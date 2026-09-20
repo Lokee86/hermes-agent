@@ -369,7 +369,8 @@ function McpSetupRow({ action, onReissue, reissueBlocked, reissuing, request, ta
     },
     open: {
       disabled: target.connectUrl === null,
-      label,
+      // An install reaches this step too, so the action's verb would read "Install" twice.
+      label: action === 'authorize' ? label : t.connectors.openInBrowser,
       onClick: () => {
         if (target.connectUrl) {
           void window.hermesDesktop?.openExternal?.(target.connectUrl)
