@@ -257,6 +257,7 @@ class _Runner:
     def prepare(self, operation: ConnectionOperation) -> None:
         _RUNNERS[operation.op_id] = self
         self.op_id = operation.op_id
+        self.operation = operation
         if self.action == "authorize" and len(operation.targets) > 1:
             self._prepare_together(operation)
             return
@@ -293,8 +294,60 @@ class _Runner:
             _OBSERVE[self.action](self, operation, target)
 
     def close(self) -> None:
+        """The operation is over. An attempt still waiting on the browser is stopped when the user
+        ended the turn, and otherwise left to finish: the card closed, not the authorization. What
+        it commits is picked up before the session's next turn (``adopt_late_connections``)."""
         if self.op_id is not None:
             _RUNNERS.pop(self.op_id, None)
+        operation = getattr(self, "operation", None)
+        for name, work in list(self.work.items()):
+            if work.attempt is None or operation is None:
+                continue
+            if operation.settled_by == SettleReason.interrupt:
+                from tools.connectors.mcp_oauth import cancel_attempt
+
+                cancel_attempt(work.attempt.flow)
+            else:
+                _LATE_ATTEMPTS.setdefault(operation.session_key, {})[name] = work.attempt
+        self.work.clear()
+
+
+# session key -> {server: attempt} for OAuth attempts that outlived their card.
+_LATE_ATTEMPTS: Dict[str, Dict[str, Any]] = {}
+
+
+def adopt_late_connections(agent: Any) -> List[str]:
+    """Register the servers whose authorization committed after their card had closed, and add
+    them to the agent's toolset selection. Runs between turns, so the result that said "not
+    connected" is followed by a turn in which the tools are there."""
+    session_key = operation_session_key(getattr(agent, "session_id", None))
+    attempts = _LATE_ATTEMPTS.get(session_key)
+    if not attempts:
+        return []
+    adopted: List[str] = []
+    for name, attempt in list(attempts.items()):
+        snapshot = attempt.poll()
+        if snapshot["status"] == "pending":
+            continue
+        attempts.pop(name, None)
+        if snapshot["status"] != "approved" or snapshot.get("discovery_error"):
+            continue
+        try:
+            from tools.mcp_tool_config import _load_mcp_config
+            from tools.mcp_tool_discovery import register_mcp_servers
+
+            config = _load_mcp_config().get(name)
+            if isinstance(config, dict):
+                register_mcp_servers({name: config})
+                adopted.append(name)
+        except Exception:
+            logger.debug("late MCP connection %s was not adopted", name, exc_info=True)
+    if not attempts:
+        _LATE_ATTEMPTS.pop(session_key, None)
+    enabled = getattr(agent, "enabled_toolsets", None)
+    if adopted and enabled is not None and "no_mcp" not in enabled:
+        agent.enabled_toolsets = [*enabled, *(n for n in adopted if n not in enabled)]
+    return adopted
 
 
 # op_id -> the runner driving it, so the card's answer and Try again (RPC thread) find the work.
@@ -307,13 +360,22 @@ def open_runner(action: str, backend: Any = None) -> _Runner:
     return _Runner(action, backend or _default_backend())
 
 
+# Errors that carry no message reach the user as their class name; say what happened instead.
+_BARE_ERRORS = {
+    "CancelledError": "tool discovery was interrupted; run the same action again to list the tools",
+    "TimeoutError": "the server did not answer in time",
+}
+
+
 def _detail(exc: Any, runner: _Runner, target: Target) -> str:
     """The user-facing text of a failure. Every value the card submitted for this target is
     replaced by exact match before the pattern redactor runs: an opaque credential has no
     recognizable shape, so only the runner knows what to remove."""
     from agent.redact import redact_sensitive_text
 
-    text = str(exc) or (exc.__class__.__name__ if isinstance(exc, BaseException) else "error")
+    text = str(exc) or (_BARE_ERRORS.get(exc.__class__.__name__, exc.__class__.__name__)
+                        if isinstance(exc, BaseException) else "error")
+    text = _BARE_ERRORS.get(text, text)  # a worker hands over the class name of a message-less error
     for value in runner.approved_env.get(target.name, {}).values():
         if value:
             text = text.replace(value, "[REDACTED]")
@@ -366,9 +428,27 @@ def _register_connected(runner: _Runner, target: Target, name: str) -> tuple[Lis
         config = _load_mcp_config().get(name)
         if not isinstance(config, dict):
             raise RuntimeError(f"no committed MCP configuration for '{name}'")
-        return [str(tool_name) for tool_name in register_mcp_servers({name: config})], ""
+        register_mcp_servers({name: config})
+        return _registered_tool_names(name), ""
     except Exception as exc:
         return [], _detail(exc, runner, target)
+
+
+def _registered_tool_names(name: str, wait_seconds: float = 10.0) -> List[str]:
+    """The server's callable names, read from the registry. Registration is a no-op for a server
+    the process already holds, and one that failed discovery earlier is parked with no tools: wake
+    it and wait for the fresh listing, so a retry reports what the user can now call."""
+    from tools.mcp_tool_loop import reconnect_mcp_server
+    from tools.registry import registry
+
+    names = registry.get_tool_names_for_toolset(f"mcp-{name}")
+    if names or not reconnect_mcp_server(name):
+        return names
+    deadline = time.time() + wait_seconds
+    while not names and time.time() < deadline:
+        time.sleep(0.25)
+        names = registry.get_tool_names_for_toolset(f"mcp-{name}")
+    return names
 
 
 def _connect(operation: ConnectionOperation, target: Target, tools: List[str], discovery_error: str = "") -> None:
@@ -608,15 +688,37 @@ def apply_answer(operation: ConnectionOperation, raw: str) -> None:
             # A row the backend resolved before this move landed has nothing to move; the rest of
             # the answer still applies. A settled operation is frozen. The check and the move are
             # not one step, so the refusal itself is the witness, not a read taken before it.
+            kept = _cancel_attempt(runner, target)
             try:
-                operation.transition(target.name, TargetState.skipped, Actor.user)
+                operation.transition(target.name, TargetState.skipped, Actor.user,
+                                     **({"detail": kept} if kept else {}))
             except IllegalTransition:
                 if not target.resolved and not operation.settled:
                     raise
-        elif status == "approved" and runner is not None and target.state == TargetState.pending:
-            runner.run(_APPROVE, operation, target, _answer_env(entry))
+        elif status == "approved" and runner is not None:
+            if target.state == TargetState.pending:
+                runner.run(_APPROVE, operation, target, _answer_env(entry))
+            elif target.state in (TargetState.failed, TargetState.expired):
+                # Connect on the form a failed row reopened: the same attempt, with the new values.
+                runner.run(_RETRY, operation, target, _answer_env(entry))
     if answer.get("settled_by") == SettleReason.continue_.value and not operation.all_resolved:
         operation.settle(SettleReason.continue_)
+
+
+AUTHORIZATION_KEPT = ("the authorization had already completed when this was canceled, so it was "
+                      "kept; run the same action again to list the tools")
+
+
+def _cancel_attempt(runner: Optional[_Runner], target: Target) -> str:
+    """Stop the target's OAuth attempt so a late reply cannot be adopted. Returns the note for a
+    cancel that lost the race: the attempt had committed, and a completed authorization stays."""
+    work = runner.work.pop(target.name, None) if runner is not None else None
+    flow = getattr(getattr(work, "attempt", None), "flow", None)
+    if flow is None:
+        return ""
+    from tools.connectors.mcp_oauth import cancel_attempt
+
+    return AUTHORIZATION_KEPT if cancel_attempt(flow) else ""
 
 
 def retry(operation: ConnectionOperation, names: List[str]) -> Optional[str]:

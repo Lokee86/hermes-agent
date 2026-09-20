@@ -72,7 +72,7 @@ def _fake_worker_publishes_url(monkeypatch, state="teststate123"):
     carrying *state* and then waits for the callback like the real worker's
     SDK does."""
 
-    def worker(hermes_home, server_name, cfg, reconnect_live, *, flow, on_done=None):
+    def worker(hermes_home, server_name, cfg, reconnect_live, *, flow, on_done=None, **_card_options):
         import asyncio
 
         asyncio.run(

@@ -35,6 +35,15 @@ def probe_with_rollback(
     backup = storage.snapshot()
     previous_entry = None
     details: Dict[str, Any] = {}
+    tools: list = []
+    discovery_error = ""
+
+    def undo() -> None:
+        # ``manager.remove`` cleared the pre-attempt tokens, so anything on disk now is this
+        # attempt's grant, and it is not being kept: put the snapshot back.
+        storage.restore(backup)
+        manager.restore_entry(server_name, previous_entry, hermes_home=hermes_home)
+
     try:
         previous_entry = manager.remove(server_name, hermes_home=hermes_home)
         timeout = max(float(cfg.get("connect_timeout", 0) or 0), 315)
@@ -46,44 +55,96 @@ def probe_with_rollback(
                 "this provider may require a manually-registered OAuth client.")
     except Exception as exc:
         if not details.get("initialized"):
-            # ``manager.remove`` cleared the pre-attempt tokens above, so anything on disk now is
-            # this attempt's grant, and the resource never accepted it: put the snapshot back.
-            storage.restore(backup)
-            manager.restore_entry(server_name, previous_entry, hermes_home=hermes_home)
+            undo()
             raise
-        _commit(server_name, cfg, on_commit)
-        if flow is not None:
-            flow.tools = []
-            flow.discovery_error = exception_message(exc)
-            flow.mark_approved()
-        return
-    _commit(server_name, cfg, on_commit)
+        tools, discovery_error = [], exception_message(exc)
+    try:
+        _commit(server_name, cfg, on_commit, flow)
+    except AttemptCanceled:
+        undo()
+        raise
     if flow is not None:
         flow.tools = [{"name": t, "description": d} for t, d in tools]
-        flow.discovery_error = ""
+        flow.discovery_error = discovery_error
         flow.mark_approved()
+    if discovery_error:
+        return
     if reconnect_live:
         from tools.mcp_tool_loop import reconnect_mcp_server
         reconnect_mcp_server(server_name)
 
 
-def _commit(server_name: str, cfg: dict, on_commit: Optional[Callable[[], None]]) -> None:
+class AttemptCanceled(RuntimeError):
+    """The user canceled this attempt before it committed; nothing of it is kept."""
+
+
+# One lock orders a cancel against the commit, so an attempt is either canceled with nothing kept or
+# committed with everything kept. A worker parked inside the token request cannot be interrupted;
+# it is stopped here, at the one point where its result would be adopted.
+_COMMIT_GUARD = threading.Lock()
+
+
+def cancel_attempt(flow) -> bool:
+    """Cancel a card attempt. True when it had already committed: the authorization stays."""
+    with _COMMIT_GUARD:
+        if getattr(flow, "committed", False):
+            return True
+        flow.canceled = True
+    flow.mark_error("canceled")  # wakes a worker that is still waiting for the browser
+    return False
+
+
+def _commit(server_name: str, cfg: dict, on_commit: Optional[Callable[[], None]], flow=None) -> None:
     from hermes_cli.mcp_config import _save_mcp_server
 
-    if not _save_mcp_server(server_name, cfg):
-        raise RuntimeError(f"'{server_name}' was rejected: suspicious command/args configuration")
-    if on_commit is not None:
-        on_commit()
+    with _COMMIT_GUARD:
+        if flow is not None and getattr(flow, "canceled", False):
+            raise AttemptCanceled("canceled")
+        if not _save_mcp_server(server_name, cfg):
+            raise RuntimeError(f"'{server_name}' was rejected: suspicious command/args configuration")
+        if on_commit is not None:
+            on_commit()
+        if flow is not None:
+            flow.committed = True
+
+
+def _reuse_saved_authorization(
+        server_name: str, cfg: dict, flow, on_commit: Optional[Callable[[], None]]) -> bool:
+    """Connect with the tokens already on disk, with no browser step and no consent.
+
+    Retrying discovery for a server that is authorized must not ask the user to sign in again, and
+    must not delete the working grant first. Any failure here falls through to the interactive
+    flow, which replaces the grant."""
+    from hermes_cli.mcp_config import _oauth_tokens_present, _probe_single_server
+    from tools.mcp_oauth import suppress_interactive_oauth
+
+    if not _oauth_tokens_present(server_name):
+        return False
+    try:
+        with suppress_interactive_oauth():
+            tools = _probe_single_server(server_name, cfg, connect_timeout=30)
+        _commit(server_name, cfg, on_commit, flow)
+    except Exception as exc:
+        logger.debug("saved authorization for %s was not usable: %s", server_name, exc)
+        return False
+    if flow is not None:
+        flow.tools = [{"name": t, "description": d} for t, d in tools]
+        flow.discovery_error = ""
+        flow.mark_approved()
+    return True
 
 
 def run_worker(
         hermes_home: str, server_name: str, cfg: dict, reconnect_live: bool, *,
         flow, on_done: Optional[Callable[[], None]] = None,
-        env: Optional[Dict[str, str]] = None, on_commit: Optional[Callable[[], None]] = None) -> None:
+        env: Optional[Dict[str, str]] = None, on_commit: Optional[Callable[[], None]] = None,
+        reuse_saved: bool = False) -> None:
     """Drive the interactive MCP OAuth probe under the shared callback bridge.
 
     ``env`` holds a card install's setup values. They join the secret scope for this attempt only,
-    so the configuration can reference them before anything is saved."""
+    so the configuration can reference them before anything is saved. ``reuse_saved`` is the
+    card's rule: a server whose saved tokens still work connects with no consent step. The RPC
+    session surface keeps it off, because its caller waits for an authorization URL."""
     from hermes_constants import reset_hermes_home_override, set_hermes_home_override
     try:
         from agent.secret_scope import (
@@ -93,8 +154,11 @@ def run_worker(
         home_token = set_hermes_home_override(hermes_home)
         secret_token = set_secret_scope({**build_profile_secret_scope(Path(hermes_home)), **(env or {})})
         try:
-            with force_interactive_oauth(), dashboard_oauth_flow(flow):
-                probe_with_rollback(server_name, cfg, hermes_home, flow, reconnect_live, on_commit=on_commit)
+            if not (reuse_saved and flow is not None
+                    and _reuse_saved_authorization(server_name, cfg, flow, on_commit)):
+                with force_interactive_oauth(), dashboard_oauth_flow(flow):
+                    probe_with_rollback(
+                        server_name, cfg, hermes_home, flow, reconnect_live, on_commit=on_commit)
         finally:
             reset_secret_scope(secret_token)
             reset_hermes_home_override(home_token)
@@ -239,11 +303,14 @@ def start(
     threading.Thread(
         target=run_worker, args=(hermes_home, server_name, cfg, False),
         kwargs={"flow": flow, "on_done": lambda: mcp_oauth_sessions.finish_flow(flow.flow_id),
+                "reuse_saved": True,
                 **({"env": env, "on_commit": on_commit} if env or on_commit else {})},
         daemon=True, name=f"mcp-oauth-{server_name}").start()
     deadline = time.time() + url_timeout
     while time.time() < deadline:
         snapshot = flow.snapshot()
+        if snapshot.get("status") == "approved":
+            return OAuthAttempt(auth_url="", flow=flow)  # the saved authorization still works
         if snapshot.get("authorization_url"):
             return OAuthAttempt(
                 auth_url=snapshot["authorization_url"], flow=flow,
