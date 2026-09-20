@@ -376,7 +376,7 @@ class CLITuiMixin:
         *,
         sudo_widget,
         secret_widget,
-        connection_widget,
+        connection_widget=None,
         approval_widget,
         slash_confirm_widget=None,
         clarify_widget,

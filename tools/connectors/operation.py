@@ -223,6 +223,10 @@ class ConnectionOperation:
         from tools.tool_search_catalog import build_catalog_listing_with_form
 
         for target in result["targets"]:
+            # Setup instructions are the card's text for the user. A catalog entry's notes can be
+            # older than this flow ("restart your session to load the tools"), and the model would
+            # repeat them after a result that says the tools are callable now.
+            target.pop("instructions", None)
             names = target.get("tools") if target.get("kind") == "mcp" else None
             if not names:
                 continue
