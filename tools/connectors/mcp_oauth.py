@@ -28,7 +28,7 @@ def probe_with_rollback(
     values there, so they land with the authorization and never before it."""
     from hermes_cli.mcp_config import _oauth_tokens_present, _probe_single_server
     from tools.mcp_dashboard_oauth import exception_message
-    from tools.mcp_oauth import HermesTokenStorage
+    from tools.mcp_oauth import HermesTokenStorage, login_connect_timeout
     from tools.mcp_oauth_manager import get_manager
     manager = get_manager()
     storage = HermesTokenStorage(server_name)
@@ -53,8 +53,8 @@ def probe_with_rollback(
 
     try:
         previous_entry = manager.remove(server_name, hermes_home=hermes_home)
-        timeout = max(float(cfg.get("connect_timeout", 0) or 0), 315)
-        tools = _probe_single_server(server_name, cfg, connect_timeout=timeout, details=details)
+        tools = _probe_single_server(
+            server_name, cfg, connect_timeout=login_connect_timeout(cfg), details=details)
         if not _oauth_tokens_present(server_name):
             details["initialized"] = False
             raise RuntimeError(
@@ -99,8 +99,9 @@ def cancel_attempt(flow) -> bool:
     with _COMMIT_GUARD:
         if getattr(flow, "committed", False):
             return True
-        flow.canceled = True
-    flow.mark_error("canceled")  # wakes a worker that is still waiting for the browser
+        flow.cancelled = True
+    # Wakes a worker that is still waiting for the browser; a cancelled flow is never re-minted.
+    flow.mark_error("canceled", cancelled=True)
     return False
 
 
@@ -108,7 +109,7 @@ def _commit(server_name: str, cfg: dict, on_commit: Optional[Callable[[], None]]
     from hermes_cli.mcp_config import _save_mcp_server
 
     with _COMMIT_GUARD:
-        if flow is not None and getattr(flow, "canceled", False):
+        if flow is not None and getattr(flow, "cancelled", False):
             raise AttemptCanceled("canceled")
         if not _save_mcp_server(server_name, cfg):
             raise RuntimeError(f"'{server_name}' was rejected: suspicious command/args configuration")
