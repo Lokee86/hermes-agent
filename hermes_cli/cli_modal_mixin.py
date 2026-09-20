@@ -660,6 +660,19 @@ class CLIModalMixin:
     def _connection_fields(target) -> list[dict]:
         return [dict(field) for field in target.get("required_env") or () if isinstance(field, dict)]
 
+    @staticmethod
+    def _connection_opening_phase(target) -> str:
+        """The phase a target opens in. A pending install or enable waits for the user's Connect
+        even with no fields to fill; a pending authorize is the backend still minting the link."""
+        target_state = target.get("state")
+        if target_state == "initiated" and target.get("connect_url"):
+            return "url"
+        if target_state == "failed":
+            return "failed"
+        if target_state == "pending" and target.get("action") != "authorize":
+            return "form"
+        return "waiting"
+
     def _connection_show_target(self, payload, index: int) -> None:
         targets = payload.get("targets") or []
         if not targets:
@@ -684,7 +697,7 @@ class CLIModalMixin:
             "fields": fields,
             "field_index": 0,
             "selected": 0,
-            "phase": "form" if fields else "waiting",
+            "phase": self._connection_opening_phase(target),
             "drafts": drafts,
         }
         self._connection_sync_input_buffer()
@@ -766,8 +779,11 @@ class CLIModalMixin:
             answer["env"] = dict(state.get("drafts", {}).get(name, {}))
         from tools.connectors.mcp import apply_answer
 
-        apply_answer(operation, json.dumps({"targets": [answer]}))
+        # The backend applies the answer on this thread, and its change hook sets the next phase
+        # (the URL step, the form again for a missing field) before apply_answer returns. Set the
+        # waiting phase first so it cannot overwrite that.
         state["phase"] = "waiting"
+        apply_answer(operation, json.dumps({"targets": [answer]}))
         response_queue = state.get("response_queue")
         if response_queue is not None:
             response_queue.put(answer["status"])
@@ -783,13 +799,14 @@ class CLIModalMixin:
             self._connection_close()
             return
         target = state["target"]
-        if target.get("state") == "pending":
+        if target.get("state") in {"pending", "failed", "expired"}:
+            # Connect on a failed row is the same attempt with the values now in the draft.
             self._connection_answer(approve=True)
             return
         from tools.connectors.mcp import retry
 
-        retry(operation, [str(target.get("name") or "")])
         state["phase"] = "waiting"
+        retry(operation, [str(target.get("name") or "")])
         self._paint_now()
 
     def _connection_continue(self) -> None:
@@ -887,7 +904,7 @@ class CLIModalMixin:
         if phase == "url":
             self._connection_open_url()
         elif phase == "authorized":
-            (self._connection_retry if state.get("selected", 0) == 0 else self._connection_continue)()
+            self._connection_continue()
         elif phase in {"form", "failed"} and state.get("field_index", 0) >= len(state.get("fields") or []):
             (self._connection_retry if state.get("selected", 0) == 0 else self._connection_cancel)()
 
@@ -920,7 +937,9 @@ class CLIModalMixin:
             lines.extend(self._connection_field_lines(state, target))
             lines.append("Connect    Cancel")
         elif phase == "authorized":
-            lines.extend(["Authorized. Tools unavailable.", "Retry discovery    Continue"])
+            # A connected row cannot be re-run inside this operation; the agent retries discovery
+            # with its next manage_connections call, which needs no new consent.
+            lines.extend(["Authorized. Tools unavailable.", "Continue"])
         elif phase == "connected":
             lines.append("Connected")
         else:

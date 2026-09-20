@@ -796,11 +796,7 @@ class CLITuiMixin:
                 )
         elif phase == "authorized" and body_lines:
             styles[-1] = 'class:clarify-selected'
-            choices = ["Retry discovery", "Continue"]
-            selected = min(1, max(0, state.get("selected", 0)))
-            body_lines[-1] = "    ".join(
-                f"▸ {choice}" if i == selected else choice for i, choice in enumerate(choices)
-            )
+            body_lines[-1] = "▸ Continue"
         return self._render_sudo_style_panel(lines[0], body_lines, styles)
 
     # (state attr, deadline attr, hint) for the modal prompts with a countdown hint row.
