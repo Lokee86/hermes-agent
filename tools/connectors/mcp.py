@@ -106,7 +106,8 @@ class _CatalogBackend:
     def start_oauth(self, name: str) -> Any:
         from tools.connectors import mcp_oauth
 
-        return mcp_oauth.start(name)
+        # The TUI/Desktop card path supplies its advertised client redirect in a later part.
+        return mcp_oauth.start(name, client_redirect_uri=None)
 
     def install(self, name: str, env: Dict[str, str]) -> List[str]:
         """Install and probe with ephemeral credentials, persisting them only after success."""
@@ -349,7 +350,8 @@ def _start_oauth(runner: _Runner, operation: ConnectionOperation, target: Target
         _fail(operation, target, _detail(exc, runner, target))
         return
     runner.work[target.name] = _Work(attempt=attempt)
-    _move(operation, target, TargetState.initiated, actor, connect_url=attempt.auth_url, detail="")
+    _move(operation, target, TargetState.initiated, actor, connect_url=attempt.auth_url,
+          detail=getattr(attempt, "detail", ""))
 
 
 def _declare_env(runner: _Runner, operation: ConnectionOperation, target: Target, env: Dict[str, str]) -> None:

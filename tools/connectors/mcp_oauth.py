@@ -1,29 +1,22 @@
-"""The MCP OAuth worker and the in-process flow ``manage_connections`` starts for an ``authorize``
-target.
-
-The worker moved here from ``tui_gateway/mcp_oauth_sessions.py``, which still owns the RPC session
-table the Capabilities tab polls and now calls this module. A connection operation needs the same
-probe without that session bookkeeping, and it sends the browser to the backend's own callback
-route (``/api/mcp/oauth/callback/{server}``) so no renderer has to host a listener.
-"""
+"""MCP OAuth worker and callback receivers used by connection cards and gateway RPC flows."""
 
 from __future__ import annotations
 
+import http.server
 import logging
+import os
 import secrets
-import sys
 import threading
 import time
 from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Dict, Optional
+from urllib.parse import urlparse
 
 logger = logging.getLogger(__name__)
 
 URL_TIMEOUT_SECONDS = 30.0
-# Loopback hosts a bind may report that a browser cannot dial back.
-_WILDCARD_HOSTS = frozenset({"", "0.0.0.0", "::"})
 
 
 def probe_with_rollback(
@@ -71,8 +64,7 @@ def probe_with_rollback(
 def run_worker(
         hermes_home: str, server_name: str, cfg: dict, reconnect_live: bool, *,
         flow, on_done: Optional[Callable[[], None]] = None) -> None:
-    """Drive the interactive MCP OAuth probe under the shared dashboard bridge (same wrapping
-    as ``web_server._run_dashboard_mcp_oauth``), reporting into ``flow``."""
+    """Drive the interactive MCP OAuth probe under the shared callback bridge."""
     from hermes_constants import reset_hermes_home_override, set_hermes_home_override
     try:
         from agent.secret_scope import (
@@ -104,47 +96,81 @@ def run_worker(
             on_done()
 
 
-def callback_url(server_name: str) -> str:
-    """The externally reachable ``/api/mcp/oauth/callback/{server}`` URL, built from the operator's
-    public URL or from the address this process bound. Same rule as the dashboard route, which has
-    a Request to read and we do not."""
-    from urllib.parse import quote
-
-    from hermes_cli.dashboard_auth.prefix import resolve_public_url
-
-    suffix = f"/api/mcp/oauth/callback/{quote(server_name, safe='')}"
-    public_url = resolve_public_url()
-    if public_url:
-        return f"{public_url}{suffix}"
-    state = getattr(sys.modules.get("hermes_cli.web_server"), "app", None)
-    state = getattr(state, "state", None)
-    port = getattr(state, "bound_port", None)
-    if not port:
-        raise RuntimeError(
-            "this Hermes process is not serving the OAuth callback route; authorize the server "
-            f"from a desktop session or run `hermes mcp login {server_name}`")
-    host = str(getattr(state, "bound_host", "") or "")
-    host = "127.0.0.1" if host in _WILDCARD_HOSTS else host
-    netloc = f"[{host}]:{port}" if ":" in host else f"{host}:{port}"
-    return f"http://{netloc}{suffix}"
+def _validate_client_redirect_uri(uri: str) -> str:
+    """Accept only plain-http loopback URLs (RFC 8252)."""
+    parsed = urlparse(str(uri or "").strip())
+    host = (parsed.hostname or "").lower()
+    if (parsed.scheme != "http" or host not in ("127.0.0.1", "localhost", "::1") or not parsed.port
+            or parsed.username is not None or parsed.password is not None):
+        raise ValueError(
+            "client_redirect_uri must be a loopback http URL like http://127.0.0.1:<port>/callback")
+    return f"http://{'[' + host + ']' if ':' in host else host}:{parsed.port}{parsed.path or '/callback'}"
 
 
-def _register_for_callback(flow) -> Callable[[], None]:
-    """Put ``flow`` in the table the callback route matches on (server name + state), and return
-    the function that drops it again."""
-    module = sys.modules.get("hermes_cli.web_routers.mcp")
-    if module is None:
-        raise RuntimeError(
-            "this Hermes process is not serving the OAuth callback route; authorize the server "
-            f"from a desktop session or run `hermes mcp login {flow.server_name}`")
-    with module._mcp_oauth_flows_lock:
-        module._mcp_oauth_flows[flow.flow_id] = flow
+def _start_loopback_receiver(flow) -> "http.server.HTTPServer":
+    """Bind the single backend-hosted one-shot receiver and feed its callback into ``flow``."""
+    from tools.mcp_oauth import _parse_redirect_query
 
-    def drop() -> None:
-        with module._mcp_oauth_flows_lock:
-            module._mcp_oauth_flows.pop(flow.flow_id, None)
+    class _Handler(http.server.BaseHTTPRequestHandler):
+        def do_GET(self):  # noqa: N802
+            parsed = urlparse(self.path)
+            if parsed.path.rstrip("/") not in ("/callback", ""):
+                self.send_response(404)
+                self.end_headers()
+                return
+            body = b"<h1>Authorization received</h1><p>You can close this tab and return to Hermes.</p>"
+            status = 200
+            try:
+                flow.deliver_callback(**_parse_redirect_query(parsed.query))
+            except Exception:
+                body = b"<h1>OAuth callback rejected</h1><p>The callback was invalid or already used.</p>"
+                status = 400
+            self.send_response(status)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.end_headers()
+            with suppress(Exception):
+                self.wfile.write(body)
 
-    return drop
+        def log_message(self, format, *args):
+            return
+
+    httpd = http.server.HTTPServer(("127.0.0.1", 0), _Handler)
+    threading.Thread(
+        target=httpd.serve_forever, kwargs={"poll_interval": 0.5}, daemon=True,
+        name=f"mcp-oauth-cb-{flow.server_name}").start()
+    return httpd
+
+
+def _pinned_loopback(cfg: dict) -> bool:
+    oauth = cfg.get("oauth") or {}
+    return bool(oauth.get("client_id") and oauth.get("redirect_port"))
+
+
+def _pinned_redirect_uri(cfg: dict) -> str:
+    oauth = cfg.get("oauth") or {}
+    host = oauth.get("redirect_host") or "127.0.0.1"
+    return f"http://{host}:{oauth['redirect_port']}/callback"
+
+
+def choose_callback_receiver(flow, cfg: dict, client_redirect_uri: Optional[str] = None):
+    """Set the redirect consumed by the SDK and return the optional backend HTTP receiver."""
+    if _pinned_loopback(cfg):
+        flow.redirect_uri = _pinned_redirect_uri(cfg)
+        return None
+    if client_redirect_uri is not None:
+        flow.redirect_uri = _validate_client_redirect_uri(client_redirect_uri)
+        return None
+    httpd = _start_loopback_receiver(flow)
+    flow.redirect_uri = f"http://127.0.0.1:{httpd.server_address[1]}/callback"
+    return httpd
+
+
+def _ssh_detail(redirect_uri: str) -> str:
+    if not (os.environ.get("SSH_CLIENT") or os.environ.get("SSH_TTY")) or not redirect_uri:
+        return ""
+    from tools.mcp_oauth import _SSH_HINT_LOOPBACK
+    parsed = urlparse(redirect_uri)
+    return _SSH_HINT_LOOPBACK.format(host=parsed.hostname or "127.0.0.1", port=parsed.port or 0).strip()
 
 
 @dataclass
@@ -153,6 +179,7 @@ class OAuthAttempt:
 
     auth_url: str
     flow: Any
+    detail: str = ""
 
     def poll(self) -> Dict[str, Any]:
         snapshot = self.flow.snapshot()
@@ -165,12 +192,15 @@ class OAuthAttempt:
                 if status == "approved" else ""}
 
 
-def start(server_name: str, *, url_timeout: float = URL_TIMEOUT_SECONDS) -> OAuthAttempt:
-    """Start an OAuth flow for a configured server and block until it publishes its authorization
-    URL. Raises when the flow fails or times out before the URL exists."""
+def start(
+    server_name: str, *, url_timeout: float = URL_TIMEOUT_SECONDS,
+    client_redirect_uri: Optional[str] = None,
+) -> OAuthAttempt:
+    """Start a card OAuth flow and wait until its authorization URL is published."""
     from hermes_cli.mcp_config import _get_mcp_servers
     from hermes_constants import get_hermes_home
     from tools.mcp_dashboard_oauth import DashboardOAuthFlow
+    from tui_gateway import mcp_oauth_sessions
 
     cfg = dict(_get_mcp_servers().get(server_name) or {})
     if not cfg:
@@ -181,20 +211,20 @@ def start(server_name: str, *, url_timeout: float = URL_TIMEOUT_SECONDS) -> OAut
     hermes_home = str(get_hermes_home().expanduser().resolve(strict=False))
     flow = DashboardOAuthFlow(
         flow_id=secrets.token_urlsafe(24), server_name=server_name, profile=None,
-        hermes_home=hermes_home, redirect_uri=callback_url(server_name),
-        # A live reconnect would swap the session's toolset mid-conversation; the tools land on the
-        # next turn instead.
-        reconnect_live=False)
-    drop = _register_for_callback(flow)
+        hermes_home=hermes_home, redirect_uri="", reconnect_live=False)
+    httpd = choose_callback_receiver(flow, cfg, client_redirect_uri)
+    mcp_oauth_sessions.register_flow(flow, httpd=httpd)
     threading.Thread(
         target=run_worker, args=(hermes_home, server_name, cfg, False),
-        kwargs={"flow": flow, "on_done": drop},
+        kwargs={"flow": flow, "on_done": lambda: mcp_oauth_sessions.finish_flow(flow.flow_id)},
         daemon=True, name=f"mcp-oauth-{server_name}").start()
     deadline = time.time() + url_timeout
     while time.time() < deadline:
         snapshot = flow.snapshot()
         if snapshot.get("authorization_url"):
-            return OAuthAttempt(auth_url=snapshot["authorization_url"], flow=flow)
+            return OAuthAttempt(
+                auth_url=snapshot["authorization_url"], flow=flow,
+                detail=_ssh_detail(flow.redirect_uri) if client_redirect_uri is None else "")
         if snapshot.get("status") == "error":
             raise RuntimeError(snapshot.get("error") or "the OAuth flow failed before authorization")
         time.sleep(0.05)
