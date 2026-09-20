@@ -195,13 +195,19 @@ export function ConnectionSetupOverlay({ cols, t }: ConnectionSetupOverlayProps)
   const [submitting, setSubmitting] = useState(false)
   const [submittedSecrets, setSubmittedSecrets] = useState<Set<string>>(() => new Set())
 
+  // A new target starts clean. Every backend snapshot carries a freshly parsed required_env, so the
+  // same target's fields only fill in what the draft lacks: a failed Connect keeps what was typed.
   useEffect(() => {
-    setDraft(initialDraft(fields))
+    setDraft({})
     setFocus(0)
     setAction(0)
     setSubmitting(false)
     setSubmittedSecrets(new Set())
-  }, [fields, targetKey])
+  }, [targetKey])
+
+  useEffect(() => {
+    setDraft(current => ({ ...initialDraft(fields), ...current }))
+  }, [fields])
 
   useEffect(() => {
     if (target?.state === 'failed') {
