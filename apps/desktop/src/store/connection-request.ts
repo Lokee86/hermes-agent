@@ -11,13 +11,19 @@ import type {
 } from '@hermes/shared'
 import { atom, computed } from 'nanostores'
 
-import type { ConnectorCardField } from '@/components/ui/connector-card'
+import type { SetupField } from '@/components/ui/setup-field-list'
 
 import { $gateway } from './gateway'
 
-/** The backend sends ``prompt`` as null when the catalog entry has none; the card takes an absent one. */
-const envFields = (fields: ConnectionTargetEnvField[] | null | undefined): ConnectorCardField[] =>
-  (fields ?? []).map(({ name, prompt, required }) => ({ name, prompt: prompt ?? undefined, required }))
+/** The backend sends ``prompt`` as null when the catalog entry has none; the form takes an absent one. */
+const envFields = (fields: ConnectionTargetEnvField[] | null | undefined): SetupField[] =>
+  (fields ?? []).map(({ default: defaultValue, name, prompt, required, secret }) => ({
+    default: defaultValue,
+    name,
+    prompt: prompt ?? undefined,
+    required,
+    secret
+  }))
 
 export type {
   ConnectionSettleReason,
@@ -41,7 +47,9 @@ export interface ConnectionTarget {
   /** Toolkit metadata on connector targets; empty on an MCP target. */
   tools: string[]
   /** Credentials an MCP install is still waiting for; empty on every other target. */
-  requiredEnv: ConnectorCardField[]
+  requiredEnv: SetupField[]
+  instructions: string | null
+  discoveryError: string | null
 }
 
 /** The session's connection operation. `deadlineAt`, `opId`, `targets[].state`, `settled` and
@@ -121,7 +129,9 @@ function parseTarget(entry: ConnectionOperationTarget): ConnectionTarget | null 
     state: targetState(entry.state) ?? 'pending',
     tools: entry.tools ?? [],
     connectionId: entry.connection_id ?? '',
-    requiredEnv: envFields(entry.required_env)
+    requiredEnv: envFields(entry.required_env),
+    instructions: entry.instructions ?? null,
+    discoveryError: entry.discovery_error ?? null
   }
 }
 
@@ -196,13 +206,17 @@ function mergeLiveTarget(target: ConnectionTarget, live: ConnectionOperationTarg
     state: live.state,
     tools: live.tools ?? target.tools,
     connectionId: live.connection_id ?? target.connectionId,
-    requiredEnv: live.required_env ? envFields(live.required_env) : target.requiredEnv
+    requiredEnv: live.required_env ? envFields(live.required_env) : target.requiredEnv,
+    instructions: live.instructions === undefined ? target.instructions : live.instructions,
+    discoveryError: live.discovery_error === undefined ? target.discoveryError : live.discovery_error
   }
 
   const same =
     next.connectUrl === target.connectUrl &&
     next.connectionId === target.connectionId &&
     next.detail === target.detail &&
+    next.instructions === target.instructions &&
+    next.discoveryError === target.discoveryError &&
     next.state === target.state &&
     next.tools.length === target.tools.length &&
     next.tools.every((tool, index) => tool === target.tools[index]) &&
@@ -212,13 +226,15 @@ function mergeLiveTarget(target: ConnectionTarget, live: ConnectionOperationTarg
 }
 
 // Every frame carries a fresh array, so identity would churn the row and remount its open inputs.
-const sameEnvFields = (next: ConnectorCardField[], previous: ConnectorCardField[]): boolean =>
+const sameEnvFields = (next: SetupField[], previous: SetupField[]): boolean =>
   next.length === previous.length &&
   next.every(
     (field, index) =>
       field.name === previous[index].name &&
       field.prompt === previous[index].prompt &&
-      field.required === previous[index].required
+      field.required === previous[index].required &&
+      field.secret === previous[index].secret &&
+      field.default === previous[index].default
   )
 
 /** Apply one `connection.update` frame. Every frame carries the operation's full target snapshot, so

@@ -85,6 +85,11 @@ export interface Translations {
     empty: string
     disclaimer: string
     execution: string
+    setup: (server: string) => string
+    openInBrowser: string
+    setupCancel: string
+    authorizedToolsUnavailable: string
+    required: string
   }
   sessionImport: {
     title: string

@@ -302,17 +302,13 @@ export function ConnectorOffer({ owner, request }: ConnectorOfferProps) {
 
   useConnectorFocusHandoff(request.targets, cardRef)
 
-  // The fresh link opens at once, and the update frame then paints the row as waiting. A refused
-  // re-mint is a click that changed nothing, so it gets a toast; the row stays as it was.
+  // The update frame paints the row as waiting with the fresh link; the user opens it from the row.
+  // A refused re-mint is a click that changed nothing, so it gets a toast; the row stays as it was.
   const reissue = async (target: ConnectionTarget): Promise<void> => {
     setReissuing(current => new Set(current).add(target.name))
 
     try {
-      const url = await reissueConnectionTarget(owner, request, target.name)
-
-      if (url) {
-        void window.hermesDesktop?.openExternal?.(url)
-      }
+      await reissueConnectionTarget(owner, request, target.name)
     } catch (error) {
       notifyError(error, copy.connectErrorFor(connectorTitle(target.name)))
     } finally {

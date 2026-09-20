@@ -4,7 +4,6 @@ import { SCAFFOLD_META_CLASS, ScaffoldRow } from '@/components/chat/scaffold-row
 import { WIDGET_SHELL_CLASS } from '@/components/chat/widget-shell'
 import { Button } from '@/components/ui/button'
 import { ConnectorLogo, type ConnectorLogoSubject } from '@/components/ui/connector-logo'
-import { Input } from '@/components/ui/input'
 import { Check, CircleIcon, Loader2 } from '@/lib/icons'
 import { cn } from '@/lib/utils'
 
@@ -24,27 +23,15 @@ export interface ConnectorRowAction {
   onClick: () => void
 }
 
-export interface ConnectorCardField {
-  name: string
-  prompt?: string
-  required?: boolean
-}
-
 export interface ConnectorRowProps {
   /** Absent once the row is resolved: there is nothing left to offer. */
   action?: ConnectorRowAction
   connector: ConnectorLogoSubject
   /** The one quiet line after the name; the waiting row's "in your browser" cue. */
   cue?: string
-  envDraft?: Record<string, string>
-  envFields?: ConnectorCardField[]
-  /** The caller reveals fields after a refused credential. */
-  envOpen?: boolean
-  envRequired?: string
   mark: ConnectorRowMark
   /** What a screen reader gets for the mark. */
   markLabel: string
-  onEnvChange?: (key: string, value: string) => void
 }
 
 const SHELL_CLASS = `${WIDGET_SHELL_CLASS} text-[length:var(--conversation-text-font-size)] text-(--ui-text-primary)`
@@ -65,20 +52,8 @@ export function ConnectorCard({ children, title }: { children: ReactNode; title:
   )
 }
 
-export function ConnectorRow({
-  action,
-  connector,
-  cue,
-  envDraft = {},
-  envFields = [],
-  envOpen = false,
-  envRequired,
-  mark,
-  markLabel,
-  onEnvChange
-}: ConnectorRowProps) {
+export function ConnectorRow({ action, connector, cue, mark, markLabel }: ConnectorRowProps) {
   const { Icon, className } = MARKS[mark]
-  const fields = envOpen ? envFields : []
   // The mark and the cue are one live region, so a row that flips is announced instead of only seen.
   // The cue often repeats the mark's own word; then it is said once.
   const announcement = cue && cue !== markLabel ? `${markLabel}. ${cue}` : markLabel
@@ -113,25 +88,6 @@ export function ConnectorRow({
         </span>
       </div>
 
-      {fields.length > 0 && (
-        <div className="grid gap-2 pb-1.5 pl-13" data-slot="connector-row-env">
-          {envRequired ? <p className="text-[0.6875rem] text-(--ui-text-tertiary)">{envRequired}</p> : null}
-          {fields.map(env => (
-            <label className="grid gap-1" key={env.name}>
-              <span className="text-[0.6875rem] text-(--ui-text-secondary)">
-                {env.prompt || env.name}
-                {env.required ? ' *' : ''}
-              </span>
-              <Input
-                className="h-7 text-xs"
-                onChange={event => onEnvChange?.(env.name, event.currentTarget.value)}
-                type="password"
-                value={envDraft[env.name] ?? ''}
-              />
-            </label>
-          ))}
-        </div>
-      )}
     </div>
   )
 }

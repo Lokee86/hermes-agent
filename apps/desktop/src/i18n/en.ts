@@ -28,7 +28,12 @@ export const en: Translations = {
     search: 'Find an app',
     empty: 'No matching apps',
     disclaimer: 'Connecting is optional. Only authorize the apps you want Hermes to use.',
-    execution: 'Connector tools'
+    execution: 'Connector tools',
+    setup: server => `Set up ${server}`,
+    openInBrowser: 'Open in browser',
+    setupCancel: 'Cancel',
+    authorizedToolsUnavailable: 'Authorized. Tools unavailable.',
+    required: 'Required'
   },
 
   sessionImport: {

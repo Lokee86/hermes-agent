@@ -1,5 +1,5 @@
 import type { ToolCallMessagePartProps } from '@assistant-ui/react'
-import { cleanup, render, screen } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { atom } from 'nanostores'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
@@ -21,6 +21,8 @@ const LINEAR: ConnectionTarget = {
   connectUrl: null,
   connectionId: '',
   detail: '',
+  discoveryError: null,
+  instructions: null,
   kind: 'mcp',
   name: 'linear',
   requiredEnv: [],
@@ -105,17 +107,31 @@ afterEach(() => {
 })
 
 describe('the MCP setup card', () => {
-  it('shows one row per target with its verb, and Continue below', () => {
-    setConnectionRequest(REQUEST)
+  it('opens required details from the row action and sends the approved environment', async () => {
+    const rpc = vi.fn().mockResolvedValue({ status: 'ok', settled: false })
+    const target = {
+      ...LINEAR,
+      instructions: 'Create a Linear API key.',
+      requiredEnv: [{ default: 'workspace', name: 'LINEAR_TEAM', prompt: 'Team', required: true, secret: false }]
+    }
+    // SAFETY: the card calls only `request`; no other gateway client surface is exercised here.
+    // respondToConnectionRequest reads $gateway, which only applyActive publishes; set it directly.
+    $gateway.set({ request: rpc } as never)
+    setConnectionRequest({ ...REQUEST, targets: [target] })
 
     renderTool()
+    fireEvent.click(screen.getByRole('button', { name: 'Install' }))
 
-    expect(screen.getByText('Add MCP servers')).toBeTruthy()
-    expect(screen.getByText('Linear', { selector: 'span' })).toBeTruthy()
-    expect(screen.getByText('Postgres', { selector: 'span' })).toBeTruthy()
-    expect(screen.getAllByRole('button', { name: 'Install' })).toHaveLength(2)
-    expect(screen.getByRole('button', { name: 'Continue' })).toBeTruthy()
-    expect(screen.queryByRole('button', { name: 'Not now' })).toBeNull()
+    expect(screen.getByText('Set up Linear')).toBeTruthy()
+    expect(screen.getByText('Create a Linear API key.')).toBeTruthy()
+    expect(screen.getByLabelText('Team').getAttribute('value')).toBe('workspace')
+    fireEvent.click(screen.getByRole('button', { name: 'Connect' }))
+    await waitFor(() => expect(rpc).toHaveBeenCalledTimes(1))
+    expect(rpc).toHaveBeenCalledWith('connection.respond', {
+      op_id: 'operation-1',
+      result: { targets: [{ env: { LINEAR_TEAM: 'workspace' }, name: 'linear', status: 'approved' }] },
+      session_id: SESSION_ID
+    })
   })
 
   it('lists every target once settled, in the same three words as the connector card', () => {

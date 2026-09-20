@@ -24,7 +24,15 @@ const WIRE = {
   tool_call_id: 'call-1',
   timeout_seconds: 120,
   targets: [
-    { action: 'connect' as const, kind: 'connector' as const, name: 'gmail', state: 'pending' as const },
+    {
+      action: 'connect' as const,
+      discovery_error: 'tool discovery failed',
+      instructions: 'Authorize Gmail.',
+      kind: 'connector' as const,
+      name: 'gmail',
+      required_env: [{ default: 'primary', name: 'ACCOUNT', prompt: 'Account', required: true, secret: false }],
+      state: 'pending' as const
+    },
     { action: 'connect' as const, kind: 'connector' as const, name: 'notion', state: 'pending' as const }
   ]
 }
@@ -82,6 +90,11 @@ describe('connection-request store', () => {
       ['gmail', 'connector', 'pending'],
       ['notion', 'connector', 'pending']
     ])
+    expect(parsed?.targets[0]).toMatchObject({
+      discoveryError: 'tool discovery failed',
+      instructions: 'Authorize Gmail.',
+      requiredEnv: [{ default: 'primary', name: 'ACCOUNT', prompt: 'Account', required: true, secret: false }]
+    })
     expect(parsed?.settled).toBe(false)
   })
 

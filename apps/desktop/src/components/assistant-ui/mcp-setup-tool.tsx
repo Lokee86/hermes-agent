@@ -18,6 +18,7 @@ import { ToolFallback } from '@/components/assistant-ui/tool/fallback'
 import { WIDGET_SHELL_CLASS } from '@/components/chat/widget-shell'
 import { Button } from '@/components/ui/button'
 import { ConnectorCard, ConnectorRow, type ConnectorRowAction, ConnectorSummary } from '@/components/ui/connector-card'
+import { SetupFormDialog } from '@/components/ui/setup-form-dialog'
 import { useI18n } from '@/i18n'
 import { connectorText, type McpTarget, mcpTargets } from '@/lib/connector-tools'
 import { Loader2 } from '@/lib/icons'
@@ -229,11 +230,8 @@ export function McpSetupOffer({ action, owner, request }: McpSetupOfferProps) {
     setReissuing(current => new Set(current).add(name))
 
     try {
-      const url = await reissueConnectionTarget(owner, request, name)
-
-      if (url) {
-        void window.hermesDesktop?.openExternal?.(url)
-      }
+      // The re-minted link reaches the row through connection.update; the user opens it from the row.
+      await reissueConnectionTarget(owner, request, name)
     } catch (error) {
       notifyError(error, copy.failed(prettyName(name)))
     } finally {
@@ -289,21 +287,26 @@ interface McpSetupRowProps {
 function McpSetupRow({ action, onReissue, reissueBlocked, reissuing, request, target }: McpSetupRowProps) {
   const { t } = useI18n()
   const copy = t.assistant.mcpSetup
-  const [envDraft, setEnvDraft] = useState<Record<string, string>>({})
+  const [setupOpen, setSetupOpen] = useState(false)
   // The operation's seq when the consent was sent; null when nothing is in flight.
   const [sentAtSeq, setSentAtSeq] = useState<null | number>(null)
   const server = target.name
   const phase = CONNECTOR_CARD_PHASES[target.state]
-  const verb = rowVerb(target, action)
+  const verb = target.state === 'connected' && target.discoveryError ? 'reissue' : rowVerb(target, action)
   const fields = target.requiredEnv
-  const missing = fields.some(field => field.required && !envDraft[field.name]?.trim())
 
   // The composer's MCP suggestion index caches the configured servers; this row just changed them.
   useEffect(() => {
     if (target.state === 'connected') {
       invalidateMcpSuggestionIndex()
+
+      if (!target.discoveryError && target.tools.length > 0) {
+        setSetupOpen(false)
+      }
+    } else if (target.state === 'skipped') {
+      setSetupOpen(false)
     }
-  }, [target.state])
+  }, [target.discoveryError, target.state, target.tools.length])
 
   // The verb stays held until the backend answers with a frame, not until the RPC returns: a second
   // click in that window would send the consent twice. The answer is any frame past the seq the
@@ -312,12 +315,12 @@ function McpSetupRow({ action, onReissue, reissueBlocked, reissuing, request, ta
   // store refused (the operation is gone or settled under the card) sent nothing, so nothing is held.
   const sending = sentAtSeq !== null && request.seq <= sentAtSeq
 
-  const approve = async () => {
+  const approve = async (env?: Record<string, string>) => {
     setSentAtSeq(request.seq)
 
     try {
       const sent = await respondToConnectionRequest(request, {
-        targets: [fields.length > 0 ? { env: envDraft, name: server, status: 'approved' } : { name: server, status: 'approved' }]
+        targets: [env ? { env, name: server, status: 'approved' } : { name: server, status: 'approved' }]
       })
 
       if (!sent) {
@@ -329,10 +332,25 @@ function McpSetupRow({ action, onReissue, reissueBlocked, reissuing, request, ta
     }
   }
 
+  const cancelSetup = async () => {
+    setSetupOpen(false)
+
+    try {
+      await respondToConnectionRequest(request, { targets: [{ name: server, status: 'skipped' }] })
+    } catch (error) {
+      notifyError(error, copy.sendFailed)
+    }
+  }
+
   const label = VERB[action](copy)
 
   const ACTIONS = {
-    approve: { busy: sending, disabled: missing || sending, label, onClick: () => void approve() },
+    approve: {
+      busy: fields.length === 0 && sending,
+      disabled: fields.length === 0 && sending,
+      label,
+      onClick: () => (fields.length > 0 ? setSetupOpen(true) : void approve())
+    },
     open: {
       disabled: target.connectUrl === null,
       label,
@@ -346,19 +364,41 @@ function McpSetupRow({ action, onReissue, reissueBlocked, reissuing, request, ta
     working: { busy: true, label, onClick: () => {} }
   } satisfies Record<Exclude<McpVerb, 'none'>, ConnectorRowAction>
 
+  const displayServer = prettyName(server)
+  const rowCue = target.discoveryError ? t.connectors.authorizedToolsUnavailable : verb === 'open' ? t.connectors.waiting : undefined
+
   return (
-    <ConnectorRow
-      action={verb === 'none' ? undefined : ACTIONS[verb]}
-      connector={{ name: server, title: prettyName(server) }}
-      // The one cue belongs to the row whose link is open in the user's browser.
-      cue={verb === 'open' ? t.connectors.waiting : undefined}
-      envDraft={envDraft}
-      envFields={fields}
-      envOpen={verb === 'approve' && fields.length > 0}
-      envRequired={copy.envRequired}
-      mark={phase.mark}
-      markLabel={MARK_LABEL[phase.mark](t.connectors)}
-      onEnvChange={(key, value) => setEnvDraft(prev => ({ ...prev, [key]: value }))}
-    />
+    <>
+      <ConnectorRow
+        action={verb === 'none' ? undefined : ACTIONS[verb]}
+        connector={{ name: server, title: displayServer }}
+        cue={rowCue}
+        mark={phase.mark}
+        markLabel={MARK_LABEL[phase.mark](t.connectors)}
+      />
+      <SetupFormDialog
+        copy={{
+          cancel: t.connectors.setupCancel,
+          connect: t.connectors.connect,
+          openInBrowser: t.connectors.openInBrowser,
+          setup: t.connectors.setup
+        }}
+        detail={target.detail}
+        fields={fields}
+        instructions={target.instructions}
+        onCancel={() => void cancelSetup()}
+        onConnect={env => void approve(env)}
+        onOpenBrowser={() => {
+          if (target.connectUrl) {
+            void window.hermesDesktop?.openExternal?.(target.connectUrl)
+          }
+        }}
+        open={setupOpen}
+        pending={sending || target.state === 'initiated'}
+        server={displayServer}
+        status={target.state}
+        url={target.connectUrl}
+      />
+    </>
   )
 }

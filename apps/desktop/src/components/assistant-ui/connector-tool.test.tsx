@@ -26,7 +26,9 @@ const GMAIL: ConnectionTarget = {
   connectUrl: 'https://connect.example/gmail',
   connectionId: '',
   detail: '',
+  discoveryError: null,
   kind: 'connector',
+  instructions: null,
   name: 'gmail',
   requiredEnv: [],
   state: 'pending',
@@ -159,7 +161,7 @@ describe('ConnectorTool operation card', () => {
     expect(request).not.toHaveBeenCalledWith('connectors.connect', expect.anything())
   })
 
-  it('Try again mints a fresh link on the open operation and opens it at once', async () => {
+  it('Try again mints a fresh link on the open operation and never opens a browser by itself', async () => {
     const openExternal = vi.fn()
     // SAFETY: the card reads only `openExternal` from the preload bridge.
     window.hermesDesktop = { openExternal } as never
@@ -175,8 +177,9 @@ describe('ConnectorTool operation card', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Try again' }))
 
     await waitFor(() => {
-      expect(openExternal).toHaveBeenCalledWith('https://connect.example/gmail-2')
+      expect(request).toHaveBeenCalledTimes(1)
     })
+    expect(openExternal).not.toHaveBeenCalled()
     expect(request).toHaveBeenCalledWith(
       'connectors.connect',
       { connectors: ['gmail'], reconnect: true, session_id: SESSION_ID },
