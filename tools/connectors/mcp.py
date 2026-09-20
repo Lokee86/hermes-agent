@@ -9,6 +9,7 @@ connection callback runs every action at once and receives the authorization URL
 
 from __future__ import annotations
 
+import contextlib
 import contextvars
 import json
 import logging
@@ -113,34 +114,42 @@ class _CatalogBackend:
         # The TUI/Desktop card path supplies its advertised client redirect in a later part.
         return mcp_oauth.start(name, client_redirect_uri=None)
 
-    def install(self, name: str, env: Dict[str, str]) -> List[str]:
-        """Install and probe with ephemeral credentials, persisting them only after success."""
-        from agent.secret_scope import current_secret_scope, reset_secret_scope, set_secret_scope
-        from hermes_cli.config import save_env_value, validate_env_var_name_for_write
-        from hermes_cli.mcp_catalog import install_entry
-        from hermes_cli.mcp_config import _remove_mcp_server
+    def installs_with_oauth(self, name: str) -> bool:
+        """A catalog entry whose own OAuth the card must run. Provider-mediated OAuth is not one:
+        its token comes from ``hermes auth <provider>``, so the plain probe covers it."""
+        auth = _catalog_entry(name).auth
+        return auth.type == "oauth" and not auth.provider
+
+    def start_install_oauth(self, name: str, env: Dict[str, str]) -> Any:
+        """Install an OAuth entry through the card's flow. The configuration is built in memory and
+        lands, together with the setup values, only when ``initialize`` accepts the token."""
+        from hermes_cli.mcp_catalog import card_install_config
+        from tools.connectors import mcp_oauth
 
         entry = _catalog_entry(name)
-        declared = {spec.name for spec in (entry.auth.env or [])}
-        for key in env:
-            if key not in declared:
-                raise ValueError(f"'{name}' does not declare the environment variable {key}")
-            validate_env_var_name_for_write(key)
-        scope = dict(current_secret_scope() or {})
-        token = set_secret_scope({**scope, **env})
+        _check_declared(name, entry, env)
+        return mcp_oauth.start(name, cfg=card_install_config(entry), env=env,
+                               on_commit=lambda: _save_env(env))
+
+    def install(self, name: str, env: Dict[str, str]) -> List[str]:
+        """Probe the entry's in-memory configuration with ephemeral credentials; save both only
+        after the server answered. A failure writes nothing, so a failed reinstall keeps the
+        previous configuration."""
+        from agent.secret_scope import current_secret_scope, reset_secret_scope, set_secret_scope
+        from hermes_cli.mcp_catalog import card_install_config
+        from hermes_cli.mcp_config import _probe_single_server, _save_mcp_server
+
+        entry = _catalog_entry(name)
+        _check_declared(name, entry, env)
+        cfg = card_install_config(entry)
+        token = set_secret_scope({**dict(current_secret_scope() or {}), **env})
         try:
-            install_entry(entry, enable=True)
-            tools = _probe_tool_names(name)
-            if tools is None:
-                raise RuntimeError(f"could not discover tools for '{name}'")
-        except Exception:
-            _remove_mcp_server(name)
-            raise
+            tools = [str(tool[0]) for tool in (_probe_single_server(name, cfg) or [])]
         finally:
             reset_secret_scope(token)
-        for key, value in env.items():
-            if value:
-                save_env_value(key, value)
+        if not _save_mcp_server(name, cfg):
+            raise RuntimeError(f"'{name}' was rejected: suspicious command/args configuration")
+        _save_env(env)
         return tools
 
     def enable(self, name: str) -> None:
@@ -159,11 +168,24 @@ class _CatalogBackend:
             save_config(config)
 
 
-def _probe_tool_names(name: str) -> Optional[List[str]]:
-    from hermes_cli.mcp_catalog import _probe_tools
+def _check_declared(name: str, entry: Any, env: Dict[str, str]) -> None:
+    """Configuring one MCP is not a general env-writing primitive: refuse the whole map before the
+    first write if any key is undeclared or unwritable."""
+    from hermes_cli.config import validate_env_var_name_for_write
 
-    tools = _probe_tools(name)
-    return None if tools is None else [str(tool[0]) for tool in tools]
+    declared = {spec.name for spec in (entry.auth.env or [])}
+    for key in env:
+        if key not in declared:
+            raise ValueError(f"'{name}' does not declare the environment variable {key}")
+        validate_env_var_name_for_write(key)
+
+
+def _save_env(env: Dict[str, str]) -> None:
+    from hermes_cli.config import save_env_value
+
+    for key, value in env.items():
+        if value:
+            save_env_value(key, value)
 
 
 def _default_backend() -> Any:
@@ -412,7 +434,41 @@ def _start_install(runner: _Runner, operation: ConnectionOperation, target: Targ
     target.required_env = []  # the credentials are written by the install; the row stops asking
     if not _move(operation, target, TargetState.initiated, actor, detail=""):
         return
+    if _installs_with_oauth(runner, target):
+        _start_install_oauth(runner, operation, target, approved)
+        return
     runner.spawn(operation, target, lambda: runner.backend.install(target.name, approved))
+
+
+def _installs_with_oauth(runner: _Runner, target: Target) -> bool:
+    try:
+        return bool(runner.backend.installs_with_oauth(target.name))
+    except Exception:
+        return False  # the install itself reports a bad entry
+
+
+def _start_install_oauth(runner: _Runner, operation: ConnectionOperation, target: Target,
+                         env: Dict[str, str]) -> None:
+    """The row is already ``initiated``; publish the authorization link onto it. The same
+    ``initiated`` + ``connect_url`` pair is what every card reads as its URL step."""
+    try:
+        attempt = runner.backend.start_install_oauth(target.name, env)
+    except Exception as exc:
+        _fail_install(runner, operation, target, exc)
+        return
+    runner.work[target.name] = _Work(attempt=attempt)
+    if operation.settled:
+        return
+    operation.refresh(target.name, connect_url=attempt.auth_url, actor=Actor.backend_watcher,
+                      detail=getattr(attempt, "detail", ""))
+
+
+def _fail_install(runner: _Runner, operation: ConnectionOperation, target: Target, error: Any) -> None:
+    """A failed install asks for its fields again, so the card can reopen the form over the draft
+    it kept. Nothing was saved, so every declared field is still missing."""
+    with contextlib.suppress(Exception):
+        target.required_env = runner.backend.required_env(target.name)
+    _fail(operation, target, _detail(error, runner, target))
 
 
 def _do_enable(runner: _Runner, operation: ConnectionOperation, target: Target, env: Dict[str, str]) -> None:
@@ -442,9 +498,20 @@ def _install_now(runner: _Runner, operation: ConnectionOperation, target: Target
                                  f"{display_hermes_home()}/.env, then install again")
         return
     actor = _actor(target)
+    if _installs_with_oauth(runner, target):
+        # No card here, so the result carries the link; the flow's own worker commits the install.
+        try:
+            attempt = runner.backend.start_install_oauth(target.name, {})
+        except Exception as exc:
+            _fail(operation, target, _detail(exc, runner, target))
+            return
+        runner.work[target.name] = _Work(attempt=attempt)
+        _move(operation, target, TargetState.initiated, actor, connect_url=attempt.auth_url,
+              detail=getattr(attempt, "detail", ""))
+        return
     _move(operation, target, TargetState.initiated, actor)
     try:
-        tools = [str(name) for name in (runner.backend.install(target.name, {}) or [])]
+        runner.backend.install(target.name, {})
     except Exception as exc:
         _fail(operation, target, _detail(exc, runner, target))
         return
@@ -469,8 +536,18 @@ def _observe_oauth(runner: _Runner, operation: ConnectionOperation, target: Targ
             tools, registration_error = _register_connected(runner, target, target.name)
             _connect(operation, target, tools, registration_error)
         return
-    _fail(operation, target, _detail(
-        snapshot.get("error") or "the authorization flow failed", runner, target))
+    error = snapshot.get("error") or "the authorization flow failed"
+    if runner.action == "install":
+        _fail_install(runner, operation, target, error)
+        return
+    _fail(operation, target, _detail(error, runner, target))
+
+
+def _observe_install(runner: _Runner, operation: ConnectionOperation, target: Target) -> None:
+    """An install is an OAuth attempt for an OAuth entry and a worker for every other one."""
+    work = runner.work.get(target.name)
+    observe = _observe_oauth if work is not None and work.attempt is not None else _observe_worker
+    observe(runner, operation, target)
 
 
 def _observe_worker(runner: _Runner, operation: ConnectionOperation, target: Target) -> None:
@@ -479,6 +556,9 @@ def _observe_worker(runner: _Runner, operation: ConnectionOperation, target: Tar
         return
     runner.work.pop(target.name, None)
     if work.error:
+        if runner.action == "install":
+            _fail_install(runner, operation, target, work.error)
+            return
         _fail(operation, target, _detail(work.error, runner, target))
         return
     tools, discovery_error = _register_connected(runner, target, target.name)
@@ -492,7 +572,7 @@ def _nothing(runner: _Runner, operation: ConnectionOperation, target: Target, en
 _PREPARE = {"authorize": _start_oauth, "install": _declare_env, "enable": _nothing}
 _APPROVE = {"authorize": _nothing, "install": _start_install, "enable": _do_enable}
 _RETRY = {"authorize": _start_oauth, "install": _start_install, "enable": _do_enable}
-_OBSERVE = {"authorize": _observe_oauth, "install": _observe_worker, "enable": _observe_worker}
+_OBSERVE = {"authorize": _observe_oauth, "install": _observe_install, "enable": _observe_worker}
 _OFF_DESKTOP = {"authorize": _start_oauth, "install": _install_now, "enable": _do_enable}
 
 

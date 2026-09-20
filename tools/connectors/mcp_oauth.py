@@ -20,9 +20,13 @@ URL_TIMEOUT_SECONDS = 30.0
 
 
 def probe_with_rollback(
-        server_name: str, cfg: dict, hermes_home: str, flow, reconnect_live: bool) -> None:
-    """Roll back failures through initialize; commit authorization before tool discovery."""
-    from hermes_cli.mcp_config import _oauth_tokens_present, _probe_single_server, _save_mcp_server
+        server_name: str, cfg: dict, hermes_home: str, flow, reconnect_live: bool, *,
+        on_commit: Optional[Callable[[], None]] = None) -> None:
+    """Roll back failures through initialize; commit authorization before tool discovery.
+
+    ``on_commit`` runs right after the configuration is saved: a card install persists its setup
+    values there, so they land with the authorization and never before it."""
+    from hermes_cli.mcp_config import _oauth_tokens_present, _probe_single_server
     from tools.mcp_dashboard_oauth import exception_message
     from tools.mcp_oauth import HermesTokenStorage
     from tools.mcp_oauth_manager import get_manager
@@ -47,13 +51,13 @@ def probe_with_rollback(
             storage.restore(backup)
             manager.restore_entry(server_name, previous_entry, hermes_home=hermes_home)
             raise
-        _save_mcp_server(server_name, cfg)
+        _commit(server_name, cfg, on_commit)
         if flow is not None:
             flow.tools = []
             flow.discovery_error = exception_message(exc)
             flow.mark_approved()
         return
-    _save_mcp_server(server_name, cfg)
+    _commit(server_name, cfg, on_commit)
     if flow is not None:
         flow.tools = [{"name": t, "description": d} for t, d in tools]
         flow.discovery_error = ""
@@ -63,10 +67,23 @@ def probe_with_rollback(
         reconnect_mcp_server(server_name)
 
 
+def _commit(server_name: str, cfg: dict, on_commit: Optional[Callable[[], None]]) -> None:
+    from hermes_cli.mcp_config import _save_mcp_server
+
+    if not _save_mcp_server(server_name, cfg):
+        raise RuntimeError(f"'{server_name}' was rejected: suspicious command/args configuration")
+    if on_commit is not None:
+        on_commit()
+
+
 def run_worker(
         hermes_home: str, server_name: str, cfg: dict, reconnect_live: bool, *,
-        flow, on_done: Optional[Callable[[], None]] = None) -> None:
-    """Drive the interactive MCP OAuth probe under the shared callback bridge."""
+        flow, on_done: Optional[Callable[[], None]] = None,
+        env: Optional[Dict[str, str]] = None, on_commit: Optional[Callable[[], None]] = None) -> None:
+    """Drive the interactive MCP OAuth probe under the shared callback bridge.
+
+    ``env`` holds a card install's setup values. They join the secret scope for this attempt only,
+    so the configuration can reference them before anything is saved."""
     from hermes_constants import reset_hermes_home_override, set_hermes_home_override
     try:
         from agent.secret_scope import (
@@ -74,10 +91,10 @@ def run_worker(
         from tools.mcp_dashboard_oauth import dashboard_oauth_flow
         from tools.mcp_oauth import force_interactive_oauth
         home_token = set_hermes_home_override(hermes_home)
-        secret_token = set_secret_scope(build_profile_secret_scope(Path(hermes_home)))
+        secret_token = set_secret_scope({**build_profile_secret_scope(Path(hermes_home)), **(env or {})})
         try:
             with force_interactive_oauth(), dashboard_oauth_flow(flow):
-                probe_with_rollback(server_name, cfg, hermes_home, flow, reconnect_live)
+                probe_with_rollback(server_name, cfg, hermes_home, flow, reconnect_live, on_commit=on_commit)
         finally:
             reset_secret_scope(secret_token)
             reset_hermes_home_override(home_token)
@@ -196,15 +213,18 @@ class OAuthAttempt:
 
 def start(
     server_name: str, *, url_timeout: float = URL_TIMEOUT_SECONDS,
-    client_redirect_uri: Optional[str] = None,
+    client_redirect_uri: Optional[str] = None, cfg: Optional[dict] = None,
+    env: Optional[Dict[str, str]] = None, on_commit: Optional[Callable[[], None]] = None,
 ) -> OAuthAttempt:
-    """Start a card OAuth flow and wait until its authorization URL is published."""
+    """Start a card OAuth flow and wait until its authorization URL is published.
+
+    ``cfg`` is an install's in-memory configuration; without it the saved one is authorized."""
     from hermes_cli.mcp_config import _get_mcp_servers
     from hermes_constants import get_hermes_home
     from tools.mcp_dashboard_oauth import DashboardOAuthFlow
     from tui_gateway import mcp_oauth_sessions
 
-    cfg = dict(_get_mcp_servers().get(server_name) or {})
+    cfg = dict(cfg if cfg is not None else _get_mcp_servers().get(server_name) or {})
     if not cfg:
         raise RuntimeError(f"'{server_name}' is not a configured MCP server")
     if not cfg.get("url"):
@@ -218,7 +238,8 @@ def start(
     mcp_oauth_sessions.register_flow(flow, httpd=httpd)
     threading.Thread(
         target=run_worker, args=(hermes_home, server_name, cfg, False),
-        kwargs={"flow": flow, "on_done": lambda: mcp_oauth_sessions.finish_flow(flow.flow_id)},
+        kwargs={"flow": flow, "on_done": lambda: mcp_oauth_sessions.finish_flow(flow.flow_id),
+                **({"env": env, "on_commit": on_commit} if env or on_commit else {})},
         daemon=True, name=f"mcp-oauth-{server_name}").start()
     deadline = time.time() + url_timeout
     while time.time() < deadline:
