@@ -108,7 +108,6 @@ def _run(args, gw, *, callback=None, tick=0.0, platform="desktop"):
     # Two seams read the surface: managed decides whether a card exists, the client decides whether a
     # return target rides the mint.
     with patch("tools.connectors.managed.WATCH_TICK_SECONDS", tick), \
-         patch("tools.connectors.managed.session_platform", return_value=platform), \
          patch("tools.connectors.gateway.client.session_platform", return_value=platform):
         return json.loads(manage_connections(
             args, client_factory=lambda: gw, connection_callback=callback, session_id="s1",
@@ -257,13 +256,13 @@ def test_off_desktop_connect_returns_links_and_does_not_block():
     assert live.current("s1") is None
 
 
-def test_platform_not_callback_presence_decides_the_url():
-    # The TUI-in-a-terminal has a gateway callback attached but no card; the URL must be in the result.
-    gw = GatewayFake()
+def test_callback_presence_decides_the_card_path_on_tui():
+    gw = GatewayFake(flips={"gmail": 1})
     cb = _desktop_callback()
     out = _run({"action": "connect", "connectors": ["gmail"]}, gw, callback=cb, platform="tui")
-    assert out["targets"][0]["connect_url"]
-    assert cb.seen == []  # no card emitted off-desktop
+    assert len(cb.seen) == 1
+    assert out["targets"][0]["state"] == "connected"
+    assert "connect_url" not in out["targets"][0]
 
 
 # ---------------------------------------------------------------------------

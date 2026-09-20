@@ -15,7 +15,7 @@ import time
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from tools.connectors.contract import Actor, TargetState, allowed
-from tools.connectors.gateway.config import operation_session_key, session_platform
+from tools.connectors.gateway.config import operation_session_key
 from tools.connectors.gateway.errors import RateLimited
 from tools.connectors.operation import ConnectionOperation, IllegalTransition, Target
 from tools.connectors.run import Kind, run_operation
@@ -236,7 +236,7 @@ def run_managed_action(
             )
         force = bool(args.get("force", False))
         session_key = operation_session_key(session_id)
-        if session_platform() != "desktop" or connection_callback is None:
+        if connection_callback is None:
             return _off_desktop_result(client, action, connectors, force, session_key)
         return run_operation(
             [Target(n, "connector", action) for n in connectors],

@@ -210,9 +210,27 @@ class ConnectionOperation:
         return self._snapshot_locked(with_urls=with_urls)
 
     def result(self, *, with_urls: bool = True) -> Dict[str, Any]:
-        """The settled result (frozen at settle time), or the live snapshot before settlement."""
+        """The settled model result, or the live snapshot before settlement.
+
+        Deferred MCP listings are model-only result data. Change frames and request payloads use
+        the internal snapshots, so renderers never receive the catalog block.
+        """
         with self._lock:
-            return self._result_locked(with_urls=with_urls)
+            result = self._result_locked(with_urls=with_urls)
+        if result.get("settled_at") is None:
+            return result
+        from tools.registry import registry
+        from tools.tool_search_catalog import build_catalog_listing_with_form
+
+        for target in result["targets"]:
+            names = target.get("tools") if target.get("kind") == "mcp" else None
+            if not names:
+                continue
+            definitions = registry.get_definitions(set(names), quiet=True)
+            listing, _form = build_catalog_listing_with_form(definitions, max_tokens=1500)
+            if listing:
+                target["tools_listing"] = listing
+        return result
 
     def request_payload(self) -> Dict[str, Any]:
         """The ``connection.request`` payload and the resume snapshot: identity, live target snapshots

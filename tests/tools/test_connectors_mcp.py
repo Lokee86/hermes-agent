@@ -51,12 +51,15 @@ class FakeAttempt:
 class FakeBackend:
     """The one fake: the catalog, the installer and the OAuth flow runner behind ``mcp.py``."""
 
-    def __init__(self, *, missing_env=(), tools=("read", "write"), install_error="", oauth_error=""):
+    def __init__(self, *, missing_env=(), tools=("read", "write"), registered_tools=(),
+                 install_error="", registration_error="", oauth_error=""):
         self.calls = []
         self.attempts = {}
         self.missing_env = list(missing_env)
         self.tools = list(tools)
+        self.registered_tools = list(registered_tools)
         self.install_error = install_error
+        self.registration_error = registration_error
         self.oauth_error = oauth_error
 
     def required_env(self, name):
@@ -98,11 +101,35 @@ def _clean_live():
 def _catalog(backend):
     # The default backend is patched too: a call that cannot be handed one (registry dispatch, the
     # inline executor) must never reach the real catalog or installer from a test.
+    registered = []
+
+    def register(runner, target, name):
+        runner.backend.calls.append(("register", name))
+        if runner.backend.registration_error:
+            from tools.connectors.mcp import _detail
+
+            return [], _detail(runner.backend.registration_error, runner, target)
+        names = list(runner.backend.registered_tools)
+        for tool_name in names:
+            registry.register(
+                name=tool_name,
+                toolset=f"mcp-{name}",
+                schema={"name": tool_name, "description": f"Registered {tool_name}", "parameters": {}},
+                handler=lambda *_args, **_kwargs: "{}",
+            )
+            registered.append(tool_name)
+        return names, ""
+
     with patch("tools.connectors.mcp._catalog_names", return_value=CATALOG), \
          patch("tools.connectors.mcp._configured_names", return_value=sorted(CONFIGURED)), \
          patch("tools.connectors.mcp._default_backend", return_value=backend), \
-         patch("tools.connectors.mcp.session_platform", return_value="desktop"):
+         patch("tools.connectors.mcp._register_connected", side_effect=register):
         yield
+    with registry._lock:
+        for tool_name in registered:
+            registry._tools.pop(tool_name, None)
+        if registered:
+            registry._generation += 1
 
 
 class FakeClient:
@@ -158,7 +185,10 @@ def _mcp(args, callback, **kw):
 
 
 def test_install_waits_for_the_credentials_it_declares_and_installs_with_them():
-    backend = FakeBackend(missing_env=["FIGMA_TOKEN"], tools=["get_file"])
+    backend = FakeBackend(
+        missing_env=["FIGMA_TOKEN"], tools=["probe_only"],
+        registered_tools=["mcp__figma__get_file", "mcp__figma__list_files"],
+    )
     answer = json.dumps({"targets": [{"name": "figma", "status": "approved", "env": {"FIGMA_TOKEN": "tok-1"}}]})
     callback = _answering(answer)
     out = _mcp({"action": "install", "connectors": [_mcp_target("figma")]}, callback, mcp_backend=backend)
@@ -170,7 +200,9 @@ def test_install_waits_for_the_credentials_it_declares_and_installs_with_them():
     assert ("install", "figma", {"FIGMA_TOKEN": "tok-1"}) in backend.calls
     (settled,) = out["targets"]
     assert settled["state"] == TargetState.connected.value
-    assert settled["tools"] == ["get_file"]
+    assert settled["tools"] == ["mcp__figma__get_file", "mcp__figma__list_files"]
+    assert all(name in settled["tools_listing"] for name in settled["tools"])
+    assert "tool_describe" in settled["tools_listing"] and "tool_call" in settled["tools_listing"]
 
 
 def test_a_card_claim_other_than_approved_or_skipped_moves_nothing(backend):
@@ -193,14 +225,16 @@ def test_no_answer_settles_by_deadline_and_marks_targets_not_connected(backend):
 
 
 def test_mcp_secrets_never_reach_the_model():
-    backend = FakeBackend(missing_env=["LINEAR_API_KEY"], install_error="sk-secret was rejected")
+    backend = FakeBackend(missing_env=["LINEAR_API_KEY"], registration_error="sk-secret was rejected")
     answer = json.dumps({"targets": [{"name": "linear", "status": "approved",
                                       "env": {"LINEAR_API_KEY": "sk-secret"}}]})
-    with patch("tools.connectors.operation.OPERATION_DEADLINE_SECONDS", 0.05):
-        out = _mcp({"action": "install", "connectors": [_linear()]}, _answering(answer), mcp_backend=backend)
+    out = _mcp({"action": "install", "connectors": [_linear()]}, _answering(answer), mcp_backend=backend)
     payload = json.dumps(out)
     assert "sk-secret" not in payload
     assert "[REDACTED]" in payload
+    assert out["targets"][0]["state"] == TargetState.connected.value
+    assert out["targets"][0]["tools"] == []
+    assert out["targets"][0]["discovery_error"] == "[REDACTED] was rejected"
 
 
 # ---------------------------------------------------------------------------
@@ -209,8 +243,7 @@ def test_mcp_secrets_never_reach_the_model():
 
 
 def _off_desktop(args, **kw):
-    with patch("tools.connectors.mcp.session_platform", return_value="tui"):
-        return json.loads(manage_connections(args, session_id="s1", **kw))
+    return json.loads(manage_connections(args, session_id="s1", **kw))
 
 
 def test_off_desktop_authorize_returns_the_link_at_once_and_opens_no_operation(backend):
@@ -225,8 +258,7 @@ def test_off_desktop_authorize_returns_the_link_at_once_and_opens_no_operation(b
 
 def test_registry_dispatch_never_blocks_and_never_reaches_a_card(backend):
     # registry.dispatch forwards no callback; the call must return, not block.
-    with patch("tools.connectors.mcp.session_platform", return_value="tui"):
-        out = json.loads(registry.dispatch("manage_connections", {"action": "enable", "connectors": [_linear()]}))
+    out = json.loads(registry.dispatch("manage_connections", {"action": "enable", "connectors": [_linear()]}))
     assert out["targets"][0]["state"] == TargetState.connected.value
 
 

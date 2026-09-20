@@ -42,7 +42,9 @@ def probe_with_rollback(
                 "this provider may require a manually-registered OAuth client.")
     except Exception as exc:
         if not details.get("initialized"):
-            storage.restore(backup, only_if_absent=True)
+            # ``manager.remove`` cleared the pre-attempt tokens above, so anything on disk now is
+            # this attempt's grant, and the resource never accepted it: put the snapshot back.
+            storage.restore(backup)
             manager.restore_entry(server_name, previous_entry, hermes_home=hermes_home)
             raise
         _save_mcp_server(server_name, cfg)

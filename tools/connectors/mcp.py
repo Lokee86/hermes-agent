@@ -3,8 +3,8 @@ a projection of the operation and may only say approved, skipped or continue.
 
 An MCP target runs the same ``run.py`` lifecycle a managed connector runs. ``prepare`` starts an
 OAuth flow, or records the credentials an install still needs; the card's approval starts the
-install or the enable; ``observe`` reads the outcome on every tick. Off the desktop there is no
-card, so every action runs at once and the result carries the authorization URL for the user.
+install or the enable; ``observe`` reads the outcome on every tick. A session that attaches no
+connection callback runs every action at once and receives the authorization URL in the result.
 """
 
 from __future__ import annotations
@@ -18,7 +18,7 @@ from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Optional
 
 from tools.connectors.contract import Actor, SettleReason, TargetState
-from tools.connectors.gateway.config import operation_session_key, session_platform
+from tools.connectors.gateway.config import operation_session_key
 from tools.connectors.operation import ConnectionOperation, IllegalTransition, Target
 from tools.connectors.run import Kind, run_operation
 from tools.registry import tool_error
@@ -30,16 +30,20 @@ logger = logging.getLogger(__name__)
 PREPARE_WAIT_SECONDS = 30.0
 
 NOTE = (
-    "Settled once; do not re-ask for any target the user skipped or that timed out — continue "
-    "without it or ask in chat. Tools of a newly installed or authorized server become available "
-    "on your next turn."
+    "Settled once; do not re-ask for any target the user skipped or that timed out. Connected "
+    "targets' tools are available now through tool_describe/tool_call and are named under "
+    "tools_listing. A target with discovery_error is authorized but its tools are unavailable; "
+    "retry discovery with manage_connections using that target's authorize or install action "
+    "without asking for consent again."
 )
 
 OFF_DESKTOP_NOTE = (
-    "There is no approval card in this session. Show any connect_url to the user so they open it "
-    "in a browser. The authorization then finishes in the background, and the server's tools "
-    "arrive on your next turn; ask the user to say when they are done. A failed target's detail "
-    "says what the user must do; do not retry it on your own."
+    "No connection callback is attached in this session. Show any connect_url to the user so they "
+    "open it in a browser, then ask them to say when they are done. Connected targets' tools are "
+    "available now through tool_describe/tool_call and are named under tools_listing. A target with "
+    "discovery_error is authorized but its tools are unavailable; retry discovery with "
+    "manage_connections using that target's authorize or install action without asking for consent "
+    "again. Do not re-ask for skipped or timed-out targets."
 )
 
 
@@ -331,8 +335,24 @@ def _fail(operation: ConnectionOperation, target: Target, detail: str) -> None:
     _move(operation, target, TargetState.failed, Actor.backend_watcher, detail=detail)
 
 
-def _connect(operation: ConnectionOperation, target: Target, tools: List[str]) -> None:
-    extra = {"tools": tools} if tools else {}
+def _register_connected(runner: _Runner, target: Target, name: str) -> tuple[List[str], str]:
+    """Register one committed server in the current profile scope and report its callable names."""
+    try:
+        from tools.mcp_tool_config import _load_mcp_config
+        from tools.mcp_tool_discovery import register_mcp_servers
+
+        config = _load_mcp_config().get(name)
+        if not isinstance(config, dict):
+            raise RuntimeError(f"no committed MCP configuration for '{name}'")
+        return [str(tool_name) for tool_name in register_mcp_servers({name: config})], ""
+    except Exception as exc:
+        return [], _detail(exc, runner, target)
+
+
+def _connect(operation: ConnectionOperation, target: Target, tools: List[str], discovery_error: str = "") -> None:
+    extra: Dict[str, Any] = {"tools": tools}
+    if discovery_error:
+        extra["discovery_error"] = discovery_error
     _move(operation, target, TargetState.connected, Actor.backend_watcher, **extra)
 
 
@@ -404,7 +424,8 @@ def _do_enable(runner: _Runner, operation: ConnectionOperation, target: Target, 
     except Exception as exc:
         _fail(operation, target, _detail(exc, runner, target))
         return
-    _connect(operation, target, [])
+    tools, discovery_error = _register_connected(runner, target, target.name)
+    _connect(operation, target, tools, discovery_error)
 
 
 def _install_now(runner: _Runner, operation: ConnectionOperation, target: Target, env: Dict[str, str]) -> None:
@@ -427,7 +448,8 @@ def _install_now(runner: _Runner, operation: ConnectionOperation, target: Target
     except Exception as exc:
         _fail(operation, target, _detail(exc, runner, target))
         return
-    _connect(operation, target, tools)
+    tools, discovery_error = _register_connected(runner, target, target.name)
+    _connect(operation, target, tools, discovery_error)
 
 
 def _observe_oauth(runner: _Runner, operation: ConnectionOperation, target: Target) -> None:
@@ -442,10 +464,10 @@ def _observe_oauth(runner: _Runner, operation: ConnectionOperation, target: Targ
     if status == "approved":
         discovery_error = snapshot.get("discovery_error") or ""
         if discovery_error:
-            _move(operation, target, TargetState.connected, Actor.backend_watcher,
-                  tools=[], discovery_error=_detail(discovery_error, runner, target))
+            _connect(operation, target, [], _detail(discovery_error, runner, target))
         else:
-            _connect(operation, target, list(snapshot.get("tools") or []))
+            tools, registration_error = _register_connected(runner, target, target.name)
+            _connect(operation, target, tools, registration_error)
         return
     _fail(operation, target, _detail(
         snapshot.get("error") or "the authorization flow failed", runner, target))
@@ -459,7 +481,8 @@ def _observe_worker(runner: _Runner, operation: ConnectionOperation, target: Tar
     if work.error:
         _fail(operation, target, _detail(work.error, runner, target))
         return
-    _connect(operation, target, work.tools)
+    tools, discovery_error = _register_connected(runner, target, target.name)
+    _connect(operation, target, tools, discovery_error)
 
 
 def _nothing(runner: _Runner, operation: ConnectionOperation, target: Target, env: Dict[str, str]) -> None:
@@ -569,11 +592,9 @@ def run_mcp_operation(
         return tool_error(error)
     runner = open_runner(action, backend)
     session_key = operation_session_key(session_id)
-    # The card exists only where the desktop renders it AND the callback can emit it (the rule
-    # ``managed.run_managed_action`` uses). The Ink TUI has the callback but no card; a desktop call
-    # that arrives without the callback (registry dispatch, e.g. from execute_code) would open an
-    # operation nobody renders and block the tool for its whole deadline. Both get the link instead.
-    if session_platform() != "desktop" or connection_callback is None:
+    # Every interactive surface that renders the card attaches this callback. Registry dispatch and
+    # messaging sessions attach none, so they receive the link instead of opening an unanswerable op.
+    if connection_callback is None:
         return _off_desktop_result(runner, names, action, session_key)
     try:
         return run_operation(
