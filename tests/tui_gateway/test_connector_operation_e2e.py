@@ -254,7 +254,9 @@ def test_cli_connect_returns_urls_without_emitting_a_card(owned_session):
                 {"action": "connect", "connectors": ["gmail", "notion"]},
                 client_factory=lambda: client,
                 session_id=SID,
-                connection_callback=server._agent_cbs(SID)["connection_callback"],
+                # No card exists where no callback is attached (registry dispatch, messaging);
+                # the classic CLI attaches one now and draws its own panel.
+                connection_callback=None,
             )
         )
     finally:
