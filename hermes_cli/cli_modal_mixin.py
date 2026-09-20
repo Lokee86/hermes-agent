@@ -840,6 +840,14 @@ class CLIModalMixin:
             state["phase"] = "url"
         elif target_state == "failed":
             state["phase"] = "failed"
+        elif target_state == "pending" and self._connection_fields(target):
+            # The backend refused the answer because a required field is still empty: reopen the
+            # form on the first one it named, over the draft the panel kept.
+            missing = {field.get("name") for field in self._connection_fields(target)}
+            names = [field.get("name") for field in state.get("fields") or []]
+            state["field_index"] = next((i for i, name in enumerate(names) if name in missing), 0)
+            state["phase"] = "form"
+            self._connection_sync_input_buffer()
         elif target_state == "connected" and target.get("discovery_error"):
             state["phase"] = "authorized"
         elif target_state in {"connected", "skipped"}:
