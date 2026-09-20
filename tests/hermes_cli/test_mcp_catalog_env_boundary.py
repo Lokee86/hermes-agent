@@ -143,21 +143,22 @@ def test_catalog_accepts_declared_credential(
     monkeypatch: pytest.MonkeyPatch,
 ):
     import hermes_cli.mcp_catalog as mcp_catalog
+    from agent.secret_scope import get_secret
+    from tools.connectors.mcp import _CatalogBackend
 
     installs: list[str] = []
-    monkeypatch.setattr(
-        mcp_catalog,
-        "install_entry",
-        lambda entry, enable=True: installs.append(entry.name),
-    )
 
-    response = client.post(
-        "/api/mcp/catalog/install",
-        headers=HEADERS,
-        json={"name": "demo", "env": {"DEMO_API_KEY": "valid-demo-value"}},
-    )
+    def install(entry, enable=True):
+        assert get_secret("DEMO_API_KEY") == "valid-demo-value"
+        assert not (catalog_env / ".env").exists()
+        installs.append(entry.name)
 
-    assert response.status_code == 200
+    monkeypatch.setattr(mcp_catalog, "install_entry", install)
+    monkeypatch.setattr(mcp_catalog, "_probe_tools", lambda name: [("demo_tool", "")])
+
+    assert _CatalogBackend().install(
+        "demo", {"DEMO_API_KEY": "valid-demo-value"}
+    ) == ["demo_tool"]
     assert installs == ["demo"]
     assert "DEMO_API_KEY=valid-demo-value" in (
         catalog_env / ".env"

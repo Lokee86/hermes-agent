@@ -482,6 +482,8 @@ export interface ConnectionOperationTarget {
   action: ConnectionTargetAction
   state: ConnectionTargetState
   detail?: string | null
+  instructions?: string | null
+  discovery_error?: string | null
   connect_url?: string | null
   connection_id?: string | null
   attempt?: string | null
@@ -497,6 +499,8 @@ export type ConnectionTargetState = 'pending' | 'initiated' | 'connected' | 'ski
 export interface ConnectionTargetEnvField {
   name: string
   required: boolean
+  secret: boolean
+  default: string
   prompt?: string | null
 }
 export interface ConnectionWakeResult {

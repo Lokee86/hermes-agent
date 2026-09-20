@@ -25,6 +25,7 @@ class Target:
     action: str
     state: TargetState = TargetState.pending
     detail: str = ""
+    instructions: str = ""
     connect_url: Optional[str] = None
     # The vendor account a managed mint created or observed. Not the desktop transport's connection id.
     connection_id: Optional[str] = None
@@ -47,6 +48,8 @@ class Target:
         out: Dict[str, Any] = {"name": self.name, "kind": self.kind, "action": self.action, "state": self.state.value}
         if self.detail:
             out["detail"] = self.detail
+        if self.instructions:
+            out["instructions"] = self.instructions
         if with_url and self.connect_url:
             out["connect_url"] = self.connect_url
         if self.connection_id:

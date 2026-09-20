@@ -99,7 +99,8 @@ class _CatalogBackend:
         """The credentials the catalog entry declares that have no value yet."""
         from hermes_cli.config import get_env_value
 
-        return [{"name": spec.name, "prompt": spec.prompt, "required": spec.required}
+        return [{"name": spec.name, "prompt": spec.prompt, "required": spec.required,
+                 "secret": spec.secret, "default": "" if spec.secret else spec.default}
                 for spec in (_catalog_entry(name).auth.env or []) if not get_env_value(spec.name)]
 
     def start_oauth(self, name: str) -> Any:
@@ -108,23 +109,34 @@ class _CatalogBackend:
         return mcp_oauth.start(name)
 
     def install(self, name: str, env: Dict[str, str]) -> List[str]:
-        """Write the declared credentials, install the entry, report the tools it offers."""
+        """Install and probe with ephemeral credentials, persisting them only after success."""
+        from agent.secret_scope import current_secret_scope, reset_secret_scope, set_secret_scope
         from hermes_cli.config import save_env_value, validate_env_var_name_for_write
         from hermes_cli.mcp_catalog import install_entry
+        from hermes_cli.mcp_config import _remove_mcp_server
 
         entry = _catalog_entry(name)
         declared = {spec.name for spec in (entry.auth.env or [])}
-        # Validate the whole map before the first write: configuring one MCP is not a general
-        # env-writing primitive, and a mixed valid/invalid answer must persist nothing.
         for key in env:
             if key not in declared:
                 raise ValueError(f"'{name}' does not declare the environment variable {key}")
             validate_env_var_name_for_write(key)
+        scope = dict(current_secret_scope() or {})
+        token = set_secret_scope({**scope, **env})
+        try:
+            install_entry(entry, enable=True)
+            tools = _probe_tool_names(name)
+            if tools is None:
+                raise RuntimeError(f"could not discover tools for '{name}'")
+        except Exception:
+            _remove_mcp_server(name)
+            raise
+        finally:
+            reset_secret_scope(token)
         for key, value in env.items():
             if value:
                 save_env_value(key, value)
-        install_entry(entry, enable=True)
-        return _probe_tool_names(name)
+        return tools
 
     def enable(self, name: str) -> None:
         """Flip ``enabled`` under the scope and lock the dashboard's toggle route uses
@@ -142,10 +154,11 @@ class _CatalogBackend:
             save_config(config)
 
 
-def _probe_tool_names(name: str) -> List[str]:
+def _probe_tool_names(name: str) -> Optional[List[str]]:
     from hermes_cli.mcp_catalog import _probe_tools
 
-    return [str(tool[0]) for tool in (_probe_tools(name) or [])]
+    tools = _probe_tools(name)
+    return None if tools is None else [str(tool[0]) for tool in tools]
 
 
 def _default_backend() -> Any:
@@ -199,7 +212,7 @@ class _Runner:
             try:
                 tools = [str(name) for name in (call() or [])]
             except Exception as exc:
-                error = _detail(exc)
+                error = _detail(exc, self, target)
             if operation.settled:
                 # The result froze while the work ran; there is no row left to report into.
                 logger.debug("mcp %s %s: outcome dropped, the operation settled first",
@@ -267,8 +280,25 @@ def open_runner(action: str, backend: Any = None) -> _Runner:
     return _Runner(action, backend or _default_backend())
 
 
-def _detail(exc: Exception) -> str:
-    return str(exc) or exc.__class__.__name__
+def _detail(exc: Any, runner: _Runner, target: Target) -> str:
+    """The user-facing text of a failure. Every value the card submitted for this target is
+    replaced by exact match before the pattern redactor runs: an opaque credential has no
+    recognizable shape, so only the runner knows what to remove."""
+    from agent.redact import redact_sensitive_text
+
+    text = str(exc) or (exc.__class__.__name__ if isinstance(exc, BaseException) else "error")
+    for value in runner.approved_env.get(target.name, {}).values():
+        if value:
+            text = text.replace(value, "[REDACTED]")
+    return redact_sensitive_text(text, force=True) or "error"
+
+
+def _catalog_instructions(name: str) -> str:
+    """The manifest's ``post_install`` text for a catalog name; a custom configured server has none."""
+    from hermes_cli.mcp_catalog import get_entry
+
+    entry = get_entry(name)
+    return str(entry.post_install or "") if entry is not None else ""
 
 
 def _move(operation: ConnectionOperation, target: Target, to: TargetState, actor: Actor, **fields: Any) -> bool:
@@ -312,10 +342,11 @@ def _actor(target: Target) -> Actor:
 
 def _start_oauth(runner: _Runner, operation: ConnectionOperation, target: Target, env: Dict[str, str]) -> None:
     actor = _actor(target)
+    target.instructions = _catalog_instructions(target.name)
     try:
         attempt = runner.backend.start_oauth(target.name)
     except Exception as exc:
-        _fail(operation, target, _detail(exc))
+        _fail(operation, target, _detail(exc, runner, target))
         return
     runner.work[target.name] = _Work(attempt=attempt)
     _move(operation, target, TargetState.initiated, actor, connect_url=attempt.auth_url, detail="")
@@ -323,10 +354,11 @@ def _start_oauth(runner: _Runner, operation: ConnectionOperation, target: Target
 
 def _declare_env(runner: _Runner, operation: ConnectionOperation, target: Target, env: Dict[str, str]) -> None:
     """The install row waits pending; the card draws a field per credential it still needs."""
+    target.instructions = _catalog_instructions(target.name)
     try:
         required = runner.backend.required_env(target.name)
     except Exception as exc:
-        _fail(operation, target, _detail(exc))
+        _fail(operation, target, _detail(exc, runner, target))
         return
     target.required_env = required
 
@@ -344,7 +376,7 @@ def _start_install(runner: _Runner, operation: ConnectionOperation, target: Targ
     try:
         missing = _missing_required(runner, target, approved)
     except Exception as exc:
-        _fail(operation, target, _detail(exc))
+        _fail(operation, target, _detail(exc, runner, target))
         return
     if missing:
         # The row stays pending and the card draws a field per credential it still needs; the
@@ -368,7 +400,7 @@ def _do_enable(runner: _Runner, operation: ConnectionOperation, target: Target, 
     try:
         runner.backend.enable(target.name)
     except Exception as exc:
-        _fail(operation, target, _detail(exc))
+        _fail(operation, target, _detail(exc, runner, target))
         return
     _connect(operation, target, [])
 
@@ -378,7 +410,7 @@ def _install_now(runner: _Runner, operation: ConnectionOperation, target: Target
     try:
         missing = [spec["name"] for spec in runner.backend.required_env(target.name) if spec.get("required", True)]
     except Exception as exc:
-        _fail(operation, target, _detail(exc))
+        _fail(operation, target, _detail(exc, runner, target))
         return
     if missing:
         from hermes_constants import display_hermes_home
@@ -391,7 +423,7 @@ def _install_now(runner: _Runner, operation: ConnectionOperation, target: Target
     try:
         tools = [str(name) for name in (runner.backend.install(target.name, {}) or [])]
     except Exception as exc:
-        _fail(operation, target, _detail(exc))
+        _fail(operation, target, _detail(exc, runner, target))
         return
     _connect(operation, target, tools)
 
@@ -406,9 +438,15 @@ def _observe_oauth(runner: _Runner, operation: ConnectionOperation, target: Targ
         return
     runner.work.pop(target.name, None)
     if status == "approved":
-        _connect(operation, target, list(snapshot.get("tools") or []))
+        discovery_error = snapshot.get("discovery_error") or ""
+        if discovery_error:
+            _move(operation, target, TargetState.connected, Actor.backend_watcher,
+                  tools=[], discovery_error=_detail(discovery_error, runner, target))
+        else:
+            _connect(operation, target, list(snapshot.get("tools") or []))
         return
-    _fail(operation, target, snapshot.get("error") or "the authorization flow failed")
+    _fail(operation, target, _detail(
+        snapshot.get("error") or "the authorization flow failed", runner, target))
 
 
 def _observe_worker(runner: _Runner, operation: ConnectionOperation, target: Target) -> None:
@@ -417,7 +455,7 @@ def _observe_worker(runner: _Runner, operation: ConnectionOperation, target: Tar
         return
     runner.work.pop(target.name, None)
     if work.error:
-        _fail(operation, target, work.error)
+        _fail(operation, target, _detail(work.error, runner, target))
         return
     _connect(operation, target, work.tools)
 

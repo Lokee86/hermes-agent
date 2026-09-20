@@ -66,6 +66,8 @@ class ConnectionTargetEnvField(Payload):
 
     name: str
     required: bool
+    secret: bool
+    default: str
     prompt: str | None = None
 
 
@@ -78,6 +80,8 @@ class ConnectionOperationTarget(Payload):
     action: ConnectionTargetAction
     state: ConnectionTargetState
     detail: str | None = None
+    instructions: str | None = None
+    discovery_error: str | None = None
     connect_url: str | None = None
     # The vendor account a managed mint created or observed; never the desktop transport's id.
     connection_id: str | None = None

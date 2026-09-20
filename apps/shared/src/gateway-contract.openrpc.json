@@ -8534,6 +8534,30 @@
             "default": null,
             "title": "Detail"
           },
+          "instructions": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Instructions"
+          },
+          "discovery_error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Discovery Error"
+          },
           "connect_url": {
             "anyOf": [
               {
@@ -8761,6 +8785,14 @@
             "title": "Required",
             "type": "boolean"
           },
+          "secret": {
+            "title": "Secret",
+            "type": "boolean"
+          },
+          "default": {
+            "type": "string",
+            "title": "Default"
+          },
           "prompt": {
             "anyOf": [
               {
@@ -8776,7 +8808,9 @@
         },
         "required": [
           "name",
-          "required"
+          "required",
+          "secret",
+          "default"
         ],
         "title": "ConnectionTargetEnvField",
         "type": "object"

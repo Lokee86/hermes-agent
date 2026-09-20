@@ -35,9 +35,11 @@ class FakeAttempt:
         self.status = "pending"
         self.error = ""
         self.tools = []
+        self.discovery_error = ""
 
     def poll(self):
-        return {"status": self.status, "error": self.error, "tools": list(self.tools)}
+        return {"status": self.status, "error": self.error, "tools": list(self.tools),
+                "discovery_error": self.discovery_error}
 
     def approve(self, tools):
         self.tools, self.status = list(tools), "approved"
@@ -59,7 +61,8 @@ class FakeBackend:
 
     def required_env(self, name):
         self.calls.append(("required_env", name))
-        return [{"name": key, "prompt": f"{key}?", "required": True} for key in self.missing_env]
+        return [{"name": key, "prompt": f"{key}?", "required": True,
+                 "secret": True, "default": ""} for key in self.missing_env]
 
     def start_oauth(self, name):
         self.calls.append(("start_oauth", name))
@@ -162,7 +165,8 @@ def test_install_waits_for_the_credentials_it_declares_and_installs_with_them():
 
     (offered,) = callback.seen[0]["targets"]
     assert offered["state"] == TargetState.pending.value
-    assert offered["required_env"] == [{"name": "FIGMA_TOKEN", "prompt": "FIGMA_TOKEN?", "required": True}]
+    assert offered["required_env"] == [{"name": "FIGMA_TOKEN", "prompt": "FIGMA_TOKEN?",
+                                        "required": True, "secret": True, "default": ""}]
     assert ("install", "figma", {"FIGMA_TOKEN": "tok-1"}) in backend.calls
     (settled,) = out["targets"]
     assert settled["state"] == TargetState.connected.value
@@ -189,11 +193,14 @@ def test_no_answer_settles_by_deadline_and_marks_targets_not_connected(backend):
 
 
 def test_mcp_secrets_never_reach_the_model():
-    backend = FakeBackend(missing_env=["LINEAR_API_KEY"])
+    backend = FakeBackend(missing_env=["LINEAR_API_KEY"], install_error="sk-secret was rejected")
     answer = json.dumps({"targets": [{"name": "linear", "status": "approved",
                                       "env": {"LINEAR_API_KEY": "sk-secret"}}]})
-    out = _mcp({"action": "install", "connectors": [_linear()]}, _answering(answer), mcp_backend=backend)
-    assert "sk-secret" not in json.dumps(out)
+    with patch("tools.connectors.operation.OPERATION_DEADLINE_SECONDS", 0.05):
+        out = _mcp({"action": "install", "connectors": [_linear()]}, _answering(answer), mcp_backend=backend)
+    payload = json.dumps(out)
+    assert "sk-secret" not in payload
+    assert "[REDACTED]" in payload
 
 
 # ---------------------------------------------------------------------------

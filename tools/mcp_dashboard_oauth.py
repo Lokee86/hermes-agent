@@ -48,6 +48,7 @@ class DashboardOAuthFlow:
     authorization_url: str | None = None
     error: str | None = None
     tools: list[dict] = field(default_factory=list)
+    discovery_error: str = ""
     expected_state: str | None = field(default=None, init=False)
     _callback: tuple[str, str | None, str | None] | None = field(default=None, init=False, repr=False)
     _callback_error: str | None = field(default=None, init=False, repr=False)
