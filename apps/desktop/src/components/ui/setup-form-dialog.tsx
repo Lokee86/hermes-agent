@@ -54,10 +54,11 @@ export function SetupFormDialog({
 }: SetupFormDialogProps) {
   const [draft, setDraft] = useState<Record<string, string>>({})
 
+  // The backend sends a fresh field list with every frame (and an empty one while an attempt runs).
+  // Fields only fill in what the draft lacks, so a failed Connect keeps what was typed. Closing the
+  // dialog drops the draft: a typed secret does not outlive the form.
   useEffect(() => {
-    if (open) {
-      setDraft(initialDraft(fields))
-    }
+    setDraft(current => (open ? { ...initialDraft(fields), ...current } : {}))
   }, [fields, open])
 
   const missingRequired = fields.some(field => field.required && !draft[field.name]?.trim())

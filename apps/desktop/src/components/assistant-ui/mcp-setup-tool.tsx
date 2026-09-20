@@ -77,14 +77,19 @@ const MCP_VERBS = {
 } satisfies Record<ConnectionTargetState, McpVerb>
 
 // Two states read differently per action. A pending authorize is the backend still minting the link,
-// so there is nothing for the user to consent to; an initiated install or enable is the backend
-// working, while an initiated authorize is the link waiting to be opened.
+// so there is nothing for the user to consent to. An initiated row with a link is that link waiting
+// to be opened, whatever the action: an install of an OAuth entry reaches it too. An initiated row
+// with no link is the backend working.
 const rowVerb = (target: ConnectionTarget, action: SetupAction): McpVerb => {
   if (action === 'authorize') {
     return target.state === 'pending' ? 'none' : MCP_VERBS[target.state]
   }
 
-  return target.state === 'initiated' ? 'working' : MCP_VERBS[target.state]
+  if (target.state === 'initiated') {
+    return target.connectUrl ? 'open' : 'working'
+  }
+
+  return MCP_VERBS[target.state]
 }
 
 function readSetupAction(args: unknown): SetupAction {
@@ -97,6 +102,7 @@ interface SettledTarget {
   name: string
   state: string
   tools: number
+  toolsUnavailable: boolean
 }
 
 /** A settled operation is a static per-target summary: one word per row, no controls. */
@@ -111,7 +117,9 @@ function McpSetupSummary({ action, rows }: { action: SetupAction; rows: SettledT
         const connected = row.state === 'connected'
 
         const line = connected
-          ? DONE[action](copy, title)
+          ? row.toolsUnavailable
+            ? `${DONE[action](copy, title)} · ${t.connectors.authorizedToolsUnavailable}`
+            : DONE[action](copy, title)
           : row.state === 'skipped'
             ? t.connectors.skipped
             : t.connectors.notConnected
@@ -137,7 +145,14 @@ function readSetupResult(result: unknown): SettledTarget[] {
     const name = connectorText(target.name)
 
     return name
-      ? [{ name, state: connectorText(target.state) ?? '', tools: Array.isArray(target.tools) ? target.tools.length : 0 }]
+      ? [
+          {
+            name,
+            state: connectorText(target.state) ?? '',
+            tools: Array.isArray(target.tools) ? target.tools.length : 0,
+            toolsUnavailable: Boolean(connectorText(target.discovery_error))
+          }
+        ]
       : []
   })
 }
@@ -212,7 +227,8 @@ export function McpSetupOffer({ action, owner, request }: McpSetupOfferProps) {
   const settledRows = request.targets.map(target => ({
     name: target.name,
     state: target.state,
-    tools: target.tools.length
+    tools: target.tools.length,
+    toolsUnavailable: Boolean(target.discoveryError)
   }))
 
   // A DOM handle for the focus handoff, never rendered state.
@@ -292,7 +308,7 @@ function McpSetupRow({ action, onReissue, reissueBlocked, reissuing, request, ta
   const [sentAtSeq, setSentAtSeq] = useState<null | number>(null)
   const server = target.name
   const phase = CONNECTOR_CARD_PHASES[target.state]
-  const verb = target.state === 'connected' && target.discoveryError ? 'reissue' : rowVerb(target, action)
+  const verb = rowVerb(target, action)
   const fields = target.requiredEnv
 
   // The composer's MCP suggestion index caches the configured servers; this row just changed them.
