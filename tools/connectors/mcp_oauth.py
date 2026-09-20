@@ -32,7 +32,11 @@ def probe_with_rollback(
     from tools.mcp_oauth_manager import get_manager
     manager = get_manager()
     storage = HermesTokenStorage(server_name)
-    backup = storage.snapshot()
+    # An attempt that replaced a still-running one starts from that one's half-written files, so
+    # it carries the older attempt's snapshot: the state from before either of them.
+    backup = getattr(flow, "inherited_backup", None) or storage.snapshot()
+    if flow is not None:
+        flow.backup = backup
     previous_entry = None
     details: Dict[str, Any] = {}
     tools: list = []
@@ -40,7 +44,10 @@ def probe_with_rollback(
 
     def undo() -> None:
         # ``manager.remove`` cleared the pre-attempt tokens, so anything on disk now is this
-        # attempt's grant, and it is not being kept: put the snapshot back.
+        # attempt's grant, and it is not being kept: put the snapshot back. A newer attempt for
+        # the same server owns the token files; an older one must not write over it.
+        if flow is not None and _ACTIVE.get((hermes_home, server_name)) not in (None, flow):
+            return
         storage.restore(backup)
         manager.restore_entry(server_name, previous_entry, hermes_home=hermes_home)
 
@@ -82,6 +89,9 @@ class AttemptCanceled(RuntimeError):
 # committed with everything kept. A worker parked inside the token request cannot be interrupted;
 # it is stopped here, at the one point where its result would be adopted.
 _COMMIT_GUARD = threading.Lock()
+# (hermes home, server) -> the newest card attempt. A retry or a new operation replaces an attempt
+# whose worker is still waiting on the browser; the older one is canceled so it cannot commit later.
+_ACTIVE: Dict[tuple, Any] = {}
 
 
 def cancel_attempt(flow) -> bool:
@@ -175,6 +185,9 @@ def run_worker(
     finally:
         if flow is not None:
             flow.mark_worker_done()
+            with _COMMIT_GUARD:
+                if _ACTIVE.get((hermes_home, server_name)) is flow:
+                    _ACTIVE.pop((hermes_home, server_name), None)
         if on_done is not None:
             on_done()
 
@@ -298,6 +311,12 @@ def start(
     flow = DashboardOAuthFlow(
         flow_id=secrets.token_urlsafe(24), server_name=server_name, profile=None,
         hermes_home=hermes_home, redirect_uri="", reconnect_live=False)
+    with _COMMIT_GUARD:
+        older = _ACTIVE.get((hermes_home, server_name))
+        _ACTIVE[(hermes_home, server_name)] = flow
+    if older is not None and not older.worker_done:
+        flow.inherited_backup = getattr(older, "backup", None)
+        cancel_attempt(older)
     httpd = choose_callback_receiver(flow, cfg, client_redirect_uri)
     mcp_oauth_sessions.register_flow(flow, httpd=httpd)
     threading.Thread(
