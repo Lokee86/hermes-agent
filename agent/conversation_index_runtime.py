@@ -14,14 +14,14 @@ from agent.conversation_index_consumer import (
 )
 from agent.conversation_index_lock import ProfileConversationIndexLock
 from agent.conversation_index_runtime_handle import ConversationIndexRuntimeHandle
-from agent.conversation_index_storage import ConversationIndexCursorStore
+from agent.conversation_index_storage import ConversationIndexCursorStore, _normalize_profile_name
 from plugins.conversation_index import (
     find_conversation_index_entry_point,
     load_conversation_index,
 )
 
 
-_RUNTIMES: dict[tuple[str, str], ConversationIndexRuntimeHandle] = {}
+_RUNTIMES: dict[tuple[str, str, str], ConversationIndexRuntimeHandle] = {}
 _RUNTIMES_LOCK = threading.Lock()
 
 
@@ -32,7 +32,7 @@ def _open_consumer(
         index_name=provider_name,
         index=index,
         db_path=db_path,
-        cursor_store=ConversationIndexCursorStore(hermes_home, provider_name),
+        cursor_store=ConversationIndexCursorStore(hermes_home, provider_name, profile_name),
         profile_name=profile_name,
         hermes_home=hermes_home,
     )
@@ -102,7 +102,9 @@ def _bootstrap_once(
 
 
 def _runtime_main(handle: ConversationIndexRuntimeHandle) -> None:
-    lock = ProfileConversationIndexLock(handle.hermes_home, handle.provider_name)
+    lock = ProfileConversationIndexLock(
+        handle.hermes_home, handle.provider_name, handle.profile_name,
+    )
     while not handle.stop_event.is_set():
         status = _bootstrap_once(
             provider_name=handle.provider_name,
@@ -164,7 +166,8 @@ def ensure_conversation_index_consumer(
         except Exception:
             profile_name = "default"
 
-    key = (str(home), clean)
+    profile_name = _normalize_profile_name(profile_name)
+    key = (str(home), profile_name, clean)
     with _RUNTIMES_LOCK:
         existing = _RUNTIMES.get(key)
         if existing is not None and existing.thread is not None and existing.thread.is_alive():
@@ -177,12 +180,25 @@ def ensure_conversation_index_consumer(
 
 
 def get_conversation_index_status(
-    provider_name: str, *, hermes_home: Optional[Path] = None,
+    provider_name: str,
+    *,
+    hermes_home: Optional[Path] = None,
+    profile_name: Optional[str] = None,
 ) -> Optional[ConversationIndexConsumerStatus]:
     if hermes_home is None:
         from hermes_constants import get_hermes_home
         hermes_home = get_hermes_home()
-    key = (str(Path(hermes_home).resolve()), str(provider_name or "").strip())
+    if profile_name is None:
+        try:
+            from hermes_cli.profiles import get_active_profile_name
+            profile_name = get_active_profile_name()
+        except Exception:
+            profile_name = "default"
+    key = (
+        str(Path(hermes_home).resolve()),
+        _normalize_profile_name(profile_name),
+        str(provider_name or "").strip(),
+    )
     with _RUNTIMES_LOCK:
         handle = _RUNTIMES.get(key)
     return handle.status() if handle is not None else None

@@ -60,8 +60,7 @@ class SessionConversationIndexMixin:
             return default
         return value
 
-    @staticmethod
-    def _prune_conversation_changes_on(conn, max_rows: int) -> int:
+    def _prune_conversation_changes_on(self, conn, max_rows: int) -> int:
         seq_row = conn.execute(
             "SELECT seq FROM sqlite_sequence WHERE name = 'conversation_changes'"
         ).fetchone()
@@ -73,7 +72,7 @@ class SessionConversationIndexMixin:
             "DELETE FROM conversation_changes WHERE sequence <= ?",
             (cutoff,),
         )
-        return max(0, int(cursor.rowcount or 0))
+        return max(0, self._resolved_rowcount(conn, cursor))
 
     def prune_conversation_changes(self, *, max_rows: int | None = None) -> int:
         """Retain at most the newest ``max_rows`` feed sequence positions.

@@ -226,3 +226,25 @@ def test_empty_feed_has_stable_zero_high_water(db):
     assert snapshot.watermark == 0
     assert snapshot.conversation_ids == ("alpha",)
     assert snapshot.messages == ()
+
+
+def test_feed_prune_uses_sqlite_changes_fallback_for_unknown_rowcount(db):
+    class Result:
+        def __init__(self, row=None, rowcount=None):
+            self._row = row
+            self.rowcount = rowcount
+
+        def fetchone(self):
+            return self._row
+
+    class FakeConn:
+        def execute(self, sql, params=()):
+            if "sqlite_sequence" in sql:
+                return Result((10,))
+            if sql.startswith("DELETE FROM conversation_changes"):
+                return Result(rowcount=-1)
+            if sql == "SELECT changes()":
+                return Result((4,))
+            raise AssertionError(sql)
+
+    assert db._prune_conversation_changes_on(FakeConn(), 5) == 4

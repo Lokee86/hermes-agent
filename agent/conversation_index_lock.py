@@ -2,16 +2,18 @@
 
 from __future__ import annotations
 
-import hashlib
 import os
 from pathlib import Path
+
+from agent.conversation_index_storage import _normalize_profile_name, _profile_index_digest
 
 
 class ProfileConversationIndexLock:
     """Non-blocking lock held for the lifetime of the active profile consumer."""
 
-    def __init__(self, hermes_home: Path, index_name: str):
-        digest = hashlib.sha256(index_name.encode("utf-8")).hexdigest()[:20]
+    def __init__(self, hermes_home: Path, index_name: str, profile_name: str = "default"):
+        profile = _normalize_profile_name(profile_name)
+        digest = _profile_index_digest(profile, index_name)
         self.path = Path(hermes_home) / "conversation-index" / f"{digest}.consumer.lock"
         self._handle = None
 

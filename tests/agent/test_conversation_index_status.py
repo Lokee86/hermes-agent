@@ -51,9 +51,11 @@ def test_runtime_status_preserves_bootstrap_unavailable_state(tmp_path):
         available=False,
         last_error="RuntimeError",
     )
-    runtime._RUNTIMES[(str(tmp_path.resolve()), "fake")] = handle
+    runtime._RUNTIMES[(str(tmp_path.resolve()), "default", "fake")] = handle
     try:
-        status = runtime.get_conversation_index_status("fake", hermes_home=tmp_path)
+        status = runtime.get_conversation_index_status(
+            "fake", hermes_home=tmp_path, profile_name="default",
+        )
     finally:
         runtime._RUNTIMES.clear()
 

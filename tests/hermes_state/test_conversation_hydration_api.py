@@ -92,6 +92,9 @@ def test_compacted_hydration_is_allowed_by_default(db):
     assert hydrated[0].state is MessageIndexState.COMPACTED
     assert hydrated[0].text == "archived evidence"
     assert db.hydrate_message_references([ref], include_compacted=False) == ()
+    assert db.hydrate_message_references(
+        [ref], include_inactive=True, include_compacted=False,
+    ) == ()
 
 
 def test_source_and_hydration_work_on_read_only_handle(tmp_path):

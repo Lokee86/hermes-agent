@@ -62,7 +62,7 @@ class SessionConversationHydrationMixin:
                 state = canonical_message_index_state(row["active"], row["compacted"])
                 if not include_inactive and state is MessageIndexState.INACTIVE:
                     continue
-                if not include_inactive and not include_compacted and state is MessageIndexState.COMPACTED:
+                if not include_compacted and state is MessageIndexState.COMPACTED:
                     continue
                 if canonical_content_hash(row["storage_type"], row["content_bytes"]) != ref.content_hash:
                     continue

@@ -87,3 +87,51 @@ def test_same_index_can_run_independently_in_two_profile_homes(tmp_path):
 
     first.release()
     second.release()
+
+
+def test_same_index_can_lock_two_profiles_sharing_one_home(tmp_path):
+    first = runtime.ProfileConversationIndexLock(tmp_path, "fake", "profile-a")
+    second = runtime.ProfileConversationIndexLock(tmp_path, "fake", "profile-b")
+
+    assert first.path != second.path
+    assert first.try_acquire() is True
+    assert second.try_acquire() is True
+
+    first.release()
+    second.release()
+
+
+def test_runtime_registry_is_profile_scoped_with_shared_home(monkeypatch, tmp_path):
+    class AliveThread:
+        def is_alive(self):
+            return True
+
+    class Handle:
+        def __init__(self, profile_name):
+            self.profile_name = profile_name
+            self.thread = AliveThread()
+
+    monkeypatch.setattr(runtime, "_RUNTIMES", {})
+    monkeypatch.setattr(runtime, "find_conversation_index_entry_point", lambda name: object())
+    monkeypatch.setattr(
+        runtime,
+        "_start_runtime_thread",
+        lambda **kwargs: Handle(kwargs["profile_name"]),
+    )
+
+    first = runtime.ensure_conversation_index_consumer(
+        provider_name="fake",
+        db_path=tmp_path / "a.db",
+        hermes_home=tmp_path,
+        profile_name="profile-a",
+    )
+    second = runtime.ensure_conversation_index_consumer(
+        provider_name="fake",
+        db_path=tmp_path / "b.db",
+        hermes_home=tmp_path,
+        profile_name="profile-b",
+    )
+
+    assert first is not second
+    assert first.profile_name == "profile-a"
+    assert second.profile_name == "profile-b"
