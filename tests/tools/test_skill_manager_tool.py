@@ -945,6 +945,25 @@ class TestPinnedGuard:
         # Skill still exists
         assert (tmp_path / "my-skill" / "SKILL.md").exists()
 
+    def test_delete_refuses_pinned_by_category_path(self, tmp_path):
+        """Categorized lookup spelling must not bypass the basename-keyed pin."""
+        with _skill_dir(tmp_path):
+            _create_skill("my-skill", VALID_SKILL_CONTENT, category="research")
+            with self._pin("my-skill"):
+                result = _delete_skill("research/my-skill")
+        assert result["success"] is False
+        assert "pinned" in result["error"].lower()
+        assert (tmp_path / "research" / "my-skill" / "SKILL.md").exists()
+
+    def test_delete_refuses_essential_by_category_path(self, tmp_path):
+        """The categorized path shown by the skills index cannot bypass ESSENTIAL_SKILLS."""
+        with _skill_dir(tmp_path):
+            _create_skill("hermes-agent", VALID_SKILL_CONTENT, category="autonomous-ai-agents")
+            result = _delete_skill("autonomous-ai-agents/hermes-agent")
+        assert result["success"] is False
+        assert "essential" in result["error"].lower()
+        assert (tmp_path / "autonomous-ai-agents" / "hermes-agent" / "SKILL.md").exists()
+
     def test_broken_sidecar_fails_open(self, tmp_path):
         """If skill_usage.get_record raises, we allow delete through.
 
