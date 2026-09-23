@@ -2368,6 +2368,9 @@ def switch_model(
     _reset_stale_streak(agent)
     agent._primary_runtime = _build_primary_runtime_snapshot(agent, api_mode)
     _finish_switch(agent, new_provider, old_norm, new_norm)
+    # A successful explicit model switch supersedes any startup fallback restore intent.
+    # Otherwise the next turn can silently jump back to the originally configured primary.
+    agent._pre_agent_primary = None
     logger.info(
         "Model switched in-place: %s (%s) -> %s (%s)",
         old_model, old_provider, new_model, new_provider,
