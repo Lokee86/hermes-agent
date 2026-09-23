@@ -129,13 +129,15 @@ class TestLoadMCPConfig:
             result = _load_mcp_config()
             assert result == {}
 
-    def test_portable_servers_merge_after_native_interpolation(self):
+    def test_portable_servers_use_same_env_interpolation_as_native(self):
         native = {"native": {"command": "node", "args": ["${PORT}"]}}
         portable = {
             "agent-plugin-demo__worker": {
                 "command": "python",
                 "args": ["${UNKNOWN}"],
                 "cwd": "/plugin",
+                "env": {"API_KEY": "${PLUGIN_API_KEY}"},
+                "headers": {"Authorization": "Bearer ${PLUGIN_API_KEY}"},
             }
         }
         manager = SimpleNamespace(get_portable_mcp_servers=lambda: portable)
@@ -143,14 +145,17 @@ class TestLoadMCPConfig:
             patch("hermes_cli.config.load_config", return_value={"mcp_servers": native}),
             patch("hermes_cli.plugins.discover_plugins"),
             patch("hermes_cli.plugins.get_plugin_manager", return_value=manager),
-            patch.dict(os.environ, {"PORT": "3000"}),
+            patch.dict(os.environ, {"PORT": "3000", "PLUGIN_API_KEY": "secret123"}),
         ):
             from tools.mcp_tool_config import _load_mcp_config
 
             result = _load_mcp_config()
 
         assert result["native"]["args"] == ["3000"]
-        assert result["agent-plugin-demo__worker"]["args"] == ["${UNKNOWN}"]
+        worker = result["agent-plugin-demo__worker"]
+        assert worker["args"] == ["${UNKNOWN}"]
+        assert worker["env"]["API_KEY"] == "secret123"
+        assert worker["headers"]["Authorization"] == "Bearer secret123"
 
     def test_portable_server_resolves_through_real_plugin_discovery(
         self, tmp_path, monkeypatch
