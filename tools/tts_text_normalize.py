@@ -209,6 +209,18 @@ def flatten_newlines_for_payload(text: str) -> str:
     return text.strip()
 
 
+def _truncate_spoken_text(text: str, max_chars: int | None) -> str:
+    """Apply the payload cap without emitting a partial inline TTS control tag."""
+    if max_chars is None or max_chars <= 0 or len(text) <= max_chars:
+        return text
+    cut = max_chars
+    for match in _TTS_TAG_RE.finditer(text):
+        if match.start() < cut < match.end():
+            cut = match.start()
+            break
+    return text[:cut].rstrip()
+
+
 def prepare_spoken_text(text: str, max_chars: int | None = 4000) -> str:
     """Return a TTS-friendly script from assistant text (deterministic cleanup, not a rewrite).
     Pipeline: non-spoken blocks > Markdown > symbols/units > line formatting into sentence
@@ -221,11 +233,9 @@ def prepare_spoken_text(text: str, max_chars: int | None = 4000) -> str:
     for step in (strip_nonspoken_blocks, strip_markdown_for_tts, normalize_symbols_for_tts,
                  smooth_whitespace_for_tts, flatten_newlines_for_payload):
         spoken = step(spoken)
-    if max_chars is not None and max_chars > 0 and len(spoken) > max_chars:
-        spoken = spoken[:max_chars].rstrip()
     for index, tag in enumerate(held):
         spoken = spoken.replace(_TTS_TAG_HOLD.format(index), tag)
-    return spoken
+    return _truncate_spoken_text(spoken, max_chars)
 
 
 def _strip_markdown_for_tts(text: str) -> str:

@@ -68,3 +68,11 @@ def test_prepare_spoken_text_preserves_inline_tts_control_tags():
 def test_prepare_spoken_text_tag_protection_keeps_table_pipe_rewrite():
     # Markdown table pipes still become pauses; only tag pipes are protected.
     assert prepare_spoken_text("a | b | c") == "a; b; c"
+
+
+def test_prepare_spoken_text_never_truncates_inside_control_tag():
+    tag = "<|emotion:sadness|>"
+    assert prepare_spoken_text(tag, max_chars=10) == ""
+    assert prepare_spoken_text(f"hello {tag} world", max_chars=12) == "hello"
+    assert prepare_spoken_text(f"{tag}abc", max_chars=len(tag)) == tag
+    assert prepare_spoken_text(f"{tag}abc", max_chars=len(tag) + 2) == f"{tag}ab"
