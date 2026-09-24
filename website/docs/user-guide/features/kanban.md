@@ -578,12 +578,12 @@ is spent. Both lanes get the same booking: a reviewer worker that dies on a
 revoked key parks the card exactly like an implementer. `hermes kanban show`
 surfaces it as *Provider rejected this profile's credential or model — blocked
 after one attempt*; fix the assignee profile's provider (`hermes -p <profile>
-auth` / `setup`), then `hermes kanban unblock <id>`. The worker also writes its exit code as the
-last line of its own log (`[kanban-worker-exit] rc=<code>`), so a per-tick
+auth` / `setup`), then `hermes kanban unblock <id>`. The worker also writes its run-scoped exit receipt as the
+last line of its own log (`[kanban-worker-exit] run=<run_id> rc=<code>`), so a per-tick
 `hermes kanban dispatch` process — which never reaped the worker and cannot
 read its exit status — books the same death the same way the gateway-embedded
-dispatcher does; a worker killed before it reaches that line is a plain
-`crashed` (`pid <n> not alive`).
+dispatcher does without inheriting an older attempt's exit code; a worker killed
+before it reaches that line is a plain `crashed` (`pid <n> not alive`).
 
 **Agent-side prevention:** Before the worker exits, Hermes injects up to two
 synthetic nudges when it detects the model is about to stop without a terminal

@@ -17,7 +17,11 @@ import pytest
 from hermes_cli import kanban_db as kb
 from hermes_cli import kanban_db_connect as kbc
 from hermes_cli import kanban_db_dispatch as kbd
-from hermes_cli.quiet_single_query import KANBAN_WORKER_EXIT_TRAILER, exit_single_query
+from hermes_cli.quiet_single_query import (
+    KANBAN_WORKER_EXIT_RUN_TRAILER,
+    KANBAN_WORKER_EXIT_TRAILER,
+    exit_single_query,
+)
 
 
 @pytest.fixture
@@ -33,10 +37,11 @@ def kanban_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     return home
 
 
-def _dead_worker_with_log(conn, tid: str, pid: int, rc: int) -> None:
-    """Claim ``tid`` for a worker that already exited ``rc`` and wrote its log — never reaped here."""
+def _dead_worker_with_log(conn, tid: str, pid: int, rc: int) -> int:
+    """Claim ``tid`` for a worker that already exited ``rc`` and wrote its run-scoped receipt."""
     host = kb._claimer_id().split(":", 1)[0]
     kb.claim_task(conn, tid, claimer=f"{host}:w{pid}")
+    run_id = conn.execute("SELECT current_run_id FROM tasks WHERE id=?", (tid,)).fetchone()["current_run_id"]
     conn.execute(
         "UPDATE tasks SET worker_pid=?, worker_started_at=NULL, started_at=? WHERE id=?",
         (pid, int(time.time()) - 120, tid),
@@ -45,7 +50,11 @@ def _dead_worker_with_log(conn, tid: str, pid: int, rc: int) -> None:
     log = kb.worker_log_path(tid)
     log.parent.mkdir(parents=True, exist_ok=True)
     with open(log, "a", encoding="utf-8") as f:
-        f.write(f"the model said something\n\nResume this session with:\n  hermes --resume x\n\n{KANBAN_WORKER_EXIT_TRAILER}{rc}\n")
+        f.write(
+            "the model said something\n\nResume this session with:\n  hermes --resume x\n\n"
+            f"{KANBAN_WORKER_EXIT_RUN_TRAILER}{run_id} rc={rc}\n"
+        )
+    return int(run_id)
 
 
 @pytest.mark.parametrize(
@@ -81,6 +90,52 @@ def test_fresh_process_sweep_books_the_logged_exit_code(kanban_home, rc, event, 
             assert KANBAN_WORKER_EXIT_TRAILER not in (run["error"] or "")
         else:
             assert run["outcome"] == "rate_limited"
+
+
+def test_legacy_exit_receipt_is_only_used_without_run_identity(kanban_home, monkeypatch):
+    """Pre-upgrade trailers stay readable for legacy rows but cannot classify a known run."""
+    monkeypatch.setattr(
+        kb,
+        "read_worker_log",
+        lambda *_args, **_kwargs: f"{KANBAN_WORKER_EXIT_TRAILER}{kb.KANBAN_RATE_LIMIT_EXIT_CODE}\n",
+    )
+    assert kbd._worker_log_exit_code("t_legacy") == kb.KANBAN_RATE_LIMIT_EXIT_CODE
+    assert kbd._worker_log_exit_code("t_legacy", run_id=42) is None
+
+
+@pytest.mark.parametrize("stale_rc", [0, kb.KANBAN_RATE_LIMIT_EXIT_CODE])
+def test_dead_run_does_not_inherit_previous_attempt_exit_receipt(kanban_home, stale_rc):
+    """A killed/OOMed retry writes no receipt, so an earlier run's rc=0/75 must not classify it."""
+    with kbc.connect() as conn:
+        tid = kb.create_task(conn, title="retry", assignee="a")
+        first_run = _dead_worker_with_log(conn, tid, 70011, stale_rc)
+        kbd.detect_crashed_workers(conn)
+
+        host = kb._claimer_id().split(":", 1)[0]
+        kb.claim_task(conn, tid, claimer=f"{host}:w70012")
+        second_run = conn.execute(
+            "SELECT current_run_id FROM tasks WHERE id=?", (tid,)
+        ).fetchone()["current_run_id"]
+        assert second_run != first_run
+        conn.execute(
+            "UPDATE tasks SET worker_pid=?, worker_started_at=NULL, started_at=? WHERE id=?",
+            (70012, int(time.time()) - 120, tid),
+        )
+        conn.commit()
+
+        kbd.detect_crashed_workers(conn)
+
+        run = conn.execute(
+            "SELECT outcome, metadata FROM task_runs WHERE id=?", (second_run,)
+        ).fetchone()
+        event = conn.execute(
+            "SELECT kind, payload FROM task_events WHERE run_id=? ORDER BY id DESC LIMIT 1",
+            (second_run,),
+        ).fetchone()
+        assert run["outcome"] == "crashed"
+        assert event["kind"] == "crashed"
+        assert kb._json_dict(run["metadata"]).get("exit_code") is None
+        assert kb._json_dict(event["payload"]).get("exit_code") is None
 
 
 def test_violation_budget_trip_holds_until_operator_unblock(kanban_home):
@@ -140,7 +195,17 @@ def test_exit_single_query_writes_trailer_only_for_kanban_workers(monkeypatch, c
     assert KANBAN_WORKER_EXIT_TRAILER not in capsys.readouterr().err
 
     monkeypatch.setenv("HERMES_KANBAN_TASK", "t_1")
+    monkeypatch.delenv("HERMES_KANBAN_RUN_ID", raising=False)
+    with pytest.raises(SystemExit) as exc:
+        exit_single_query(1)
+    assert exc.value.code == 1
+    assert f"{KANBAN_WORKER_EXIT_TRAILER}1" in capsys.readouterr().err
+
+    monkeypatch.setenv("HERMES_KANBAN_RUN_ID", "42")
     with pytest.raises(SystemExit) as exc:
         exit_single_query(kb.KANBAN_RATE_LIMIT_EXIT_CODE)
     assert exc.value.code == kb.KANBAN_RATE_LIMIT_EXIT_CODE
-    assert f"{KANBAN_WORKER_EXIT_TRAILER}{kb.KANBAN_RATE_LIMIT_EXIT_CODE}" in capsys.readouterr().err
+    assert (
+        f"{KANBAN_WORKER_EXIT_RUN_TRAILER}42 rc={kb.KANBAN_RATE_LIMIT_EXIT_CODE}"
+        in capsys.readouterr().err
+    )

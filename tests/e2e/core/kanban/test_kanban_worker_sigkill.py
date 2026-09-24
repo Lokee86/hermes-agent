@@ -3,7 +3,7 @@
 One scenario is driven once per module (real processes end to end, the model is the recording fake):
 
 1. attempt 1 answers in plain text and exits rc=0 without a terminal board call (a protocol
-   violation: its log ends with the CLI exit summary and the ``[kanban-worker-exit] rc=0`` trailer);
+   violation: its log ends with the CLI exit summary and its run-scoped ``[kanban-worker-exit]`` receipt);
 2. the next tick reaps it and spawns attempt 2, which heartbeats and is then SIGKILLed while its
    provider request hangs (no trailer, no exit summary of its own);
 3. a ``--max 0`` tick reaps the corpse, an operator ``kanban claim --ttl 1`` opens a fresh run,
@@ -47,9 +47,6 @@ KNOWN: dict[str, tuple[str, str]] = {
     "test_fresh_claim_does_not_inherit_previous_heartbeat": (
         r"fresh run \d+ \(started \d+\) carries last_heartbeat_at=\d+, attempt 2's value",
         "#119155 a fresh claim keeps the previous run's last_heartbeat_at"),
-    "test_sigkilled_attempt_is_booked_as_a_crash_of_its_own": (
-        r"SIGKILLed attempt booked as \w+ .*'exit_code': 0\b",
-        "#121255 a SIGKILLed worker is booked with the previous attempt's rc=0 trailer"),
     "test_crash_diagnostic_comes_from_the_crashed_attempt": (
         r"attempt 2's crash diagnostic quotes attempt 1: ",
         "#119618 crash diagnostic carries an older attempt's output"),
@@ -188,9 +185,8 @@ def test_sigkilled_attempt_is_booked_as_a_crash_of_its_own(scenario: Scenario) -
     booked = [(k, p) for k, p in kinds if k in ("crashed", "protocol_violation", "rate_limited")]
     assert len(booked) == 1, kinds
     kind, payload = booked[0]
-    with known_gate(KNOWN, "test_sigkilled_attempt_is_booked_as_a_crash_of_its_own", raises=KnownGap):
-        if kind != "crashed" or (payload or {}).get("exit_code") == 0:
-            raise KnownGap(f"SIGKILLed attempt booked as {kind} {payload}")
+    assert kind == "crashed", f"SIGKILLed attempt booked as {kind} {payload}"
+    assert (payload or {}).get("exit_code") is None, payload
 
 
 def test_crash_diagnostic_comes_from_the_crashed_attempt(scenario: Scenario) -> None:

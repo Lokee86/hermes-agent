@@ -22,21 +22,32 @@ from typing import Any, Callable, MutableMapping
 # Nested A→B→C is one extra turn; this caps a runaway message_agent chain.
 _MAX_QUIET_NOTIFY_ROUNDS = 8
 
-# Last line a Kanban worker leaves in its own log: ``[kanban-worker-exit] rc=<code>``. A per-tick
-# ``hermes kanban dispatch`` process never reaped the worker, so ``os.waitpid`` cannot tell it how
-# the worker exited; the trailer is the process-independent witness the dead-worker sweep reads
-# instead, so a clean exit without a terminal board call is booked as the same protocol violation
-# (and a 75 as the same rate-limit requeue) whichever process notices the death.
+# Last line a Kanban worker leaves in its own log. Modern workers qualify the durable
+# exit witness with the task-run id: ``[kanban-worker-exit] run=<id> rc=<code>``.
+# A per-tick ``hermes kanban dispatch`` process never reaped the worker, so ``os.waitpid``
+# cannot tell it how the worker exited; the trailer lets another process classify that exact run.
+# Keep the legacy prefix for old/unscoped workers so pre-upgrade logs remain readable.
 KANBAN_WORKER_EXIT_TRAILER = "[kanban-worker-exit] rc="
+KANBAN_WORKER_EXIT_RUN_TRAILER = "[kanban-worker-exit] run="
 
 
 def exit_single_query(code: int) -> None:
-    """``sys.exit(code)`` for a one-shot turn; a Kanban worker first writes the exit trailer to its log."""
+    """``sys.exit(code)`` for a one-shot turn; a Kanban worker first writes its durable exit witness."""
     if os.environ.get("HERMES_KANBAN_TASK"):
         with contextlib.suppress(Exception):
             # stderr: stdout may be the ``--stream-json`` record stream, and the worker log
-            # captures both streams.
-            print(f"\n{KANBAN_WORKER_EXIT_TRAILER}{int(code)}", file=sys.stderr, flush=True)
+            # captures both streams. Qualify the receipt whenever the dispatcher supplied a run id;
+            # a later attempt must never inherit this attempt's exit semantics.
+            raw_run_id = (os.environ.get("HERMES_KANBAN_RUN_ID") or "").strip()
+            try:
+                run_id = int(raw_run_id)
+            except (TypeError, ValueError):
+                run_id = None
+            if run_id is not None:
+                trailer = f"{KANBAN_WORKER_EXIT_RUN_TRAILER}{run_id} rc={int(code)}"
+            else:
+                trailer = f"{KANBAN_WORKER_EXIT_TRAILER}{int(code)}"
+            print(f"\n{trailer}", file=sys.stderr, flush=True)
     sys.exit(code)
 
 
