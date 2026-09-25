@@ -288,7 +288,7 @@ def _installed_services(home: Path) -> list[tuple[str, bool]]:
     from hermes_cli import gateway as gw
     found: list[tuple[str, bool]] = []
     if gw._running_under_s6():
-        from hermes_cli.gateway_multiplex_s6 import named_slot_name, slot_is_up
+        from gateway.s6_service import named_slot_name, slot_is_up
         from hermes_cli.service_manager import S6ServiceManager
         from hermes_constants import profile_name_for_home
         name = profile_name_for_home(home) or "default"
@@ -358,7 +358,7 @@ def _s6_slot_op(verb: str, home: Path) -> None:
     """The s6 leg of :func:`_service_op`. A named profile's slot is never uninstalled: it stays
     registered DOWN (``down`` file) as the target of a later ``hermes -p X gateway start``, exactly
     the shape the container's boot produces. The root slot is (re)started so it re-reads its config."""
-    from hermes_cli.gateway_multiplex_s6 import bring_root_slot_up, park_named_slot
+    from gateway.s6_service import bring_root_slot_up, park_named_slot
     from hermes_constants import profile_name_for_home
     name = profile_name_for_home(home) or "default"
     if name == "default":
@@ -1149,13 +1149,13 @@ def _host_supports_migration() -> Optional[str]:
     Windows IS handled (per-profile Scheduled Tasks and the Startup-folder fallback are removed
     like any other unit). s6 IS handled too, in-process: a named profile's slot that is UP is
     parked (``s6-svc -d`` + ``down`` file) and its autostart intent folded into the root slot the
-    same way the container's boot does it (``hermes_cli.gateway_multiplex_s6``). What cannot be
+    same way the container's boot does it (``gateway.s6_service``). What cannot be
     done from here is register a slot the boot never created — that is the one refusal left.
     """
     from hermes_cli import gateway as gw
     if not gw._running_under_s6():
         return None
-    from hermes_cli.gateway_multiplex_s6 import named_slot_name
+    from gateway.s6_service import named_slot_name
     from hermes_cli.service_manager import S6ServiceManager
     scandir = S6ServiceManager().scandir
     if not (scandir / named_slot_name("default")).is_dir():

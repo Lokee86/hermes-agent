@@ -13,7 +13,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal, Sequence
 
-from hermes_cli.gateway_multiplex_s6 import AUTOSTART_STATES as _AUTOSTART_STATES, fold_named_slot_intent
+from gateway.s6_service import AUTOSTART_STATES as _AUTOSTART_STATES, fold_named_slot_intent
 
 log = logging.getLogger(__name__)
 
