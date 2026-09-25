@@ -70,11 +70,12 @@ def _detect_supervisor_for_pid(pid: int, service_pids: set, windows_service_pids
     if pid not in service_pids:
         return "manual"
     with suppress(Exception):
-        from hermes_cli.gateway import is_macos, supports_systemd_services
+        import sys
+        from gateway.systemd_runtime import supports_services
 
-        if supports_systemd_services():
+        if supports_services():
             return "systemd"
-        if is_macos():
+        if sys.platform == "darwin":
             return "launchd"
     return "service"
 

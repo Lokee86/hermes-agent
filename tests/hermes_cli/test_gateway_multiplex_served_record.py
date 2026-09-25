@@ -9,6 +9,8 @@
 """
 
 from __future__ import annotations
+from gateway import systemd_lifecycle
+from gateway import systemd_runtime
 
 import argparse
 import contextlib
@@ -112,12 +114,12 @@ def test_setup_gateway_service_step_skips_install_for_served_profile(served_root
 
     calls: list[str] = []
     # The orchestrator reads every service primitive through ``hermes_cli.gateway``; patch that binding.
-    monkeypatch.setattr(gw, "supports_systemd_services", lambda: True)
+    monkeypatch.setattr(systemd_runtime, "supports_services", lambda: True)
     monkeypatch.setattr(gw, "_is_service_running", lambda: False)
     monkeypatch.setattr(gw, "_is_service_installed", lambda: "install" in calls)
     monkeypatch.setattr(gw, "has_conflicting_systemd_units", lambda: False)
-    monkeypatch.setattr(gw, "systemd_install", lambda **kwargs: calls.append("install"))
-    monkeypatch.setattr(gw, "systemd_start", lambda *args, **kwargs: calls.append("start"))
+    monkeypatch.setattr(systemd_lifecycle, "install", lambda **kwargs: calls.append("install"))
+    monkeypatch.setattr(systemd_lifecycle, "start", lambda *args, **kwargs: calls.append("start"))
 
     # Consent is explicit here; the served-profile early return must win before it matters.
     assert ensure_gateway_service(context="setup", install=True) is True

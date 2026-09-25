@@ -34,6 +34,18 @@ from gateway.config import coerce_systemd_watchdog_seconds, load_gateway_config 
 from gateway.status import terminate_pid
 from gateway import host_topology as _host_topology
 from gateway import restart as _gateway_restart
+from gateway import process_liveness as _process_liveness
+from gateway import service_identity as _service_identity
+from gateway import service_process as _service_process
+from gateway import signal_restart as _signal_restart
+from gateway import systemd_identity as _systemd_identity
+from gateway import systemd_legacy as _systemd_legacy
+from gateway import systemd_lifecycle as _systemd_lifecycle
+from gateway import systemd_restart as _systemd_restart
+from gateway import systemd_restart_state as _systemd_restart_state
+from gateway import systemd_runtime as _systemd_runtime
+from gateway import systemd_unit_render as _systemd_unit_render
+from gateway import systemd_unit_state as _systemd_unit_state
 from profiles.paths import profile_name_from_home
 from gateway.restart import (  # noqa: F401 — resolved lazily by siblings through the facade
     DEFAULT_GATEWAY_RESTART_DRAIN_TIMEOUT,
@@ -69,26 +81,6 @@ from hermes_cli.setup import (  # noqa: F401 — resolved lazily by siblings thr
     prompt_yes_no,
 )
 from hermes_cli.colors import Colors, color  # noqa: F401 — resolved lazily by siblings through the facade
-from hermes_cli.gateway_service_unit import (  # noqa: F401 — resolved lazily by siblings through the facade
-    _systemd_env_line,
-    _installed_unit_ld_library_path,
-    _ld_library_path_line,
-    _hermes_home_for_target_user,
-    _build_service_path_dirs,
-    _stable_service_working_dir,
-    _systemd_watchdog_seconds,
-    _append_node_dir_for_service,
-    _service_venv_dir,
-    generate_systemd_unit,
-    _normalize_service_definition,
-    _SYSTEMD_OPTIONAL_DIRECTIVES,
-    _strip_optional_systemd_directives,
-    _normalize_launchd_plist_for_comparison,
-    systemd_unit_is_current,
-    _temp_home_in_service_definition,
-    _refuse_temp_home_service_write,
-    refresh_systemd_unit_if_needed,
-)
 
 logger = logging.getLogger(__name__)
 
@@ -157,8 +149,8 @@ def _get_service_pids(all_profiles: bool = False) -> set:
     pids: set = set()
 
     # --- systemd (Linux): user and system scopes ---
-    if supports_systemd_services():
-        pattern = "hermes-gateway*" if all_profiles else get_service_name()
+    if _systemd_runtime.supports_services():
+        pattern = "hermes-gateway*" if all_profiles else _service_identity.service_name()
         for scope_args in [["systemctl", "--user"], ["systemctl"]]:
             try:
                 # Belt-and-suspenders for the EXCLUDE use case (#74075): a bare ``launchctl list`` prefix
@@ -283,42 +275,8 @@ def _request_gateway_self_restart(pid: int) -> bool:
     return True
 
 
-def _graceful_restart_via_sigusr1(pid: int, drain_timeout: float, *, on_progress=None) -> bool:
-    """SIGUSR1 (drain-aware restart) a gateway PID and wait for exit; False if unsent or it outlived the timeout.
-
-    gateway/run.py maps SIGUSR1 to ``request_restart(via_service=True)``: refuse new turns, drain,
-    ``stop()``, exit; the supervisor relaunches. ``drain_timeout`` must cover after-turn wait + drain
-    — pass ``resolve_restart_exit_wait_budget(...)``. ``on_progress`` (zero-arg) runs on every poll so
-    a long wait can report what the gateway is still holding for (``update_cmd_drain_report``).
-    """
-    if not hasattr(signal, "SIGUSR1") or pid <= 0:
-        return False
-    try:
-        os.kill(pid, signal.SIGUSR1)  # windows-footgun: ok — POSIX signal, guarded by hasattr(signal, 'SIGUSR1') above
-    except ProcessLookupError:
-        return True
-    except (PermissionError, OSError):
-        return False
-
-    return _wait_for_pid_exit(pid, max(drain_timeout, 1.0), on_progress=on_progress)
 
 
-def _wait_for_pid_exit(pid: int, timeout: float, *, on_progress=None) -> bool:
-    """Wait up to ``timeout``s for ``pid`` to exit; True once gone. (``launchctl bootstrap`` fails EIO
-    while the previous instance still drains, so teardown callers must wait for the real exit.)"""
-    if pid <= 0:
-        return True
-    # ``os.kill(pid, 0)`` hard-kills on Windows (TerminateProcess); use _pid_exists instead.
-    from gateway.status import _pid_exists
-    deadline = time.monotonic() + max(timeout, 0.0)
-    while True:
-        if not _pid_exists(pid):
-            return True
-        if time.monotonic() >= deadline:
-            return False
-        if on_progress is not None:
-            on_progress()
-        time.sleep(0.5)
 
 
 # --- Wedged-gateway detection + bounded escalation ---------------------------
@@ -362,187 +320,22 @@ def _wait_for_pid_exit(pid: int, timeout: float, *, on_progress=None) -> bool:
 # budget — even when the filesystem is stalling the heartbeat write (the incident that motivated #90502).
 # Legacy gateways (no ``loop_tick_socket`` flag in the payload) wrote the file on-loop, so their staleness
 # remains proof and the old single-witness contract is unchanged.
-GATEWAY_LOOP_ALIVE = "alive"
-GATEWAY_LOOP_WEDGED = "wedged"
-GATEWAY_LOOP_UNKNOWN = "unknown"
 
 # 3 missed 30s beats (gateway.shutdown_watchdog.DEFAULT_HEARTBEAT_INTERVAL_S): decisive, not one slow write.
-DEFAULT_LOOP_LIVENESS_STALE_AFTER_S = 90.0
 
 # Sentinel for "the producer never wrote the witness flag" (legacy payload).
-_LOOP_TICK_ABSENT = object()
 
 
-def _probe_loop_tick_socket(pid: int, home: Path | None, timeout: float = 1.0) -> bool | None:
-    """Ping the loop-tick witness socket: True answered, False node present but silent, None no node (not evidence)."""
-    try:
-        from gateway.shutdown_watchdog import get_loop_tick_socket_path
-        path = get_loop_tick_socket_path(home, pid)
-        if not path.is_socket():
-            return None
-    except Exception:
-        return None
-    return _ping_loop_tick_witness(socket.AF_UNIX, str(path), timeout)
 
 
-def _ping_loop_tick_witness(family: int, address, timeout: float) -> bool:
-    """Connect to a loop-tick witness and expect one byte ``"1"``; False on refusal/timeout/any error."""
-    sock = None
-    try:
-        sock = socket.socket(family, socket.SOCK_STREAM)
-        sock.settimeout(max(float(timeout), 0.0))
-        sock.connect(address)
-        return sock.recv(1) == b"1"
-    except Exception:
-        return False
-    finally:
-        if sock is not None:
-            with contextlib.suppress(Exception):
-                sock.close()
 
 
-def _probe_loop_tick_tcp(port: int, timeout: float = 1.0) -> bool | None:
-    """TCP-loopback variant of the tick probe for Windows (no AF_UNIX in asyncio); same semantics, None
-    on invalid port."""
-    try:
-        port_num = int(port)
-        if port_num <= 0 or port_num > 65535:
-            return None
-    except (TypeError, ValueError):
-        return None
-    return _ping_loop_tick_witness(socket.AF_INET, ("127.0.0.1", port_num), timeout)
 
 
-def _probe_loop_tick_socket_sustained(
-    pid: int, home: Path | None, *, timeout: float = 1.0, strikes: int = 3, gap_s: float = 0.2,
-    tcp_port: int | None = None,
-) -> bool | None:
-    """Probe the tick socket up to ``strikes`` times, ``gap_s`` apart: True once answered, False if a node
-    stayed silent the whole window, None if the node vanished (not evidence). One silent probe is not
-    destructive evidence — a transient synchronous stall can outlast one recv timeout.
-
-    A single silent probe is NOT destructive evidence: the loop may be in a short transient synchronous
-    stall (a reconnect storm, a heavy synchronous callback, scheduler delay) that outlasts one recv timeout.
-    Killing a gateway on that would be a false wedge — the exact class of false positive #90502 exists to
-    prevent. Destructive authority therefore requires the loop to fail to answer across a bounded window of
-    ``strikes`` consecutive misses, ``gap_s`` apart; any answer inside the window proves the loop is
-    dispatching and returns ``True``.
-    """
-    total = max(int(strikes), 0)
-    for attempt in range(total):
-        if tcp_port is not None:
-            result = _probe_loop_tick_tcp(tcp_port, timeout=timeout)
-        else:
-            result = _probe_loop_tick_socket(pid, home, timeout=timeout)
-        if result is True:
-            return True
-        if result is None:
-            # No node: ambiguity, never a wedge — absence is not a miss.
-            return None
-        if attempt < total - 1 and gap_s > 0:
-            time.sleep(gap_s)
-    return False
 
 
-def probe_gateway_loop_liveness(
-    pid: int, *, stale_after: float = DEFAULT_LOOP_LIVENESS_STALE_AFTER_S, home: Path | None = None,
-    tick_timeout: float = 1.0, tick_strikes: int = 3, tick_gap_s: float = 0.2,
-) -> str:
-    """Classify a gateway PID's event loop as alive / wedged / unknown (see block comment above).
-    Stale heartbeat is ``wedged`` only when the payload declares the tick socket armed AND it stays
-    silent across ``tick_strikes`` misses; any answer is ``alive``; ambiguity is ``unknown``.
-
-    - the loop-tick socket (``state/gateway.loop-tick.<pid>.sock``): answered by the gateway loop itself, so
-    a reply is direct proof that the loop is dispatching. It is never refreshed by the heartbeat executor
-    thread and never stalled by a filesystem that is slow to fsync. - the heartbeat file
-    (``state/gateway.heartbeat``): rewritten every 30s on a thread since #90502, so freshness alone is no
-    longer proof of loop schedulability — a stalled write (measured at 112.6s max on the incident box) or a
-    saturated executor can age the file while the loop runs, and a write can land after the loop froze.
-    """
-    try:
-        stale_budget = max(float(stale_after), 0.0)
-    except (TypeError, ValueError):
-        stale_budget = DEFAULT_LOOP_LIVENESS_STALE_AFTER_S
-    try:
-        from gateway.shutdown_watchdog import get_loop_heartbeat_path
-        path = get_loop_heartbeat_path(home)
-        mtime = path.stat().st_mtime
-        payload = json.loads(path.read_text(encoding="utf-8"))
-        heartbeat_pid = int(payload.get("pid", 0))
-    except Exception:
-        return GATEWAY_LOOP_UNKNOWN
-    if heartbeat_pid <= 0 or int(pid) <= 0 or heartbeat_pid != int(pid):
-        # Heartbeat is not this process's (old version, starting up, stale file): not evidence.
-        return GATEWAY_LOOP_UNKNOWN
-
-    # TCP loopback witness (Windows) takes priority when published; else the AF_UNIX socket.
-    tcp_port = payload.get("loop_tick_tcp_port")
-    try:
-        tcp_port_int = int(tcp_port) if tcp_port is not None else None
-    except (TypeError, ValueError):
-        tcp_port_int = None
-
-    if tcp_port_int is not None and tcp_port_int > 0:
-        witness = _probe_loop_tick_tcp(tcp_port_int, timeout=tick_timeout)
-        tick_armed = True
-    else:
-        witness = _probe_loop_tick_socket(pid, home, timeout=tick_timeout)
-        tick_armed = payload.get("loop_tick_socket", _LOOP_TICK_ABSENT)
-    if witness is True:
-        # Loop answered: a stale file is a stalled write, not a wedge.
-        return GATEWAY_LOOP_ALIVE
-    # The loop answered a ping — it is dispatching right now. See #90502.
-    age = time.time() - mtime
-    if age <= stale_budget:
-        if witness is False:
-            # Fresh file but silent loop: an off-loop write can land after the loop froze.
-            return GATEWAY_LOOP_UNKNOWN
-        return GATEWAY_LOOP_ALIVE
-
-    # Stale past the budget; the verdict depends on what the producer promised about its witness.
-    if tick_armed is _LOOP_TICK_ABSENT:
-        # Legacy on-loop writer: staleness proves the loop stopped scheduling.
-        return GATEWAY_LOOP_WEDGED
-    if tick_armed is not True:
-        # Witness could not be armed (bind failed); off-loop write means staleness is not proof.
-        return GATEWAY_LOOP_UNKNOWN
-    if witness is False:
-        # First miss. The probe above is miss #1, so ``tick_strikes - 1`` more attempts follow.
-        # One silent probe is NOT destructive authority: a short transient synchronous stall can outlast a
-        # single recv timeout, and killing a live gateway on it would be the exact false wedge #90502 exists
-        # to prevent.
-        sustained = _probe_loop_tick_socket_sustained(
-            pid, home, timeout=tick_timeout, strikes=tick_strikes - 1, gap_s=tick_gap_s, tcp_port=tcp_port_int
-        )
-        if sustained is False:
-            return GATEWAY_LOOP_WEDGED
-        if sustained is True:
-            return GATEWAY_LOOP_ALIVE  # Transient stall, not a wedge.
-        return GATEWAY_LOOP_UNKNOWN  # Witness vanished mid-window: ambiguity — never kill on it.
-    return GATEWAY_LOOP_UNKNOWN  # Armed but unreachable socket: ambiguity — never kill on it.
 
 
-def _escalate_wedged_gateway(pid: int, *, term_grace: float = 5.0, kill_wait: float = 5.0) -> bool:
-    """Bounded stop (SIGTERM, ``term_grace``, SIGKILL, ``kill_wait``) for a provably dead loop; True once gone.
-    Callers MUST have classified ``GATEWAY_LOOP_WEDGED`` first: escalating a merely busy gateway
-    bypasses the cron drain floor and SIGKILLs live work.
-
-    See #86684.
-    """
-    from gateway.status import get_process_start_time
-    expected_start_time = get_process_start_time(pid)
-    try:
-        terminate_pid(pid, force=False)
-    except (ProcessLookupError, PermissionError, OSError):
-        return _wait_for_pid_exit(pid, 1.0)
-    if _wait_for_pid_exit(pid, max(float(term_grace), 0.0)):
-        return True
-    try:
-        terminate_pid(pid, force=True, expected_start_time=expected_start_time)
-        print(f"⚠ Gateway PID {pid} unresponsive to SIGTERM; sent SIGKILL")
-    except (ProcessLookupError, PermissionError, OSError):
-        pass
-    return _wait_for_pid_exit(pid, max(float(kill_wait), 0.0))
 
 
 def _get_ancestor_pids() -> set[int]:
@@ -607,7 +400,7 @@ def _scan_gateway_pids(
     # trailing separator: the assignments parser strips one, so the systemd ``Environment=``
     # spelling (``HERMES_HOME=/root/.hermes/``) compares equal to the resolved home.
     current_home_lc = current_home.lower().replace("\\", "/").rstrip("/")
-    current_profile_arg = _profile_arg(current_home)
+    current_profile_arg = _service_identity.profile_arg(current_home)
     current_profile_name = current_profile_arg.split()[-1] if current_profile_arg else ""
     current_profile_name_lc = current_profile_name.lower()
 
@@ -769,7 +562,7 @@ def find_gateway_pids(exclude_pids: set | None = None, all_profiles: bool = Fals
     for pid in _get_service_pids(all_profiles=all_profiles):
         _append_unique_pid(pids, pid, _exclude)
     try:
-        include_restart_managers = not supports_systemd_services()
+        include_restart_managers = not _systemd_runtime.supports_services()
     except Exception:
         include_restart_managers = False
     for pid in _scan_gateway_pids(_exclude, all_profiles=all_profiles, include_restart_managers=include_restart_managers):
@@ -931,7 +724,7 @@ def find_windows_gateway_services(
 
 
 def _gateway_run_args_for_profile(profile: str) -> list[str]:
-    args = [get_python_path(), "-m", "hermes_cli.main"]
+    args = [_service_process.python_path(), "-m", "hermes_cli.main"]
     if profile != "default":
         args.extend(["--profile", profile])
     args.extend(["gateway", "run", "--replace"])
@@ -1116,20 +909,8 @@ def _spawn_gateway_restart_watcher(old_pid: int, run_argv: list[str]) -> bool:
     return True
 
 
-def _systemd_unit_is_active(system: bool) -> bool:
-    """``systemctl is-active`` == "active" for the installed unit in ``system`` scope, else False."""
-    if not get_systemd_unit_path(system=system).exists():
-        return False
-    try:
-        result = _run_systemctl(["is-active", get_service_name()], system=system, timeout=10, **_CAPTURE_TEXT)
-    except (RuntimeError, subprocess.TimeoutExpired):
-        return False
-    return result.stdout.strip() == "active"
 
 
-def _probe_systemd_service_running(system: bool = False) -> tuple[bool, bool]:
-    selected_system = _select_systemd_scope(system)
-    return selected_system, _systemd_unit_is_active(selected_system)
 
 
 def _parse_kv_pairs(items) -> dict[str, str]:
@@ -1137,67 +918,16 @@ def _parse_kv_pairs(items) -> dict[str, str]:
     return {k: v.strip() for k, v in (item.split("=", 1) for item in items if "=" in item)}
 
 
-def _systemctl_show(properties: tuple[str, ...], *, system: bool) -> dict[str, str]:
-    """``systemctl show --property a,b`` for the gateway unit as ``{key: value}``; {} on failure."""
-    try:
-        result = _run_systemctl(
-            ["show", get_service_name(), "--no-pager", "--property", ",".join(properties)],
-            system=_select_systemd_scope(system), timeout=10, **_CAPTURE_TEXT,
-        )
-    except (RuntimeError, subprocess.TimeoutExpired, OSError):
-        return {}
-    return _parse_kv_pairs(result.stdout.splitlines()) if result.returncode == 0 else {}
 
 
-def _unit_environment_value(unit_path: Path, name: str) -> str | None:
-    """Value of one ``Environment="NAME=…"`` directive in the unit file at *unit_path*, with
-    systemd's ``\\"``/``\\\\``/``%%`` quoting undone; None when the file or the key is absent."""
-    try:
-        text = unit_path.read_text(encoding="utf-8")
-    except OSError:
-        return None
-    for line in text.splitlines():
-        body = line.strip()
-        if not body.startswith("Environment="):
-            continue
-        body = body[len("Environment=") :].strip()
-        if body.startswith('"') and body.endswith('"'):
-            body = body[1:-1].replace('\\"', '"').replace("\\\\", "\\").replace("%%", "%")
-        if body.startswith(f"{name}="):
-            return body.split("=", 1)[1].strip() or None
-    return None
 
 
-def _hermes_home_pinned_by_unit(unit_path: Path) -> str | None:
-    """``HERMES_HOME`` pinned by the unit file at *unit_path*, or None when absent/unreadable."""
-    return _unit_environment_value(unit_path, "HERMES_HOME")
 
 
-def _hermes_home_from_systemd_unit_file(system: bool = False) -> str | None:
-    """``HERMES_HOME`` from the on-disk unit file - what refresh/compare already read, and reliable under ``sudo``."""
-    return _hermes_home_pinned_by_unit(get_systemd_unit_path(system=system))
 
 
-def _sync_hermes_home_from_systemd_unit(system: bool) -> None:
-    """Adopt a system-scope unit's ``HERMES_HOME``: under ``sudo`` it is stripped and HOME=/root, so
-    get_hermes_home() would pick the wrong profile for runtime-status/PID reads."""
-    if not system:
-        return
-    # On-disk unit first; ``systemctl show`` for units that only exist in the manager.
-    unit_home = (_hermes_home_from_systemd_unit_file(system=True) or "").strip()
-    if not unit_home:
-        env_line = _systemctl_show(("Environment",), system=True).get("Environment", "")
-        unit_home = _parse_kv_pairs(env_line.split()).get("HERMES_HOME", "").strip()
-    if unit_home and os.environ.get("HERMES_HOME", "").strip() != unit_home:
-        os.environ["HERMES_HOME"] = unit_home
 
 
-def _read_systemd_unit_properties(
-    system: bool = False,
-    properties: tuple[str, ...] = ("ActiveState", "SubState", "Result", "ExecMainStatus", "MainPID"),
-) -> dict[str, str]:
-    """Return selected ``systemctl show`` properties for the gateway unit."""
-    return _systemctl_show(properties, system=system)
 
 
 def _positive_pid(value) -> int | None:
@@ -1209,184 +939,28 @@ def _positive_pid(value) -> int | None:
     return pid if pid > 0 else None
 
 
-def _systemd_main_pid_from_props(props: dict[str, str]) -> int | None:
-    return _positive_pid(props.get("MainPID", "0") or "0")
 
 
-def _runtime_state_pid(state: dict | None) -> int:
-    """``pid`` recorded in a runtime-status dict; 0 when absent, unparsable, or non-positive."""
-    return _positive_pid((state or {}).get("pid", 0)) or 0
 
 
-def _systemd_main_pid(system: bool = False) -> int | None:
-    return _systemd_main_pid_from_props(_read_systemd_unit_properties(system=system))
 
 
-def _read_gateway_runtime_status() -> dict | None:
-    try:
-        from gateway.status import read_runtime_status
-        state = read_runtime_status()
-    except Exception:
-        return None
-    return state if isinstance(state, dict) else None
 
 
-def _systemd_cli_bits(system: bool) -> tuple[str, str, str]:
-    """``(sudo_prefix, scope_flag, user_flag)`` for printed hints: ``("sudo ", " --system", "")`` in
-    system scope, ``("", "", "--user ")`` in user scope."""
-    return ("sudo ", " --system", "") if system else ("", "", "--user ")
 
 
-def _wait_for_systemd_service_restart(
-    *,
-    system: bool = False,
-    previous_pid: int | None = None,
-    timeout: float | None = None,
-    replacement_observed: list[bool] | None = None,
-) -> bool:
-    """Wait for the gateway service to become active after a restart handoff."""
-    svc = get_service_name()
-    scope_label = _service_scope_label(system).capitalize()
-    if timeout is None:
-        timeout = _systemd_restart_wait_timeout(system=system)
-    deadline = time.monotonic() + timeout
-    printed_runtime_wait = False
-
-    while time.monotonic() < deadline:
-        props = _read_systemd_unit_properties(system=system)
-        active_state = props.get("ActiveState", "")
-        sub_state = props.get("SubState", "")
-        try:
-            from gateway.status import get_running_pid
-            new_pid = get_running_pid()
-        except Exception:
-            new_pid = None
-        new_pid = new_pid or _systemd_main_pid_from_props(props)
-
-        runtime_state = _read_gateway_runtime_status()
-        runtime_pid = _runtime_state_pid(runtime_state)
-        if (
-            previous_pid is not None
-            and replacement_observed is not None
-            and not replacement_observed
-            and any(p > 0 and p != previous_pid for p in (new_pid or 0, runtime_pid))
-        ):
-            replacement_observed.append(True)
-
-        if active_state == "active" and new_pid and (previous_pid is None or new_pid != previous_pid):
-            if runtime_pid != new_pid:
-                runtime_state = _read_gateway_runtime_status()
-                if runtime_state and _runtime_state_pid(runtime_state) != new_pid:
-                    runtime_state = None
-            gateway_state = (runtime_state or {}).get("gateway_state")
-            if gateway_state in ("running", "degraded"):
-                print(f"✓ {scope_label} service restarted (PID {new_pid})")
-                if gateway_state == "degraded":
-                    # Serving, but a configured platform is parked or retrying: a real restart, not a
-                    # failure — say so instead of waiting out the timeout and reporting one.
-                    print(f"⚠ {scope_label} gateway is DEGRADED — see `hermes gateway status`")
-                return True
-            if gateway_state == "startup_failed":
-                reason = (runtime_state or {}).get("exit_reason") or "startup failed"
-                print(
-                    f"⚠ {scope_label} service process restarted (PID {new_pid}), but gateway startup failed: {reason}"
-                )
-                return False
-            if not printed_runtime_wait:
-                print(f"⏳ {scope_label} service process started (PID {new_pid}); waiting for gateway runtime...")
-                printed_runtime_wait = True
-
-        if active_state == "activating" and sub_state == "auto-restart":
-            time.sleep(1)
-            continue
-
-        if _systemd_unit_is_start_limited(props):
-            _print_systemd_start_limit_wait(system=system)
-            return False
-
-        time.sleep(2)
-
-    sudo, _, user_flag = _systemd_cli_bits(system)
-    print(
-        f"⚠ {scope_label} service did not become active within {int(timeout)}s.\n"
-        f"  Check status: {sudo}hermes gateway status\n"
-        f"  Check logs:   journalctl {user_flag}-u {svc} -l --since '2 min ago'"
-    )
-    return False
 
 
-def _systemd_restart_wait_timeout(system: bool = False) -> float:
-    """Cover systemd's relaunch delays before applying the runtime wait floor."""
-    from gateway.shutdown_forensics import parse_systemd_duration_to_us
-    props = _read_systemd_unit_properties(system=system, properties=("RestartUSec", "TimeoutStartUSec"))
-    supervisor_budget = 0.0
-    for name in ("RestartUSec", "TimeoutStartUSec"):
-        raw = props.get(name, "")
-        duration_us = int(raw) if raw.isdigit() else parse_systemd_duration_to_us(raw)
-        if duration_us is not None:
-            supervisor_budget += duration_us / 1_000_000
-    return 60.0 + supervisor_budget
 
 
-def _systemd_unit_is_start_limited(props: dict[str, str]) -> bool:
-    return "start-limit-hit" in (props.get("Result", "").lower(), props.get("SubState", "").lower())
 
 
-def _systemd_error_indicates_start_limit(exc: subprocess.CalledProcessError) -> bool:
-    parts: list[str] = []
-    for attr in ("stderr", "stdout", "output"):
-        value = getattr(exc, attr, None)
-        if value:
-            parts.append(value.decode(errors="replace") if isinstance(value, bytes) else str(value))
-    text = "\n".join(parts).lower()
-    return "start-limit-hit" in text or "start request repeated too quickly" in text or "start-limit" in text
 
 
-def _systemd_service_is_start_limited(system: bool = False) -> bool:
-    return _systemd_unit_is_start_limited(_read_systemd_unit_properties(system=system))
 
 
-def _print_systemd_start_limit_wait(system: bool = False) -> None:
-    svc = get_service_name()
-    scope_label = _service_scope_label(system).capitalize()
-    sudo, scope_flag, user_flag = _systemd_cli_bits(system)
-    print(f"⏳ {scope_label} service is temporarily rate-limited by systemd.")
-    print("  systemd is refusing another immediate start after repeated exits.")
-    print(f"  Wait for the start-limit window to expire, then run: {sudo}hermes gateway restart{scope_flag}")
-    print(f"  Or clear the failed state manually: systemctl {user_flag}reset-failed {svc}")
-    print(f"  Check logs: journalctl {user_flag}-u {svc} -l --since '5 min ago'")
 
 
-def _recover_pending_systemd_restart(system: bool = False, previous_pid: int | None = None) -> bool:
-    """Recover a planned service restart that is stuck in systemd state."""
-    props = _read_systemd_unit_properties(system=system)
-    if not props:
-        return False
-
-    try:
-        from gateway.status import read_runtime_status
-    except Exception:
-        return False
-
-    if not (read_runtime_status() or {}).get("restart_requested"):
-        return False
-
-    active_state = props.get("ActiveState", "")
-    if active_state == "activating" and props.get("SubState", "") == "auto-restart":
-        print("⏳ Service restart already pending — waiting for systemd relaunch...")
-        return _wait_for_systemd_service_restart(system=system, previous_pid=previous_pid)
-
-    if active_state == "failed" and (
-        props.get("ExecMainStatus", "") == str(GATEWAY_SERVICE_RESTART_EXIT_CODE)
-        or props.get("Result", "") == "exit-code"
-    ):
-        svc = get_service_name()
-        print(f"↻ Clearing failed state for pending {_service_scope_label(system)} service restart...")
-        _run_systemctl(["reset-failed", svc], system=system, check=False, timeout=30)
-        _run_systemctl(["start", svc], system=system, check=False, timeout=90)
-        return _wait_for_systemd_service_restart(system=system, previous_pid=previous_pid)
-
-    return False
 
 
 def _parse_launchd_pid_from_list_output(output: str) -> int | None:
@@ -1494,12 +1068,13 @@ def get_gateway_runtime_snapshot(system: bool = False) -> GatewayRuntimeSnapshot
             pass  # Fall through to the legacy label on any detection error.
         return GatewayRuntimeSnapshot(manager="docker (foreground)", gateway_pids=gateway_pids)
 
-    if supports_systemd_services():
-        selected_system, service_running = _probe_systemd_service_running(system=system)
-        scope_label = _service_scope_label(selected_system)
+    if _systemd_runtime.supports_services():
+        selected_system = _systemd_runtime.select_scope(system)
+        service_running = _systemd_runtime.unit_is_active(selected_system)
+        scope_label = _systemd_runtime.scope_label(selected_system)
         return GatewayRuntimeSnapshot(
             manager=f"systemd ({scope_label})",
-            service_installed=get_systemd_unit_path(system=selected_system).exists(),
+            service_installed=_systemd_identity.unit_path(system=selected_system).exists(),
             service_running=service_running,
             gateway_pids=gateway_pids,
             service_scope=scope_label,
@@ -1714,7 +1289,7 @@ def _reap_unsupervised_gateway_orphans(extra_exclude: set | None = None) -> bool
     then lets a live orphan keep the webhook port while a restart stacks a duplicate. No-op where a
     supervisor exists (there ``gateway restart`` is a transient command). ``extra_exclude``: already killed."""
     try:
-        supervised_host = supports_systemd_services()
+        supervised_host = _systemd_runtime.supports_services()
     except Exception:
         supervised_host = True
     if supervised_host:
@@ -1790,10 +1365,10 @@ def _reap_unsupervised_gateway_orphans(extra_exclude: set | None = None) -> bool
 def _reaper_exclusion_pids(extra_exclude: set | None) -> set[int]:
     """PIDs the orphan reaper must never kill: self, caller extras, service-managed, recorded."""
     own = {os.getpid()} | (extra_exclude or set())
-    # Service-managed gateways are never orphans (on macOS supports_systemd_services() is False, so a
+    # Service-managed gateways are never orphans (on macOS _systemd_runtime.supports_services() is False, so a
     # launchd gateway would otherwise be SIGTERM'd); all_profiles because the scan sees siblings too.
     with contextlib.suppress(Exception):
-        # This covers macOS launchd (supports_systemd_services() is False there, so without this the launchd
+        # This covers macOS launchd (_systemd_runtime.supports_services() is False there, so without this the launchd
         # gateway looks like an unsupervised orphan and gets SIGTERM'd, causing launchd to restart it — or
         # leaving it down under KeepAlive.SuccessfulExit=false) and any systemd unit reachable from a host
         # that got past the gate above (#83683, #85344).
@@ -1870,16 +1445,6 @@ def _force_kill_survivors(survivors, *, kill=None) -> None:
             kill(pid, getattr(signal, "SIGKILL", signal.SIGTERM))
 
 
-def _mark_planned_stop(pid: int | None = None) -> None:
-    """Best-effort planned-stop marker for ``pid`` (default: the recorded gateway PID)."""
-    try:
-        from gateway.status import get_running_pid, write_planned_stop_marker
-        if pid is None:
-            pid = get_running_pid(cleanup_stale=False)
-        if pid is not None:
-            write_planned_stop_marker(pid)
-    except Exception:
-        pass
 
 
 def stop_profile_gateway() -> bool:
@@ -1917,7 +1482,7 @@ def stop_profile_gateway() -> bool:
         if not _drain_gateway_pid(pid, _windows_stop_drain_timeout()):
             _force_terminate_known_gateway_pids({pid: expected_start_time})
     else:
-        _mark_planned_stop(pid)
+        _signal_restart._mark_planned_stop(pid)
         try:
             os.kill(pid, signal.SIGTERM)
         except ProcessLookupError:
@@ -1953,30 +1518,10 @@ def is_linux() -> bool:
 from hermes_constants import is_container, is_termux, is_wsl
 
 
-def _wsl_systemd_operational() -> bool:
-    """WSL2 with ``systemd=true`` in wsl.conf has working systemd; WSL1/without it does not."""
-    return _systemd_operational(system=True)
 
 
-def _systemd_operational(system: bool = False) -> bool:
-    """Return True when the requested systemd scope is usable."""
-    try:
-        result = _run_systemctl(["is-system-running"], system=system, timeout=5, **_CAPTURE_TEXT)
-    except (RuntimeError, subprocess.TimeoutExpired, OSError):
-        return False
-    # "running", "degraded", "starting" all mean systemd is PID 1
-    return result.stdout.strip().lower() in {"running", "degraded", "starting", "initializing"}
 
 
-def supports_systemd_services() -> bool:
-    if not is_linux() or is_termux() or shutil.which("systemctl") is None:
-        return False
-    if is_wsl():
-        return _wsl_systemd_operational()
-    if is_container():
-        # A container whose init is systemd (nspawn, some k8s pods) behaves like a host.
-        return _systemd_operational(system=False) or _systemd_operational(system=True)
-    return True
 
 
 def is_macos() -> bool:
@@ -2095,470 +1640,136 @@ def _windows_gateway_breakaway_state() -> bool | None:
 # Service Configuration
 # =============================================================================
 
-_SERVICE_BASE = "hermes-gateway"
 SERVICE_DESCRIPTION = "Hermes Agent Gateway - Messaging Platform Integration"
 
-_SYSTEM_UNIT_DIR = Path("/etc/systemd/system")
 
 
-def _native_service_homes() -> set[Path]:
-    """This process's native default home plus, when root under sudo, the invoking user's (see
-    ``_profile_suffix`` for why sudo matters)."""
-    from hermes_constants import _get_platform_default_hermes_home, sudo_invoker_default_home
-
-    homes = {_get_platform_default_hermes_home().resolve()}
-    sudo_home = sudo_invoker_default_home()
-    if sudo_home is not None:
-        homes.add(sudo_home.resolve())
-    return homes
 
 
-def _bare_unit_pinned_home() -> Path | None:
-    """Resolved ``HERMES_HOME`` pinned by an installed ``hermes-gateway.service``, or None. The unit is the
-    one naming basis that holds still across the sudo mid-command switch (see ``_profile_suffix``) and it
-    covers every elevated identity — ``sudo -i`` and cron included, where SUDO_USER is absent.
-
-    Linux- and root-gated: a systemd unit is not an identity authority for launchd labels, Windows
-    scheduled tasks, or s6 slots, which share ``_profile_suffix()``, and only an elevated process ever
-    operates the system unit — an unprivileged user-scope command must keep naming its own units, or a
-    bare system unit pinning ``profiles/<name>`` would alias that profile onto the user's default unit.
-    ``is_linux()`` is a plain ``sys.platform`` test; ``supports_systemd_services()`` would be wrong here,
-    since it can shell out to ``systemctl is-system-running`` on WSL/containers and this runs on every
-    name resolution.
-    """
-    if not is_linux() or os.geteuid() != 0:  # windows-footgun: ok — behind is_linux()
-        return None
-    pinned = _hermes_home_pinned_by_unit(_SYSTEM_UNIT_DIR / f"{_SERVICE_BASE}.service")
-    if not pinned:
-        return None
-    try:
-        return Path(pinned).expanduser().resolve()
-    except (RuntimeError, ValueError):  # hand-edited unit: ``~nouser`` or an embedded NUL
-        return None
 
 
-def _profile_suffix() -> str:
-    """Service-name suffix for HERMES_HOME: "" for a home that owns the bare name, the profile name for
-    ``<root>/profiles/<name>``, else a short hash of the path.
-
-    Bare-name owners: this process's platform-native default (``~/.hermes``), under sudo the invoking
-    user's native default, and the home pinned by an installed ``hermes-gateway.service``. Under sudo the
-    naming basis moves MID-COMMAND — sudo strips HERMES_HOME and sets HOME=/root, then
-    ``_sync_hermes_home_from_systemd_unit()`` adopts the unit's own HERMES_HOME into ``os.environ`` — so a
-    basis derived from the process alone names one unit before the adoption and another after it. The
-    unit-pinned check must precede the profile branch: ``sudo hermes gateway install --system`` resolves
-    the BARE name from root's default, then pins the invoking user's remapped home, so the bare unit
-    legitimately carries a ``<root>/profiles/<name>`` home.
-
-    The bare name is deliberately NOT tied to ``get_default_hermes_root()``: that helper treats any
-    HERMES_HOME outside ``~/.hermes`` (Docker ``/opt/data``, a temp dir) as "the root itself", which let a
-    temp-home harness resolve to the default profile's ``hermes-gateway`` unit and uninstall the
-    production gateway. Service names are host-wide identities; a home with no installed bare unit and
-    no native default keeps its own suffix.
-    """
-    import hashlib
-    from hermes_constants import get_default_hermes_root
-    home = get_hermes_home().resolve()
-    if home in _native_service_homes() or home == _bare_unit_pinned_home():
-        return ""
-    name = profile_name_from_home(home, get_default_hermes_root().resolve())
-    return name or hashlib.sha256(str(home).encode()).hexdigest()[:8]
 
 
 def _current_profile_name() -> str:
     """Profile id relative to the profile ROOT: ``default`` for the root itself (Docker's ``/opt/data``
     included), ``<name>`` for ``<root>/profiles/<name>``, else the service hash. s6 slots and the
-    multiplexer ask which PROFILE this is; ``_profile_suffix()`` answers which HOST SERVICE this is."""
+    multiplexer ask which PROFILE this is; ``_service_identity.service_suffix()`` answers which HOST SERVICE this is."""
     from hermes_constants import profile_name_for_home
-    return profile_name_for_home(get_hermes_home()) or _profile_suffix()
+    return profile_name_for_home(get_hermes_home()) or _service_identity.service_suffix()
 
 
-def _profile_arg(hermes_home: str | None = None, default_root: str | Path | None = None) -> str:
-    """``--profile <name>`` for ``<root>/profiles/<name>``, else "". *hermes_home*/*default_root* let a
-    sudo/root process generate a unit for another user (the defaults would refer to root)."""
-    from hermes_constants import get_default_hermes_root
-    home = Path(hermes_home or str(get_hermes_home())).resolve()
-    default = Path(default_root).resolve() if default_root else get_default_hermes_root().resolve()
-    if home == default:
-        return ""
-    name = profile_name_from_home(home, default)
-    return f"--profile {name}" if name else ""
 
 
-def get_service_name() -> str:
-    """Systemd service name: ``hermes-gateway`` for default HERMES_HOME, ``hermes-gateway-<profile>``
-    or ``-<hash>`` otherwise."""
-    suffix = _profile_suffix()
-    return f"{_SERVICE_BASE}-{suffix}" if suffix else _SERVICE_BASE
 
 
-def user_systemd_unit_dir() -> Path:
-    """``$XDG_CONFIG_HOME/systemd/user`` (``~/.config`` only as the spec's default).
-
-    Hardcoding ``~/.config`` made every unit probe silently false-negative on a host that moves
-    XDG_CONFIG_HOME — doctor then reported no gateway unit while systemd was running ours.
-    """
-    config_home = os.environ.get("XDG_CONFIG_HOME", "").strip()
-    base = Path(config_home) if config_home else Path.home() / ".config"
-    return base / "systemd" / "user"
 
 
-def get_systemd_unit_path(system: bool = False) -> Path:
-    name = get_service_name()
-    if system:
-        return _SYSTEM_UNIT_DIR / f"{name}.service"
-    return user_systemd_unit_dir() / f"{name}.service"
 
 
-class UserSystemdUnavailableError(RuntimeError):
-    """``systemctl --user`` cannot reach the user D-Bus session (fresh SSH sessions with linger off,
-    so ``/run/user/$UID/bus`` never exists). ``args[0]`` is a user-facing remediation message."""
 
 
-class SystemScopeRequiresRootError(RuntimeError):
-    """System-scope gateway operation attempted as non-root. Typed (not ``sys.exit(1)``) so the setup
-    wizard can print remediation; ``args`` = (message, action) and ``str(e)`` is the message only."""
-
-    def __str__(self) -> str:
-        return self.args[0] if self.args else ""
 
 
-def _user_runtime_dir() -> Path:
-    """``$XDG_RUNTIME_DIR`` or ``/run/user/<uid>`` (regardless of existence)."""
-    return Path(os.environ.get("XDG_RUNTIME_DIR") or f"/run/user/{os.getuid()}")  # windows-footgun: ok — POSIX systemd helper, never invoked on Windows
 
 
-def _user_dbus_socket_path() -> Path:
-    """Return the expected per-user D-Bus socket path (regardless of existence)."""
-    return _user_runtime_dir() / "bus"
 
 
-def _user_systemd_private_socket_path() -> Path:
-    """Return the per-user systemd private socket path (regardless of existence)."""
-    return _user_runtime_dir() / "systemd" / "private"
 
 
-def _path_exists_safe(path: Path) -> bool:
-    """``Path.exists()`` treating an inaccessible path as absent: a leaked ``XDG_RUNTIME_DIR`` from
-    another user (``/run/user/0`` is 0700) would otherwise crash the preflight with EACCES.
-
-    ``Path.exists()`` only swallows a subset of ``OSError`` (ENOENT/ENOTDIR/ EBADF/ELOOP); ``EACCES`` still
-    propagates. When ``XDG_RUNTIME_DIR`` leaks from another user — the classic ``su``/``sudo -u`` from a
-    root shell case, where ``/run/user/0`` is ``0700 root:root`` — stat-ing a socket underneath it raises
-    ``PermissionError`` that escapes the systemd preflight as a raw traceback (#86558). An unreadable path
-    is, for our purposes, not reachable.
-    """
-    try:
-        return path.exists()
-    except OSError:  # e.g. EACCES on another user's runtime dir
-        return False
 
 
-def _runtime_dir_is_ours(runtime_dir: str) -> bool:
-    """True when *runtime_dir* exists and is owned by our uid (a leaked foreign XDG_RUNTIME_DIR must not be trusted)."""
-    try:
-        return Path(runtime_dir).stat().st_uid == os.getuid()  # windows-footgun: ok — POSIX systemd helper, never invoked on Windows
-    except OSError:
-        return False
 
 
-def _user_systemd_socket_ready() -> bool:
-    """True when the user D-Bus socket OR the per-user systemd private socket exists (some distros
-    expose only the latter and ``systemctl --user`` still works). Inaccessible counts as not-ready."""
-    return _path_exists_safe(_user_dbus_socket_path()) or _path_exists_safe(_user_systemd_private_socket_path())
 
 
-def _ensure_user_systemd_env() -> None:
-    """Set XDG_RUNTIME_DIR / DBUS_SESSION_BUS_ADDRESS so ``systemctl --user`` works on headless (SSH)
-    hosts; an XDG_RUNTIME_DIR leaked from another user is replaced with our own ``/run/user/{uid}``.
-
-    An ``XDG_RUNTIME_DIR`` that leaked from another user (``su``/``sudo -u`` from root, where the env still
-    points at ``/run/user/0``) is dropped in favour of our own ``/run/user/{uid}`` so ``systemctl --user``
-    targets the right instance instead of an unreadable foreign socket (#86558).
-    """
-    uid = os.getuid()  # windows-footgun: ok — POSIX systemd helper, never invoked on Windows
-    xdg = os.environ.get("XDG_RUNTIME_DIR")
-    if (not xdg or not _runtime_dir_is_ours(xdg)) and _runtime_dir_is_ours(f"/run/user/{uid}"):
-        os.environ["XDG_RUNTIME_DIR"] = f"/run/user/{uid}"
-
-    if "DBUS_SESSION_BUS_ADDRESS" not in os.environ:
-        bus_path = Path(os.environ.get("XDG_RUNTIME_DIR", f"/run/user/{uid}")) / "bus"
-        if _path_exists_safe(bus_path):
-            os.environ["DBUS_SESSION_BUS_ADDRESS"] = f"unix:path={bus_path}"
 
 
-def _wait_for_user_dbus_socket(timeout: float = 3.0) -> bool:
-    """Poll up to ``timeout`` s for a user systemd control socket (user@.service takes a moment after enable-linger)."""
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
-        if _user_systemd_socket_ready():
-            _ensure_user_systemd_env()
-            return True
-        time.sleep(0.2)
-    return _user_systemd_socket_ready()
 
 
-def _wait_for_target_user_bus(uid: int, timeout: float = 5.0) -> bool:
-    """Poll for ``/run/user/<uid>/bus`` of ANOTHER account (the system unit's ``User=`` while root installs).
-    Only the D-Bus socket counts — ``systemd/private`` alone is enough for ``systemctl --user`` but not for
-    the ``systemd-run --user`` that restart-safe workers need. Never adopts anything into our env."""
-    bus = Path(f"/run/user/{uid}/bus")
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
-        if _path_exists_safe(bus):
-            return True
-        time.sleep(0.2)
-    return _path_exists_safe(bus)
 
 
-def _loginctl_enable_linger(username: str) -> subprocess.CompletedProcess:
-    """``loginctl enable-linger <username>`` (check=False, 30s); exceptions propagate to the caller."""
-    return subprocess.run(["loginctl", "enable-linger", username], check=False, timeout=30, **_CAPTURE_TEXT)
 
 
-def _completed_process_detail(result) -> str:
-    """stderr, else stdout, else ``exit <rc>`` — stripped."""
-    return (result.stderr or result.stdout or f"exit {result.returncode}").strip()
 
 
-def _preflight_user_systemd(*, auto_enable_linger: bool = True) -> None:
-    """Ensure ``systemctl --user`` can reach user-scope systemd; raise UserSystemdUnavailableError otherwise.
-    No-op when a control socket exists; else wait briefly if linger is on, or (``auto_enable_linger``)
-    try ``loginctl enable-linger`` (non-root works when polkit permits)."""
-    _ensure_user_systemd_env()
-    if _user_systemd_socket_ready():
-        return
-
-    import getpass
-    username = getpass.getuser()
-    linger_enabled, linger_detail = get_systemd_linger_status()
-    sudo_hint = f"  sudo loginctl enable-linger {username}"
-
-    if linger_enabled is True:
-        if _wait_for_user_dbus_socket(timeout=3.0):
-            return
-        # Linger is on but socket still missing — unusual; fall through to error.
-        _raise_user_systemd_unavailable(
-            username,
-            reason="User systemd control sockets are missing even though linger is enabled.",
-            fix_hint=(
-                f"  systemctl start user@{os.getuid()}.service\n"  # windows-footgun: ok — POSIX systemd helper, never invoked on Windows
-                "  (may require sudo; try again after the command succeeds)"
-            ),
-        )
-
-    if auto_enable_linger and shutil.which("loginctl"):
-        try:
-            result = _loginctl_enable_linger(username)
-        except Exception as exc:
-            _raise_user_systemd_unavailable(
-                username, reason=f"loginctl enable-linger failed ({exc}).", fix_hint=sudo_hint
-            )
-        else:
-            if result.returncode == 0:
-                if _wait_for_user_dbus_socket(timeout=5.0):
-                    print(f"✓ Enabled linger for {username} — user D-Bus now available")
-                    return
-                # enable-linger succeeded but the socket never appeared.
-                _raise_user_systemd_unavailable(
-                    username,
-                    reason="Linger was enabled, but the user D-Bus socket did not appear.",
-                    fix_hint=(
-                        "  Log out and log back in, then re-run the command.\n"
-                        f"  Or reboot and run: systemctl --user start {get_service_name()}"
-                    ),
-                )
-            _raise_user_systemd_unavailable(
-                username,
-                reason=f"loginctl enable-linger was denied: {_completed_process_detail(result)}",
-                fix_hint=sudo_hint,
-            )
-
-    _raise_user_systemd_unavailable(
-        username,
-        reason=f"User D-Bus session is not available ({linger_detail or 'linger disabled'}).",
-        fix_hint=sudo_hint,
-    )
 
 
-def _raise_user_systemd_unavailable(username: str, *, reason: str, fix_hint: str) -> None:
-    """Build a user-facing error message and raise UserSystemdUnavailableError."""
-    msg = (
-        f"{reason}\n"
-        "  systemctl --user cannot reach the user D-Bus session in this shell.\n"
-        "\n"
-        "  To fix:\n"
-        f"{fix_hint}\n"
-        "\n"
-        "  Alternative: run the gateway in the foreground (stays up until\n"
-        "  you exit / close the terminal):\n"
-        "    hermes gateway run"
-    )
-    raise UserSystemdUnavailableError(msg)
 
 
-def _systemctl_cmd(system: bool = False) -> list[str]:
-    if not system:
-        _ensure_user_systemd_env()
-    return ["systemctl"] if system else ["systemctl", "--user"]
 
 
-def _run_systemctl(args: list[str], *, system: bool = False, **kwargs) -> subprocess.CompletedProcess:
-    """Run systemctl; raise RuntimeError (not raw FileNotFoundError) if missing, for callers bypassing
-    ``supports_systemd_services()``."""
-    try:
-        return subprocess.run(_systemctl_cmd(system) + args, **kwargs)
-    except FileNotFoundError:
-        from hermes_cli.gateway_command_errors import SystemctlUnavailableError
-        raise SystemctlUnavailableError() from None
 
 
-def _service_scope_label(system: bool = False) -> str:
-    return "system" if system else "user"
 
 
-def get_installed_systemd_scopes() -> list[str]:
-    scopes: list[str] = []
-    seen_paths: set[Path] = set()
-    for system, label in ((False, "user"), (True, "system")):
-        unit_path = get_systemd_unit_path(system=system)
-        if unit_path not in seen_paths and unit_path.exists():
-            scopes.append(label)
-            seen_paths.add(unit_path)
-    return scopes
 
 
-def has_conflicting_systemd_units() -> bool:
-    return len(get_installed_systemd_scopes()) > 1
 
 
 # Legacy pre-rename names: explicit allowlist (NOT a glob) so profile and third-party units never match.
-_LEGACY_SERVICE_NAMES: tuple[str, ...] = ("hermes.service",)
 
 # ExecStart markers identifying a unit as running our gateway; a legacy unit is flagged only if one matches.
-_LEGACY_UNIT_EXECSTART_MARKERS: tuple[str, ...] = (
-    "hermes_cli.main gateway",
-    "hermes_cli/main.py gateway",
-    "gateway/run.py",
-    " hermes gateway ",
-    "/hermes gateway ",
-)
 
 
-def _legacy_unit_search_paths() -> list[tuple[bool, Path]]:
-    """``[(is_system, base_dir), ...]`` to scan for legacy units; factored out so tests can monkeypatch."""
-    return [(False, user_systemd_unit_dir()), (True, _SYSTEM_UNIT_DIR)]
 
 
-def _find_legacy_hermes_units() -> list[tuple[str, Path, bool]]:
-    """``[(unit_name, unit_path, is_system)]`` for legacy gateway units (e.g. ``hermes.service``), which
-    fight the current unit for the bot token (SIGTERM flap loop). Explicit name allowlist + ExecStart
-    marker check so profile/third-party units never match; no mutation.
-
-    Detects unit files installed by older Hermes versions that used a different service name (e.g. When both
-    a legacy unit and the current ``hermes-gateway.service`` are active, they fight over the same bot token
-    — the PR #5646 signal-recovery change turns this into a 30-second SIGTERM flap loop.
-    """
-    results: list[tuple[str, Path, bool]] = []
-    for is_system, base in _legacy_unit_search_paths():
-        for name in _LEGACY_SERVICE_NAMES:
-            unit_path = base / name
-            try:
-                if not unit_path.exists():
-                    continue
-                text = unit_path.read_text(encoding="utf-8", errors="ignore")
-            except (OSError, PermissionError):
-                continue
-            if any(marker in text for marker in _LEGACY_UNIT_EXECSTART_MARKERS):
-                results.append((name, unit_path, is_system))
-    return results
 
 
-def has_legacy_hermes_units() -> bool:
-    """Return True when any legacy Hermes gateway unit files exist."""
-    return bool(_find_legacy_hermes_units())
 
 
 def print_legacy_unit_warning() -> None:
     """Warn about installed legacy gateway units; prints nothing when there are none."""
-    legacy = _find_legacy_hermes_units()
+    legacy = _systemd_legacy.find_units()
     if not legacy:
         return
     print_warning("Legacy Hermes gateway unit(s) detected from an older install:")
-    for name, path, is_system in legacy:
-        print_info(f"    {path}  ({_service_scope_label(is_system)} scope)")
+    for _name, path, is_system in legacy:
+        print_info(f"    {path}  ({_systemd_runtime.scope_label(is_system)} scope)")
     print_info("  These run alongside the current hermes-gateway service and")
     print_info("  cause SIGTERM flap loops — both try to use the same bot token.")
     print_info("  Remove them with:")
     print_info("    hermes gateway migrate-legacy")
 
 
-def remove_legacy_hermes_units(interactive: bool = True, dry_run: bool = False) -> tuple[int, list[Path]]:
-    """Stop, disable, and remove legacy gateway units. ``interactive=False`` skips the prompt; ``dry_run``
-    only lists. Returns ``(removed_count, remaining_paths)`` (remaining: e.g. system-scope when not root)."""
-    legacy = _find_legacy_hermes_units()
+def remove_legacy_hermes_units(
+    interactive: bool = True,
+    dry_run: bool = False,
+) -> tuple[int, list[Path]]:
+    """Prompt in the CLI; delegate mutation to the systemd legacy owner."""
+    legacy = _systemd_legacy.find_units()
     if not legacy:
         print("No legacy Hermes gateway units found.")
         return 0, []
 
     print()
     print("Legacy Hermes gateway unit(s) found:")
-    for name, path, is_system in legacy:
-        print(f"  {path}  ({_service_scope_label(is_system)} scope)")
+    for _name, path, is_system in legacy:
+        print(f"  {path}  ({_systemd_runtime.scope_label(is_system)} scope)")
     print()
 
     if dry_run:
         print("(dry-run — nothing removed)")
-        return 0, [p for _, p, _ in legacy]
-
+        return 0, [path for _, path, _ in legacy]
     if interactive and not prompt_yes_no("Remove these legacy units?", True):
         print("Skipped. Run again with: hermes gateway migrate-legacy")
-        return 0, [p for _, p, _ in legacy]
+        return 0, [path for _, path, _ in legacy]
 
-    removed = 0
-    remaining: list[Path] = []
-
-    def _remove_units(units: list[tuple[str, Path]], *, system: bool) -> None:
-        nonlocal removed
-        for name, path in units:
-            try:
-                _run_systemctl(["stop", name], system=system, check=False, timeout=90)
-                _run_systemctl(["disable", name], system=system, check=False, timeout=30)
-                path.unlink(missing_ok=True)
-                print(f"  ✓ Removed {path}")
-                removed += 1
-            except (OSError, RuntimeError) as e:
-                print(f"  ⚠ Could not remove {path}: {e}")
-                remaining.append(path)
-        with contextlib.suppress(RuntimeError):
-            _run_systemctl(["daemon-reload"], system=system, check=False, timeout=30)
-
-    user_units = [(n, p) for n, p, is_sys in legacy if not is_sys]
-    system_units = [(n, p) for n, p, is_sys in legacy if is_sys]
-    if user_units:
-        _remove_units(user_units, system=False)
-
-    # System-scope removal (needs root)
-    if system_units:
-        if os.geteuid() != 0:  # windows-footgun: ok — Linux systemd removal path, guarded by `if system == "Linux"` / systemd-only branch
-            print()
-            print_warning("System-scope legacy units require root to remove.")
-            print_info("  Re-run with: sudo hermes gateway migrate-legacy")
-            remaining.extend(path for _, path in system_units)
-        else:
-            _remove_units(system_units, system=True)
-
+    removed, remaining = _systemd_legacy.remove_units()
+    for _name, path, _is_system in legacy:
+        if path not in remaining and not path.exists():
+            print(f"  ✓ Removed {path}")
+    for path in remaining:
+        print(f"  ⚠ Could not remove {path}")
     print()
     if remaining:
         print_warning(f"{len(remaining)} legacy unit(s) still present — see messages above.")
     else:
         print_success(f"Removed {removed} legacy unit(s).")
-
     return removed, remaining
 
 
 def print_systemd_scope_conflict_warning() -> None:
-    scopes = get_installed_systemd_scopes()
+    scopes = _systemd_runtime.installed_scopes()
     if len(scopes) < 2:
         return
 
@@ -2573,7 +1784,7 @@ def print_systemd_scope_conflict_warning() -> None:
 def refuses_container_user_scope_install(system: bool) -> bool:
     """True (after printing the guidance) when a fresh USER-scope unit was requested inside a container.
 
-    A systemd container passes ``supports_systemd_services()`` on purpose so ``--system`` keeps working,
+    A systemd container passes ``_systemd_runtime.supports_services()`` on purpose so ``--system`` keeps working,
     but a user unit there is not container-scoped: the unit file and its ``default.target.wants`` symlink
     land in ``~/.config/systemd/user`` — commonly the host's own home bind-mounted in — so the host's
     ``systemd --user`` enables it too and a second gateway polls the same bot token outside the container.
@@ -2596,42 +1807,10 @@ def refuses_container_user_scope_install(system: bool) -> bool:
     return True
 
 
-def _require_root_for_system_service(action: str) -> None:
-    if os.geteuid() != 0:  # windows-footgun: ok — POSIX systemd helper, never invoked on Windows
-        raise SystemScopeRequiresRootError(f"System gateway {action} requires root. Re-run with sudo.", action)
 
 
-def _system_service_identity(run_as_user: str | None = None) -> tuple[str, str, str, int]:
-    import getpass
-    import grp
-    import pwd
-    username = (
-        run_as_user or os.getenv("SUDO_USER") or os.getenv("USER") or os.getenv("LOGNAME") or getpass.getuser()
-    ).strip()
-    if not username:
-        raise ValueError("Could not determine which user the gateway service should run as")
-    if username == "root" and not run_as_user:
-        raise ValueError(
-            "Refusing to install the gateway system service as root; pass --run-as-user root to override (e.g. in LXC containers)"
-        )
-    if username == "root":
-        print_warning("Installing gateway service to run as root.")
-        print_info("  This is fine for LXC/container environments but not recommended on bare-metal hosts.")
-
-    try:
-        user_info = pwd.getpwnam(username)
-    except KeyError as e:
-        raise ValueError(f"Unknown user: {username}") from e
-    return username, grp.getgrgid(user_info.pw_gid).gr_name, user_info.pw_dir, user_info.pw_uid
 
 
-def _read_systemd_user_from_unit(unit_path: Path) -> str | None:
-    if not unit_path.exists():
-        return None
-    for line in unit_path.read_text(encoding="utf-8").splitlines():
-        if line.startswith("User="):
-            return line.split("=", 1)[1].strip() or None
-    return None
 
 
 def _default_system_service_user() -> str | None:
@@ -2678,62 +1857,22 @@ def install_linux_gateway_from_setup(force: bool = False, enable_on_startup: boo
             if not run_as_user:
                 print_error("  Enter a username.")
 
-        systemd_install(force=force, system=True, run_as_user=run_as_user, enable_on_startup=enable_on_startup)
+        _systemd_lifecycle.install(force=force, system=True, run_as_user=run_as_user, enable_on_startup=enable_on_startup)
         return scope, True
 
     if refuses_container_user_scope_install(system=False):
         return scope, False
-    systemd_install(force=force, system=False, enable_on_startup=enable_on_startup)
+    _systemd_lifecycle.install(force=force, system=False, enable_on_startup=enable_on_startup)
     return scope, True
 
 
 
-def get_systemd_linger_status(username: str | None = None) -> tuple[bool | None, str]:
-    """Linger status for *username* or the current user when omitted.
-
-    System-scope gateway installation runs as root but the service runs as a
-    configured target user, so querying the caller would validate the wrong
-    user manager.
-    """
-    if is_termux():
-        return None, "not supported in Termux"
-    if not is_linux():
-        return None, "not supported on this platform"
-    if not shutil.which("loginctl"):
-        return None, "loginctl not found"
-
-    if username is None:
-        username = os.getenv("USER") or os.getenv("LOGNAME")
-    if not username:
-        try:
-            import pwd
-            username = pwd.getpwuid(os.getuid()).pw_name  # windows-footgun: ok — POSIX loginctl helper, never invoked on Windows
-        except Exception:
-            return None, "could not determine current user"
-
-    try:
-        result = subprocess.run(
-            ["loginctl", "show-user", username, "--property=Linger", "--value"],
-            check=False, timeout=10, **_CAPTURE_TEXT,
-        )
-    except Exception as e:
-        return None, str(e)
-
-    if result.returncode != 0:
-        return None, _completed_process_detail(result) or "loginctl query failed"
-
-    value = (result.stdout or "").strip().lower()
-    if value in {"yes", "true", "1"}:
-        return True, ""
-    if value in {"no", "false", "0"}:
-        return False, ""
-    return None, f"unexpected loginctl output: {value or '<empty>'}"
 
 
 def get_launchd_plist_path() -> Path:
     """``~/Library/LaunchAgents/ai.hermes.gateway[-<profile>].plist`` under the real account home."""
     import pwd
-    suffix = _profile_suffix()
+    suffix = _service_identity.service_suffix()
     name = f"ai.hermes.gateway-{suffix}" if suffix else "ai.hermes.gateway"
     # Real account home: profile mode may point HOME at a profile dir.
     home = Path(pwd.getpwuid(os.getuid()).pw_dir)  # windows-footgun: ok — POSIX launchd (macOS) helper, never invoked on Windows
@@ -2797,33 +1936,8 @@ def legacy_launchd_labels_for_install(exclude=()) -> list[str]:
     return sorted(labels)
 
 
-def _detect_venv_dir() -> Path | None:
-    """Active virtualenv dir: ``sys.prefix``, then ``VIRTUAL_ENV`` (uv sets it without changing
-    sys.prefix), then .venv/venv under PROJECT_ROOT; None if none found."""
-    candidates: list[Path] = []
-    if sys.prefix != sys.base_prefix:
-        candidates.append(Path(sys.prefix))
-    if os.environ.get("VIRTUAL_ENV"):
-        candidates.append(Path(os.environ["VIRTUAL_ENV"]))
-    candidates += [PROJECT_ROOT / ".venv", PROJECT_ROOT / "venv"]
-    return next((venv for venv in candidates if venv.is_dir()), None)
 
 
-def get_python_path() -> str:
-    venv = _detect_venv_dir()
-    if venv is not None:
-        try:
-            from hermes_constants import venv_python_path
-        except ImportError:
-            # Update-boundary: a gateway restarted mid-update can hold a stale hermes_constants
-            # without this symbol; see _reload_hermes_constants() in hermes_cli/managed_uv.py.
-            from hermes_cli.managed_uv import _reload_hermes_constants
-            venv_python_path = _reload_hermes_constants().venv_python_path
-
-        venv_python = venv_python_path(venv, windows=is_windows())
-        if venv_python.exists():
-            return str(venv_python)
-    return sys.executable
 
 
 # =============================================================================
@@ -2831,153 +1945,20 @@ def get_python_path() -> str:
 # =============================================================================
 
 
-def _build_user_local_paths(home: Path, path_entries: list[str]) -> list[str]:
-    """Return user-local bin dirs that exist and aren't already in *path_entries*."""
-    candidates = [
-        str(home / ".local" / "bin"),  # uv, uvx, pip-installed CLIs
-        str(home / ".cargo" / "bin"),  # Rust/cargo tools
-        str(home / "go" / "bin"),  # Go tools
-        str(home / ".npm-global" / "bin"),  # npm global packages
-    ]
-    return [p for p in candidates if p not in path_entries and Path(p).exists()]
-
-
-def _build_wsl_interop_paths(path_entries: list[str]) -> list[str]:
-    """WSL Windows-interop PATH entries for generated units: systemd services don't inherit the
-    Windows PATH (``/mnt/c/WINDOWS/System32``…), so ``powershell.exe``/``cmd.exe`` break unless persisted."""
-    if not is_wsl():
-        return []
-
-    candidates = [entry for entry in os.environ.get("PATH", "").split(os.pathsep) if entry.startswith("/mnt/")]
-    for executable in ("powershell.exe", "cmd.exe", "explorer.exe", "wsl.exe"):
-        resolved = shutil.which(executable)
-        if resolved:
-            candidates.append(str(Path(resolved).parent))
-    candidates += [
-        entry
-        for entry in (
-            "/mnt/c/WINDOWS/system32",
-            "/mnt/c/WINDOWS",
-            "/mnt/c/WINDOWS/System32/Wbem",
-            "/mnt/c/WINDOWS/System32/WindowsPowerShell/v1.0/",
-            "/mnt/c/WINDOWS/System32/OpenSSH/",
-        )
-        if Path(entry).exists()
-    ]
-
-    result: list[str] = []
-    seen = set(path_entries)
-    for entry in candidates:
-        if entry and entry not in seen:
-            seen.add(entry)
-            result.append(entry)
-    return result
-
-
-def _remap_path_for_user(path: str, target_home_dir: str) -> str:
-    """Swap the ``Path.home()`` prefix of *path* for *target_home_dir*; other paths return unchanged.
-    Intentionally does NOT resolve symlinks."""
-    current_home = Path.home()
-    p = Path(path).expanduser()
-    try:
-        relative = p.relative_to(current_home)
-        return str(Path(target_home_dir) / relative)
-    except ValueError:
-        return str(p)
 
 
 
 
-def _print_linger_enable_warning(username: str, detail: str | None = None, *, system: bool = False) -> None:
-    print()
-    if system:
-        print(f"⚠ Linger not enabled for {username} — cron and Kanban workers cannot start (no user D-Bus).")
-    else:
-        print("⚠ Linger not enabled — gateway may stop when you close this terminal.")
-    if detail:
-        print(f"  Auto-enable failed: {detail}")
-    print()
-    print("  Enable it manually:" if system else "  On headless servers (VPS, cloud instances) run:")
-    print(f"    sudo loginctl enable-linger {username}")
-    print()
-    print("  Then restart the gateway:")
-    sudo, _, user_flag = _systemd_cli_bits(system)
-    print(f"    {sudo}systemctl {user_flag}restart {get_service_name()}.service")
-    print()
 
 
-def _ensure_linger_enabled(username: str | None = None, *, system: bool = False) -> bool:
-    """Enable linger for *username* (default: the current user) when possible.
-
-    A user unit needs linger so the gateway survives logout. A system unit (``system=True``) needs
-    it for its ``User=`` so ``user@<uid>.service`` provides the D-Bus that ``systemd-run --user
-    --scope`` — every restart-safe cron/Kanban worker — connects to (#104893). Returns True only
-    when linger was enabled by this call.
-    """
-    if is_termux() or not is_linux():
-        return False
-
-    if username is None:
-        import getpass
-        username = getpass.getuser()
-    enabled_msg = (
-        f"✓ Systemd linger is enabled for {username} (worker D-Bus available)" if system
-        else "✓ Systemd linger is enabled (service survives logout)"
-    )
-    if Path(f"/var/lib/systemd/linger/{username}").exists():
-        print(enabled_msg)
-        return False
-
-    linger_enabled, linger_detail = get_systemd_linger_status(username)
-    if linger_enabled is True:
-        print(enabled_msg)
-        return False
-
-    if not shutil.which("loginctl"):
-        _print_linger_enable_warning(username, linger_detail or "loginctl not found", system=system)
-        return False
-
-    if system:
-        print(f"Enabling linger for {username} so cron and Kanban workers can reach systemd-run --user...")
-    else:
-        print("Enabling linger so the gateway survives SSH logout...")
-    try:
-        result = _loginctl_enable_linger(username)
-    except Exception as e:
-        _print_linger_enable_warning(username, str(e), system=system)
-        return False
-
-    if result.returncode != 0:
-        _print_linger_enable_warning(username, _completed_process_detail(result) or linger_detail, system=system)
-        return False
-    print(f"✓ Enabled linger for {username}" if system else "✓ Linger enabled — gateway will persist after logout")
-    return True
 
 
-def _ensure_system_service_linger(username: str) -> None:
-    """Enable linger for the installed unit's ``User=`` (root included: restart-safe workers always cross
-    ``systemd-run --user``, so a root gateway needs ``user@0.service`` just the same).
-
-    After a fresh enable, wait for the TARGET user's bus: logind starts ``user@<uid>.service``
-    asynchronously and ``--start-now`` boots the gateway immediately. A gateway that was already running
-    keeps its bus-less environment and ``systemctl start`` on an active unit is a no-op — say so rather
-    than let the repair silently not take."""
-    if not _ensure_linger_enabled(username, system=True):
-        return
-    import pwd
-    uid = pwd.getpwnam(username).pw_uid  # windows-footgun: ok — POSIX systemd helper, never invoked on Windows
-    if _wait_for_target_user_bus(uid):
-        print(f"✓ /run/user/{uid}/bus is up — cron and Kanban workers can use systemd-run --user")
-    else:
-        print(f"⚠ /run/user/{uid}/bus did not appear within 5s.")
-        print(f"  Start the user manager: sudo systemctl start user@{uid}.service")
-    if _systemd_unit_is_active(system=True):
-        print("  The running gateway was started without a user D-Bus; restart it to pick one up:")
-        print(f"    sudo systemctl restart {get_service_name()}.service")
 
 
-def _select_systemd_scope(system: bool = False) -> bool:
-    return system or (get_systemd_unit_path(system=True).exists() and not get_systemd_unit_path(system=False).exists())
+
+
+
+
 
 
 def _system_scope_wizard_would_need_root(system: bool = False) -> bool:
@@ -2985,7 +1966,7 @@ def _system_scope_wizard_would_need_root(system: bool = False) -> bool:
     ``_select_systemd_scope`` so the dead-end is detected BEFORE prompting."""
     if os.geteuid() == 0:  # windows-footgun: ok — systemd scope wizard decision, never invoked on Windows
         return False
-    return _select_systemd_scope(system=system)
+    return _systemd_runtime.select_scope(system=system)
 
 
 def _print_system_scope_remediation(action: str) -> None:
@@ -2993,359 +1974,94 @@ def _print_system_scope_remediation(action: str) -> None:
     print_warning(f"Gateway is installed as a system-wide service — {action} requires root.")
     print_info("  Options:")
     print_info(f"    1. {action.capitalize()} it this time:")
-    print_info(f"         sudo systemctl {action} {get_service_name()}")
+    print_info(f"         sudo systemctl {action} {_service_identity.service_name()}")
     print_info("    2. Switch to a per-user service (recommended for personal use):")
     print_info("         sudo hermes gateway uninstall --system")
     print_info("         hermes gateway install")
     print_info("         hermes gateway start")
 
 
-def _agent_timeout_setting(env_var: str, key: str, parse) -> float:
-    """``parse(env)`` when the env var is non-empty, else ``parse(agent.<key>)`` (None if unset)."""
-    env_raw = os.getenv(env_var)
-    if env_raw is not None and str(env_raw).strip() != "":
-        return parse(env_raw)
-    cfg = read_raw_config()
-    agent_cfg = cfg.get("agent", {}) if isinstance(cfg, dict) else {}
-    if isinstance(agent_cfg, dict) and key in agent_cfg:
-        return parse(agent_cfg.get(key))
-    return parse(None)
 
 
-def _get_cron_drain_timeout() -> float:
-    """Return the configured cron-only drain floor in seconds.
-
-    See #82161.
-    """
-    return _agent_timeout_setting("HERMES_CRON_DRAIN_TIMEOUT", "cron_drain_timeout", parse_cron_drain_timeout)
 
 
-def _get_restart_exit_wait_budget() -> float:
-    """CLI wait for gateway exit after SIGUSR1 / self-restart (#77184)."""
-    return resolve_restart_exit_wait_budget(
-        # TimeoutStopSec must cover the full stop budget, not just restart_drain_timeout. Cron work can
-        # legally wait cron_drain_timeout plus cleanup reserve before interrupt/teardown, and systemd
-        # SIGKILLs if the unit's deadline is shorter (#94759). 30s of post-drain headroom is preserved on
-        # top, with a 60s floor.
-        _gateway_restart.get_restart_drain_timeout(),
-        _agent_timeout_setting(
-            "HERMES_RESTART_AFTER_TURN_TIMEOUT", "restart_after_turn_timeout", parse_restart_after_turn_timeout
-        ),
-    )
 
 
-def systemd_install(
-    force: bool = False,
-    system: bool = False,
-    run_as_user: str | None = None,
-    enable_on_startup: bool = True,
-    non_interactive: bool = False,
-):
-    if system:
-        _require_root_for_system_service("install")
-
-    # Offer to remove legacy units first: alongside the new unit they flap-fight for the bot token.
-    if has_legacy_hermes_units():
-        print()
-        print_legacy_unit_warning()
-        print()
-        if non_interactive or prompt_yes_no("Remove the legacy unit(s) before installing?", True):
-            remove_legacy_hermes_units(interactive=False)
-            print()
-
-    unit_path = get_systemd_unit_path(system=system)
-    scope_label = _service_scope_label(system)
-    sudo, scope_flag, user_flag = _systemd_cli_bits(system)
-
-    # Existing system units already pin HERMES_HOME; adopt it before any regenerate.
-    if unit_path.exists():
-        _sync_hermes_home_from_systemd_unit(system=system)
-
-    if unit_path.exists() and not force:
-        if not systemd_unit_is_current(system=system):
-            print(f"↻ Repairing outdated {scope_label} systemd service at: {unit_path}")
-            refresh_systemd_unit_if_needed(system=system)
-            if enable_on_startup:
-                _run_systemctl(["enable", get_service_name()], system=system, check=True, timeout=30)
-            print(f"✓ {scope_label.capitalize()} service definition updated")
-        else:
-            print(f"Service already installed at: {unit_path}")
-            print("Use --force to reinstall")
-        # Same post-install guarantee as a fresh install: a repaired user unit must survive logout too.
-        configured_user = _read_systemd_user_from_unit(unit_path) if system else None
-        if configured_user:
-            _ensure_system_service_linger(configured_user)
-        elif not system:
-            _ensure_linger_enabled()
-        return
-
-    unit_path.parent.mkdir(parents=True, exist_ok=True)
-    new_unit = generate_systemd_unit(system=system, run_as_user=run_as_user)
-    if _refuse_temp_home_service_write(new_unit, "systemd unit"):
-        return
-    print(f"Installing {scope_label} systemd service to: {unit_path}")
-    unit_path.write_text(new_unit, encoding="utf-8")
-
-    _run_systemctl(["daemon-reload"], system=system, check=True, timeout=30)
-    if enable_on_startup:
-        _run_systemctl(["enable", get_service_name()], system=system, check=True, timeout=30)
-
-    print()
-    print(f"✓ {scope_label.capitalize()} service {'installed and enabled' if enable_on_startup else 'installed'}!")
-    print()
-    print("Next steps:")
-    print(f"  {sudo}hermes gateway start{scope_flag}              # Start the service")
-    print(f"  {sudo}hermes gateway status{scope_flag}             # Check status")
-    print(f"  journalctl {user_flag}-u {get_service_name()} -f  # View logs")
-    print()
-
-    if system:
-        configured_user = _read_systemd_user_from_unit(unit_path)
-        if configured_user:
-            print(f"Configured to run as: {configured_user}")
-            _ensure_system_service_linger(configured_user)
-    else:
-        _ensure_linger_enabled()
-
-    print_systemd_scope_conflict_warning()
-    print_legacy_unit_warning()
 
 
-def _systemd_scope_preamble(
-    action: str, system: bool, *, require_installed: bool = True, preflight_user: bool = False
-) -> bool:
-    """Resolve the effective scope, then enforce root (system) / user D-Bus reachability (user, when
-    ``preflight_user``) and — when ``require_installed`` — that the unit exists. Returns the scope."""
-    system = _select_systemd_scope(system)
-    if system:
-        _require_root_for_system_service(action)
-    elif preflight_user:
-        # Fail fast with guidance when the user D-Bus session is unreachable (raises UserSystemdUnavailableError).
-        _preflight_user_systemd()
-    if require_installed:
-        _require_service_installed(action, system=system)
-    return system
 
 
-def _systemd_unit_belongs_to_current_home(system: bool = False) -> bool:
-    """False (with a warning) when the installed unit pins a HERMES_HOME other than this process's: the
-    service name then resolved to ANOTHER install's gateway, and stop/disable/unlink would take it down."""
-    _sync_hermes_home_from_systemd_unit(system=system)  # sudo strips HERMES_HOME; adopt the unit's first
-    unit_home = _hermes_home_from_systemd_unit_file(system=system)
-    if unit_home is None or Path(unit_home).expanduser().resolve() == get_hermes_home().resolve():
-        return True
-    print_warning(
-        f"Refusing to remove {get_systemd_unit_path(system=system)}: it runs HERMES_HOME={unit_home}, "
-        f"but this process has HERMES_HOME={get_hermes_home()}"
-    )
-    return False
 
 
-def systemd_uninstall(system: bool = False):
-    system = _systemd_scope_preamble("uninstall", system, require_installed=False)
-    if not _systemd_unit_belongs_to_current_home(system):
-        return
-    _run_systemctl(["stop", get_service_name()], system=system, check=False, timeout=90)
-    _run_systemctl(["disable", get_service_name()], system=system, check=False, timeout=30)
-
-    unit_path = get_systemd_unit_path(system=system)
-    if unit_path.exists():
-        unit_path.unlink()
-        print(f"✓ Removed {unit_path}")
-
-    _run_systemctl(["daemon-reload"], system=system, check=True, timeout=30)
-    print(f"✓ {_service_scope_label(system).capitalize()} service uninstalled")
 
 
 def _print_service_not_installed(system: bool) -> None:
-    sudo, scope_flag, _ = _systemd_cli_bits(system)
+    sudo, scope_flag, _ = (("sudo ", " --system", "") if system else ("", "", "--user "))
     print("✗ Gateway service is not installed")
     print(f"  Run: {sudo}hermes gateway install{scope_flag}")
 
 
 def _require_service_installed(action: str, system: bool = False) -> None:
-    if not get_systemd_unit_path(system=system).exists():
+    if not _systemd_identity.unit_path(system=system).exists():
         _print_service_not_installed(system)
         sys.exit(1)
 
 
-def systemd_start(system: bool = False):
-    system = _systemd_scope_preamble("start", system, preflight_user=True)
-    # HERMES_HOME sync happens in refresh's systemd_unit_is_current gate; the unit is guaranteed to exist here.
-    refresh_systemd_unit_if_needed(system=system)
-    _run_systemctl(["start", get_service_name()], system=system, check=True, timeout=30)
-    print(f"✓ {_service_scope_label(system).capitalize()} service started")
 
 
-def systemd_stop(system: bool = False):
-    system = _systemd_scope_preamble("stop", system)
-    _sync_hermes_home_from_systemd_unit(system=system)
-    _mark_planned_stop()
-    try:
-        _run_systemctl(["stop", get_service_name()], system=system, check=True, timeout=90)
-    except subprocess.TimeoutExpired:
-        print(
-            f"Gateway {_service_scope_label(system)} service is still stopping after 90s; "
-            "check `hermes gateway status` or logs for final shutdown state."
-        )
-        return
-    print(f"✓ {_service_scope_label(system).capitalize()} service stopped")
 
 
-def systemd_restart(system: bool = False):
-    system = _systemd_scope_preamble("restart", system, preflight_user=True)
-    # HERMES_HOME sync happens in refresh's systemd_unit_is_current gate; its os.environ mutation
-    # persists for the get_running_pid / drain-timeout reads below.
-    refresh_systemd_unit_if_needed(system=system)
-    from gateway.status import get_running_pid
-    pid = get_running_pid() or _systemd_main_pid(system=system)
-    if pid is not None and probe_gateway_loop_liveness(pid) == GATEWAY_LOOP_WEDGED:
-        # Event loop provably dead: SIGUSR1 can't drain it, so bounded SIGTERM → SIGKILL and let systemd relaunch.
-        print(
-            # Health probe says the event loop is provably dead (#81642): SIGUSR1 can never drain it, so the
-            # graceful wait below would burn the full budget. A busy-but-alive gateway (fresh heartbeat)
-            # never takes this path — its in-flight work, including the #86684 cron drain floor, keeps the
-            # full graceful budget.
-            # Health probe says the event loop is provably dead (#81642): the gateway cannot process a
-            # graceful shutdown, so waiting the full drain budget only stalls the restart (and `hermes
-            # update` behind it) for 180s. Bounded escalation instead: SIGTERM grace → SIGKILL → proceed,
-            # ~10s worst case. Never taken for a busy-but-alive gateway — a fresh heartbeat keeps the drain
-            # path (and the #86684 cron drain floor) fully intact.
-            f"⚠ Gateway PID {pid} event loop is unresponsive — "
-            "skipping graceful drain and forcing a bounded stop..."
-        )
-        _escalate_wedged_gateway(pid)
-        svc = get_service_name()
-        _run_systemctl(["reset-failed", svc], system=system, check=False, timeout=30)
-        _run_systemctl(["restart", svc], system=system, check=False, timeout=90)
-        _wait_for_systemd_service_restart(system=system, previous_pid=pid)
-        return
-    if pid is not None:
-        service_action = _systemd_graceful_restart_action(system, pid)
-        if service_action:
-            _systemd_reset_and_run(service_action, system=system, previous_pid=pid)
-        return
-
-    if _recover_pending_systemd_restart(system=system, previous_pid=pid):
-        return
-    _systemd_reset_and_run("restart", system=system, previous_pid=pid)
 
 
-def _systemd_graceful_restart_action(system: bool, pid: int) -> str | None:
-    """SIGUSR1-drain the live gateway ``pid``; return the follow-up ``systemctl`` verb (``"start"`` /
-    ``"restart"``) the caller must still issue, or None when systemd already owns the relaunch."""
-    scope_label = _service_scope_label(system).capitalize()
-    # Graceful in-band restart, mirroring the systemd branch. Previously this sent a bare SIGTERM and waited
-    # ``get_restart_drain_timeout()`` — which defaults to 0, so the wait could never succeed and every
-    # restart fell through to ``kickstart -k``. A bare SIGTERM also leaves ``restart_requested`` False, so
-    # the gateway exits 1 instead of 75 and reports itself to chat as "shutting down" rather than
-    # "restarting", losing the resume_pending handoff. SIGUSR1 is the drain-aware path: refuse new turns,
-    # wait for in-flight work (``agent.restart_after_turn_timeout``), then stop() within
-    # ``agent.restart_drain_timeout``. The wait budget must cover BOTH phases plus headroom (#77184) — the
-    # raw drain timeout covers only the second. Announce the wait BEFORE it runs: it can last the full
-    # budget while the old gateway finishes in-flight agent runs, and it streams into surfaces with no other
-    # feedback — the desktop updater's live output most of all, where a silent stop here reads as "update
-    # stuck" (#44515).
-    wait_budget = _get_restart_exit_wait_budget()
-    print(
-        f"⏳ {scope_label} service restarting gracefully (PID {pid}) — "
-        f"waiting up to {wait_budget:.0f}s for in-flight turns + drain..."
-    )
-    from hermes_cli.update_cmd_drain_report import drain_progress_reporter
-    if not _graceful_restart_via_sigusr1(pid, wait_budget, on_progress=drain_progress_reporter(budget_s=wait_budget)):
-        print(f"⚠ Graceful restart did not complete within {int(wait_budget)}s; forcing a service restart...")
-        return "restart"
-
-    # Exit 75 hands restart ownership to systemd; observe that replacement rather than restarting again.
-    replacement_observed: list[bool] = []
-    if _wait_for_systemd_service_restart(system=system, previous_pid=pid, replacement_observed=replacement_observed):
-        return None
-    if replacement_observed or _systemd_service_is_start_limited(system=system):
-        return None
-
-    # A replacement may have started but not reached runtime readiness in time; never stop that generation.
-    props = _read_systemd_unit_properties(system=system)
-    if not props:
-        return None
-    replacement_pid = _systemd_main_pid_from_props(props)
-    if (
-        props.get("ActiveState") in {"active", "activating", "reloading"}
-        or props.get("SubState") == "auto-restart"
-        or (replacement_pid is not None and replacement_pid != pid)
-    ):
-        return None
-
-    print("⚠ Systemd did not relaunch the gateway after its graceful exit; starting the inactive service...")
-    # ``start`` is intentionally idempotent: a replacement appearing after the snapshot must not be stopped.
-    return "start"
 
 
-def _systemd_reset_and_run(action: str, *, system: bool, previous_pid) -> None:
-    """``reset-failed`` then ``systemctl <action>``, then wait for the relaunch. Start-limit
-    rejection prints the wait hint instead of raising; a 90s timeout prints where to look."""
-    svc = get_service_name()
-    _run_systemctl(["reset-failed", svc], system=system, check=False, timeout=30)
-    try:
-        _run_systemctl([action, svc], system=system, check=True, timeout=90)
-    except subprocess.CalledProcessError as exc:
-        if _systemd_error_indicates_start_limit(exc) or _systemd_service_is_start_limited(system=system):
-            _print_systemd_start_limit_wait(system=system)
-            return
-        raise
-    except subprocess.TimeoutExpired:
-        print(
-            f"Gateway {_service_scope_label(system)} service is still restarting after 90s; "
-            "check `hermes gateway status` or logs for final state."
-        )
-        return
-    _wait_for_systemd_service_restart(system=system, previous_pid=previous_pid)
 
 
 def systemd_status(deep: bool = False, system: bool = False, full: bool = False):
-    system = _select_systemd_scope(system)
-    unit_path = get_systemd_unit_path(system=system)
-    svc = get_service_name()
-    scope_label = _service_scope_label(system).capitalize()
-    sudo, scope_flag, user_flag = _systemd_cli_bits(system)
+    system = _systemd_runtime.select_scope(system)
+    unit_path = _systemd_identity.unit_path(system=system)
+    svc = _service_identity.service_name()
+    scope_label = _systemd_runtime.scope_label(system).capitalize()
+    sudo, scope_flag, user_flag = (("sudo ", " --system", "") if system else ("", "", "--user "))
 
     if not unit_path.exists():
         _print_service_not_installed(system)
         return
 
-    if has_conflicting_systemd_units():
+    if _systemd_runtime.has_conflicting_units():
         print_systemd_scope_conflict_warning()
         print()
 
-    if has_legacy_hermes_units():
+    if _systemd_legacy.has_units():
         print_legacy_unit_warning()
         print()
 
-    if not systemd_unit_is_current(system=system):
+    if not _systemd_unit_state.unit_is_current(system=system):
         print("⚠ Installed gateway service definition is outdated")
         print(f"  Run: {sudo}hermes gateway restart{scope_flag}  # auto-refreshes the unit")
         print()
 
     status_cmd = ["status", svc, "--no-pager"] + (["-l"] if full else [])
-    _run_systemctl(status_cmd, system=system, capture_output=False, timeout=10)
-    result = _run_systemctl(["is-active", svc], system=system, timeout=10, **_CAPTURE_TEXT)
+    _systemd_runtime.run_systemctl(status_cmd, system=system, capture_output=False, timeout=10)
+    result = _systemd_runtime.run_systemctl(["is-active", svc], system=system, timeout=10, **_CAPTURE_TEXT)
     if result.stdout.strip() == "active":
         print(f"✓ {scope_label} gateway service is running")
     else:
         print(f"✗ {scope_label} gateway service is stopped")
         print(f"  Run: {sudo}hermes gateway start{scope_flag}")
 
-    configured_user = _read_systemd_user_from_unit(unit_path) if system else None
+    configured_user = _systemd_identity.read_unit_user(unit_path) if system else None
     if configured_user:
         print(f"Configured to run as: {configured_user}")
 
     _print_runtime_health()
 
-    unit_props = _read_systemd_unit_properties(system=system)
+    unit_props = _systemd_restart_state._read_systemd_unit_properties(system=system)
     active_state = unit_props.get("ActiveState", "")
     result_code = unit_props.get("Result", "")
     if active_state == "activating" and unit_props.get("SubState", "") == "auto-restart":
         print("  ⏳ Restart pending: systemd is waiting to relaunch the gateway")
-    elif _systemd_unit_is_start_limited(unit_props):
+    elif _systemd_restart_state._systemd_unit_is_start_limited(unit_props):
         print("  ⏳ Restart pending: systemd is temporarily rate-limiting starts")
         print(f"  Run after the start-limit window expires: {sudo}hermes gateway restart{scope_flag}")
         print(f"  Or clear it manually: systemctl {user_flag}reset-failed {svc}")
@@ -3358,7 +2074,7 @@ def systemd_status(deep: bool = False, system: bool = False, full: bool = False)
     if system:
         print("✓ System service starts at boot without requiring systemd linger")
     else:
-        linger_enabled, linger_detail = get_systemd_linger_status()
+        linger_enabled, linger_detail = _systemd_runtime.linger_status()
         if linger_enabled is True:
             print("✓ Systemd linger is enabled (service survives logout)")
         elif linger_enabled is False:
@@ -3932,13 +2648,13 @@ def run_gateway(verbose: int = 0, quiet: bool = False, replace: bool = False, fo
     # A system-level unit execs us without XDG_RUNTIME_DIR/DBUS_SESSION_BUS_ADDRESS; adopt our own
     # user bus before any worker env snapshot so `systemd-run --user --scope` works (#104893).
     if is_linux() and os.environ.get("INVOCATION_ID"):
-        _ensure_user_systemd_env()
+        _systemd_runtime.ensure_user_env()
 
     # Refresh the systemd unit on every boot so restart settings stay current even after an
     # exit-code-75 respawn (stale-code or /restart), which bypasses `hermes gateway restart`.
-    if supports_systemd_services():
+    if _systemd_runtime.supports_services():
         try:
-            refresh_systemd_unit_if_needed(system=False)
+            _systemd_unit_state.refresh_if_needed(system=False)
         except Exception:
             pass  # best-effort; don't block gateway startup
 
@@ -4098,7 +2814,7 @@ def _runtime_health_lines() -> list[str]:
         lines.append(f"⏳ Gateway draining for {action} ({count} active agent(s))")
         work = state.get("active_work")
         if isinstance(work, list) and work:
-            from hermes_cli.update_cmd_drain_report import describe_active_work_unit
+            from gateway.drain_report import describe_active_work_unit
             lines.extend(f"     • {describe_active_work_unit(u)}" for u in work if isinstance(u, dict))
     elif gateway_state == "stopped" and exit_reason:
         lines.append(f"⚠ Last shutdown reason: {exit_reason}")
@@ -4122,8 +2838,8 @@ def _running_under_s6() -> bool:
 
 
 def _systemd_unit_installed() -> bool:
-    return supports_systemd_services() and (
-        get_systemd_unit_path(system=False).exists() or get_systemd_unit_path(system=True).exists()
+    return _systemd_runtime.supports_services() and (
+        _systemd_identity.unit_path(system=False).exists() or _systemd_identity.unit_path(system=True).exists()
     )
 
 
@@ -4133,8 +2849,8 @@ def _is_service_installed() -> bool:
 
 def _is_service_running() -> bool:
     """Check if the gateway service is currently running."""
-    if supports_systemd_services():
-        return _systemd_unit_is_active(False) or _systemd_unit_is_active(True)
+    if _systemd_runtime.supports_services():
+        return _systemd_runtime.unit_is_active(False) or _systemd_runtime.unit_is_active(True)
     if is_macos() and get_launchd_plist_path().exists():
         try:
             return _launchd_service_registered(get_launchd_label(), timeout=10)
@@ -4153,7 +2869,7 @@ def _print_indented(text: str, emit=print) -> None:
 def _service_backend(*, windows: bool = True) -> str | None:
     """Host service manager: ``"systemd"`` / ``"launchd"`` / ``"windows"`` / None, in the canonical
     predicate order every subcommand routes on. ``windows=False`` never probes ``is_windows()``."""
-    if supports_systemd_services():
+    if _systemd_runtime.supports_services():
         return "systemd"
     if is_macos():
         return "launchd"
@@ -4169,8 +2885,7 @@ def _service_call(backend: str, verb: str, system: bool | None = False) -> None:
         return getattr(_gw_windows(), verb)()
     if backend == "launchd":
         return globals()[f"launchd_{verb}"]()
-    fn = globals()[f"systemd_{verb}"]
-    return fn() if system is None else fn(system=system)
+    return _systemd_lifecycle.service_call(verb, False if system is None else system)
 
 
 
@@ -4243,12 +2958,12 @@ def gateway_command(args):
     """Handle gateway subcommands."""
     try:
         return _gateway_command_inner(args)
-    except UserSystemdUnavailableError as e:
+    except _systemd_runtime.UserSystemdUnavailableError as e:
         # Actionable message, not a traceback, when the user D-Bus session is unreachable.
         print_error("User systemd not reachable:")
         _print_indented(str(e))
         sys.exit(1)
-    except SystemScopeRequiresRootError as e:
+    except _systemd_identity.SystemScopeRequiresRootError as e:
         # System-scope action typed without sudo; the wizard intercepts this earlier with guidance.
         print(str(e))
         sys.exit(1)
@@ -4359,7 +3074,7 @@ def _stop_installed_service(system: bool) -> bool:
     kind = _installed_service_kind()
     if kind is None:
         return False
-    # SystemScopeRequiresRootError is a RuntimeError and must propagate from systemd_stop.
+    # _systemd_identity.SystemScopeRequiresRootError is a RuntimeError and must propagate from systemd_stop.
     try:
         _service_call(kind, "stop", system)
         return True
@@ -4510,12 +3225,19 @@ def _install_systemd_from_cli(args, *, force: bool, system: bool, run_as_user) -
 
     start_now = _flag("start_now", "Start the gateway now after installing the service?")
     start_on_login = _flag("start_on_login", "Start the gateway automatically on login/boot with systemd?")
-    systemd_install(
+    if _systemd_legacy.has_units():
+        print()
+        print_legacy_unit_warning()
+        print()
+        if non_interactive or prompt_yes_no("Remove the legacy unit(s) before installing?", True):
+            remove_legacy_hermes_units(interactive=False)
+            print()
+    _systemd_lifecycle.install(
         force=force, system=system, run_as_user=run_as_user,
-        enable_on_startup=start_on_login, non_interactive=non_interactive,
+        enable_on_startup=start_on_login,
     )
     if start_now:
-        systemd_start(system=system)
+        _systemd_lifecycle.start(system=system)
 
 
 def _cmd_install(args):
@@ -4678,7 +3400,7 @@ def _cmd_stop(args):
         else:
             print("✗ No gateway running for this profile")
     else:
-        print(f"✓ Stopped {get_service_name()} service")
+        print(f"✓ Stopped {_service_identity.service_name()} service")
 
 
 def _stop_host_multiplexer(owner) -> int:
@@ -4783,8 +3505,8 @@ def _cmd_restart(args):
     # Linger only explains a FAILED systemd unit restart. Without an installed unit the
     # detached run below is the restart; bailing here left `hermes gateway restart` a
     # silent exit-0 no-op on any Linux login session (Desktop read it as success).
-    if kind == "systemd" and supports_systemd_services():
-        linger_ok, _detail = get_systemd_linger_status()
+    if kind == "systemd" and _systemd_runtime.supports_services():
+        linger_ok, _detail = _systemd_runtime.linger_status()
         if linger_ok is not True:
             import getpass
             _print_lines(
@@ -4939,7 +3661,7 @@ def _cmd_migrate_legacy(args):
     """Stop, disable, and remove legacy Hermes gateway unit files (e.g. hermes.service)."""
     dry_run = getattr(args, "dry_run", False)
     yes = getattr(args, "yes", False)
-    if not supports_systemd_services() and not is_macos():
+    if not _systemd_runtime.supports_services() and not is_macos():
         print("Legacy unit migration only applies to systemd-based Linux hosts.")
         return
     remove_legacy_hermes_units(interactive=not yes, dry_run=dry_run)
@@ -4970,7 +3692,7 @@ def _gateway_command_inner(args):
 
 def print_systemd_linger_guidance() -> None:
     """Print the current linger status and the fix when it is disabled."""
-    linger_enabled, linger_detail = get_systemd_linger_status()
+    linger_enabled, linger_detail = _systemd_runtime.linger_status()
     if linger_enabled is True:
         print("✓ Systemd linger is enabled (service survives logout)")
     elif linger_enabled is False:

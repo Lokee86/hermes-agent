@@ -1,4 +1,5 @@
 """Installed identity proofs at inert native supervisor executable boundaries."""
+from gateway import service_identity, systemd_runtime
 import json
 import os
 from pathlib import Path
@@ -22,7 +23,6 @@ import pytest
 ])
 def test_ensure_checks_effective_service_binding_before_start(tmp_path, monkeypatch, case, reason):
     from gateway import runtime
-    from gateway.runtime_service import service_suffix
 
     monkeypatch.setattr(Path, "home", lambda: tmp_path)
     home = tmp_path / (".hermes" if case == "default" else "custom root")
@@ -30,7 +30,7 @@ def test_ensure_checks_effective_service_binding_before_start(tmp_path, monkeypa
         home = home / "profiles" / "worker"
     home.mkdir(mode=0o700, parents=True)
     monkeypatch.setenv("HERMES_HOME", str(home))
-    suffix = service_suffix(home)
+    suffix = service_identity.service_suffix_for_home(home)
     unit = tmp_path / ".config/systemd/user" / f"hermes-gateway{'-' + suffix if suffix else ''}.service"
     unit.parent.mkdir(parents=True)
     unit.write_text(f'[Service]\nExecStart={sys.executable} -m hermes_cli.main gateway run\nEnvironment="HERMES_HOME={home}"\n', encoding="utf-8")
@@ -99,7 +99,7 @@ def test_ensure_checks_effective_service_binding_before_start(tmp_path, monkeypa
     executable.chmod(0o700)
     monkeypatch.setenv('PATH', str(tmp_path) + os.pathsep + os.environ['PATH'])
     from hermes_cli import gateway as gw
-    monkeypatch.setattr(gw, "_systemctl_cmd", lambda system=False: [str(executable)] + ([] if system else ["--user"]))
+    monkeypatch.setattr(systemd_runtime, "systemctl_cmd", lambda system=False: [str(executable)] + ([] if system else ["--user"]))
     result = runtime.ensure_gateway_runtime(home, timeout=3.0)
     assert result.reason_code == reason
     commands = [json.loads(line) for line in calls.read_text().splitlines()]
@@ -196,7 +196,7 @@ def test_native_launchd_checks_loaded_job_before_disk(case, reason, tmp_path, mo
     home.mkdir(mode=0o700)
     monkeypatch.setenv('HERMES_HOME', str(home))
     monkeypatch.setattr(pwd, 'getpwuid', lambda uid: SimpleNamespace(pw_dir=str(tmp_path), pw_name="owner"))
-    label = 'ai.hermes.gateway' + ('-' + service.service_suffix(home) if service.service_suffix(home) else '')
+    label = 'ai.hermes.gateway' + ('-' + service_identity.service_suffix_for_home(home) if service_identity.service_suffix_for_home(home) else '')
     plist = tmp_path / 'Library/LaunchAgents' / (label + '.plist')
     plist.parent.mkdir(parents=True)
     argv = [sys.executable, '-m', 'hermes_cli.main', 'gateway', 'run']
@@ -246,7 +246,7 @@ def test_native_task_query_uses_installed_xml_and_vendor_launcher(wrong, tmp_pat
     from hermes_cli.gateway_windows import _schtasks_encoding
     import csv
     account, sid = next(csv.reader(identity.stdout.decode(_schtasks_encoding()).splitlines()))
-    suffix = service.service_suffix(home)
+    suffix = service_identity.service_suffix_for_home(home)
     name = 'Hermes_Gateway' + ('_' + suffix if suffix else '')
     xml = _build_scheduled_task_xml(name, script, 'S-1-5-18' if wrong else sid)
     peer = tmp_path / 'supervisor.py'

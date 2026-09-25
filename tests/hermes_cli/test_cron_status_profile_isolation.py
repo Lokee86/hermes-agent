@@ -20,6 +20,8 @@ ticked» unless the gateway process itself started less than STALE_AFTER ago
 """
 
 from __future__ import annotations
+from gateway import service_identity
+from gateway import systemd_runtime
 
 import time
 from unittest.mock import MagicMock, patch
@@ -70,8 +72,8 @@ class TestGetServicePidsProfileScope:
 
         with (
             patch("hermes_cli.gateway.is_macos", return_value=False),
-            patch("hermes_cli.gateway.supports_systemd_services", return_value=True),
-            patch("hermes_cli.gateway.get_service_name", return_value="hermes-gateway-jarvis"),
+            patch("hermes_cli.systemd_runtime.supports_services", return_value=True),
+            patch("hermes_cli.service_identity.service_name", return_value="hermes-gateway-jarvis"),
             patch("subprocess.run", side_effect=_run_side_effect),
         ):
             pids = gateway_mod._get_service_pids()
@@ -101,8 +103,8 @@ class TestGetServicePidsProfileScope:
 
         with (
             patch("hermes_cli.gateway.is_macos", return_value=False),
-            patch("hermes_cli.gateway.supports_systemd_services", return_value=True),
-            patch("hermes_cli.gateway.get_service_name", return_value="hermes-gateway"),
+            patch("hermes_cli.systemd_runtime.supports_services", return_value=True),
+            patch("hermes_cli.service_identity.service_name", return_value="hermes-gateway"),
             patch("subprocess.run", side_effect=_run_side_effect),
         ):
             pids = gateway_mod._get_service_pids(all_profiles=True)

@@ -1,4 +1,12 @@
 """Tests for hermes_cli.gateway."""
+from gateway import service_identity
+from gateway import service_process
+from gateway import systemd_identity
+from gateway import systemd_legacy
+from gateway import systemd_lifecycle
+from gateway import systemd_linger
+from gateway import systemd_runtime
+from gateway import systemd_unit_render
 
 import json
 import os
@@ -56,7 +64,7 @@ def _run_native_windows_gateway_start_diag(
         gateway_cli._attach_to_host_gateway_or_guard = lambda **kwargs: None
         gateway_cli._guard_supervised_gateway_conflict = lambda force=False: None
         gateway_cli._guard_existing_gateway_process_conflict = lambda replace=False: None
-        gateway_cli.supports_systemd_services = lambda: False
+        systemd_runtime.supports_services = lambda: False
         gateway_cli.run_gateway(quiet=True)
 
         diag_path = pathlib.Path(os.environ["HERMES_HOME"]) / "logs" / "gateway-exit-diag.log"
@@ -170,7 +178,7 @@ def test_gateway_run_subprocess_preserves_daemon_exit_codes(
         gateway_cli._attach_to_host_gateway_or_guard = lambda **kwargs: None
         gateway_cli._guard_supervised_gateway_conflict = lambda force=False: None
         gateway_cli._guard_existing_gateway_process_conflict = lambda replace=False: None
-        gateway_cli.supports_systemd_services = lambda: False
+        systemd_runtime.supports_services = lambda: False
         gateway_cli.run_gateway()
         """
     )
@@ -231,7 +239,7 @@ def test_s6_runtime_snapshot_reports_supervised_service(monkeypatch, tmp_path):
     monkeypatch.setattr("hermes_cli.service_manager.detect_service_manager", lambda: "s6")
     monkeypatch.setattr("hermes_cli.service_manager.get_service_manager", lambda: FakeS6Manager())
     monkeypatch.setattr(gateway, "find_gateway_pids", lambda: [123])
-    monkeypatch.setattr(gateway, "_profile_suffix", lambda: "")
+    monkeypatch.setattr(service_identity, "service_suffix", lambda: "")
 
     snapshot = gateway.get_gateway_runtime_snapshot()
 
@@ -254,13 +262,13 @@ class TestSystemdLingerStatus:
         )
         monkeypatch.setattr("shutil.which", lambda name: "/usr/bin/loginctl")
 
-        assert gateway.get_systemd_linger_status() == (True, "")
+        assert systemd_runtime.linger_status() == (True, "")
 
 
     def test_reports_termux_as_not_supported(self, monkeypatch):
         monkeypatch.setattr(gateway, "is_termux", lambda: True)
 
-        assert gateway.get_systemd_linger_status() == (None, "not supported in Termux")
+        assert systemd_runtime.linger_status() == (None, "not supported in Termux")
 
 
 class TestContainerSystemdSupport:
@@ -272,7 +280,7 @@ class TestContainerSystemdSupport:
         monkeypatch.setattr("shutil.which", lambda name: "/usr/bin/systemctl")
         monkeypatch.setattr(gateway, "_systemd_operational", lambda system=False: not system)
 
-        assert gateway.supports_systemd_services() is True
+        assert systemd_runtime.supports_services() is True
 
 
 def test_spawn_detached_gateway_timestamps_stderr(monkeypatch, tmp_path):
@@ -291,7 +299,7 @@ def test_spawn_detached_gateway_timestamps_stderr(monkeypatch, tmp_path):
         return SimpleNamespace()
 
     monkeypatch.setattr(gateway, "get_hermes_home", lambda: tmp_path)
-    monkeypatch.setattr(gateway, "get_python_path", lambda: "/usr/bin/python3")
+    monkeypatch.setattr(service_process, "python_path", lambda: "/usr/bin/python3")
     monkeypatch.setattr(gateway, "_gateway_run_command", lambda: child_cmd)
     monkeypatch.setattr(gateway.subprocess, "Popen", fake_popen)
 
@@ -320,12 +328,12 @@ def test_spawn_detached_gateway_timestamps_stderr(monkeypatch, tmp_path):
 def test_systemd_install_checks_linger_status(monkeypatch, tmp_path):
     unit_path = tmp_path / "systemd" / "user" / "hermes-gateway.service"
 
-    monkeypatch.setattr(gateway, "get_systemd_unit_path", lambda system=False: unit_path)
+    monkeypatch.setattr(systemd_identity, "unit_path", lambda system=False: unit_path)
     # Synthetic unit with a non-temp home: the real generator bakes the
     # hermetic test HERMES_HOME (a tmp dir), which the temp-home write
     # guard correctly refuses.
     monkeypatch.setattr(
-        gateway,
+        systemd_unit_render,
         "generate_systemd_unit",
         lambda system=False, run_as_user=None: (
             '[Service]\nEnvironment="HERMES_HOME=/home/alice/.hermes"\n'
@@ -340,14 +348,14 @@ def test_systemd_install_checks_linger_status(monkeypatch, tmp_path):
         return SimpleNamespace(returncode=0, stdout="", stderr="")
 
     monkeypatch.setattr(gateway.subprocess, "run", fake_run)
-    monkeypatch.setattr(gateway, "_ensure_linger_enabled", lambda: helper_calls.append(True))
+    monkeypatch.setattr(systemd_linger, "ensure_linger_enabled", lambda: helper_calls.append(True))
 
-    gateway.systemd_install(force=False)
+    systemd_lifecycle.install(force=False)
 
     assert unit_path.exists()
     assert [cmd for cmd, _ in calls] == [
         ["systemctl", "--user", "daemon-reload"],
-        ["systemctl", "--user", "enable", gateway.get_service_name()],
+        ["systemctl", "--user", "enable", service_identity.service_name()],
     ]
     assert helper_calls == [True]
 
@@ -358,7 +366,7 @@ def test_gateway_install_noninteractive_skips_legacy_unit_prompt(monkeypatch, tm
     Covers the second hidden prompt that --start-now/--start-on-login do not
     guard. Originally contributed via PR #42124 (kyssta-exe).
     """
-    monkeypatch.setattr(gateway, "has_legacy_hermes_units", lambda: True)
+    monkeypatch.setattr(systemd_legacy, "has_units", lambda: True)
 
     calls = []
     monkeypatch.setattr(
@@ -370,14 +378,14 @@ def test_gateway_install_noninteractive_skips_legacy_unit_prompt(monkeypatch, tm
     monkeypatch.setattr(gateway, "print_legacy_unit_warning", lambda: None)
 
     fake_path = tmp_path / "hermes-gateway.service"
-    monkeypatch.setattr(gateway, "get_systemd_unit_path", lambda system=False: fake_path)
-    monkeypatch.setattr(gateway, "generate_systemd_unit", lambda system=False, run_as_user=None: "[Service]")
-    monkeypatch.setattr(gateway, "_run_systemctl", lambda *a, **kw: None)
-    monkeypatch.setattr(gateway, "_ensure_linger_enabled", lambda: None)
+    monkeypatch.setattr(systemd_identity, "unit_path", lambda system=False: fake_path)
+    monkeypatch.setattr(systemd_unit_render, "generate_systemd_unit", lambda system=False, run_as_user=None: "[Service]")
+    monkeypatch.setattr(systemd_runtime, "run_systemctl", lambda *a, **kw: None)
+    monkeypatch.setattr(systemd_linger, "ensure_linger_enabled", lambda: None)
     monkeypatch.setattr(gateway, "print_systemd_scope_conflict_warning", lambda: None)
-    monkeypatch.setattr(gateway, "_service_scope_label", lambda system=False: "user")
+    monkeypatch.setattr(systemd_runtime, "scope_label", lambda system=False: "user")
 
-    gateway.systemd_install(non_interactive=True)
+    systemd_lifecycle.install(non_interactive=True)
 
     # Legacy units removed without prompting.
     assert ("remove_legacy",) in calls
@@ -668,7 +676,7 @@ class TestReapUnsupervisedGatewayOrphansMacOS:
         """A launchd-managed PID must not appear in the orphan kill list."""
         launchd_pid = 52615
 
-        monkeypatch.setattr(gateway, "supports_systemd_services", lambda: False)
+        monkeypatch.setattr(systemd_runtime, "supports_services", lambda: False)
 
         # _get_service_pids returns the launchd-managed gateway PID.
         # (accepts all_profiles: the reaper asks for the whole fleet, #74075)
@@ -729,7 +737,7 @@ class TestReapUnsupervisedGatewayOrphansWindows:
         bootstrap_pid = 52616  # Scheduled-Task bootstrap (argv matches scan)
         orphan_pid = 99998     # a real orphan that should still be reaped
 
-        monkeypatch.setattr(gateway, "supports_systemd_services", lambda: False)
+        monkeypatch.setattr(systemd_runtime, "supports_services", lambda: False)
 
         # gateway.pid records the detached gateway; its parent is the
         # Scheduled-Task bootstrap whose argv matches the gateway scan.
@@ -783,7 +791,7 @@ class TestReapUnsupervisedGatewayOrphansWindows:
         """
         recorded_pid = 52615
 
-        monkeypatch.setattr(gateway, "supports_systemd_services", lambda: False)
+        monkeypatch.setattr(systemd_runtime, "supports_services", lambda: False)
 
         recorded = SimpleNamespace(pid=recorded_pid, parent=lambda: None)
         self._install_fake_psutil(monkeypatch, [recorded])

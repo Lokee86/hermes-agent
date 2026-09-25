@@ -285,9 +285,12 @@ def _installed_services(home: Path) -> list[tuple[str, bool]]:
     Under s6 the footprint is the SLOT: the root slot always (it is what a restart goes through),
     a named profile's slot only while it is UP — a registered-down slot is what the container's
     boot leaves behind for every named profile and is not a gateway."""
-    from hermes_cli import gateway as gw
+    from hermes_cli.service_manager import detect_service_manager
+    from gateway.systemd_identity import unit_path
+    from gateway.systemd_runtime import supports_services
+
     found: list[tuple[str, bool]] = []
-    if gw._running_under_s6():
+    if detect_service_manager() == "s6":
         from gateway.s6_service import named_slot_name, slot_is_up
         from hermes_cli.service_manager import S6ServiceManager
         from hermes_constants import profile_name_for_home
@@ -297,11 +300,13 @@ def _installed_services(home: Path) -> list[tuple[str, bool]]:
             found.append(("s6", False))
         return found
     with _home_env(home):
-        if gw.supports_systemd_services():
-            found.extend(("systemd", system) for system in (False, True) if gw.get_systemd_unit_path(system=system).exists())
-        if gw.is_macos() and gw.get_launchd_plist_path().exists():
-            found.append(("launchd", False))
-        if gw.is_windows() and _windows_task_installed():
+        if supports_services():
+            found.extend(("systemd", system) for system in (False, True) if unit_path(system=system).exists())
+        if sys.platform == "darwin":
+            from hermes_cli.gateway import get_launchd_plist_path
+            if get_launchd_plist_path().exists():
+                found.append(("launchd", False))
+        if sys.platform == "win32" and _windows_task_installed():
             found.append(("windows", False))
     return found
 
@@ -324,19 +329,19 @@ def _systemd_service_user(home: Path, services: list[tuple[str, bool]]) -> Optio
     """Read ``User=`` before migration removes a system-scope unit."""
     if ("systemd", True) not in services:
         return None
-    from hermes_cli import gateway as gw
+    from gateway.systemd_identity import read_unit_user, unit_path
     with _home_env(home):
-        return gw._read_systemd_user_from_unit(gw.get_systemd_unit_path(system=True))
+        return read_unit_user(unit_path(system=True))
 
 
 def _service_op(kind: str, system: bool, verb: str, home: Path, *, run_as_user: Optional[str] = None) -> None:
     """``stop`` / ``uninstall`` / ``start`` / ``restart`` / ``install`` on ``home``'s service."""
     if kind == "s6":
         return _s6_slot_op(verb, home)
-    from hermes_cli import gateway as gw
     with _home_env(home):
         if verb == "install":
             if kind == "launchd":
+                from hermes_cli import gateway as gw
                 gw.launchd_install()
             elif kind == "windows":
                 # Non-interactive: the migration already asked; prompting here would hang a
@@ -344,9 +349,15 @@ def _service_op(kind: str, system: bool, verb: str, home: Path, *, run_as_user: 
                 from hermes_cli import gateway_windows as gww
                 gww.install(start_now=True, start_on_login=True)
             else:
-                gw.systemd_install(system=system, run_as_user=run_as_user, non_interactive=True)
+                from gateway.systemd_lifecycle import install
+                install(system=system, run_as_user=run_as_user, remove_legacy=True)
             return
-        gw._service_call(kind, verb, system)
+        if kind == "systemd":
+            from gateway.systemd_lifecycle import service_call
+            service_call(verb, system)
+        else:
+            from hermes_cli import gateway as gw
+            gw._service_call(kind, verb, system)
 
 
 def _stop_gateway_process(home: Path) -> None:
@@ -893,7 +904,7 @@ def _preflight_apply(plan: MigrationPlan, target: Optional[tuple[str, bool]], ru
     working per-profile gateway is stopped: rollback is the fallback for surprises, not the plan.
     Mirrors the checks ``systemd_install``/``_service_call`` make on a system unit (root, resolvable
     ``User=``) and the config write's read-guard."""
-    from hermes_cli import gateway as gw
+    from gateway.systemd_identity import require_root, system_service_identity
     from hermes_cli.config import require_readable_config_before_write
     try:
         require_readable_config_before_write(plan.default_home / "config.yaml")
@@ -902,13 +913,13 @@ def _preflight_apply(plan: MigrationPlan, target: Optional[tuple[str, bool]], ru
     touches_system_unit = target == ("systemd", True) or any(p.has_system_unit for p in plan.standalone_secondaries)
     if touches_system_unit:
         try:
-            gw._require_root_for_system_service("migration")
+            require_root("migration")
         except Exception as exc:
             return str(exc)
     if plan.default.service is None and target == ("systemd", True):
         if run_as_user is None:
             try:
-                gw._system_service_identity()  # the #110850 refusal (implicit root), before anything is removed
+                system_service_identity()  # the #110850 refusal (implicit root), before anything is removed
             except ValueError as exc:
                 return f"default: {exc}"
         else:
@@ -1152,8 +1163,8 @@ def _host_supports_migration() -> Optional[str]:
     same way the container's boot does it (``gateway.s6_service``). What cannot be
     done from here is register a slot the boot never created — that is the one refusal left.
     """
-    from hermes_cli import gateway as gw
-    if not gw._running_under_s6():
+    from hermes_cli.service_manager import detect_service_manager
+    if detect_service_manager() != "s6":
         return None
     from gateway.s6_service import named_slot_name
     from hermes_cli.service_manager import S6ServiceManager

@@ -1087,10 +1087,10 @@ def _restart_macos_launchd_gateways(
     drain → kickstart). ``subprocess.TimeoutExpired`` is isolated per label so one wedged launchctl call
     cannot leave the rest of the fleet on old code (#68523).
     """
+    from gateway.signal_restart import _graceful_restart_via_sigusr1
     from hermes_cli.gateway import (
         get_launchd_label, get_launchd_plist_path, launchd_gateway_labels_for_install, legacy_launchd_labels_for_install,
-        _graceful_restart_via_sigusr1, _launchd_kickstart,
-        _locate_launchd_gateway_service, _wait_for_launchd_service_pid,
+        _launchd_kickstart, _locate_launchd_gateway_service, _wait_for_launchd_service_pid,
     )
     if require_supervision:
         listing = subprocess.run(["launchctl", "list"], capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=10)
@@ -1131,7 +1131,7 @@ def _restart_macos_launchd_gateways(
             graceful_ok = False
             if old_pid is not None and old_pid > 0:
                 print(f"  → {label}: draining (up to {int(drain_budget)}s)...")
-                from hermes_cli.update_cmd_drain_report import drain_progress_reporter
+                from gateway.drain_report import drain_progress_reporter
                 graceful_ok = _graceful_restart_via_sigusr1(
                     old_pid, drain_timeout=drain_budget,
                     on_progress=drain_progress_reporter(_gateway_home_for_pid(old_pid), budget_s=drain_budget))
@@ -1286,10 +1286,11 @@ def _drain_or_signal_gateway_for_update(
     return), so it is "actively waiting forever" and never marked wedged — the gateway burns the full
     force-drain cap (1800s) before killing its own updater's session. See #86684.
     """
-    from hermes_cli.gateway import (
-        GATEWAY_LOOP_WEDGED, _escalate_wedged_gateway, _graceful_restart_via_sigusr1,
-        _is_pid_ancestor_of_current_process, _request_gateway_self_restart, probe_gateway_loop_liveness,
+    from gateway.process_liveness import (
+        GATEWAY_LOOP_WEDGED, _escalate_wedged_gateway, probe_gateway_loop_liveness,
     )
+    from gateway.signal_restart import _graceful_restart_via_sigusr1
+    from hermes_cli.gateway import _is_pid_ancestor_of_current_process, _request_gateway_self_restart
     if _is_pid_ancestor_of_current_process(pid):
         print(
             f"  → {label}: update is running inside this gateway's "
@@ -1305,7 +1306,7 @@ def _drain_or_signal_gateway_for_update(
         _escalate_wedged_gateway(pid)
         return True
     print(f"  → {label}: draining (up to {int(drain_budget)}s)...")
-    from hermes_cli.update_cmd_drain_report import drain_progress_reporter
+    from gateway.drain_report import drain_progress_reporter
     return _graceful_restart_via_sigusr1(
         pid, drain_timeout=drain_budget,
         on_progress=drain_progress_reporter(_gateway_home_for_pid(pid), budget_s=drain_budget))
@@ -1365,24 +1366,24 @@ def _repair_unit_without_fatal_exit_park(svc_name: str, scope: str) -> None:
     exit: a ``Restart=on-failure`` system unit restarted ~180x on a host-attach refusal while the
     regenerated user units parked (#118282). The gateway rewrites its USER unit at boot; a SYSTEM unit
     lives in /etc, so rewrite it here when we are root, else name the repair."""
-    from hermes_cli.gateway import (
-        _SYSTEM_UNIT_DIR, GATEWAY_FATAL_CONFIG_EXIT_CODE, get_service_name,
-        refresh_systemd_unit_if_needed, user_systemd_unit_dir,
-    )
+    from gateway.restart import GATEWAY_FATAL_CONFIG_EXIT_CODE
+    from gateway.service_identity import SYSTEM_UNIT_DIR, service_name
+    from gateway.systemd_identity import user_unit_dir
+    from gateway.systemd_unit_state import refresh_if_needed
     system = scope == "system"
-    unit_path = (_SYSTEM_UNIT_DIR if system else user_systemd_unit_dir()) / f"{svc_name}.service"
+    unit_path = (SYSTEM_UNIT_DIR if system else user_unit_dir()) / f"{svc_name}.service"
     try:
         parked = re.search(rf"^RestartPreventExitStatus=.*\b{GATEWAY_FATAL_CONFIG_EXIT_CODE}\b", unit_path.read_text(encoding="utf-8"), re.M)
     except OSError:
         return
     if parked:
         return
-    if system and not _needs_sudo(scope) and svc_name == get_service_name():
+    if system and not _needs_sudo(scope) and svc_name == service_name():
         # The refresh adopts the unit's HERMES_HOME into os.environ (sudo strips it); the rest of the
         # update keeps running for the invoking profile.
         launch_home = os.environ.get("HERMES_HOME")
         try:
-            refresh_systemd_unit_if_needed(system=True)
+            refresh_if_needed(system=True)
         finally:
             if launch_home is None:
                 os.environ.pop("HERMES_HOME", None)
@@ -1511,12 +1512,12 @@ def _restart_systemd_gateway_units(
     Settled units → ``restarted_services`` (bare) and ``restarted_scoped_units``
     (``scope/name``); failures → ``failed_or_stale_units``. Per-unit timeouts isolated.
     """
-    from hermes_cli.gateway import supports_systemd_services, _ensure_user_systemd_env
-    if not supports_systemd_services():
+    from gateway.systemd_runtime import ensure_user_env, supports_services
+    if not supports_services():
         return
     _manage_cmd_cache: dict = {}
     with suppress(Exception):
-        _ensure_user_systemd_env()
+        ensure_user_env()
 
     def _on_list_timeout(scope: str, exc: subprocess.TimeoutExpired) -> None:
         # Discovery timeout — skip this scope, keep the other.
@@ -1790,8 +1791,8 @@ def _recover_after_restart_phase_abort(
 def _gateway_drain_budget() -> float:
     """Seconds a drain-first (SIGUSR1) restart may wait for a gateway to exit; 45s floor."""
     try:
-        from hermes_cli.gateway import _get_restart_exit_wait_budget
-        return max(float(_get_restart_exit_wait_budget()), 45.0)
+        from gateway.restart import get_restart_exit_wait_budget
+        return max(float(get_restart_exit_wait_budget()), 45.0)
     except Exception:
         return 45.0
 
@@ -1881,12 +1882,13 @@ def _restart_gateway_fleet_after_update(_pre_update_plan, gateway_mode: bool):
 def _print_legacy_units_warning() -> None:
     """Legacy hermes.service fights hermes-gateway.service over the bot token; warn on
     every update until migrated."""
-    from hermes_cli.gateway import (has_legacy_hermes_units, _find_legacy_hermes_units, supports_systemd_services)
-    if not (supports_systemd_services() and has_legacy_hermes_units()):
+    from gateway.systemd_legacy import find_units, has_units
+    from gateway.systemd_runtime import supports_services
+    if not (supports_services() and has_units()):
         return
     print()
     print("⚠ Legacy Hermes gateway unit(s) detected:")
-    for name, path, is_sys in _find_legacy_hermes_units():
+    for name, path, is_sys in find_units():
         scope = "system" if is_sys else "user"
         print(f"    {path}  ({scope} scope)")
     print()

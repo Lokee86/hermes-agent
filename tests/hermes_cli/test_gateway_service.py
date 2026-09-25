@@ -1,4 +1,18 @@
 """Tests for gateway service management helpers."""
+from gateway import process_liveness
+from gateway import restart
+from gateway import service_identity
+from gateway import service_process
+from gateway import signal_restart
+from gateway import systemd_identity
+from gateway import systemd_legacy
+from gateway import systemd_lifecycle
+from gateway import systemd_linger
+from gateway import systemd_restart
+from gateway import systemd_restart_state
+from gateway import systemd_runtime
+from gateway import systemd_unit_render
+from gateway import systemd_unit_state
 
 import os
 import plistlib
@@ -40,16 +54,16 @@ def _osascript_exec_argv(program_args: list[str]) -> list[str]:
 
 class TestUserSystemdPrivateSocketPreflight:
     def test_preflight_accepts_private_socket_without_dbus_bus(self, monkeypatch):
-        monkeypatch.setattr(gateway_cli, "_ensure_user_systemd_env", lambda: None)
+        monkeypatch.setattr(systemd_runtime, "ensure_user_env", lambda: None)
         monkeypatch.setattr(gateway_cli, "_user_dbus_socket_path", lambda: Path("/tmp/missing-bus"))
         monkeypatch.setattr(gateway_cli, "_user_systemd_private_socket_path", lambda: Path("/tmp/private-socket"))
         monkeypatch.setattr(Path, "exists", lambda self: str(self) == "/tmp/private-socket")
 
-        gateway_cli._preflight_user_systemd(auto_enable_linger=False)
+        systemd_runtime.preflight_user(auto_enable_linger=False)
 
     def test_wait_for_user_dbus_socket_accepts_private_socket(self, monkeypatch):
         calls = []
-        monkeypatch.setattr(gateway_cli, "_ensure_user_systemd_env", lambda: calls.append("env"))
+        monkeypatch.setattr(systemd_runtime, "ensure_user_env", lambda: calls.append("env"))
         monkeypatch.setattr(gateway_cli, "_user_dbus_socket_path", lambda: Path("/tmp/missing-bus"))
         monkeypatch.setattr(gateway_cli, "_user_systemd_private_socket_path", lambda: Path("/tmp/private-socket"))
         monkeypatch.setattr(Path, "exists", lambda self: str(self) == "/tmp/private-socket")
@@ -68,19 +82,19 @@ class TestSystemdServiceRefresh:
         dashboard would previously show a Python traceback (issue #19937
         follow-up: the same failure mode applies to restart, not just stop).
         """
-        monkeypatch.setattr(gateway_cli, "_select_systemd_scope", lambda system=False: False)
+        monkeypatch.setattr(systemd_runtime, "select_scope", lambda system=False: False)
         monkeypatch.setattr(gateway_cli, "_require_service_installed", lambda action, system=False: None)
-        monkeypatch.setattr(gateway_cli, "_preflight_user_systemd", lambda: None)
-        monkeypatch.setattr(gateway_cli, "refresh_systemd_unit_if_needed", lambda system=False: None)
+        monkeypatch.setattr(systemd_runtime, "preflight_user", lambda: None)
+        monkeypatch.setattr(systemd_unit_state, "refresh_if_needed", lambda system=False: None)
         monkeypatch.setattr(status, "get_running_pid", lambda cleanup_stale=True: None)
-        monkeypatch.setattr(gateway_cli, "_systemd_main_pid", lambda system=False: None)
+        monkeypatch.setattr(systemd_restart, "_systemd_main_pid", lambda system=False: None)
         monkeypatch.setattr(
-            gateway_cli,
+            systemd_restart,
             "_recover_pending_systemd_restart",
             lambda system=False, previous_pid=None: False,
         )
         monkeypatch.setattr(
-            gateway_cli,
+            systemd_restart,
             "_systemd_service_is_start_limited",
             lambda system=False: False,
         )
@@ -91,9 +105,9 @@ class TestSystemdServiceRefresh:
                 return SimpleNamespace(returncode=0, stdout="", stderr="")
             raise subprocess.TimeoutExpired(args, kwargs.get("timeout"))
 
-        monkeypatch.setattr(gateway_cli, "_run_systemctl", fake_run_systemctl)
+        monkeypatch.setattr(systemd_runtime, "run_systemctl", fake_run_systemctl)
 
-        gateway_cli.systemd_restart()
+        systemd_restart.systemd_restart()
 
         output = capsys.readouterr().out
         assert "still restarting after 90s" in output
@@ -120,7 +134,7 @@ class TestSystemdServiceRefresh:
         unit_path.write_text("old unit\n", encoding="utf-8")
 
         monkeypatch.setattr(
-            gateway_cli, "get_systemd_unit_path", lambda system=False: unit_path
+            systemd_identity, "unit_path", lambda system=False: unit_path
         )
         # Realistic generated unit referencing a pytest tmpdir HERMES_HOME
         polluted_unit = (
@@ -129,7 +143,7 @@ class TestSystemdServiceRefresh:
             'popen-gw0/test_x/hermes_test"\n'
         )
         monkeypatch.setattr(
-            gateway_cli,
+            systemd_unit_render,
             "generate_systemd_unit",
             lambda system=False, run_as_user=None: polluted_unit,
         )
@@ -143,7 +157,7 @@ class TestSystemdServiceRefresh:
 
         monkeypatch.setattr(gateway_cli.subprocess, "run", fake_run)
 
-        result = gateway_cli.refresh_systemd_unit_if_needed(system=False)
+        result = systemd_unit_state.refresh_if_needed(system=False)
 
         assert result is False, "refresh should refuse to write a polluted unit"
         assert (
@@ -160,7 +174,7 @@ class TestTempHomeServiceDefinitionGuard:
     def test_detects_tmp_home_in_systemd_unit(self):
         unit = '[Service]\nEnvironment="HERMES_HOME=/tmp/hermes-e2e-41264"\n'
         assert (
-            gateway_cli._temp_home_in_service_definition(unit)
+            systemd_unit_state.temp_home_in_definition(unit)
             == "/tmp/hermes-e2e-41264"
         )
 
@@ -169,13 +183,13 @@ class TestTempHomeServiceDefinitionGuard:
 
         monkeypatch.setattr(_tempfile, "gettempdir", lambda: str(tmp_path))
         unit = f'[Service]\nEnvironment="HERMES_HOME={tmp_path}/hermes-home"\n'
-        assert gateway_cli._temp_home_in_service_definition(unit) is not None
+        assert systemd_unit_state.temp_home_in_definition(unit) is not None
 
 
 class TestRequireServiceInstalled:
     def test_exits_with_install_hint_when_unit_missing(self, tmp_path, monkeypatch, capsys):
         unit_path = tmp_path / "hermes-gateway.service"
-        monkeypatch.setattr(gateway_cli, "get_systemd_unit_path", lambda system=False: unit_path)
+        monkeypatch.setattr(systemd_identity, "unit_path", lambda system=False: unit_path)
 
         with pytest.raises(SystemExit) as exc_info:
             gateway_cli._require_service_installed("start")
@@ -188,7 +202,7 @@ class TestRequireServiceInstalled:
     def test_passes_when_unit_exists(self, tmp_path, monkeypatch):
         unit_path = tmp_path / "hermes-gateway.service"
         unit_path.write_text("[Unit]\n", encoding="utf-8")
-        monkeypatch.setattr(gateway_cli, "get_systemd_unit_path", lambda system=False: unit_path)
+        monkeypatch.setattr(systemd_identity, "unit_path", lambda system=False: unit_path)
 
         gateway_cli._require_service_installed("start")
 
@@ -210,19 +224,19 @@ class TestServiceIdentityForForeignHome:
         monkeypatch.setenv("HERMES_HOME", str(foreign))
 
         default_unit = machine_home / ".config" / "systemd" / "user" / "hermes-gateway.service"
-        assert gateway_cli.get_service_name() != "hermes-gateway"
-        assert gateway_cli.get_systemd_unit_path() != default_unit
-        assert gateway_cli.get_systemd_unit_path().parent == default_unit.parent
+        assert service_identity.service_name() != "hermes-gateway"
+        assert systemd_identity.unit_path() != default_unit
+        assert systemd_identity.unit_path().parent == default_unit.parent
 
     def test_default_and_named_profile_homes_keep_their_names(self, machine_home, monkeypatch):
         default_home = machine_home / ".hermes"
         (default_home / "profiles" / "alpha").mkdir(parents=True)
 
         monkeypatch.setenv("HERMES_HOME", str(default_home))
-        assert gateway_cli.get_service_name() == "hermes-gateway"
+        assert service_identity.service_name() == "hermes-gateway"
 
         monkeypatch.setenv("HERMES_HOME", str(default_home / "profiles" / "alpha"))
-        assert gateway_cli.get_service_name() == "hermes-gateway-alpha"
+        assert service_identity.service_name() == "hermes-gateway-alpha"
 
     def test_sudo_user_default_home_keeps_bare_service_name(self, machine_home, tmp_path, monkeypatch):
         sudo_home = tmp_path / "alice"
@@ -234,11 +248,11 @@ class TestServiceIdentityForForeignHome:
 
         # Before unit sync, sudo resolves the root process's native home.
         monkeypatch.delenv("HERMES_HOME", raising=False)
-        assert gateway_cli.get_service_name() == "hermes-gateway"
+        assert service_identity.service_name() == "hermes-gateway"
 
         # After unit sync, HERMES_HOME points at the invoking user's native home.
         monkeypatch.setenv("HERMES_HOME", str(sudo_default))
-        assert gateway_cli.get_service_name() == "hermes-gateway"
+        assert service_identity.service_name() == "hermes-gateway"
 
 
 class TestUninstallRefusesForeignUnit:
@@ -248,12 +262,12 @@ class TestUninstallRefusesForeignUnit:
         unit_path = tmp_path / "hermes-gateway.service"
         unit_path.write_text('[Service]\nEnvironment="HERMES_HOME=/somewhere/else"\n', encoding="utf-8")
         monkeypatch.setenv("HERMES_HOME", str(tmp_path / "mine"))
-        monkeypatch.setattr(gateway_cli, "get_systemd_unit_path", lambda system=False: unit_path)
+        monkeypatch.setattr(systemd_identity, "unit_path", lambda system=False: unit_path)
         monkeypatch.setattr(gateway_cli, "_systemd_scope_preamble", lambda *a, **k: False)
         calls = []
-        monkeypatch.setattr(gateway_cli, "_run_systemctl", lambda args, **k: calls.append(args))
+        monkeypatch.setattr(systemd_runtime, "run_systemctl", lambda args, **k: calls.append(args))
 
-        gateway_cli.systemd_uninstall(system=False)
+        systemd_lifecycle.uninstall(system=False)
 
         assert unit_path.exists()
         assert calls == []
@@ -265,7 +279,7 @@ class TestGetCronDrainTimeout:
         monkeypatch.delenv("HERMES_CRON_DRAIN_TIMEOUT", raising=False)
         monkeypatch.setattr(gateway_cli, "read_raw_config", lambda: {})
         assert (
-            gateway_cli._get_cron_drain_timeout() == DEFAULT_GATEWAY_CRON_DRAIN_TIMEOUT
+            restart.get_cron_drain_timeout() == DEFAULT_GATEWAY_CRON_DRAIN_TIMEOUT
         )
 
     def test_zero_in_config_is_opt_out(self, monkeypatch):
@@ -275,7 +289,7 @@ class TestGetCronDrainTimeout:
             "read_raw_config",
             lambda: {"agent": {"cron_drain_timeout": 0}},
         )
-        assert gateway_cli._get_cron_drain_timeout() == 0.0
+        assert restart.get_cron_drain_timeout() == 0.0
 
     def test_env_overrides_config(self, monkeypatch):
         monkeypatch.setenv("HERMES_CRON_DRAIN_TIMEOUT", "45")
@@ -284,7 +298,7 @@ class TestGetCronDrainTimeout:
             "read_raw_config",
             lambda: {"agent": {"cron_drain_timeout": 90}},
         )
-        assert gateway_cli._get_cron_drain_timeout() == 45.0
+        assert restart.get_cron_drain_timeout() == 45.0
 
 
 class TestGeneratedSystemdUnits:
@@ -303,12 +317,12 @@ class TestGeneratedSystemdUnits:
         monkeypatch.delenv("HERMES_CRON_DRAIN_TIMEOUT", raising=False)
         monkeypatch.setattr("gateway.restart.get_restart_drain_timeout", lambda: 0.0)
         monkeypatch.setattr(
-            gateway_cli,
-            "_get_cron_drain_timeout",
+            restart,
+            "get_cron_drain_timeout",
             lambda: DEFAULT_GATEWAY_CRON_DRAIN_TIMEOUT,
         )
 
-        unit = gateway_cli.generate_systemd_unit(system=False)
+        unit = systemd_unit_render.generate_systemd_unit(system=False)
         expected = resolve_systemd_timeout_stop_sec(
             0.0, DEFAULT_GATEWAY_CRON_DRAIN_TIMEOUT
         )
@@ -321,9 +335,9 @@ class TestGeneratedSystemdUnits:
         self, monkeypatch
     ):
         monkeypatch.setattr("gateway.restart.get_restart_drain_timeout", lambda: 0.0)
-        monkeypatch.setattr(gateway_cli, "_get_cron_drain_timeout", lambda: 0.0)
+        monkeypatch.setattr(restart, "get_cron_drain_timeout", lambda: 0.0)
 
-        unit = gateway_cli.generate_systemd_unit(system=False)
+        unit = systemd_unit_render.generate_systemd_unit(system=False)
         assert "TimeoutStopSec=60" in unit
 
     def test_restart_exit_code_is_also_declared_a_success_status(self):
@@ -334,7 +348,7 @@ class TestGeneratedSystemdUnits:
         hermes gateway restart, the in-app restart). SuccessExitStatus=75 keeps the same
         force-restart behavior while letting the unit land back in ``active``/``success``,
         so OnFailure= stays reserved for actual failures."""
-        unit = gateway_cli.generate_systemd_unit(system=False)
+        unit = systemd_unit_render.generate_systemd_unit(system=False)
         assert f"SuccessExitStatus={GATEWAY_SERVICE_RESTART_EXIT_CODE}" in unit
         # Must still force an actual restart on that exit code -- SuccessExitStatus alone
         # would otherwise let the process stay stopped instead of being relaunched.
@@ -345,16 +359,16 @@ class TestGeneratedSystemdUnits:
         """#14613: glibc reads LD_LIBRARY_PATH only at process start, so the unit file is the
         only place it can reach CUDA-backed tools; quotes/backslashes must survive systemd quoting."""
         # The absent-env branch falls back to the installed unit: keep the host's real one out.
-        monkeypatch.setattr(gateway_cli, "get_systemd_unit_path", lambda system=False: tmp_path / "hermes-gateway.service")
+        monkeypatch.setattr(systemd_identity, "unit_path", lambda system=False: tmp_path / "hermes-gateway.service")
         monkeypatch.setenv("LD_LIBRARY_PATH", '/opt/cu"da/lib64:/opt/back\\slash/lib')
 
-        unit = gateway_cli.generate_systemd_unit(system=False)
+        unit = systemd_unit_render.generate_systemd_unit(system=False)
         assert 'Environment="LD_LIBRARY_PATH=/opt/cu\\"da/lib64:/opt/back\\\\slash/lib"' in unit
 
         monkeypatch.setenv("LD_LIBRARY_PATH", "")
-        assert "LD_LIBRARY_PATH" not in gateway_cli.generate_systemd_unit(system=False)
+        assert "LD_LIBRARY_PATH" not in systemd_unit_render.generate_systemd_unit(system=False)
         monkeypatch.delenv("LD_LIBRARY_PATH")
-        assert "LD_LIBRARY_PATH" not in gateway_cli.generate_systemd_unit(system=False)
+        assert "LD_LIBRARY_PATH" not in systemd_unit_render.generate_systemd_unit(system=False)
 
 
     def test_user_unit_does_not_leak_profile_node_symlink_target(self, tmp_path, monkeypatch):
@@ -376,7 +390,7 @@ class TestGeneratedSystemdUnits:
 
         monkeypatch.setattr(gateway_cli.shutil, "which", lambda cmd: str(link_node) if cmd == "node" else None)
 
-        unit = gateway_cli.generate_systemd_unit(system=False)
+        unit = systemd_unit_render.generate_systemd_unit(system=False)
 
         assert str(local_bin) in unit
         assert str(profile_node_bin) not in unit
@@ -442,14 +456,14 @@ class TestGatewayStopCleanup:
         unit_path = tmp_path / "hermes-gateway.service"
         unit_path.write_text("unit\n", encoding="utf-8")
 
-        monkeypatch.setattr(gateway_cli, "supports_systemd_services", lambda: True)
+        monkeypatch.setattr(systemd_runtime, "supports_services", lambda: True)
         monkeypatch.setattr(gateway_cli, "is_termux", lambda: False)
-        monkeypatch.setattr(gateway_cli, "get_systemd_unit_path", lambda system=False: unit_path)
+        monkeypatch.setattr(systemd_identity, "unit_path", lambda system=False: unit_path)
 
         service_calls = []
         kill_calls = []
 
-        monkeypatch.setattr(gateway_cli, "systemd_stop", lambda system=False: service_calls.append("stop"))
+        monkeypatch.setattr(systemd_lifecycle, "stop", lambda system=False: service_calls.append("stop"))
         monkeypatch.setattr(
             gateway_cli,
             "kill_gateway_processes",
@@ -471,17 +485,17 @@ class TestLaunchdServiceRecovery:
         )
         monkeypatch.setattr(gateway_cli.time, "sleep", lambda s: None)
 
-        assert gateway_cli._wait_for_pid_exit(4242, timeout=30) is True
+        assert process_liveness._wait_for_pid_exit(4242, timeout=30) is True
         assert not alive  # polled until the PID disappeared
 
     def test_wait_for_pid_exit_times_out_on_wedged_process(self, monkeypatch):
         """A wedged gateway must not block the reload forever."""
         monkeypatch.setattr("gateway.status._pid_exists", lambda pid: True)
 
-        assert gateway_cli._wait_for_pid_exit(4242, timeout=0) is False
+        assert process_liveness._wait_for_pid_exit(4242, timeout=0) is False
 
     def test_wait_for_pid_exit_ignores_nonpositive_pid(self):
-        assert gateway_cli._wait_for_pid_exit(0, timeout=30) is True
+        assert process_liveness._wait_for_pid_exit(0, timeout=30) is True
 
     def test_refresh_defers_reload_when_running_inside_gateway_tree(self, tmp_path, monkeypatch):
         """#43842: when the refresh runs inside the gateway's own process tree,
@@ -687,7 +701,7 @@ class TestLaunchdServiceRecovery:
 
         waited = []
         monkeypatch.setattr(
-            gateway_cli,
+            process_liveness,
             "_wait_for_pid_exit",
             lambda pid, timeout, **_: waited.append((pid, timeout)) or True,
         )
@@ -870,7 +884,7 @@ class TestGatewayServiceDetection:
         monkeypatch.setattr(gateway_cli, "is_termux", lambda: False)
         monkeypatch.setattr(gateway_cli.shutil, "which", lambda name: None)
 
-        assert gateway_cli.supports_systemd_services() is False
+        assert systemd_runtime.supports_services() is False
 
     def test_supports_systemd_services_returns_true_when_systemctl_present(self, monkeypatch):
         monkeypatch.setattr(gateway_cli, "is_linux", lambda: True)
@@ -878,25 +892,25 @@ class TestGatewayServiceDetection:
         monkeypatch.setattr(gateway_cli, "is_wsl", lambda: False)
         monkeypatch.setattr(gateway_cli.shutil, "which", lambda name: "/usr/bin/systemctl")
 
-        assert gateway_cli.supports_systemd_services() is True
+        assert systemd_runtime.supports_services() is True
 
     def test_is_service_running_checks_system_scope_when_user_scope_is_inactive(self, monkeypatch):
         user_unit = SimpleNamespace(exists=lambda: True)
         system_unit = SimpleNamespace(exists=lambda: True)
 
-        monkeypatch.setattr(gateway_cli, "supports_systemd_services", lambda: True)
+        monkeypatch.setattr(systemd_runtime, "supports_services", lambda: True)
         monkeypatch.setattr(gateway_cli, "is_termux", lambda: False)
         monkeypatch.setattr(gateway_cli, "is_macos", lambda: False)
         monkeypatch.setattr(
-            gateway_cli,
-            "get_systemd_unit_path",
+            systemd_identity,
+            "unit_path",
             lambda system=False: system_unit if system else user_unit,
         )
 
         def fake_run(cmd, capture_output=True, text=True, **kwargs):
-            if cmd == ["systemctl", "--user", "is-active", gateway_cli.get_service_name()]:
+            if cmd == ["systemctl", "--user", "is-active", service_identity.service_name()]:
                 return SimpleNamespace(returncode=0, stdout="inactive\n", stderr="")
-            if cmd == ["systemctl", "is-active", gateway_cli.get_service_name()]:
+            if cmd == ["systemctl", "is-active", service_identity.service_name()]:
                 return SimpleNamespace(returncode=0, stdout="active\n", stderr="")
             raise AssertionError(f"Unexpected command: {cmd}")
 
@@ -909,18 +923,18 @@ class TestGatewaySystemServiceRouting:
     def test_systemd_restart_gracefully_restarts_running_service_and_waits(self, monkeypatch, capsys):
         calls = []
 
-        monkeypatch.setattr(gateway_cli, "_select_systemd_scope", lambda system=False: False)
+        monkeypatch.setattr(systemd_runtime, "select_scope", lambda system=False: False)
         monkeypatch.setattr(gateway_cli, "_require_service_installed", lambda action, system=False: None)
-        monkeypatch.setattr(gateway_cli, "_preflight_user_systemd", lambda **kwargs: None)
-        monkeypatch.setattr(gateway_cli, "refresh_systemd_unit_if_needed", lambda system=False: calls.append(("refresh", system)))
+        monkeypatch.setattr(systemd_runtime, "preflight_user", lambda **kwargs: None)
+        monkeypatch.setattr(systemd_unit_state, "refresh_if_needed", lambda system=False: calls.append(("refresh", system)))
         # Wait budget covers after-turn deferral + drain + headroom (#77184).
-        monkeypatch.setattr(gateway_cli, "_get_restart_exit_wait_budget", lambda: 27.0)
+        monkeypatch.setattr(systemd_restart, "_get_restart_exit_wait_budget", lambda: 27.0)
         monkeypatch.setattr(
             "gateway.status.get_running_pid",
             lambda: 654,
         )
         monkeypatch.setattr(
-            gateway_cli,
+            signal_restart,
             "_graceful_restart_via_sigusr1",
             lambda pid, timeout, **_: calls.append(("graceful", pid, timeout)) or True,
         )
@@ -933,7 +947,7 @@ class TestGatewaySystemServiceRouting:
 
         monkeypatch.setattr(gateway_cli.subprocess, "run", fake_subprocess_run)
         monkeypatch.setattr(
-            gateway_cli,
+            systemd_restart,
             "_wait_for_systemd_service_restart",
             lambda system=False, previous_pid=None, replacement_observed=None: calls.append(
                 ("wait", system, previous_pid)
@@ -941,7 +955,7 @@ class TestGatewaySystemServiceRouting:
             or True,
         )
 
-        gateway_cli.systemd_restart()
+        systemd_restart.systemd_restart()
 
         assert ("graceful", 654, 27.0) in calls
         assert ("wait", False, 654) in calls
@@ -955,33 +969,33 @@ class TestGatewaySystemServiceRouting:
     ):
         calls = []
 
-        monkeypatch.setattr(gateway_cli, "_select_systemd_scope", lambda system=False: False)
+        monkeypatch.setattr(systemd_runtime, "select_scope", lambda system=False: False)
         monkeypatch.setattr(gateway_cli, "_require_service_installed", lambda action, system=False: None)
-        monkeypatch.setattr(gateway_cli, "_preflight_user_systemd", lambda **kwargs: None)
-        monkeypatch.setattr(gateway_cli, "refresh_systemd_unit_if_needed", lambda system=False: None)
-        monkeypatch.setattr(gateway_cli, "_get_restart_exit_wait_budget", lambda: 27.0)
+        monkeypatch.setattr(systemd_runtime, "preflight_user", lambda **kwargs: None)
+        monkeypatch.setattr(systemd_unit_state, "refresh_if_needed", lambda system=False: None)
+        monkeypatch.setattr(systemd_restart, "_get_restart_exit_wait_budget", lambda: 27.0)
         monkeypatch.setattr("gateway.status.get_running_pid", lambda: 654)
-        monkeypatch.setattr(gateway_cli, "_graceful_restart_via_sigusr1", lambda pid, timeout, **_: True)
+        monkeypatch.setattr(signal_restart, "_graceful_restart_via_sigusr1", lambda pid, timeout, **_: True)
         waits = iter((False, True))
         monkeypatch.setattr(
-            gateway_cli,
+            systemd_restart,
             "_wait_for_systemd_service_restart",
             lambda system=False, previous_pid=None, replacement_observed=None: next(waits),
         )
-        monkeypatch.setattr(gateway_cli, "_systemd_service_is_start_limited", lambda system=False: False)
+        monkeypatch.setattr(systemd_restart, "_systemd_service_is_start_limited", lambda system=False: False)
         monkeypatch.setattr(
             gateway_cli,
             "_read_systemd_unit_properties",
             lambda system=False, properties=None: {"ActiveState": "inactive", "MainPID": "0"},
         )
         monkeypatch.setattr(
-            gateway_cli,
-            "_run_systemctl",
+            systemd_runtime,
+            "run_systemctl",
             lambda args, **kwargs: calls.append((args, kwargs))
             or SimpleNamespace(returncode=0, stdout="", stderr=""),
         )
 
-        gateway_cli.systemd_restart()
+        systemd_restart.systemd_restart()
 
         assert [call[0][0] for call in calls] == ["reset-failed", "start"]
         assert "did not relaunch" in capsys.readouterr().out
@@ -989,40 +1003,40 @@ class TestGatewaySystemServiceRouting:
     def test_systemd_restart_does_not_force_an_unready_replacement(self, monkeypatch):
         calls = []
 
-        monkeypatch.setattr(gateway_cli, "_select_systemd_scope", lambda system=False: False)
+        monkeypatch.setattr(systemd_runtime, "select_scope", lambda system=False: False)
         monkeypatch.setattr(gateway_cli, "_require_service_installed", lambda action, system=False: None)
-        monkeypatch.setattr(gateway_cli, "_preflight_user_systemd", lambda **kwargs: None)
-        monkeypatch.setattr(gateway_cli, "refresh_systemd_unit_if_needed", lambda system=False: None)
-        monkeypatch.setattr(gateway_cli, "_get_restart_exit_wait_budget", lambda: 27.0)
+        monkeypatch.setattr(systemd_runtime, "preflight_user", lambda **kwargs: None)
+        monkeypatch.setattr(systemd_unit_state, "refresh_if_needed", lambda system=False: None)
+        monkeypatch.setattr(systemd_restart, "_get_restart_exit_wait_budget", lambda: 27.0)
         monkeypatch.setattr("gateway.status.get_running_pid", lambda: 654)
-        monkeypatch.setattr(gateway_cli, "_graceful_restart_via_sigusr1", lambda pid, timeout, **_: True)
+        monkeypatch.setattr(signal_restart, "_graceful_restart_via_sigusr1", lambda pid, timeout, **_: True)
         monkeypatch.setattr(
-            gateway_cli,
+            systemd_restart,
             "_wait_for_systemd_service_restart",
             lambda system=False, previous_pid=None, replacement_observed=None: False,
         )
-        monkeypatch.setattr(gateway_cli, "_systemd_service_is_start_limited", lambda system=False: False)
+        monkeypatch.setattr(systemd_restart, "_systemd_service_is_start_limited", lambda system=False: False)
         monkeypatch.setattr(
             gateway_cli,
             "_read_systemd_unit_properties",
             lambda system=False, properties=None: {"ActiveState": "active", "MainPID": "777"},
         )
-        monkeypatch.setattr(gateway_cli, "_run_systemctl", lambda args, **kwargs: calls.append(args))
+        monkeypatch.setattr(systemd_runtime, "run_systemctl", lambda args, **kwargs: calls.append(args))
 
-        gateway_cli.systemd_restart()
+        systemd_restart.systemd_restart()
 
         assert calls == []
 
     def test_systemd_restart_does_not_recover_a_failed_replacement(self, monkeypatch):
         calls = []
 
-        monkeypatch.setattr(gateway_cli, "_select_systemd_scope", lambda system=False: False)
+        monkeypatch.setattr(systemd_runtime, "select_scope", lambda system=False: False)
         monkeypatch.setattr(gateway_cli, "_require_service_installed", lambda action, system=False: None)
-        monkeypatch.setattr(gateway_cli, "_preflight_user_systemd", lambda **kwargs: None)
-        monkeypatch.setattr(gateway_cli, "refresh_systemd_unit_if_needed", lambda system=False: None)
-        monkeypatch.setattr(gateway_cli, "_get_restart_exit_wait_budget", lambda: 27.0)
+        monkeypatch.setattr(systemd_runtime, "preflight_user", lambda **kwargs: None)
+        monkeypatch.setattr(systemd_unit_state, "refresh_if_needed", lambda system=False: None)
+        monkeypatch.setattr(systemd_restart, "_get_restart_exit_wait_budget", lambda: 27.0)
         monkeypatch.setattr("gateway.status.get_running_pid", lambda: 654)
-        monkeypatch.setattr(gateway_cli, "_graceful_restart_via_sigusr1", lambda pid, timeout, **_: True)
+        monkeypatch.setattr(signal_restart, "_graceful_restart_via_sigusr1", lambda pid, timeout, **_: True)
 
         def failed_replacement_wait(
             system=False, previous_pid=None, replacement_observed=None
@@ -1031,13 +1045,13 @@ class TestGatewaySystemServiceRouting:
             return False
 
         monkeypatch.setattr(
-            gateway_cli,
+            systemd_restart,
             "_wait_for_systemd_service_restart",
             failed_replacement_wait,
         )
-        monkeypatch.setattr(gateway_cli, "_run_systemctl", lambda args, **kwargs: calls.append(args))
+        monkeypatch.setattr(systemd_runtime, "run_systemctl", lambda args, **kwargs: calls.append(args))
 
-        gateway_cli.systemd_restart()
+        systemd_restart.systemd_restart()
 
         assert calls == []
 
@@ -1046,27 +1060,27 @@ class TestGatewaySystemServiceRouting:
     ):
         calls = []
 
-        monkeypatch.setattr(gateway_cli, "_select_systemd_scope", lambda system=False: False)
+        monkeypatch.setattr(systemd_runtime, "select_scope", lambda system=False: False)
         monkeypatch.setattr(gateway_cli, "_require_service_installed", lambda action, system=False: None)
-        monkeypatch.setattr(gateway_cli, "_preflight_user_systemd", lambda **kwargs: None)
-        monkeypatch.setattr(gateway_cli, "refresh_systemd_unit_if_needed", lambda system=False: None)
-        monkeypatch.setattr(gateway_cli, "_get_restart_exit_wait_budget", lambda: 27.0)
+        monkeypatch.setattr(systemd_runtime, "preflight_user", lambda **kwargs: None)
+        monkeypatch.setattr(systemd_unit_state, "refresh_if_needed", lambda system=False: None)
+        monkeypatch.setattr(systemd_restart, "_get_restart_exit_wait_budget", lambda: 27.0)
         monkeypatch.setattr("gateway.status.get_running_pid", lambda: 654)
-        monkeypatch.setattr(gateway_cli, "_graceful_restart_via_sigusr1", lambda pid, timeout, **_: True)
+        monkeypatch.setattr(signal_restart, "_graceful_restart_via_sigusr1", lambda pid, timeout, **_: True)
         monkeypatch.setattr(
-            gateway_cli,
+            systemd_restart,
             "_wait_for_systemd_service_restart",
             lambda system=False, previous_pid=None, replacement_observed=None: False,
         )
-        monkeypatch.setattr(gateway_cli, "_systemd_service_is_start_limited", lambda system=False: False)
+        monkeypatch.setattr(systemd_restart, "_systemd_service_is_start_limited", lambda system=False: False)
         monkeypatch.setattr(
             gateway_cli,
             "_read_systemd_unit_properties",
             lambda system=False, properties=None: {},
         )
-        monkeypatch.setattr(gateway_cli, "_run_systemctl", lambda args, **kwargs: calls.append(args))
+        monkeypatch.setattr(systemd_runtime, "run_systemctl", lambda args, **kwargs: calls.append(args))
 
-        gateway_cli.systemd_restart()
+        systemd_restart.systemd_restart()
 
         assert calls == []
 
@@ -1080,7 +1094,7 @@ class TestGatewaySystemServiceRouting:
             },
         )
 
-        assert gateway_cli._systemd_restart_wait_timeout() == 155.0
+        assert systemd_restart_state._systemd_restart_wait_timeout() == 155.0
 
     def test_wait_records_a_short_lived_failed_replacement(self, monkeypatch):
         ticks = iter((0.0, 0.0, 2.0))
@@ -1102,7 +1116,7 @@ class TestGatewaySystemServiceRouting:
         )
         replacement_observed = []
 
-        result = gateway_cli._wait_for_systemd_service_restart(
+        result = systemd_restart_state._wait_for_systemd_service_restart(
             previous_pid=654,
             timeout=1.0,
             replacement_observed=replacement_observed,
@@ -1127,7 +1141,7 @@ class TestGatewaySystemServiceRouting:
             lambda: {"pid": 777, "gateway_state": "degraded"},
         )
 
-        result = gateway_cli._wait_for_systemd_service_restart(previous_pid=654, timeout=1.0)
+        result = systemd_restart_state._wait_for_systemd_service_restart(previous_pid=654, timeout=1.0)
 
         assert result is True
         assert "DEGRADED" in capsys.readouterr().out
@@ -1149,16 +1163,16 @@ class TestGatewaySystemServiceRouting:
         monkeypatch.setattr("gateway.status.get_running_pid", lambda *a, **k: 654)
         monkeypatch.setattr(gateway_cli, "_request_gateway_self_restart", lambda pid: False)
         monkeypatch.setattr(
-            gateway_cli,
+            process_liveness,
             "probe_gateway_loop_liveness",
-            lambda pid, **kw: gateway_cli.GATEWAY_LOOP_ALIVE,
+            lambda pid, **kw: process_liveness.GATEWAY_LOOP_ALIVE,
         )
         # Wait budget covers after-turn deferral + drain + headroom (#77184);
         # the raw drain timeout (0 by default) must not be used here.
         monkeypatch.setattr("gateway.restart.get_restart_drain_timeout", lambda: 0.0)
-        monkeypatch.setattr(gateway_cli, "_get_restart_exit_wait_budget", lambda: 27.0)
+        monkeypatch.setattr(systemd_restart, "_get_restart_exit_wait_budget", lambda: 27.0)
         monkeypatch.setattr(
-            gateway_cli,
+            signal_restart,
             "_graceful_restart_via_sigusr1",
             lambda pid, timeout, **_: calls.append(("graceful", pid, timeout)) or True,
         )
@@ -1216,13 +1230,13 @@ class TestGatewaySystemServiceRouting:
         monkeypatch.setattr("gateway.status.get_running_pid", lambda *a, **k: 654)
         monkeypatch.setattr(gateway_cli, "_request_gateway_self_restart", lambda pid: False)
         monkeypatch.setattr(
-            gateway_cli,
+            process_liveness,
             "probe_gateway_loop_liveness",
-            lambda pid, **kw: gateway_cli.GATEWAY_LOOP_ALIVE,
+            lambda pid, **kw: process_liveness.GATEWAY_LOOP_ALIVE,
         )
-        monkeypatch.setattr(gateway_cli, "_get_restart_exit_wait_budget", lambda: 27.0)
+        monkeypatch.setattr(systemd_restart, "_get_restart_exit_wait_budget", lambda: 27.0)
         monkeypatch.setattr(
-            gateway_cli, "_graceful_restart_via_sigusr1", lambda pid, timeout, **_: True
+            signal_restart, "_graceful_restart_via_sigusr1", lambda pid, timeout, **_: True
         )
         monkeypatch.setattr(
             gateway_cli,
@@ -1289,7 +1303,7 @@ class TestDetectVenvDir:
         monkeypatch.setattr("sys.prefix", str(venv_path))
         monkeypatch.setattr("sys.base_prefix", "/usr")
 
-        result = gateway_cli._detect_venv_dir()
+        result = service_process.detect_venv_dir()
         assert result == venv_path
 
     def test_falls_back_to_dot_venv_directory(self, tmp_path, monkeypatch):
@@ -1302,7 +1316,7 @@ class TestDetectVenvDir:
         dot_venv = tmp_path / ".venv"
         dot_venv.mkdir()
 
-        result = gateway_cli._detect_venv_dir()
+        result = service_process.detect_venv_dir()
         assert result == dot_venv
 
     def test_returns_none_when_no_virtualenv(self, tmp_path, monkeypatch):
@@ -1311,7 +1325,7 @@ class TestDetectVenvDir:
         monkeypatch.delenv("VIRTUAL_ENV", raising=False)
         monkeypatch.setattr(gateway_cli, "PROJECT_ROOT", tmp_path)
 
-        result = gateway_cli._detect_venv_dir()
+        result = service_process.detect_venv_dir()
         assert result is None
 
 
@@ -1328,7 +1342,7 @@ class TestSystemUnitHermesHome:
         )
         entries: list[str] = []
 
-        gateway_cli._append_node_dir_for_service(entries, tmp_path / ".hermes")
+        service_process.append_node_dir(entries, tmp_path / ".hermes")
 
         assert entries == ["/opt/external-node/bin"]
 
@@ -1345,7 +1359,7 @@ class TestSystemUnitHermesHome:
         )
         entries: list[str] = []
 
-        gateway_cli._append_node_dir_for_service(entries, tmp_path / ".hermes")
+        service_process.append_node_dir(entries, tmp_path / ".hermes")
 
         assert entries == ["/opt/external-node/bin"]
 
@@ -1367,18 +1381,18 @@ class TestSystemUnitHermesHome:
         monkeypatch.setattr(Path, "home", staticmethod(lambda: root_home))
         monkeypatch.setenv("HERMES_HOME", str(root_hermes))
         monkeypatch.setattr(
-            gateway_cli,
-            "_system_service_identity",
+            systemd_identity,
+            "system_service_identity",
             lambda run_as_user=None: ("alice", "alice", str(target_home), 1001),
         )
         monkeypatch.setattr(gateway_cli, "get_hermes_home", lambda: root_hermes)
-        monkeypatch.setattr(gateway_cli, "_build_service_path_dirs", lambda: [])
+        monkeypatch.setattr(service_process, "service_path_dirs", lambda: [])
 
         monkeypatch.setattr(gateway_cli.shutil, "which", lambda name: "/root/bin/node")
-        root_unit = gateway_cli.generate_systemd_unit(system=True, run_as_user="alice")
+        root_unit = systemd_unit_render.generate_systemd_unit(system=True, run_as_user="alice")
 
         monkeypatch.setattr(gateway_cli.shutil, "which", lambda name: "/home/alice/.local/bin/node")
-        user_unit = gateway_cli.generate_systemd_unit(system=True, run_as_user="alice")
+        user_unit = systemd_unit_render.generate_systemd_unit(system=True, run_as_user="alice")
 
         assert root_unit == user_unit
         assert str(managed_bin) in root_unit
@@ -1400,7 +1414,7 @@ class TestSystemUnitHermesHome:
         )
         entries: list[str] = []
 
-        gateway_cli._append_node_dir_for_service(entries, tmp_path / ".hermes")
+        service_process.append_node_dir(entries, tmp_path / ".hermes")
 
         assert entries == ["/opt/external-node/bin"]
 
@@ -1409,13 +1423,13 @@ class TestSystemUnitHermesHome:
         monkeypatch.setattr(Path, "home", staticmethod(lambda: tmp_path))
         monkeypatch.setenv("HERMES_HOME", str(tmp_path / ".hermes"))
         monkeypatch.setattr(
-            gateway_cli, "_system_service_identity",
+            systemd_identity, "system_service_identity",
             lambda run_as_user=None: ("alice", "alice", str(tmp_path), 1001),
         )
-        monkeypatch.setattr(gateway_cli, "_build_service_path_dirs", lambda: [])
+        monkeypatch.setattr(service_process, "service_path_dirs", lambda: [])
 
-        system_unit = gateway_cli.generate_systemd_unit(system=True, run_as_user="alice")
-        user_unit = gateway_cli.generate_systemd_unit(system=False)
+        system_unit = systemd_unit_render.generate_systemd_unit(system=True, run_as_user="alice")
+        user_unit = systemd_unit_render.generate_systemd_unit(system=False)
 
         unit_section = system_unit.split("[Service]")[0]
         assert "After=user@1001.service" in unit_section
@@ -1426,15 +1440,15 @@ class TestSystemUnitHermesHome:
         """The unit is regenerated and compared on every start/restart/status; a later shell without
         the export (ssh, cron, sudo) must see the installed unit as current, not "repair" the line away."""
         unit_path = tmp_path / "hermes-gateway.service"
-        monkeypatch.setattr(gateway_cli, "get_systemd_unit_path", lambda system=False: unit_path)
+        monkeypatch.setattr(systemd_identity, "unit_path", lambda system=False: unit_path)
         monkeypatch.setenv("LD_LIBRARY_PATH", "/opt/cuda/lib64:/opt/pct%dir/lib")
-        unit_path.write_text(gateway_cli.generate_systemd_unit(system=False), encoding="utf-8")
+        unit_path.write_text(systemd_unit_render.generate_systemd_unit(system=False), encoding="utf-8")
         assert 'Environment="LD_LIBRARY_PATH=/opt/cuda/lib64:/opt/pct%%dir/lib"' in unit_path.read_text()
 
         monkeypatch.delenv("LD_LIBRARY_PATH")
 
-        assert gateway_cli.systemd_unit_is_current(system=False)
-        assert 'LD_LIBRARY_PATH=/opt/cuda/lib64:/opt/pct%%dir/lib' in gateway_cli.generate_systemd_unit(system=False)
+        assert systemd_unit_state.unit_is_current(system=False)
+        assert 'LD_LIBRARY_PATH=/opt/cuda/lib64:/opt/pct%%dir/lib' in systemd_unit_render.generate_systemd_unit(system=False)
 
     def test_system_unit_remaps_caller_home_ld_library_path_components(self, monkeypatch):
         """#14613: under sudo the caller's /root/... library dirs are unreadable to the target
@@ -1442,13 +1456,13 @@ class TestSystemUnitHermesHome:
         monkeypatch.setattr(Path, "home", staticmethod(lambda: Path("/root")))
         monkeypatch.delenv("HERMES_HOME", raising=False)
         monkeypatch.setattr(
-            gateway_cli, "_system_service_identity",
+            systemd_identity, "system_service_identity",
             lambda run_as_user=None: ("alice", "alice", "/home/alice", 1001),
         )
-        monkeypatch.setattr(gateway_cli, "_build_service_path_dirs", lambda: [])
+        monkeypatch.setattr(service_process, "service_path_dirs", lambda: [])
         monkeypatch.setenv("LD_LIBRARY_PATH", "/root/cuda/lib:/opt/cuda/lib64")
 
-        unit = gateway_cli.generate_systemd_unit(system=True, run_as_user="alice")
+        unit = systemd_unit_render.generate_systemd_unit(system=True, run_as_user="alice")
 
         assert 'Environment="LD_LIBRARY_PATH=/home/alice/cuda/lib:/opt/cuda/lib64"' in unit
 
@@ -1457,22 +1471,22 @@ class TestSystemUnitHermesHome:
         monkeypatch.setattr(Path, "home", staticmethod(lambda: Path("/root")))
         monkeypatch.delenv("HERMES_HOME", raising=False)
         monkeypatch.setattr(
-            gateway_cli, "_system_service_identity",
+            systemd_identity, "system_service_identity",
             lambda run_as_user=None: ("alice", "alice", "/home/alice", 1001),
         )
         monkeypatch.setattr(
-            gateway_cli, "_build_user_local_paths",
+            service_process, "build_user_local_paths",
             lambda home, existing: [],
         )
 
-        unit = gateway_cli.generate_systemd_unit(system=True, run_as_user="alice")
+        unit = systemd_unit_render.generate_systemd_unit(system=True, run_as_user="alice")
 
         assert 'HERMES_HOME=/home/alice/.hermes' in unit
         assert '/root/.hermes' not in unit
 
     def test_user_unit_unaffected_by_change(self):
         # User-scope units should still use the calling user's HERMES_HOME
-        unit = gateway_cli.generate_systemd_unit(system=False)
+        unit = systemd_unit_render.generate_systemd_unit(system=False)
 
         hermes_home = str(gateway_cli.get_hermes_home().resolve())
         assert f'HERMES_HOME={hermes_home}' in unit
@@ -1498,30 +1512,30 @@ class TestSystemUnitRefreshSyncsHermesHome:
         unit_path = tmp_path / "hermes-gateway.service"
         monkeypatch.setattr(Path, "home", staticmethod(lambda: root_home))
         monkeypatch.setattr(
-            gateway_cli,
-            "_system_service_identity",
+            systemd_identity,
+            "system_service_identity",
             lambda run_as_user=None: ("alice", "alice", str(alice_home), 1001),
         )
         monkeypatch.setattr(
-            gateway_cli, "_build_user_local_paths", lambda home, existing: []
+            service_process, "build_user_local_paths", lambda home, existing: []
         )
         monkeypatch.setattr(gateway_cli.shutil, "which", lambda cmd: None)
-        monkeypatch.setattr(gateway_cli, "get_systemd_unit_path", lambda system=False: unit_path)
-        monkeypatch.setattr(gateway_cli, "_run_systemctl", lambda *a, **k: None)
+        monkeypatch.setattr(systemd_identity, "unit_path", lambda system=False: unit_path)
+        monkeypatch.setattr(systemd_runtime, "run_systemctl", lambda *a, **k: None)
         monkeypatch.delenv("HERMES_RESTART_DRAIN_TIMEOUT", raising=False)
 
         # Correct installed unit (operator's HERMES_HOME + drain timeout).
         monkeypatch.setenv("HERMES_HOME", str(alice_hermes))
-        good_unit = gateway_cli.generate_systemd_unit(system=True, run_as_user="alice")
+        good_unit = systemd_unit_render.generate_systemd_unit(system=True, run_as_user="alice")
         assert f"TimeoutStopSec={resolve_systemd_timeout_stop_sec(180.0, DEFAULT_GATEWAY_CRON_DRAIN_TIMEOUT)}" in good_unit
         unit_path.write_text(good_unit, encoding="utf-8")
 
         # Simulate sudo without inherited HERMES_HOME (falls back to root).
         monkeypatch.setenv("HERMES_HOME", str(root_hermes))
-        assert gateway_cli.refresh_systemd_unit_if_needed(system=True) is False
+        assert systemd_unit_state.refresh_if_needed(system=True) is False
         assert unit_path.read_text(encoding="utf-8") == good_unit
         assert os.environ["HERMES_HOME"] == str(alice_hermes)
-        assert gateway_cli.systemd_unit_is_current(system=True) is True
+        assert systemd_unit_state.unit_is_current(system=True) is True
 
 
 
@@ -1533,7 +1547,7 @@ class TestHermesHomeForTargetUser:
         monkeypatch.setattr(Path, "home", staticmethod(lambda: Path("/root")))
         monkeypatch.delenv("HERMES_HOME", raising=False)
 
-        result = gateway_cli._hermes_home_for_target_user("/home/alice")
+        result = service_process.hermes_home_for_target_user("/home/alice")
         assert result == "/home/alice/.hermes"
 
 
@@ -1543,10 +1557,10 @@ class TestGeneratedUnitUsesDetectedVenv:
         dot_venv.mkdir()
         (dot_venv / "bin").mkdir()
 
-        monkeypatch.setattr(gateway_cli, "_detect_venv_dir", lambda: dot_venv)
-        monkeypatch.setattr(gateway_cli, "get_python_path", lambda: str(dot_venv / "bin" / "python"))
+        monkeypatch.setattr(service_process, "detect_venv_dir", lambda: dot_venv)
+        monkeypatch.setattr(service_process, "python_path", lambda: str(dot_venv / "bin" / "python"))
 
-        unit = gateway_cli.generate_systemd_unit(system=False)
+        unit = systemd_unit_render.generate_systemd_unit(system=False)
 
         assert f"VIRTUAL_ENV={dot_venv}" in unit
         assert f"{dot_venv}/bin" in unit
@@ -1565,7 +1579,7 @@ class TestSystemServiceIdentityRootHandling:
         monkeypatch.setenv("LOGNAME", "root")
 
         with pytest.raises(ValueError, match="pass --run-as-user root to override"):
-            gateway_cli._system_service_identity(run_as_user=None)
+            systemd_identity.system_service_identity(run_as_user=None)
 
     def test_explicit_root_is_allowed(self, monkeypatch):
         """When root is explicitly passed via --run-as-user root, allow it."""
@@ -1573,7 +1587,7 @@ class TestSystemServiceIdentityRootHandling:
         root_info = pwd.getpwnam("root")
         root_group = grp.getgrgid(root_info.pw_gid).gr_name
 
-        username, group, home, _uid = gateway_cli._system_service_identity(run_as_user="root")
+        username, group, home, _uid = systemd_identity.system_service_identity(run_as_user="root")
         assert username == "root"
         assert home == root_info.pw_dir
 
@@ -1592,7 +1606,7 @@ class TestEnsureUserSystemdEnv:
         monkeypatch.delenv("DBUS_SESSION_BUS_ADDRESS", raising=False)
         monkeypatch.setattr(os, "getuid", lambda: 99)
 
-        gateway_cli._ensure_user_systemd_env()
+        systemd_runtime.ensure_user_env()
 
         assert os.environ["DBUS_SESSION_BUS_ADDRESS"] == f"unix:path={bus_socket}"
 
@@ -1617,7 +1631,7 @@ class TestPreflightUserSystemd:
             lambda: type("P", (), {"exists": lambda self: False})(),
         )
         monkeypatch.setattr(
-            gateway_cli, "get_systemd_linger_status", lambda username=None: (False, ""),
+            systemd_runtime, "linger_status", lambda username=None: (False, ""),
         )
         monkeypatch.setattr(gateway_cli.shutil, "which", lambda _: "/usr/bin/loginctl")
 
@@ -1630,8 +1644,8 @@ class TestPreflightUserSystemd:
             gateway_cli.subprocess, "run", lambda *a, **kw: _Result(),
         )
 
-        with pytest.raises(gateway_cli.UserSystemdUnavailableError) as exc_info:
-            gateway_cli._preflight_user_systemd()
+        with pytest.raises(systemd_runtime.UserSystemdUnavailableError) as exc_info:
+            systemd_runtime.preflight_user()
 
         msg = str(exc_info.value)
         assert "sudo loginctl enable-linger" in msg
@@ -1649,7 +1663,7 @@ class TestPreflightUserSystemd:
             lambda: type("P", (), {"exists": lambda self: False})(),
         )
         monkeypatch.setattr(
-            gateway_cli, "get_systemd_linger_status", lambda username=None: (False, ""),
+            systemd_runtime, "linger_status", lambda username=None: (False, ""),
         )
         monkeypatch.setattr(gateway_cli.shutil, "which", lambda _: "/usr/bin/loginctl")
 
@@ -1667,7 +1681,7 @@ class TestPreflightUserSystemd:
         )
 
         # Should not raise.
-        gateway_cli._preflight_user_systemd()
+        systemd_runtime.preflight_user()
         out = capsys.readouterr().out
         assert "Enabled linger" in out
 
@@ -1686,12 +1700,12 @@ class TestProfileArg:
         monkeypatch.setenv("HERMES_HOME", str(root_profile))
         monkeypatch.setattr(gateway_cli, "get_hermes_home", lambda: root_profile)
         monkeypatch.setattr(
-            gateway_cli,
-            "_system_service_identity",
+            systemd_identity,
+            "system_service_identity",
             lambda run_as_user=None: ("alice", "alice", str(target_home), 1001),
         )
 
-        unit = gateway_cli.generate_systemd_unit(system=True, run_as_user="alice")
+        unit = systemd_unit_render.generate_systemd_unit(system=True, run_as_user="alice")
 
         assert "ExecStart=" in unit
         assert "--profile mybot gateway run" in unit
@@ -1703,7 +1717,7 @@ class TestProfileArg:
         monkeypatch.setattr(Path, "home", lambda: tmp_path)
         monkeypatch.setenv("HERMES_HOME", str(profile_dir))
         monkeypatch.setattr(gateway_cli, "get_hermes_home", lambda: profile_dir)
-        monkeypatch.setattr(gateway_cli, "get_python_path", lambda: "/usr/bin/python3")
+        monkeypatch.setattr(service_process, "python_path", lambda: "/usr/bin/python3")
 
         plist = gateway_cli.generate_launchd_plist()
         program_args = plistlib.loads(plist.encode("utf-8"))["ProgramArguments"]
@@ -1738,7 +1752,7 @@ class TestProfileArg:
         monkeypatch.setattr(Path, "home", lambda: tmp_path)
         monkeypatch.setenv("HERMES_HOME", str(profile_dir))
         monkeypatch.setattr(gateway_cli, "get_hermes_home", lambda: profile_dir)
-        monkeypatch.setattr(gateway_cli, "get_python_path", lambda: str(profile_dir / "bin dir" / "python"))
+        monkeypatch.setattr(service_process, "python_path", lambda: str(profile_dir / "bin dir" / "python"))
 
         program_args = plistlib.loads(gateway_cli.generate_launchd_plist().encode("utf-8"))["ProgramArguments"]
         argv = _osascript_exec_argv(program_args)
@@ -1772,7 +1786,7 @@ class TestRemapPathForUser:
     def test_remaps_path_under_current_home(self, monkeypatch, tmp_path):
         monkeypatch.setattr(Path, "home", lambda: tmp_path / "root")
         (tmp_path / "root").mkdir()
-        result = gateway_cli._remap_path_for_user(
+        result = service_process.remap_path_for_user(
             str(tmp_path / "root" / ".hermes" / "hermes-agent"),
             str(tmp_path / "alice"),
         )
@@ -1797,14 +1811,14 @@ class TestSystemUnitPathRemapping:
         monkeypatch.setenv("HERMES_HOME", str(root_home / ".hermes"))
         monkeypatch.setattr(gateway_cli, "get_hermes_home", lambda: root_home / ".hermes")
         monkeypatch.setattr(gateway_cli, "PROJECT_ROOT", project)
-        monkeypatch.setattr(gateway_cli, "_detect_venv_dir", lambda: project / "venv")
-        monkeypatch.setattr(gateway_cli, "get_python_path", lambda: str(venv_bin / "python"))
+        monkeypatch.setattr(service_process, "detect_venv_dir", lambda: project / "venv")
+        monkeypatch.setattr(service_process, "python_path", lambda: str(venv_bin / "python"))
         monkeypatch.setattr(
-            gateway_cli, "_system_service_identity",
+            systemd_identity, "system_service_identity",
             lambda run_as_user=None: ("alice", "alice", target_home, 1001),
         )
 
-        unit = gateway_cli.generate_systemd_unit(system=True)
+        unit = systemd_unit_render.generate_systemd_unit(system=True)
 
         # No root paths should leak into the unit
         assert str(root_home) not in unit
@@ -1833,7 +1847,7 @@ class TestDockerAwareGateway:
         from hermes_cli.gateway_command_errors import SystemctlUnavailableError
 
         with pytest.raises(SystemctlUnavailableError):
-            gateway_cli._run_systemctl(["start", "hermes-gateway"])
+            systemd_runtime.run_systemctl(["start", "hermes-gateway"])
 
 
     def test_install_in_container_prints_docker_guidance(self, monkeypatch, capsys):
@@ -1842,7 +1856,7 @@ class TestDockerAwareGateway:
 
         monkeypatch.setattr(gateway_cli, "is_managed", lambda: False)
         monkeypatch.setattr(gateway_cli, "is_termux", lambda: False)
-        monkeypatch.setattr(gateway_cli, "supports_systemd_services", lambda: False)
+        monkeypatch.setattr(systemd_runtime, "supports_services", lambda: False)
         monkeypatch.setattr(gateway_cli, "is_macos", lambda: False)
         monkeypatch.setattr(gateway_cli, "is_wsl", lambda: False)
         monkeypatch.setattr(gateway_cli, "is_container", lambda: True)
@@ -1860,7 +1874,7 @@ class TestDockerAwareGateway:
         """A bind-mounted home must not receive a host-visible user unit."""
         monkeypatch.setattr(gateway_cli, "is_managed", lambda: False)
         monkeypatch.setattr(gateway_cli, "is_termux", lambda: False)
-        monkeypatch.setattr(gateway_cli, "supports_systemd_services", lambda: True)
+        monkeypatch.setattr(systemd_runtime, "supports_services", lambda: True)
         monkeypatch.setattr(gateway_cli, "is_container", lambda: True)
         monkeypatch.setattr(
             gateway_cli,
@@ -1881,7 +1895,7 @@ class TestDockerAwareGateway:
         """Explicit system installs stay available for systemd-managed containers."""
         monkeypatch.setattr(gateway_cli, "is_managed", lambda: False)
         monkeypatch.setattr(gateway_cli, "is_termux", lambda: False)
-        monkeypatch.setattr(gateway_cli, "supports_systemd_services", lambda: True)
+        monkeypatch.setattr(systemd_runtime, "supports_services", lambda: True)
         monkeypatch.setattr(gateway_cli, "is_container", lambda: True)
         calls = []
         monkeypatch.setattr(
@@ -1901,7 +1915,7 @@ class TestDockerAwareGateway:
         monkeypatch.setattr(gateway_cli, "is_container", lambda: True)
         monkeypatch.setattr(gateway_cli, "prompt_linux_gateway_install_scope", lambda: "user")
         monkeypatch.setattr(
-            gateway_cli, "systemd_install",
+            systemd_lifecycle, "install",
             lambda **kwargs: pytest.fail("must not install a user unit in a container"),
         )
 
@@ -1950,7 +1964,7 @@ class TestLegacyHermesUnitDetection:
         (user_dir / "hermes.service").write_text(self._OUR_UNIT_TEXT, encoding="utf-8")
         (system_dir / "hermes.service").write_text(self._OUR_UNIT_TEXT, encoding="utf-8")
 
-        results = gateway_cli._find_legacy_hermes_units()
+        results = systemd_legacy.find_units()
 
         scopes = sorted(is_system for _, _, is_system in results)
         assert scopes == [False, True]
@@ -1978,7 +1992,7 @@ class TestLegacyHermesUnitDetection:
                 f"[Unit]\nDescription=Old Hermes\n[Service]\n{execstart}\n",
                 encoding="utf-8",
             )
-            results = gateway_cli._find_legacy_hermes_units()
+            results = systemd_legacy.find_units()
             assert len(results) == 1, f"Variant {i} not detected: {execstart!r}"
 
 
@@ -2066,7 +2080,7 @@ class TestMigrateLegacyCommand:
             return 0, []
 
         monkeypatch.setattr(gateway_cli, "remove_legacy_hermes_units", fake_remove)
-        monkeypatch.setattr(gateway_cli, "supports_systemd_services", lambda: True)
+        monkeypatch.setattr(systemd_runtime, "supports_services", lambda: True)
         monkeypatch.setattr(gateway_cli, "is_macos", lambda: False)
 
         args = SimpleNamespace(
@@ -2093,7 +2107,7 @@ class TestSystemdInstallOffersLegacyRemoval:
             return 1, []
 
         # has_legacy_hermes_units must return True
-        monkeypatch.setattr(gateway_cli, "has_legacy_hermes_units", lambda: True)
+        monkeypatch.setattr(systemd_legacy, "has_units", lambda: True)
         monkeypatch.setattr(gateway_cli, "remove_legacy_hermes_units", fake_remove)
         monkeypatch.setattr(gateway_cli, "print_legacy_unit_warning", lambda: None)
         # Answer "yes" to the legacy-removal prompt
@@ -2102,10 +2116,10 @@ class TestSystemdInstallOffersLegacyRemoval:
         # Mock the rest of the install flow
         unit_path = tmp_path / "hermes-gateway.service"
         monkeypatch.setattr(
-            gateway_cli, "get_systemd_unit_path", lambda system=False: unit_path
+            systemd_identity, "unit_path", lambda system=False: unit_path
         )
         monkeypatch.setattr(
-            gateway_cli,
+            systemd_unit_render,
             "generate_systemd_unit",
             lambda system=False, run_as_user=None: "unit text\n",
         )
@@ -2114,9 +2128,9 @@ class TestSystemdInstallOffersLegacyRemoval:
             "run",
             lambda cmd, **kw: SimpleNamespace(returncode=0, stdout="", stderr=""),
         )
-        monkeypatch.setattr(gateway_cli, "_ensure_linger_enabled", lambda: None)
+        monkeypatch.setattr(systemd_linger, "ensure_linger_enabled", lambda: None)
 
-        gateway_cli.systemd_install()
+        systemd_lifecycle.install()
 
         assert remove_called.get("invoked") is True
         assert remove_called.get("interactive") is False  # prompted elsewhere
@@ -2132,17 +2146,17 @@ class TestSystemdInstallOffersLegacyRemoval:
             remove_called["invoked"] = True
             return 0, []
 
-        monkeypatch.setattr(gateway_cli, "has_legacy_hermes_units", lambda: True)
+        monkeypatch.setattr(systemd_legacy, "has_units", lambda: True)
         monkeypatch.setattr(gateway_cli, "remove_legacy_hermes_units", fake_remove)
         monkeypatch.setattr(gateway_cli, "print_legacy_unit_warning", lambda: None)
         monkeypatch.setattr(gateway_cli, "prompt_yes_no", lambda *a, **k: False)
 
         unit_path = tmp_path / "hermes-gateway.service"
         monkeypatch.setattr(
-            gateway_cli, "get_systemd_unit_path", lambda system=False: unit_path
+            systemd_identity, "unit_path", lambda system=False: unit_path
         )
         monkeypatch.setattr(
-            gateway_cli,
+            systemd_unit_render,
             "generate_systemd_unit",
             lambda system=False, run_as_user=None: "unit text\n",
         )
@@ -2151,9 +2165,9 @@ class TestSystemdInstallOffersLegacyRemoval:
             "run",
             lambda cmd, **kw: SimpleNamespace(returncode=0, stdout="", stderr=""),
         )
-        monkeypatch.setattr(gateway_cli, "_ensure_linger_enabled", lambda: None)
+        monkeypatch.setattr(systemd_linger, "ensure_linger_enabled", lambda: None)
 
-        gateway_cli.systemd_install()
+        systemd_lifecycle.install()
 
         # Helper must NOT have been called
         assert remove_called["invoked"] is False
@@ -2177,16 +2191,16 @@ class TestSystemdInstallOffersLegacyRemoval:
             remove_called["invoked"] = True
             return 0, []
 
-        monkeypatch.setattr(gateway_cli, "has_legacy_hermes_units", lambda: False)
+        monkeypatch.setattr(systemd_legacy, "has_units", lambda: False)
         monkeypatch.setattr(gateway_cli, "remove_legacy_hermes_units", fake_remove)
         monkeypatch.setattr(gateway_cli, "prompt_yes_no", counting_prompt)
 
         unit_path = tmp_path / "hermes-gateway.service"
         monkeypatch.setattr(
-            gateway_cli, "get_systemd_unit_path", lambda system=False: unit_path
+            systemd_identity, "unit_path", lambda system=False: unit_path
         )
         monkeypatch.setattr(
-            gateway_cli,
+            systemd_unit_render,
             "generate_systemd_unit",
             lambda system=False, run_as_user=None: "unit text\n",
         )
@@ -2195,9 +2209,9 @@ class TestSystemdInstallOffersLegacyRemoval:
             "run",
             lambda cmd, **kw: SimpleNamespace(returncode=0, stdout="", stderr=""),
         )
-        monkeypatch.setattr(gateway_cli, "_ensure_linger_enabled", lambda: None)
+        monkeypatch.setattr(systemd_linger, "ensure_linger_enabled", lambda: None)
 
-        gateway_cli.systemd_install()
+        systemd_lifecycle.install()
 
         assert prompt_called["count"] == 0
         assert remove_called["invoked"] is False
@@ -2218,8 +2232,8 @@ class TestSystemScopeRequiresRootError:
     def test_require_root_raises_when_non_root(self, monkeypatch):
         monkeypatch.setattr(gateway_cli.os, "geteuid", lambda: 1000)
 
-        with pytest.raises(gateway_cli.SystemScopeRequiresRootError) as excinfo:
-            gateway_cli._require_root_for_system_service("start")
+        with pytest.raises(systemd_identity.SystemScopeRequiresRootError) as excinfo:
+            systemd_identity.require_root("start")
 
         assert "start" in excinfo.value.args[0]
         assert excinfo.value.args[1] == "start"
@@ -2232,7 +2246,7 @@ class TestSystemScopeRequiresRootError:
         ``RuntimeError`` (catchable by ``Exception``), NOT a ``SystemExit``
         (``BaseException``), so the wizard can recover from it.
         """
-        err = gateway_cli.SystemScopeRequiresRootError("msg", "start")
+        err = systemd_identity.SystemScopeRequiresRootError("msg", "start")
         assert isinstance(err, RuntimeError)
         assert isinstance(err, Exception)
         assert not isinstance(err, SystemExit)
@@ -2255,8 +2269,8 @@ class TestSystemScopeWizardPreCheck:
         if user_present:
             (usr_dir / "hermes-gateway.service").write_text("[Unit]\n")
         monkeypatch.setattr(
-            gateway_cli,
-            "get_systemd_unit_path",
+            systemd_identity,
+            "unit_path",
             lambda system=False: (sys_dir if system else usr_dir) / "hermes-gateway.service",
         )
 
@@ -2288,12 +2302,12 @@ class TestGatewayCommandCatchesSystemScopeError:
         usr_dir.mkdir()
         (sys_dir / "hermes-gateway.service").write_text("[Unit]\n")
         monkeypatch.setattr(
-            gateway_cli,
-            "get_systemd_unit_path",
+            systemd_identity,
+            "unit_path",
             lambda system=False: (sys_dir if system else usr_dir) / "hermes-gateway.service",
         )
         monkeypatch.setattr(gateway_cli.os, "geteuid", lambda: 1000)
-        monkeypatch.setattr(gateway_cli, "supports_systemd_services", lambda: True)
+        monkeypatch.setattr(systemd_runtime, "supports_services", lambda: True)
         monkeypatch.setattr(gateway_cli, "is_termux", lambda: False)
         monkeypatch.setattr(gateway_cli, "kill_gateway_processes", lambda **kw: 0)
 
@@ -2319,7 +2333,7 @@ class TestServiceWorkingDirIsStable:
         home = tmp_path / ".hermes"
         home.mkdir()
         monkeypatch.setattr(gateway_cli, "get_hermes_home", lambda: home)
-        unit = gateway_cli.generate_systemd_unit(system=False)
+        unit = systemd_unit_render.generate_systemd_unit(system=False)
         wd = [l for l in unit.splitlines() if l.startswith("WorkingDirectory=")]
         assert wd, "unit has no WorkingDirectory line"
         value = wd[0].split("=", 1)[1]
@@ -2387,7 +2401,7 @@ class TestServiceTakeoverGovernance:
         home = tmp_path / ".hermes"
         home.mkdir()
         monkeypatch.setattr(gateway_cli, "get_hermes_home", lambda: home)
-        unit = gateway_cli.generate_systemd_unit(system=False)
+        unit = systemd_unit_render.generate_systemd_unit(system=False)
         exec_starts = [l for l in unit.splitlines() if l.startswith("ExecStart=")]
         assert exec_starts, "unit has no ExecStart line"
         # The safe service posture the launchd plist now mirrors.
@@ -2477,7 +2491,7 @@ class TestLaunchdUnloadedJobStderrStaysOffTerminal:
         monkeypatch.setattr(gateway_cli, "_launchd_domain", lambda: "gui/501")
         monkeypatch.setattr(gateway_cli, "get_launchd_plist_path", lambda: tmp_path / "ai.hermes.gateway.plist")
         monkeypatch.setattr(gateway_cli, "_clear_launchd_unsupported_marker", lambda: None)
-        monkeypatch.setattr(gateway_cli, "_mark_planned_stop", lambda *a, **k: None)
+        monkeypatch.setattr(signal_restart, "_mark_planned_stop", lambda *a, **k: None)
         monkeypatch.setattr(gateway_cli, "_wait_for_gateway_exit", lambda *a, **k: True)
         monkeypatch.setattr("gateway.status.get_running_pid", lambda *a, **k: None)
         return log
@@ -2631,11 +2645,11 @@ class TestTimeoutStopSecCoversCronFloor:
         monkeypatch.delenv("HERMES_CRON_DRAIN_TIMEOUT", raising=False)
         monkeypatch.setattr(gateway_cli.shutil, "which", lambda cmd: None)
         monkeypatch.setattr(
-            gateway_cli, "_build_user_local_paths", lambda home, existing: []
+            service_process, "build_user_local_paths", lambda home, existing: []
         )
         for key, value in (env or {}).items():
             monkeypatch.setenv(key, value)
-        return gateway_cli.generate_systemd_unit(system=False)
+        return systemd_unit_render.generate_systemd_unit(system=False)
 
     def test_cron_floor_dominates_when_larger(self, tmp_path, monkeypatch):
         unit = self._unit_with_config(
@@ -2686,15 +2700,15 @@ class TestUnitAnchoredServiceIdentity:
         root_home.mkdir(parents=True)
         unit_dir = tmp_path / "systemd"
         unit_dir.mkdir()
-        (unit_dir / f"{gateway_cli._SERVICE_BASE}.service").write_text(
+        (unit_dir / f"{service_identity.SERVICE_BASE}.service").write_text(
             f'[Service]\nEnvironment="HERMES_HOME={alice_home}"\n', encoding="utf-8"
         )
-        monkeypatch.setattr(gateway_cli, "_SYSTEM_UNIT_DIR", unit_dir)
+        monkeypatch.setattr(service_identity, "SYSTEM_UNIT_DIR", unit_dir)
         monkeypatch.setattr(hermes_constants, "_get_platform_default_hermes_home", lambda: root_home)
         monkeypatch.setenv("HERMES_HOME", str(bob_home))
-        name = gateway_cli.get_service_name()
-        assert name != gateway_cli._SERVICE_BASE
-        assert name.startswith(gateway_cli._SERVICE_BASE + "-")
+        name = service_identity.service_name()
+        assert name != service_identity.SERVICE_BASE
+        assert name.startswith(service_identity.SERVICE_BASE + "-")
 
     @pytest.mark.linux_only
     def test_unprivileged_profile_command_ignores_the_system_unit(self, tmp_path, monkeypatch):
@@ -2704,14 +2718,14 @@ class TestUnitAnchoredServiceIdentity:
         profile_home.mkdir(parents=True)
         unit_dir = tmp_path / "systemd"
         unit_dir.mkdir()
-        (unit_dir / f"{gateway_cli._SERVICE_BASE}.service").write_text(
+        (unit_dir / f"{service_identity.SERVICE_BASE}.service").write_text(
             f'[Service]\nEnvironment="HERMES_HOME={profile_home}"\n', encoding="utf-8"
         )
-        monkeypatch.setattr(gateway_cli, "_SYSTEM_UNIT_DIR", unit_dir)
+        monkeypatch.setattr(service_identity, "SYSTEM_UNIT_DIR", unit_dir)
         monkeypatch.setattr(Path, "home", lambda: tmp_path / "alice")
         monkeypatch.setattr(os, "geteuid", lambda: 1000)
         monkeypatch.setenv("HERMES_HOME", str(profile_home))
-        assert gateway_cli.get_service_name() == "hermes-gateway-kimi"
+        assert service_identity.service_name() == "hermes-gateway-kimi"
 
     @pytest.mark.linux_only
     def test_bare_unit_pinning_a_named_profile_home_keeps_the_bare_name(self, tmp_path, monkeypatch):
@@ -2725,13 +2739,13 @@ class TestUnitAnchoredServiceIdentity:
         root_home.mkdir(parents=True)
         unit_dir = tmp_path / "systemd"
         unit_dir.mkdir()
-        unit_path = unit_dir / f"{gateway_cli._SERVICE_BASE}.service"
+        unit_path = unit_dir / f"{service_identity.SERVICE_BASE}.service"
         unit_path.write_text(f'[Service]\nEnvironment="HERMES_HOME={profile_home}"\n', encoding="utf-8")
-        monkeypatch.setattr(gateway_cli, "_SYSTEM_UNIT_DIR", unit_dir)
+        monkeypatch.setattr(service_identity, "SYSTEM_UNIT_DIR", unit_dir)
         monkeypatch.setattr(os, "geteuid", lambda: 0)
         monkeypatch.setattr(hermes_constants, "_get_platform_default_hermes_home", lambda: root_home)
         monkeypatch.setenv("HERMES_HOME", str(profile_home))
-        assert gateway_cli.get_service_name() == gateway_cli._SERVICE_BASE
+        assert service_identity.service_name() == service_identity.SERVICE_BASE
         # The profile branch, consulted against the home that owns the profile, would have answered
         # with the readable suffix -- which is why the unit-pinned check has to be evaluated first.
         from profiles.paths import profile_name_from_home
@@ -2748,16 +2762,16 @@ class TestUnitAnchoredServiceIdentity:
         root_home.mkdir(parents=True)
         unit_dir = tmp_path / "systemd"
         unit_dir.mkdir()
-        (unit_dir / f"{gateway_cli._SERVICE_BASE}.service").write_text(
+        (unit_dir / f"{service_identity.SERVICE_BASE}.service").write_text(
             f'[Service]\nEnvironment="HERMES_HOME={alice_home}"\n', encoding="utf-8"
         )
-        monkeypatch.setattr(gateway_cli, "_SYSTEM_UNIT_DIR", unit_dir)
+        monkeypatch.setattr(service_identity, "SYSTEM_UNIT_DIR", unit_dir)
         monkeypatch.setattr(os, "geteuid", lambda: 0)
         monkeypatch.setattr(hermes_constants, "_get_platform_default_hermes_home", lambda: root_home)
         monkeypatch.delenv("HERMES_HOME", raising=False)
 
-        pre_sync_name = gateway_cli.get_service_name()
-        gateway_cli._sync_hermes_home_from_systemd_unit(system=True)
+        pre_sync_name = service_identity.service_name()
+        systemd_runtime.sync_home_from_unit(system=True)
 
         assert os.environ["HERMES_HOME"] == str(alice_home)  # the sync really ran
-        assert gateway_cli.get_service_name() == pre_sync_name
+        assert service_identity.service_name() == pre_sync_name

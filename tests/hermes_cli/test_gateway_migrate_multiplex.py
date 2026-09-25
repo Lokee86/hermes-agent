@@ -7,6 +7,8 @@ fingerprint and port-binding predicates, so the tests assert verdict → effect,
 """
 
 from __future__ import annotations
+from gateway import service_identity
+from gateway import systemd_identity
 
 import json
 import os
@@ -92,9 +94,9 @@ def fleet(tmp_path, monkeypatch):
     from hermes_cli import gateway as gw
     from gateway import migration_guards as guards
     monkeypatch.setattr(guards, "_pid_uid", lambda pid: root.stat().st_uid if pid in state.pids.values() else None)
-    _unit_path = gw.get_systemd_unit_path
-    monkeypatch.setattr(gw, "get_systemd_unit_path", lambda system=False: _unit_path(system=True) if system
-                        else tmp_path / "user-units" / f"{gw.get_service_name()}.service")
+    _unit_path = systemd_identity.unit_path
+    monkeypatch.setattr(systemd_identity, "unit_path", lambda system=False: _unit_path(system=True) if system
+                        else tmp_path / "user-units" / f"{service_identity.service_name()}.service")
     state.root = root
     return state
 
@@ -641,10 +643,10 @@ def test_unresolvable_system_unit_user_is_unknown_principal_not_directory_owner(
     from hermes_cli import gateway as gw
     from gateway.migration_guards import gateway_identity
     unit_dir = tmp_path / "system"; unit_dir.mkdir()
-    monkeypatch.setattr(gw, "_SYSTEM_UNIT_DIR", unit_dir)
+    monkeypatch.setattr(service_identity, "SYSTEM_UNIT_DIR", unit_dir)
     coder_home = fleet.root / "profiles/coder"
     with gm._home_env(coder_home):
-        gw.get_systemd_unit_path(system=True).write_text("[Service]\nUser=nobody-such-user-xyz\n", encoding="utf-8")
+        systemd_identity.unit_path(system=True).write_text("[Service]\nUser=nobody-such-user-xyz\n", encoding="utf-8")
     uid, _home = gateway_identity(coder_home, None, [("systemd", True)])
     assert uid is None  # NOT coder_home.stat().st_uid
     # Same unit shape without a system unit keeps the directory-owner answer for user-scope gateways.
@@ -760,7 +762,7 @@ def test_known_bringup_refusal_is_rejected_before_any_secondary_is_touched(fleet
     fleet.services.update({"coder": ("systemd", True), "ops": ("systemd", True)})
     monkeypatch.setattr(gm, "_systemd_service_user", lambda home, services: None)
     monkeypatch.setattr(gm, "_preflight_apply", _real_preflight)
-    monkeypatch.setattr(gw, "_require_root_for_system_service", lambda action: None)  # we are "root"
+    monkeypatch.setattr(systemd_identity, "require_root", lambda action: None)  # we are "root"
     for var in ("SUDO_USER", "USER", "LOGNAME"):
         monkeypatch.setenv(var, "root")
     assert gm.apply_migration(gm.build_migration_plan(), served_wait=0.1) is False
@@ -776,12 +778,12 @@ def test_unknown_default_system_principal_blocks_the_update_hook(fleet, tmp_path
     from hermes_cli import gateway as gw
     from gateway.migration_guards import auto_migration_blockers, gateway_identity
     unit_dir = tmp_path / "system"; unit_dir.mkdir()
-    monkeypatch.setattr(gw, "_SYSTEM_UNIT_DIR", unit_dir)
+    monkeypatch.setattr(service_identity, "SYSTEM_UNIT_DIR", unit_dir)
     with gm._home_env(fleet.root):
-        gw.get_systemd_unit_path(system=True).write_text("[Service]\nUser=no-such-pr111062-user\n", encoding="utf-8")
+        systemd_identity.unit_path(system=True).write_text("[Service]\nUser=no-such-pr111062-user\n", encoding="utf-8")
     for name in ("coder", "ops"):
         with gm._home_env(fleet.root / "profiles" / name):
-            gw.get_systemd_unit_path(system=True).write_text("[Service]\nUser=root\n", encoding="utf-8")
+            systemd_identity.unit_path(system=True).write_text("[Service]\nUser=root\n", encoding="utf-8")
     fleet.services.update({"default": ("systemd", True), "coder": ("systemd", True), "ops": ("systemd", True)})
     fleet.pids.clear()  # stopped units everywhere: identity comes from User=, resolved for real
     plan = gm.build_migration_plan()
@@ -884,11 +886,11 @@ def test_windows_task_detection_reads_both_the_task_and_the_startup_fallback(mon
 def test_windows_is_migratable_and_only_s6_is_refused(monkeypatch):
     """The host predicate: Windows used to be a flat refusal with hand-migration instructions.
     s6 stays refused -- its per-profile gateways are slots the container's own boot registers."""
-    from hermes_cli import gateway as gw
-    monkeypatch.setattr(gw, "_running_under_s6", lambda: False)
+    import hermes_cli.service_manager as service_manager
+    monkeypatch.setattr(service_manager, "detect_service_manager", lambda: "systemd")
     assert gm._host_supports_migration() is None
 
-    monkeypatch.setattr(gw, "_running_under_s6", lambda: True)
+    monkeypatch.setattr(service_manager, "detect_service_manager", lambda: "s6")
     reason = gm._host_supports_migration()
     assert reason is not None
 
