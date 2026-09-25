@@ -53,7 +53,7 @@ async def dispatch_group_control(connection, method, params):
     home = Path(authority.profile_id)
     if Path(authority.db.db_path).resolve().parent != home.resolve():
         raise RuntimeStoreError('profile_mismatch')
-    from hermes_cli.profiles import profile_matches_home
+    from profiles.paths import profile_matches_home
     profile = params.get('profile')
     if profile is not None and not isinstance(profile, str):
         raise RuntimeStoreError('invalid_params')
@@ -229,7 +229,7 @@ def _execution_control(service, method, params):
 
 
 def _profiles(authority, actor, home, params):
-    from hermes_cli.profiles import _profile_info, read_profile_meta
+    from profiles import _profile_info, read_profile_meta
     import yaml
     include_sessions = params.get('include_sessions', True)
     if type(include_sessions) is not bool:
