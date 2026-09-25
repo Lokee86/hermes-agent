@@ -145,7 +145,8 @@ def test_dashboard_exposes_parked_profile_and_start_unparks_it(homes, monkeypatc
 
 @pytest.mark.parametrize('host_running', [False, True])
 def test_start_unparks_without_host_rendezvous(homes, monkeypatch, capsys, host_running):
-    from hermes_cli import gateway as gw, gateway_multiplex_served as served
+    from hermes_cli import gateway as gw
+    from gateway import served_profiles as served
     from gateway import control_socket
     root, secondary = homes
     marker = secondary / 'gateway.parked'

@@ -1085,7 +1085,7 @@ def _finish_profile_layout(profile_dir: Path, *, no_skills: bool, clone_all: boo
 
 
 def _notify_multiplexer(canon: str) -> None:
-    from hermes_cli.gateway_multiplex_served import notify_multiplexer_profiles_changed
+    from gateway.served_profiles import notify_multiplexer_profiles_changed
     notify_multiplexer_profiles_changed(canon)
 
 
@@ -1102,7 +1102,7 @@ def _live_default_multiplexer() -> bool:
     """True when a live default gateway has recorded a served-profile set: every dir under
     profiles/ is then served by it, so a profile-identity change must be unrouted first."""
     try:
-        from hermes_cli.gateway_multiplex_served import recorded_served_profiles
+        from gateway.served_profiles import recorded_served_profiles
         return recorded_served_profiles() is not None
     except Exception:
         return False

@@ -87,7 +87,7 @@ def default_gateway_multiplexes(default_home: Optional[Path] = None) -> bool:
     it made every CLI surface contradict the gateway that was about to multiplex anyway.
     """
     from hermes_constants import get_default_hermes_root
-    from hermes_cli.gateway_multiplex_served import recorded_served_profiles
+    from gateway.served_profiles import recorded_served_profiles
     root = Path(default_home) if default_home is not None else get_default_hermes_root()
     recorded = recorded_served_profiles(root)
     if recorded is not None:

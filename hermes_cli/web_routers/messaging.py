@@ -918,7 +918,7 @@ def _notify_multiplexer_hot_serve(profile: Optional[str]) -> bool:
     Unscoped (no ``?profile=``) means THIS process's profile: Desktop routes a pooled
     ``hermes --profile X serve`` without the query (#109088), so X must resolve here too."""
     from hermes_cli.gateway import _current_profile_name, named_profile_served_by_running_multiplexer
-    from hermes_cli.gateway_multiplex_served import notify_multiplexer_profiles_changed
+    from gateway.served_profiles import notify_multiplexer_profiles_changed
     name = (profile or "").strip() or _current_profile_name()
     if not name or name == "default" or not named_profile_served_by_running_multiplexer(name):
         return False
