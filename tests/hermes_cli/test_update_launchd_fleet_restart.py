@@ -19,6 +19,8 @@ in a domain it does not live in.
 """
 
 from __future__ import annotations
+from gateway import signal_restart
+from gateway import systemd_runtime
 
 import subprocess
 from pathlib import Path
@@ -187,7 +189,7 @@ class TestProbeLaunchdDomainForLabel:
 
 class TestGetServicePidsScoping:
     def _wire(self, monkeypatch):
-        monkeypatch.setattr(gw, "supports_systemd_services", lambda: False)
+        monkeypatch.setattr(systemd_runtime, "supports_services", lambda: False)
         # The all_profiles branch also runs a real ``launchctl list`` prefix scan; a developer
         # box with a live ai.hermes.gateway* fleet would leak its PIDs into the assertion.
         monkeypatch.setattr(gw.subprocess, "run", lambda *a, **k: _completed(0, ""))
@@ -273,7 +275,7 @@ def _fleet(monkeypatch, tmp_path, *, current, labels, located,
     monkeypatch.setattr(gw, "_locate_launchd_gateway_service", fake_locate)
     monkeypatch.setattr(gw, "_launchd_service_registered", fake_registered)
     monkeypatch.setattr(
-        gw,
+        signal_restart,
         "_graceful_restart_via_sigusr1",
         lambda pid, drain_timeout, **_: (rec.drains.append(pid), (drain_results or {}).get(pid, False))[1],
     )

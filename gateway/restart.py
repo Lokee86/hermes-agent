@@ -313,6 +313,43 @@ def get_restart_drain_timeout() -> float:
     return parse_restart_drain_timeout(raw)
 
 
+def get_cron_drain_timeout() -> float:
+    """Return the configured cron-only drain floor in seconds."""
+    raw = os.getenv("HERMES_CRON_DRAIN_TIMEOUT", "").strip()
+    if not raw:
+        from hermes_cli.config import read_raw_config
+
+        cfg = read_raw_config()
+        agent_cfg = cfg.get("agent", {}) if isinstance(cfg, dict) else {}
+        raw = str(agent_cfg.get("cron_drain_timeout", DEFAULT_GATEWAY_CRON_DRAIN_TIMEOUT))
+    return parse_cron_drain_timeout(raw)
+
+
+def get_restart_after_turn_timeout() -> float:
+    """Return the configured in-band restart after-turn timeout."""
+    raw = os.getenv("HERMES_RESTART_AFTER_TURN_TIMEOUT", "").strip()
+    if not raw:
+        from hermes_cli.config import read_raw_config
+
+        cfg = read_raw_config()
+        agent_cfg = cfg.get("agent", {}) if isinstance(cfg, dict) else {}
+        raw = str(
+            agent_cfg.get(
+                "restart_after_turn_timeout",
+                DEFAULT_GATEWAY_RESTART_AFTER_TURN_TIMEOUT,
+            )
+        )
+    return parse_restart_after_turn_timeout(raw)
+
+
+def get_restart_exit_wait_budget() -> float:
+    """CLI wait budget for a SIGUSR1 handoff: turn wait + drain + headroom."""
+    return resolve_restart_exit_wait_budget(
+        get_restart_drain_timeout(),
+        get_restart_after_turn_timeout(),
+    )
+
+
 def parse_restart_after_turn_timeout(raw: object) -> float:
     """Parse the after-turn wait cap for in-band restart (``0`` = legacy immediate drain)."""
     return _parse_timeout_keeping_zero(raw, DEFAULT_GATEWAY_RESTART_AFTER_TURN_TIMEOUT)

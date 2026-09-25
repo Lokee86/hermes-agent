@@ -299,19 +299,19 @@ def _check_gateway_service_linger(issues: list[str]) -> None:
     the check for every profile that does not own a service of its own.
     """
     try:
-        from hermes_cli.gateway import (
-            _SERVICE_BASE, get_systemd_linger_status, get_systemd_unit_path, is_linux,
-            user_systemd_unit_dir)
+        from gateway.service_identity import SERVICE_BASE
+        from gateway.systemd_identity import unit_path, user_unit_dir
+        from gateway.systemd_runtime import is_linux, linger_status
         from hermes_cli.service_manager import detect_service_manager
     except Exception as e:
         return check_warn("Gateway service linger", f"(could not import gateway helpers: {e})")
     if not is_linux() or detect_service_manager() == "s6":
         return
-    host_unit = user_systemd_unit_dir() / f"{_SERVICE_BASE}.service"
-    if not (get_systemd_unit_path().exists() or host_unit.exists()):
+    host_unit = user_unit_dir() / f"{SERVICE_BASE}.service"
+    if not (unit_path().exists() or host_unit.exists()):
         return
     _section("Gateway Service")
-    linger_enabled, linger_detail = get_systemd_linger_status()
+    linger_enabled, linger_detail = linger_status()
     if linger_enabled is None:
         return check_warn("Could not verify systemd linger", f"({linger_detail})")
     if not check_bool(linger_enabled, ("Systemd linger enabled", "(gateway service survives logout)"),

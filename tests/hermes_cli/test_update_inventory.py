@@ -1,4 +1,5 @@
 """Tests for hermes_cli.update_inventory — the plan phase (#91277 Phase 2)."""
+from gateway import systemd_runtime
 
 import json
 from pathlib import Path
@@ -36,7 +37,7 @@ def fleet(monkeypatch, tmp_path):
     monkeypatch.setattr("gateway.status._read_process_cmdline", lambda pid: {
         100: "hermes gateway run", 200: "hermes --profile work gateway run"}.get(pid))
     monkeypatch.setattr("hermes_cli.gateway._get_service_pids", lambda all_profiles=False: {100})
-    monkeypatch.setattr("hermes_cli.gateway.supports_systemd_services", lambda: True)
+    monkeypatch.setattr("hermes_cli.systemd_runtime.supports_services", lambda: True)
     monkeypatch.setattr("hermes_cli.gateway.find_profile_gateway_processes", lambda exclude_pids=None: [])
     monkeypatch.setattr(
         "hermes_cli.build_info.get_code_identity",

@@ -443,7 +443,8 @@ def launchd_plist_is_current() -> bool:
     if not plist_path.exists():
         return False
     installed = plist_path.read_text(encoding="utf-8")
-    norm = _gw()._normalize_launchd_plist_for_comparison
+    from gateway.launchd_unit_state import _normalize_launchd_plist_for_comparison
+    norm = _normalize_launchd_plist_for_comparison
     return norm(installed) == norm(_gw().generate_launchd_plist())
 
 
@@ -559,7 +560,8 @@ def refresh_launchd_plist_if_needed() -> bool:
     subprocess.run(["launchctl", "bootout", target], check=False, timeout=90, **_gw()._CAPTURE_TEXT)
     _reload_budget = _launchd_reload_budget()
     # Wait out the old gateway's drain first so the budget isn't burned on guaranteed EIO ("already loaded").
-    if gateway_pid is not None and not _gw()._wait_for_pid_exit(gateway_pid, _reload_budget):
+    from gateway.process_liveness import _wait_for_pid_exit
+    if gateway_pid is not None and not _wait_for_pid_exit(gateway_pid, _reload_budget):
         _gw()._append_launchd_reload_log(
             f"old gateway pid {gateway_pid} still alive after "
             f"{int(_reload_budget)}s drain wait — bootstrapping {target} anyway"
@@ -707,7 +709,8 @@ def _launchd_ok(message: str) -> None:
 
 def launchd_stop():
     target = f"{_launchd_domain()}/{get_launchd_label()}"
-    _gw()._mark_planned_stop()
+    from gateway.signal_restart import _mark_planned_stop
+    _mark_planned_stop()
     # bootout unloads the definition so KeepAlive doesn't respawn; `hermes gateway start` re-bootstraps.
     try:
         # Captured: an already-unloaded job (3/113/125) is handled below, so launchctl's own
@@ -753,20 +756,25 @@ def launchd_restart():
         if pid is not None and _gw()._request_gateway_self_restart(pid):
             _launchd_ok("✓ Service restart requested")
             return
-        if pid is not None and _gw().probe_gateway_loop_liveness(pid) == _gw().GATEWAY_LOOP_WEDGED:
+        from gateway.process_liveness import (
+            GATEWAY_LOOP_WEDGED, _escalate_wedged_gateway, probe_gateway_loop_liveness,
+        )
+        from gateway.restart import get_restart_exit_wait_budget
+        from gateway.signal_restart import _graceful_restart_via_sigusr1
+        if pid is not None and probe_gateway_loop_liveness(pid) == GATEWAY_LOOP_WEDGED:
             # Event loop provably dead: it can't process a graceful shutdown, so a full drain wait
             # only stalls the restart (and `hermes update`). Bounded SIGTERM → SIGKILL, ~10s.
             print(f"⚠ Gateway PID {pid} event loop is unresponsive — " "skipping drain and forcing a bounded stop...")
-            _gw()._escalate_wedged_gateway(pid)
+            _escalate_wedged_gateway(pid)
             pid = None
         if pid is not None:
             # Graceful in-band restart via SIGUSR1 (mirrors systemd); the budget covers both the idle wait
             # and the drain. A bare SIGTERM would lose the resume_pending handoff. Announce BEFORE waiting:
             # surfaces with no other feedback (desktop updater) read silence as "update stuck".
-            wait_budget = _gw()._get_restart_exit_wait_budget()
+            wait_budget = get_restart_exit_wait_budget()
             print(f"→ Stopping gateway (PID {pid}) — draining in-flight runs (up to {wait_budget:.0f}s)...")
-            from hermes_cli.update_cmd_drain_report import drain_progress_reporter
-            if _gw()._graceful_restart_via_sigusr1(pid, wait_budget, on_progress=drain_progress_reporter(budget_s=wait_budget)):
+            from gateway.drain_report import drain_progress_reporter
+            if _graceful_restart_via_sigusr1(pid, wait_budget, on_progress=drain_progress_reporter(budget_s=wait_budget)):
                 # KeepAlive revives a planned exit, so do NOT kickstart (-k would kill the replacement) —
                 # but a clean exit doesn't prove supervision, so verify a replacement PID appears first.
                 if _gw()._wait_for_launchd_service_pid(label, pid, timeout=15.0, domain=domain):
