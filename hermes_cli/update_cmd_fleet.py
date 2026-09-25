@@ -679,9 +679,9 @@ def _run_pending_fleet_restart() -> bool:
     # same bot token (see PR #11909). Flagging here means every `hermes update` surfaces the issue until the
     # user migrates.
     try:
+        from gateway.restart import _wait_for_gateway_exit
         from hermes_cli.gateway import (
             find_gateway_pids, is_macos, is_windows, kill_gateway_processes, supports_systemd_services,
-            _wait_for_gateway_exit,
         )
     except Exception as exc:
         _warn_gateway_restart_phase_aborted(exc, None)
@@ -1011,10 +1011,14 @@ def _restart_launchd_gateway_after_update(
     still printed "Update complete!".
     See #88848.
     """
-    from hermes_cli.gateway import (
-        get_launchd_label, get_launchd_plist_path, launchd_restart, wait_for_launchd_gateway_supervision,
-        _is_pid_ancestor_of_current_process, _launchctl_supervised_pid,
+    from gateway.launchd_service import (
+        _launchctl_supervised_pid,
+        get_launchd_label,
+        get_launchd_plist_path,
+        launchd_restart,
+        wait_for_launchd_gateway_supervision,
     )
+    from gateway.restart import _is_pid_ancestor_of_current_process
     current_label = get_launchd_label()
     old_pid = None
     try:
@@ -1088,9 +1092,14 @@ def _restart_macos_launchd_gateways(
     cannot leave the rest of the fleet on old code (#68523).
     """
     from gateway.signal_restart import _graceful_restart_via_sigusr1
-    from hermes_cli.gateway import (
-        get_launchd_label, get_launchd_plist_path, launchd_gateway_labels_for_install, legacy_launchd_labels_for_install,
-        _launchd_kickstart, _locate_launchd_gateway_service, _wait_for_launchd_service_pid,
+    from gateway.launchd_service import (
+        _launchd_kickstart,
+        _locate_launchd_gateway_service,
+        _wait_for_launchd_service_pid,
+        get_launchd_label,
+        get_launchd_plist_path,
+        launchd_gateway_labels_for_install,
+        legacy_launchd_labels_for_install,
     )
     if require_supervision:
         listing = subprocess.run(["launchctl", "list"], capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=10)
@@ -1290,7 +1299,7 @@ def _drain_or_signal_gateway_for_update(
         GATEWAY_LOOP_WEDGED, _escalate_wedged_gateway, probe_gateway_loop_liveness,
     )
     from gateway.signal_restart import _graceful_restart_via_sigusr1
-    from hermes_cli.gateway import _is_pid_ancestor_of_current_process, _request_gateway_self_restart
+    from gateway.restart import _is_pid_ancestor_of_current_process, _request_gateway_self_restart
     if _is_pid_ancestor_of_current_process(pid):
         print(
             f"  → {label}: update is running inside this gateway's "
@@ -1612,9 +1621,9 @@ def _restart_manual_gateways(out: _GatewayRestartOutcome, _drain_budget) -> None
     Mutates ``out`` in place; raises so the caller's abort recovery fires.
     """
     import signal as _signal
+    from gateway.restart import _wait_for_gateway_exit
     from hermes_cli.gateway import (
         find_gateway_pids, find_profile_gateway_processes, _prepare_profile_gateway_update_restart, _get_service_pids,
-        _wait_for_gateway_exit,
     )
     # Exclude just-restarted service PIDs so we don't kill what systemd/launchd spawned.
     service_pids = _get_service_pids(all_profiles=True)
@@ -1827,13 +1836,13 @@ def _restart_gateway_fleet_after_update(_pre_update_plan, gateway_mode: bool):
     try:
         # Every gateway helper the phase needs is imported up front so a broken gateway
         # module aborts into recovery BEFORE any unit is touched.
+        from gateway.restart import _wait_for_gateway_exit  # noqa: F401
         from hermes_cli.gateway import (  # noqa: F401
             is_macos,
             find_gateway_pids,
             find_profile_gateway_processes,
             _prepare_profile_gateway_update_restart,
             _get_service_pids,
-            _wait_for_gateway_exit,
         )
         # Drain budget covers ``restart_after_turn_timeout`` and stop()'s
         # ``restart_drain_timeout`` so a gateway waiting on a turn isn't hard-killed;
