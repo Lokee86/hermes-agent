@@ -1864,7 +1864,7 @@ def load_gateway_config_for_runner() -> "GatewayConfig":
     default root, not ``get_hermes_home()`` — a named launcher's home is not the owner
     of the primary adapter map.
     """
-    from hermes_cli.gateway_multiplex_mode import log_multiplex_decision, resolve_multiplex_mode
+    from gateway.multiplex_mode import log_multiplex_decision, resolve_multiplex_mode
     cfg = load_gateway_config()
     log_multiplex_decision(resolve_multiplex_mode(cfg))
     if not cfg.multiplex_profiles:
@@ -3518,7 +3518,7 @@ class GatewayRunner(
         # standalone opt-out: --config must not turn that profile into a host multiplexer.
         self.config = config if config is not None else load_gateway_config_for_runner()
         if config is not None:
-            from hermes_cli.gateway_multiplex_mode import standalone_launcher_decision, log_multiplex_decision
+            from gateway.multiplex_mode import standalone_launcher_decision, log_multiplex_decision
             decision = standalone_launcher_decision(self.config)
             if decision is not None:
                 log_multiplex_decision(decision)
@@ -5043,7 +5043,7 @@ def _claim_host_gateway_role(force: bool = False) -> None:
 
 
 def _migrate_command() -> str:
-    from hermes_cli.gateway_migrate import MIGRATE_COMMAND
+    from gateway.migration import MIGRATE_COMMAND
 
     return MIGRATE_COMMAND
 
@@ -5101,7 +5101,7 @@ def _log_standalone_profiles_at_boot(runner) -> None:
         if not getattr(runner.config, "multiplex_profiles", False):
             return
         from gateway.profile_serving import profiles_to_serve, profile_is_standalone
-        from hermes_cli.gateway_multiplex_mode import STANDALONE_DEPRECATION_NOTICE
+        from gateway.multiplex_mode import STANDALONE_DEPRECATION_NOTICE
         served = set(runner.served_profile_names())
         for name, home in profiles_to_serve(True, include_standalone=True, include_parked=True):
             if name != "default" and name not in served and profile_is_standalone(home):
@@ -5261,7 +5261,7 @@ def main():
         with open(args.config, encoding="utf-8-sig") as f:
             config = GatewayConfig.from_dict(yaml.safe_load(f) or {})
         # Same boot-time verdict the loaded config gets when the file leaves the flag unset.
-        from hermes_cli.gateway_multiplex_mode import log_multiplex_decision, resolve_multiplex_mode
+        from gateway.multiplex_mode import log_multiplex_decision, resolve_multiplex_mode
         log_multiplex_decision(resolve_multiplex_mode(config))
 
     # start_gateway() completes teardown before returning/raising SystemExit; force-exit after so a

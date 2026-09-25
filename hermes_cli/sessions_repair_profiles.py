@@ -138,7 +138,7 @@ def _gateway_multiplexes(root: Path) -> bool:
     """Does the default gateway serve every profile? Same reader as every other CLI surface: the live
     record, else the explicit flag, else False — an unset flag is a verdict only the gateway reaches,
     and guessing "yes" would uproot a standalone gateway's own routing index."""
-    from hermes_cli.gateway_multiplex_mode import default_gateway_multiplexes
+    from gateway.multiplex_mode import default_gateway_multiplexes
     try:
         return default_gateway_multiplexes(root)
     except Exception:

@@ -16,7 +16,7 @@ from types import SimpleNamespace
 import pytest
 
 import hermes_constants
-from hermes_cli import gateway_migrate as gm
+from gateway import migration as gm
 
 
 @pytest.fixture
@@ -90,7 +90,7 @@ def fleet(tmp_path, monkeypatch):
     # blocker), and the user-scope unit path lives under the real $HOME. The whole fleet runs as this
     # user with no unit files on disk unless a test writes some (it repoints _SYSTEM_UNIT_DIR itself).
     from hermes_cli import gateway as gw
-    from hermes_cli import gateway_migrate_guards as guards
+    from gateway import migration_guards as guards
     monkeypatch.setattr(guards, "_pid_uid", lambda pid: root.stat().st_uid if pid in state.pids.values() else None)
     _unit_path = gw.get_systemd_unit_path
     monkeypatch.setattr(gw, "get_systemd_unit_path", lambda system=False: _unit_path(system=True) if system
@@ -456,7 +456,7 @@ def test_update_hook_folds_a_unit_less_default_when_every_secondary_shares_one_m
     elects as the target (``target_service_kind``) is the reference the guard must agree with — not the
     default's empty unit list, which turned every such fleet into "blockers" instead of a fold.
     Controls: a default unit under another manager, and two managers among the secondaries, still refuse."""
-    from hermes_cli.gateway_migrate_guards import auto_migration_blockers
+    from gateway.migration_guards import auto_migration_blockers
     monkeypatch.setattr(gm, "_gateway_identity", lambda home, pid, service: (1000, home), raising=False)
     fleet.services.update({"coder": ("launchd", False), "ops": ("launchd", False)})
     assert "default" not in fleet.services
@@ -499,7 +499,7 @@ def test_auto_multiplex_migration_false_opts_out_of_the_update_hook_but_not_the_
     assert not (fleet.root / gm.MANIFEST_NAME).exists()
 
     # A top-level alias is NOT honoured; absent and an explicit true keep the automatic behaviour.
-    from hermes_cli.gateway_migrate_guards import auto_migration_opted_out
+    from gateway.migration_guards import auto_migration_opted_out
     (fleet.root / "config.yaml").write_text(
         "model:\n  default: x\nauto_multiplex_migration: false\n", encoding="utf-8")
     assert auto_migration_opted_out(fleet.root) is False
@@ -639,7 +639,7 @@ def test_unresolvable_system_unit_user_is_unknown_principal_not_directory_owner(
     """A system unit pinned to a User= this host cannot resolve: the principal is unknown, never the
     profile directory's owner, and unknown blocks the unattended path."""
     from hermes_cli import gateway as gw
-    from hermes_cli.gateway_migrate_guards import gateway_identity
+    from gateway.migration_guards import gateway_identity
     unit_dir = tmp_path / "system"; unit_dir.mkdir()
     monkeypatch.setattr(gw, "_SYSTEM_UNIT_DIR", unit_dir)
     coder_home = fleet.root / "profiles/coder"
@@ -665,7 +665,7 @@ def test_opt_out_reads_effective_config_managed_false_wins_and_string_false_is_f
     an opt-out, not a truthy value; the declared default keeps absent == opted in."""
     from hermes_cli import config as cfg
     from hermes_cli.config_defaults import DEFAULT_CONFIG
-    from hermes_cli.gateway_migrate_guards import auto_migration_opted_out
+    from gateway.migration_guards import auto_migration_opted_out
     from hermes_cli import managed_scope
     assert DEFAULT_CONFIG["gateway"]["auto_multiplex_migration"] is True
     assert auto_migration_opted_out(fleet.root) is False  # absent -> DEFAULT_CONFIG value
@@ -774,7 +774,7 @@ def test_unknown_default_system_principal_blocks_the_update_hook(fleet, tmp_path
     resolve while both secondaries are known root system units. Folding INTO an unidentifiable
     principal is the same boundary; known-same uid still folds, known-different still refuses."""
     from hermes_cli import gateway as gw
-    from hermes_cli.gateway_migrate_guards import auto_migration_blockers, gateway_identity
+    from gateway.migration_guards import auto_migration_blockers, gateway_identity
     unit_dir = tmp_path / "system"; unit_dir.mkdir()
     monkeypatch.setattr(gw, "_SYSTEM_UNIT_DIR", unit_dir)
     with gm._home_env(fleet.root):

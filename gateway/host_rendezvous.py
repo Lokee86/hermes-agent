@@ -578,7 +578,7 @@ def cleanup_on_exit(role: str) -> None:
 
 def _multiplex_profiles_enabled() -> bool:
     """Will THIS process multiplex? An explicit ``true`` and an unset key both say yes, and an
-    explicit ``false`` is RETIRED (``hermes_cli.gateway_multiplex_mode``) — it is warned about and
+    explicit ``false`` is RETIRED (``gateway.multiplex_mode``) — it is warned about and
     ignored at boot, so it must not make the claim-time record advertise a narrower roster than
     the process actually serves. Reading it here was the last place the retired flag still decided
     topology, and it made CLI/dashboard report "standalone, serving default" while the runtime
