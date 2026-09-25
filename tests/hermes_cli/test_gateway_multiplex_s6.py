@@ -11,7 +11,7 @@ import hermes_constants
 from hermes_cli import gateway as gw
 from gateway import migration as gm
 from gateway import multiplex_mode as mode
-from hermes_cli import gateway_multiplex_s6 as s6
+from gateway import s6_service as s6
 from hermes_cli.container_boot import reconcile_profile_gateways
 from hermes_cli.service_manager import S6ServiceManager
 
