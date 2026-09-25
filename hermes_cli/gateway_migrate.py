@@ -587,7 +587,7 @@ def _load_profile_configs(plan: MigrationPlan) -> dict[str, object]:
 
 def build_migration_plan() -> MigrationPlan:
     """Enumerate profiles + their OWN gateway footprint, then run every preflight check."""
-    from hermes_cli.gateway_multiplex_served import recorded_served_profiles
+    from gateway.served_profiles import recorded_served_profiles
     default_home = _default_home()
     # Probed ONCE: every profile's ownership verdict is relative to the same host process.
     owner = _host_gateway_owner()
@@ -839,7 +839,7 @@ def _reconcile_standalone_runtime(default_home: Path, secondary_names: set[str])
 
 def _wait_for_served(default_home: Path, expected: set[str], timeout: float) -> Optional[list[str]]:
     """Poll the default's ``gateway_state.json`` until ``served_profiles`` covers ``expected``."""
-    from hermes_cli.gateway_multiplex_served import recorded_served_profiles
+    from gateway.served_profiles import recorded_served_profiles
     deadline = time.monotonic() + timeout
     served: Optional[list[str]] = None
     while time.monotonic() < deadline:

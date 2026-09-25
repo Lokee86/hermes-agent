@@ -272,7 +272,7 @@ def _profile_create(args):
     print("\nNext steps:")
     print(f"  {name} setup              Configure API keys and model")
     print(f"  {name} chat               Start chatting")
-    from hermes_cli.gateway_multiplex_served import live_default_gateway_pid, recorded_served_profiles
+    from gateway.served_profiles import live_default_gateway_pid, recorded_served_profiles
     from profiles.names import normalize_profile_name
     served = recorded_served_profiles() if live_default_gateway_pid() is not None else None
     if served is not None and normalize_profile_name(name) in {normalize_profile_name(p) for p in served}:

@@ -1550,7 +1550,7 @@ def _print_served_ingress_urls(profile: str | None = None) -> None:
     """Callback URLs of inbound-port platforms the live multiplexer serves for secondary profiles
     (the value to paste into the Twilio / LINE / Teams / BlueBubbles console)."""
     try:
-        from hermes_cli.gateway_multiplex_served import format_ingress_url_lines, served_profile_ingress_urls
+        from gateway.served_profiles import format_ingress_url_lines, served_profile_ingress_urls
         urls = served_profile_ingress_urls(profile)
     except Exception:
         return
@@ -1567,7 +1567,7 @@ def _print_unserved_shared_ingress(profile: str | None) -> None:
     """Shared-ingress platforms (WhatsApp/Relay) this served profile enabled that the multiplexer runs
     only on the default profile — the ``whatsapp: not served under multiplex`` line."""
     try:
-        from hermes_cli.gateway_multiplex_served import served_profile_unserved_platforms
+        from gateway.served_profiles import served_profile_unserved_platforms
         unserved = served_profile_unserved_platforms(profile or "")
     except Exception:
         return
@@ -3609,7 +3609,7 @@ def named_profile_served_by_running_multiplexer(profile_name: str | None = None)
         return False
 
     try:
-        from hermes_cli.gateway_multiplex_served import live_default_gateway_pid, recorded_served_profiles
+        from gateway.served_profiles import live_default_gateway_pid, recorded_served_profiles
         if live_default_gateway_pid() is None:
             return False
         from profiles.names import normalize_profile_name

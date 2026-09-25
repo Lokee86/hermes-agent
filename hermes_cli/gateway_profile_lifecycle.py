@@ -35,7 +35,7 @@ def profile_lifecycle(command: str, args) -> bool:
         marker.unlink()
         owner = gw._host_multiplexer_for_all_verb()
         if owner is None:
-            from hermes_cli.gateway_multiplex_served import live_default_gateway_pid
+            from gateway.served_profiles import live_default_gateway_pid
             if live_default_gateway_pid() is None:
                 return False  # Unpark even when today's normal start path must start the host first.
         host_home = owner.home if owner is not None else get_default_hermes_root()

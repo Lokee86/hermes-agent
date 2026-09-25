@@ -48,7 +48,7 @@ def test_unprovable_record_is_a_candidate_not_the_host_gateway(host_gateway, mon
     from gateway import host_topology
 
     monkeypatch.setattr("gateway.host_rendezvous.liveness_is_proven", lambda record: False)
-    monkeypatch.setattr("hermes_cli.gateway_multiplex_served.live_default_gateway_pid", lambda: None)
+    monkeypatch.setattr("gateway.served_profiles.live_default_gateway_pid", lambda: None)
     assert host_topology.host_gateway_topology() is None
 
 
@@ -63,7 +63,7 @@ def test_record_without_createtime_is_never_the_host_gateway(host_gateway, monke
     from gateway import host_rendezvous as hr
     from gateway import host_topology
 
-    monkeypatch.setattr("hermes_cli.gateway_multiplex_served.live_default_gateway_pid", lambda: None)
+    monkeypatch.setattr("gateway.served_profiles.live_default_gateway_pid", lambda: None)
     path = hr.record_path(hr.ROLE_GATEWAY)
     record = json.loads(path.read_text())
     record["createTime"] = None
