@@ -10,7 +10,7 @@ import pytest
 @pytest.mark.parametrize('named', [False, True])
 def test_requested_service_name_does_not_borrow_callers_home(tmp_path, monkeypatch, named):
     from gateway.runtime_service import service_suffix
-    from hermes_cli.gateway import _profile_suffix
+    from gateway.service_identity import service_suffix as _profile_suffix
     monkeypatch.setattr(Path, 'home', lambda: tmp_path)
     requested = tmp_path / 'custom'
     if named:

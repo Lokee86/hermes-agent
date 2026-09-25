@@ -60,18 +60,19 @@ def detect_service_manager() -> ServiceManagerKind:
     """
     # Deferred so importing this module (Protocol type, validate_profile_name) doesn't drag in
     # the whole gateway dependency graph.
-    from hermes_cli.gateway import is_macos, is_windows, supports_systemd_services
+    import sys
+    from gateway.systemd_runtime import supports_services
     # Gate on _s6_running() alone, NOT is_container(): the latter only detects Docker/Podman/lxc
     # and is False on Fly's Firecracker microVMs even though s6-overlay is PID 1 there — that
     # made the s6 dispatch inert on Fly, so `hermes gateway start` spawned a foreground gateway
     # competing with the supervised one.
     if _s6_running():
         return "s6"
-    if is_windows():
+    if sys.platform == "win32":
         return "windows"
-    if is_macos():
+    if sys.platform == "darwin":
         return "launchd"
-    if supports_systemd_services():
+    if supports_services():
         return "systemd"
     return "none"
 

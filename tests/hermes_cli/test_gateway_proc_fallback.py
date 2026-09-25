@@ -5,6 +5,7 @@ Verifies that _scan_gateway_pids() uses /proc/*/cmdline when available
 
 See: NousResearch/hermes-agent#7622
 """
+from gateway import systemd_runtime
 
 import os
 from unittest.mock import MagicMock, patch
@@ -156,7 +157,7 @@ class TestGetServicePidsAllProfiles:
             return ("gui/501", 123)
 
         with (
-            patch("hermes_cli.gateway.supports_systemd_services", return_value=False),
+            patch("hermes_cli.systemd_runtime.supports_services", return_value=False),
             patch(
                 "hermes_cli.gateway.get_launchd_label",
                 return_value="ai.hermes.gateway.myprofile",
@@ -198,7 +199,7 @@ class TestGetServicePidsAllProfiles:
             return ("gui/501", pid) if pid else (None, None)
 
         with (
-            patch("hermes_cli.gateway.supports_systemd_services", return_value=False),
+            patch("hermes_cli.systemd_runtime.supports_services", return_value=False),
             patch(
                 "hermes_cli.gateway.get_launchd_label",
                 return_value="ai.hermes.gateway",
@@ -242,7 +243,7 @@ class TestGetServicePidsAllProfiles:
         lists every hermes-gateway* unit unconditionally."""
         with (
             patch("hermes_cli.gateway.is_macos", return_value=False),
-            patch("hermes_cli.gateway.supports_systemd_services", return_value=True),
+            patch("hermes_cli.systemd_runtime.supports_services", return_value=True),
             patch("subprocess.run") as mock_run,
         ):
             def _run_side_effect(args, **kwargs):

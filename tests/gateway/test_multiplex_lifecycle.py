@@ -1,5 +1,5 @@
 """Phase 4: lifecycle guard + per-profile observability."""
-from gateway import host_topology, served_profiles
+from gateway import host_topology, served_profiles, service_identity
 import pytest
 
 from gateway.config import GatewayConfig
@@ -71,7 +71,7 @@ class TestNamedProfileMultiplexerGuard:
 
     def test_inert_when_no_default_gateway_running(self, monkeypatch, tmp_path):
         from hermes_cli import gateway as gw
-        monkeypatch.setattr(gw, "_profile_suffix", lambda: "coder")
+        monkeypatch.setattr(service_identity, "service_suffix", lambda: "coder")
         monkeypatch.setattr(
             "hermes_constants.get_default_hermes_root", lambda: tmp_path
         )
@@ -83,7 +83,7 @@ class TestNamedProfileMultiplexerGuard:
         from hermes_cli import gateway as gw
         import gateway.status as status
 
-        monkeypatch.setattr(gw, "_profile_suffix", lambda: "coder")
+        monkeypatch.setattr(service_identity, "service_suffix", lambda: "coder")
         monkeypatch.setattr(host_topology, "_current_profile_name", lambda: "coder")
         monkeypatch.setattr(
             "hermes_constants.get_default_hermes_root", lambda: tmp_path
@@ -152,7 +152,7 @@ class TestNamedProfileMultiplexerGuard:
 
         assert gw.named_profile_served_by_running_multiplexer() is True
 
-        monkeypatch.setattr(gw, "_profile_suffix", lambda: "")
+        monkeypatch.setattr(service_identity, "service_suffix", lambda: "")
         monkeypatch.setattr(host_topology, "_current_profile_name", lambda: "default")
         assert gw.named_profile_served_by_running_multiplexer() is False
 

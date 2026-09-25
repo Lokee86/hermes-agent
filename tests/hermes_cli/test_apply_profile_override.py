@@ -293,7 +293,7 @@ class TestGeneralizedSupervisorMarkers:
         are protected without relying on the INVOCATION_ID heuristic."""
         monkeypatch.setenv("HERMES_HOME", str(tmp_path / "home"))
         (tmp_path / "home").mkdir()
-        from hermes_cli.gateway import generate_systemd_unit
+        from gateway.systemd_unit_render import generate_systemd_unit
 
         unit = generate_systemd_unit()
         assert 'Environment="HERMES_SUPERVISED_CHILD=1"' in unit
