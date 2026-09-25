@@ -36,7 +36,7 @@ def _prefix_names_served_profile(profile: str) -> bool:
     """True when a /p/<profile>/ prefix names the profile this gateway serves. Fail closed: a
     single-profile gateway answering /p/<x>/ served the owner's toolsets under another URL."""
     try:
-        from profiles.paths import profile_matches_home
+        from profiles.registry import profile_matches_home
         return profile_matches_home(profile)
     except Exception:
         return False
@@ -1566,7 +1566,7 @@ class APIServerAdapter(OpenAICompatRoutesMixin, BasePlatformAdapter):
                     return _profile_runtime_scope(get_hermes_home())
             return nullcontext()
         from gateway.run import _profile_runtime_scope
-        from profiles.paths import profile_dir as get_profile_dir
+        from profiles.paths import get_profile_dir
         return _profile_runtime_scope(get_profile_dir(profile))
 
     async def _handle_profile_ingress(self, request: "web.Request") -> "web.StreamResponse":
@@ -2645,7 +2645,7 @@ class APIServerAdapter(OpenAICompatRoutesMixin, BasePlatformAdapter):
         if store is not None:
             return store
         try:
-            from profiles.paths import profile_dir as get_profile_dir
+            from profiles.paths import get_profile_dir
             root = Path(get_profile_dir(profile or "default")) / "artifacts" / "browser-control"
         except Exception:
             # Unscoped fallback (tests/manual wiring): controlled root under the Hermes home.
