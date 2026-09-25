@@ -4,7 +4,7 @@ from contextlib import suppress
 import sys
 import uuid
 
-from hermes_cli.gateway_client import GatewayClientError
+from gateway.client import GatewayClientError
 
 
 class GatewayChatView:
