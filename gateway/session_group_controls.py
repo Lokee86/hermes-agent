@@ -53,7 +53,7 @@ async def dispatch_group_control(connection, method, params):
     home = Path(authority.profile_id)
     if Path(authority.db.db_path).resolve().parent != home.resolve():
         raise RuntimeStoreError('profile_mismatch')
-    from profiles.paths import profile_matches_home
+    from profiles.registry import profile_matches_home
     profile = params.get('profile')
     if profile is not None and not isinstance(profile, str):
         raise RuntimeStoreError('invalid_params')

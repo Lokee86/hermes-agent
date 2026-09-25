@@ -1,56 +1,59 @@
-"""Profile home and directory resolution."""
+"""Profile root/home path resolution."""
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
-from hermes_constants import get_default_hermes_root, get_hermes_home
+from hermes_constants import get_default_hermes_root, named_profile_is_live
 
-from .names import PROFILE_ID_RE, invalid_profile_name_error, normalize_profile_name
+from .names import (
+    _PROFILE_ID_RE,
+    _canon_valid,
+    _invalid_profile_name_error,
+    _missing_profile_error,
+    normalize_profile_name,
+)
 
 
-def default_hermes_home() -> Path:
+def _get_default_hermes_home() -> Path:
     return get_default_hermes_root()
 
 
-def profiles_root() -> Path:
-    return default_hermes_home() / "profiles"
+def _get_profiles_root() -> Path:
+    return _get_default_hermes_home() / "profiles"
 
 
-def active_profile_path() -> Path:
-    return default_hermes_home() / "active_profile"
+def _get_active_profile_path() -> Path:
+    return _get_default_hermes_home() / "active_profile"
 
 
-def profile_dir(name: str) -> Path:
+def get_profile_dir(name: str) -> Path:
     canon = normalize_profile_name(name)
     if canon == "default":
-        return default_hermes_home()
-    if not PROFILE_ID_RE.match(canon):
-        raise invalid_profile_name_error(canon)
-    return profiles_root() / canon
-
-
-def profile_matches_home(name: str, home: Path | None = None) -> bool:
-    try:
-        target = profile_dir(name)
-        if home is None:
-            home = get_hermes_home()
-        return target.expanduser().resolve(strict=False) == Path(home).expanduser().resolve(strict=False)
-    except Exception:
-        return False
+        return _get_default_hermes_home()
+    if not _PROFILE_ID_RE.match(canon):
+        raise _invalid_profile_name_error(canon)
+    return _get_profiles_root() / canon
 
 
 def profile_root_for_env_home(env_home: str, default_root: Path) -> Path:
-    candidate = Path(env_home).expanduser().resolve(strict=False)
-    default_root = Path(default_root).expanduser().resolve(strict=False)
-    if candidate == default_root:
+    env_home = env_home.strip()
+    if not env_home:
         return default_root
-    try:
-        candidate.relative_to(default_root / "profiles")
-    except ValueError:
-        return default_root
-    return candidate
+    env_path = Path(env_home)
+    return env_path.parent.parent if env_path.parent.name == "profiles" else env_path
 
 
 def resolve_profile_env(profile_name: str) -> str:
-    return str(profile_dir(profile_name))
+    canon = _canon_valid(profile_name)
+    root = profile_root_for_env_home(
+        os.environ.get("HERMES_HOME", ""),
+        _get_default_hermes_home(),
+    )
+    if canon == "default":
+        return str(root)
+    profile_dir = root / "profiles" / canon
+    if not named_profile_is_live(profile_dir):
+        raise _missing_profile_error(canon)
+    return str(profile_dir)

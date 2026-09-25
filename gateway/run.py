@@ -1692,7 +1692,7 @@ def _cron_tick_profile_homes(config: object) -> list[tuple[str, "Path"]]:
     process ticks all of them regardless of ``gateway.multiplex_profiles``. Adapter startup
     already skips ``active``."""
     from profiles.current import get_active_profile_name
-    from profiles.paths import profile_dir as get_profile_dir
+    from profiles.paths import get_profile_dir
 
     homes = _multiplex_profile_homes(config)
     active = get_active_profile_name() or "default"  # launch profile, pre-identity (ticker boot)
@@ -4269,7 +4269,7 @@ class GatewayRunner(
         from gateway.profile_routing import ProfileRouteRejected
         from gateway.session_identity import identity_of
         from profiles.current import get_active_profile_name
-        from profiles.paths import profile_dir as get_profile_dir
+        from profiles.paths import get_profile_dir
         from profiles.registry import profile_exists
         from hermes_constants import get_hermes_home
         identity = identity_of(source)

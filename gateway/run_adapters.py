@@ -881,7 +881,7 @@ class GatewayAdapterLifecycleMixin:
         try:
             from profiles.current import get_active_profile_name
             from gateway.profile_serving import profiles_to_serve
-            from profiles.registry import profile_is_parked
+            from gateway.profile_serving import profile_is_parked
         except Exception:
             return 0
         active = get_active_profile_name() or "default"  # launch profile, pre-identity (adapter boot)
@@ -1227,7 +1227,7 @@ class GatewayAdapterLifecycleMixin:
         tears down a RETURNED adapter; one whose configure/connect raised is torn down here."""
         from gateway.run import _platform_has_bot_credential, _profile_runtime_scope
         # Lazy + per-attempt: keeps test monkeypatches on these modules live.
-        from profiles.paths import profile_dir
+        from profiles.paths import get_profile_dir
         from hermes_cli.env_loader import hydrate_profile_secret_sources
         from gateway.config import load_gateway_config
         profile_home = get_profile_dir(profile_name)
@@ -1439,7 +1439,7 @@ class GatewayAdapterLifecycleMixin:
         answering it for an unresolvable NAMED profile is what made a secondary's inbound message
         run on the launch profile's credentials.
         """
-        from profiles.paths import profile_dir as get_profile_dir
+        from profiles.paths import get_profile_dir
         try:
             return get_profile_dir(profile_name)
         except Exception:
