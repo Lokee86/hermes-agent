@@ -219,8 +219,8 @@ def _render_platforms(ctx):
 def _render_gateway(ctx):
     _section("Gateway Service")
     try:
-        from hermes_cli.gateway import (
-            get_gateway_runtime_snapshot, _format_gateway_pids, named_profile_served_by_running_multiplexer)
+        from hermes_cli.gateway import get_gateway_runtime_snapshot, _format_gateway_pids
+        from gateway.host_topology import named_profile_served_by_running_multiplexer
         from gateway.served_profiles import multiplexer_served_secondaries
         snapshot = get_gateway_runtime_snapshot()
         # A satellite profile has no gateway.pid of its own; the default multiplexer is its live process.

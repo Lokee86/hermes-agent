@@ -315,7 +315,7 @@ def test_credential_write_hot_serves_a_multiplexed_profile(client, isolated_prof
     import hermes_cli.gateway as gateway_cli
     import gateway.served_profiles as served_mod
     notified = []
-    monkeypatch.setattr(gateway_cli, "named_profile_served_by_running_multiplexer", lambda name=None: name == "worker_alpha")
+    monkeypatch.setattr("gateway.host_topology.named_profile_served_by_running_multiplexer", lambda name=None: name == "worker_alpha")
     monkeypatch.setattr(served_mod, "notify_multiplexer_profiles_changed", lambda name, **kw: notified.append(name) or ["default", name])
     if topology == "pooled_unscoped":
         monkeypatch.setattr(gateway_cli, "_current_profile_name", lambda: "worker_alpha")

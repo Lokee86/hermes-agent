@@ -48,7 +48,7 @@ def served_root(tmp_path, monkeypatch):
 
 
 def test_probe_trusts_live_record_over_cli_side_config(served_root):
-    from hermes_cli.gateway import named_profile_served_by_running_multiplexer
+    from gateway.host_topology import named_profile_served_by_running_multiplexer
     assert named_profile_served_by_running_multiplexer("coder") is True
     assert named_profile_served_by_running_multiplexer("other") is False
     # Config says multiplex on, but the running gateway did not pick up 'other': the record wins.
@@ -57,7 +57,7 @@ def test_probe_trusts_live_record_over_cli_side_config(served_root):
 
 
 def test_probe_falls_back_to_config_only_without_recorded_key(served_root):
-    from hermes_cli.gateway import named_profile_served_by_running_multiplexer
+    from gateway.host_topology import named_profile_served_by_running_multiplexer
     (served_root / "gateway_state.json").write_text(json.dumps(
         {"pid": os.getpid(), "hermes_home": str(served_root), "gateway_state": "running"}))
     assert named_profile_served_by_running_multiplexer("coder") is False
@@ -70,7 +70,7 @@ def test_probe_survives_a_missing_default_pid_file(served_root):
     unlinks it while the process keeps serving. Keying liveness off that file alone made every surface
     (``hermes -p X status``, ``cron list``, the dashboard ladder) say "not running" about the gateway
     that was in fact serving the profile."""
-    from hermes_cli.gateway import named_profile_served_by_running_multiplexer
+    from gateway.host_topology import named_profile_served_by_running_multiplexer
     from gateway.served_profiles import live_default_gateway_pid
     (served_root / "gateway.pid").unlink()
     assert live_default_gateway_pid() == os.getpid()
@@ -136,7 +136,7 @@ def test_recycled_pid_does_not_lend_a_stale_record_its_served_profiles(served_ro
     once did, so `hermes -p coder gateway start` exited 78 for a multiplexer that was long gone."""
     import subprocess
     import gateway.status as status
-    from hermes_cli.gateway import named_profile_served_by_running_multiplexer
+    from gateway.host_topology import named_profile_served_by_running_multiplexer
     from gateway.served_profiles import live_default_gateway_pid, recorded_served_profiles
     child = subprocess.Popen(["sleep", "60"])
     try:

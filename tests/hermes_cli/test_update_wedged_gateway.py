@@ -200,7 +200,7 @@ def _launchd_harness(monkeypatch, tmp_path, pid):
     events = []
     monkeypatch.setattr(gateway_cli, "get_launchd_label", lambda: "ai.hermes.gateway")
     monkeypatch.setattr(gateway_cli, "_launchd_domain", lambda: "gui/501")
-    monkeypatch.setattr(gateway_cli, "_get_restart_drain_timeout", lambda: 180.0)
+    monkeypatch.setattr("gateway.restart.get_restart_drain_timeout", lambda: 180.0)
     monkeypatch.setattr("gateway.status.get_running_pid", lambda *a, **k: pid)
     monkeypatch.setattr(
         gateway_cli, "_request_gateway_self_restart", lambda pid: False
@@ -409,7 +409,7 @@ class TestLaunchdRestartWedgedIntegration:
         events = []
         monkeypatch.setattr(gateway_cli, "get_launchd_label", lambda: "ai.hermes.gateway")
         monkeypatch.setattr(gateway_cli, "_launchd_domain", lambda: "gui/501")
-        monkeypatch.setattr(gateway_cli, "_get_restart_drain_timeout", lambda: 180.0)
+        monkeypatch.setattr("gateway.restart.get_restart_drain_timeout", lambda: 180.0)
         # Wait budget covers after-turn deferral + drain + headroom (#77184).
         monkeypatch.setattr(gateway_cli, "_get_restart_exit_wait_budget", lambda: 195.0)
         monkeypatch.setattr("gateway.status.get_running_pid", lambda *a, **k: 4242)

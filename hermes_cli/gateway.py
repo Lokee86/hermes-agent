@@ -32,6 +32,9 @@ PROJECT_ROOT = Path(__file__).parent.parent.resolve()
 
 from gateway.config import coerce_systemd_watchdog_seconds, load_gateway_config  # noqa: F401 — resolved lazily by siblings through the facade
 from gateway.status import terminate_pid
+from gateway import host_topology as _host_topology
+from gateway import restart as _gateway_restart
+from profiles.paths import profile_name_from_home
 from gateway.restart import (  # noqa: F401 — resolved lazily by siblings through the facade
     DEFAULT_GATEWAY_RESTART_DRAIN_TIMEOUT,
     EXTERNAL_GATEWAY_SUPERVISOR_ENV,
@@ -1637,7 +1640,7 @@ def _gateway_list() -> None:
                 pass
             if pid:
                 parts.append(f"PID {pid}")
-            elif named_profile_served_by_running_multiplexer(prof.name):
+            elif _host_topology.named_profile_served_by_running_multiplexer(prof.name):
                 parts.append("served by the default multiplexer")
         else:
             parts.append("not running")
@@ -2098,18 +2101,6 @@ SERVICE_DESCRIPTION = "Hermes Agent Gateway - Messaging Platform Integration"
 _SYSTEM_UNIT_DIR = Path("/etc/systemd/system")
 
 
-def _profile_name_from_home(home: Path, default: Path) -> str | None:
-    """Profile name when ``home`` is ``<default>/profiles/<name>`` with a service-safe name, else None."""
-    import re
-    try:
-        parts = home.relative_to((default / "profiles").resolve()).parts
-    except ValueError:
-        return None
-    if len(parts) == 1 and re.match(r"^[a-z0-9][a-z0-9_-]{0,63}$", parts[0]):
-        return parts[0]
-    return None
-
-
 def _native_service_homes() -> set[Path]:
     """This process's native default home plus, when root under sudo, the invoking user's (see
     ``_profile_suffix`` for why sudo matters)."""
@@ -2170,7 +2161,7 @@ def _profile_suffix() -> str:
     home = get_hermes_home().resolve()
     if home in _native_service_homes() or home == _bare_unit_pinned_home():
         return ""
-    name = _profile_name_from_home(home, get_default_hermes_root().resolve())
+    name = profile_name_from_home(home, get_default_hermes_root().resolve())
     return name or hashlib.sha256(str(home).encode()).hexdigest()[:8]
 
 
@@ -2190,7 +2181,7 @@ def _profile_arg(hermes_home: str | None = None, default_root: str | Path | None
     default = Path(default_root).resolve() if default_root else get_default_hermes_root().resolve()
     if home == default:
         return ""
-    name = _profile_name_from_home(home, default)
+    name = profile_name_from_home(home, default)
     return f"--profile {name}" if name else ""
 
 
@@ -3009,16 +3000,6 @@ def _print_system_scope_remediation(action: str) -> None:
     print_info("         hermes gateway start")
 
 
-def _get_restart_drain_timeout() -> float:
-    """Return the configured gateway restart drain timeout in seconds."""
-    raw = os.getenv("HERMES_RESTART_DRAIN_TIMEOUT", "").strip()
-    if not raw:
-        cfg = read_raw_config()
-        agent_cfg = cfg.get("agent", {}) if isinstance(cfg, dict) else {}
-        raw = str(agent_cfg.get("restart_drain_timeout", DEFAULT_GATEWAY_RESTART_DRAIN_TIMEOUT))
-    return parse_restart_drain_timeout(raw)
-
-
 def _agent_timeout_setting(env_var: str, key: str, parse) -> float:
     """``parse(env)`` when the env var is non-empty, else ``parse(agent.<key>)`` (None if unset)."""
     env_raw = os.getenv(env_var)
@@ -3046,7 +3027,7 @@ def _get_restart_exit_wait_budget() -> float:
         # legally wait cron_drain_timeout plus cleanup reserve before interrupt/teardown, and systemd
         # SIGKILLs if the unit's deadline is shorter (#94759). 30s of post-drain headroom is preserved on
         # top, with a 60s floor.
-        _get_restart_drain_timeout(),
+        _gateway_restart.get_restart_drain_timeout(),
         _agent_timeout_setting(
             "HERMES_RESTART_AFTER_TURN_TIMEOUT", "restart_after_turn_timeout", parse_restart_after_turn_timeout
         ),
@@ -3255,7 +3236,7 @@ def _systemd_graceful_restart_action(system: bool, pid: int) -> str | None:
     ``"restart"``) the caller must still issue, or None when systemd already owns the relaunch."""
     scope_label = _service_scope_label(system).capitalize()
     # Graceful in-band restart, mirroring the systemd branch. Previously this sent a bare SIGTERM and waited
-    # ``_get_restart_drain_timeout()`` — which defaults to 0, so the wait could never succeed and every
+    # ``get_restart_drain_timeout()`` — which defaults to 0, so the wait could never succeed and every
     # restart fell through to ``kickstart -k``. A bare SIGTERM also leaves ``restart_requested`` False, so
     # the gateway exits 1 instead of 75 and reports itself to chat as "shutting down" rather than
     # "restarting", losing the resume_pending handoff. SIGUSR1 is the drain-aware path: refuse new turns,
@@ -3547,95 +3528,13 @@ def _running_under_gateway_supervisor() -> bool:
     return is_gateway_supervisor_process()
 
 
-def host_multiplexer_serving(profile_name: str | None = None):
-    """The ONE live host gateway when it serves ``profile_name`` (default: the current profile).
-
-    Companion to :func:`named_profile_served_by_running_multiplexer`, which answers the narrower
-    "is this a SATELLITE of the default's multiplexer" and is hard-False for ``default`` — the
-    profile that usually owns the shared process. Every lifecycle guard built on it was therefore
-    blind to the host process itself. This one is true for ``default`` too, and it reports WHICH
-    profiles the host process serves. Returns a ``gateway.host_attach.HostGateway`` or None.
-    """
-    try:
-        from gateway.host_attach import host_gateway_serving
-        name = profile_name if profile_name is not None else _current_profile_name()
-        return host_gateway_serving(name or "default")
-    except Exception:
-        logger.debug("Host multiplexer probe failed", exc_info=True)
-        return None
-
-
-def _served_by_another_host_gateway(profile_name: str | None = None):
-    """The host gateway serving ``profile_name`` when it is NOT this home's own process.
-
-    The owner must never be guarded out of restarting itself: a refusal keyed on "something serves
-    you" would make `hermes gateway restart` impossible for the profile that launched the host
-    process. Guards want "ANOTHER process already serves you", which is this.
-    """
-    gateway = host_multiplexer_serving(profile_name)
-    if gateway is None:
-        return None
-    try:
-        from gateway.status import _get_process_hermes_home, _same_hermes_home
-        if _same_hermes_home(gateway.home, _get_process_hermes_home()):
-            return None
-    except Exception:
-        logger.debug("Host multiplexer home comparison failed", exc_info=True)
-    return gateway
-
-
-def named_profile_served_by_running_multiplexer(profile_name: str | None = None) -> bool:
-    """True when a live default multiplexer already ticks this named profile (a satellite profile has no
-    gateway.pid; the multiplexer fires its jobs and serves its platforms). Defaults to the current profile.
-
-    See #97120.
-    """
-    try:
-        suffix = profile_name if profile_name is not None else _current_profile_name()
-    except Exception:
-        return False
-    if not suffix or suffix == "default":
-        return False
-
-    # The host record answers first: it names the live host process whatever home launched it, so a
-    # multiplexer started by a named profile is visible here too.
-    if host_multiplexer_serving(suffix) is not None:
-        return True
-
-    try:
-        from hermes_constants import get_default_hermes_root
-        default_root = get_default_hermes_root()
-    except Exception:
-        return False
-
-    try:
-        from gateway.served_profiles import live_default_gateway_pid, recorded_served_profiles
-        if live_default_gateway_pid() is None:
-            return False
-        from profiles.names import normalize_profile_name
-        # The live gateway's own record wins: the CLI process cannot see an env-only opt-in on the
-        # default profile (`hermes -p X` loads X's .env) and a config edit after start is not live yet.
-        # Only a record without the key (pre-multiplex writer) falls through to config derivation.
-        recorded = recorded_served_profiles(default_root)
-        if recorded is not None:
-            return normalize_profile_name(suffix) in {normalize_profile_name(p) for p in recorded}
-
-        # No record (older gateway): only an EXPLICIT opt-in counts. The unset default is settled by
-        # the gateway at boot (it may have stayed standalone); a CLI process must not guess it on.
-        from gateway.multiplex_mode import explicit_multiplex_flag
-        return explicit_multiplex_flag(default_root) is True  # a multiplexer serves every named profile
-    except Exception:
-        logger.debug("Multiplexer-serving probe failed", exc_info=True)
-        return False
-
-
 def _served_profile_needs_no_service() -> bool:
     """Print the "already served" note and return True when a setup flow must not install a standalone
     service: a live multiplexing default gateway already serves this named profile, so the unit/plist it
     would register can only sit dead (the start guard refuses it) or double-bind its platforms.
     Shared by ``hermes setup gateway`` / ``hermes setup`` / ``hermes import`` (``ensure_gateway_service``)
     and the ``hermes gateway setup`` wizard. See #111958."""
-    if not named_profile_served_by_running_multiplexer():
+    if not _host_topology.named_profile_served_by_running_multiplexer():
         # Not served (yet): a named profile still gets no service of its own — same rule and text
         # as `gateway install`, so `hermes -p X setup` cannot grow a fleet member the verb refuses.
         return _named_profile_refused_under_multiplexer()
@@ -3682,8 +3581,8 @@ def _named_profile_refused_under_multiplexer(force: bool = False) -> bool:
                           and not _is_service_installed())
     except Exception:
         return False
-    owner = _served_by_another_host_gateway()
-    served = owner is not None or named_profile_served_by_running_multiplexer()
+    owner = _host_topology.served_by_another_host_gateway()
+    served = owner is not None or _host_topology.named_profile_served_by_running_multiplexer()
     if standalone:
         if not served:
             return False
@@ -4744,9 +4643,10 @@ def _cmd_stop(args):
     stop_all = getattr(args, "all", False)
     system = getattr(args, "system", False)
     if not stop_all and not find_gateway_pids() and (
-            _served_by_another_host_gateway() or named_profile_served_by_running_multiplexer()):
+            _host_topology.served_by_another_host_gateway()
+            or _host_topology.named_profile_served_by_running_multiplexer()):
         # The launch/default-profile lifecycle still names the whole host.
-        owner = _served_by_another_host_gateway()
+        owner = _host_topology.served_by_another_host_gateway()
         print_error(
             f"The host gateway serves profile '{_current_profile_name()}' — there is no separate "
             f"gateway for this profile to stop."
@@ -4977,7 +4877,8 @@ def _cmd_status(args):
         print("standalone by config (gateway.standalone: true) — temporary compatibility shim")
         print(f"  {STANDALONE_DEPRECATION_NOTICE}")
     _windows_service_installed = is_windows() and _gw_windows().is_installed()
-    if not active_standalone and not snapshot.running and named_profile_served_by_running_multiplexer():
+    if (not active_standalone and not snapshot.running
+            and _host_topology.named_profile_served_by_running_multiplexer()):
         # Satellite profile: the default multiplexer is the live inbound process for it.
         print("✓ Gateway is running via the default-profile multiplexer")
         print("  Manage it from the default profile: hermes gateway status")

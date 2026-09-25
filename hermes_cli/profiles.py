@@ -588,7 +588,7 @@ def _served_by_running_multiplexer(profile_name: str) -> bool:
     Single shared lookup with the named-profile start guard and cron liveness (#97120).
     """
     try:
-        from hermes_cli.gateway import named_profile_served_by_running_multiplexer
+        from gateway.host_topology import named_profile_served_by_running_multiplexer
         return named_profile_served_by_running_multiplexer(profile_name)
     except Exception:
         return False

@@ -905,9 +905,9 @@ def _request_socket_pauses(running_pids, profile_processes, service_gateway_pids
 def _gateway_drain_timeout(socket_acks: list[dict]) -> float:
     """Drain budget: configured restart drain (>= 1s), raised to a socket-paused gateway's declared
     ACTIVE-TURN budget + teardown grace so it isn't force-killed mid-turn."""
-    from hermes_cli.gateway import _get_restart_drain_timeout
+    from gateway.restart import get_restart_drain_timeout
     try:
-        drain_timeout = max(float(_get_restart_drain_timeout()), 1.0)
+        drain_timeout = max(float(get_restart_drain_timeout()), 1.0)
     except Exception:
         drain_timeout = 10.0
     if socket_acks:

@@ -49,7 +49,7 @@ def fleet(tmp_path, monkeypatch):
         if verb == "start" and name != "default":
             # What the real `hermes -p <name> gateway run` checks first: is a live multiplexer
             # still recorded as serving me? (exit 78 if so — the unit is then parked for good).
-            from hermes_cli.gateway import named_profile_served_by_running_multiplexer
+            from gateway.host_topology import named_profile_served_by_running_multiplexer
             state.refused_at_start[name] = named_profile_served_by_running_multiplexer(name)
         if verb == "uninstall":
             remaining = [u for u in _units(state.services.get(name)) if u != (kind, system)]
@@ -256,7 +256,7 @@ def test_apply_clears_the_manifest_on_success_and_the_compensator_restores(fleet
     runtime = json.loads(runtime_path.read_text(encoding="utf-8"))
     assert runtime["served_profiles"] == []
     assert runtime["platforms"] == {"telegram": {"state": "connected"}}
-    from hermes_cli.gateway import named_profile_served_by_running_multiplexer
+    from gateway.host_topology import named_profile_served_by_running_multiplexer
     assert named_profile_served_by_running_multiplexer("coder") is False
     assert not (fleet.root / gm.MANIFEST_NAME).exists()
 

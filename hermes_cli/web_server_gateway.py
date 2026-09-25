@@ -540,7 +540,7 @@ def _gateway_subcommand(profile: Optional[str], verb: str) -> List[str]:
 
 
 def _profile_is_multiplexed(profile: str) -> bool:
-    from hermes_cli.gateway import named_profile_served_by_running_multiplexer
+    from gateway.host_topology import named_profile_served_by_running_multiplexer
     return named_profile_served_by_running_multiplexer(profile)
 
 

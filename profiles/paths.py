@@ -28,6 +28,17 @@ def _get_active_profile_path() -> Path:
     return _get_default_hermes_home() / "active_profile"
 
 
+def profile_name_from_home(home: Path, default_root: Path) -> str | None:
+    """Profile name when ``home`` is ``<default_root>/profiles/<name>`` with a valid name."""
+    try:
+        parts = home.relative_to((default_root / "profiles").resolve()).parts
+    except ValueError:
+        return None
+    if len(parts) == 1 and _PROFILE_ID_RE.match(parts[0]):
+        return parts[0]
+    return None
+
+
 def get_profile_dir(name: str) -> Path:
     canon = normalize_profile_name(name)
     if canon == "default":
