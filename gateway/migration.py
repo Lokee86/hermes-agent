@@ -275,7 +275,7 @@ def _own_gateway_pid(home: Path, owner) -> Optional[int]:
 
 
 def _gateway_identity(home: Path, pid: Optional[int], services: list[tuple[str, bool]]) -> tuple[Optional[int], Path]:
-    from hermes_cli.gateway_migrate_guards import gateway_identity
+    from gateway.migration_guards import gateway_identity
     return gateway_identity(home, pid, services)
 
 
@@ -379,7 +379,7 @@ def _read_multiplex_flag(default_home: Path) -> bool:
     """The operator's EXPLICIT opt-in only. The unset default (on) is settled by the default gateway at
     boot and refused while a secondary runs its own gateway — exactly the fleet this command folds —
     so the plan reads it as "not yet multiplexed" and the migration proceeds."""
-    from hermes_cli.gateway_multiplex_mode import explicit_multiplex_flag
+    from gateway.multiplex_mode import explicit_multiplex_flag
     return explicit_multiplex_flag(default_home) is True
 
 
@@ -616,7 +616,7 @@ def build_migration_plan() -> MigrationPlan:
     configs = _load_profile_configs(plan)
     for check in _PREFLIGHT_CHECKS:
         check(plan, configs)
-    from hermes_cli.gateway_migrate_guards import auto_migration_blockers
+    from gateway.migration_guards import auto_migration_blockers
     # Notices, not blockers: the explicit command is the operator's decision; only the update hook
     # refuses to cross these boundaries on its own.
     plan.notices.extend(f"Not migrated automatically by `hermes update`: {b}" for b in auto_migration_blockers(plan))
@@ -1198,7 +1198,7 @@ def maybe_auto_migrate_after_update() -> None:
     migrate automatically when unblocked (deterministic, never prompts) or print the blocker block.
     ``gateway.auto_multiplex_migration: false`` on the default profile opts out; a secondary behind a
     service-domain / UNIX-user / HERMES_HOME boundary blocks this path only (the explicit command decides)."""
-    from hermes_cli.gateway_migrate_guards import auto_migration_blockers, auto_migration_opted_out
+    from gateway.migration_guards import auto_migration_blockers, auto_migration_opted_out
     if _host_supports_migration() is not None or auto_migration_opted_out(_default_home()):
         return
     plan = build_migration_plan()
