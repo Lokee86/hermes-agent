@@ -107,7 +107,7 @@ def _wizard_install_service(backend: str) -> None:
     """Choose persistence once; start-now without persistence stays unmanaged."""
     import subprocess
     from hermes_cli import gateway as gw
-    from hermes_cli.gateway_runtime import ensure_gateway_runtime
+    from gateway.runtime import ensure_gateway_runtime
 
     if not sys.stdin.isatty():
         return

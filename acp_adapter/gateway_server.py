@@ -12,7 +12,7 @@ from acp.schema import (
     SessionCapabilities, SessionForkCapabilities, SessionListCapabilities, SessionResumeCapabilities,
 )
 
-from hermes_cli.gateway_client import GatewayClientError, connect_gateway
+from gateway.client import GatewayClientError, connect_gateway
 from hermes_constants import get_hermes_home
 from acp_adapter.session import _translate_acp_cwd, _normalize_cwd_for_compare
 

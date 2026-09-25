@@ -92,7 +92,7 @@ def _exists(path: Path) -> bool:
 def _systemd(home: Path, deadline: float) -> ExistingService | None:
     from hermes_cli import gateway as gw
     from hermes_cli.service_manager import _s6_running
-    from hermes_cli.gateway_runtime_service_identity import ForeignRoot, SYSTEMD_IDENTITY_PROPERTIES, verify_systemd
+    from gateway.runtime_service_identity import ForeignRoot, SYSTEMD_IDENTITY_PROPERTIES, verify_systemd
     if _s6_running():
         raise RuntimeStartError("external_supervisor")
     suffix = service_suffix(home)
@@ -156,7 +156,7 @@ def _launchd(home: Path, deadline: float) -> ExistingService | None:
     account = pwd.getpwuid(os.getuid())  # windows-footgun: ok — native launchd only
     account_home = Path(account.pw_dir)
     plist = account_home / "Library/LaunchAgents" / f"{label}.plist"
-    from hermes_cli.gateway_runtime_service_identity import verify_launchd_loaded, verify_launchd_plist, read_definition
+    from gateway.runtime_service_identity import verify_launchd_loaded, verify_launchd_plist, read_definition
     installed = _exists(plist)
     domains = [f"gui/{os.getuid()}", f"user/{os.getuid()}"]  # windows-footgun: ok — native launchd only
     found = []
@@ -195,7 +195,7 @@ def _windows(home: Path, deadline: float) -> ExistingService | None:
     if any(len(row) != 3 for row in rows if row):
         raise RuntimeStartError("service_state_unknown")
     if any(row and row[0].lstrip("\\") == name for row in rows):
-        from hermes_cli.gateway_runtime_service_identity import verify_windows_task
+        from gateway.runtime_service_identity import verify_windows_task
         definition = _run(["schtasks.exe", "/Query", "/TN", name, "/XML"], deadline, encoding=None)
         identity = _run(["whoami.exe", "/USER", "/FO", "CSV", "/NH"], deadline, encoding=_schtasks_encoding())
         if definition.returncode or identity.returncode:
