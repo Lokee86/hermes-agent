@@ -1,4 +1,5 @@
 """Phase 4: lifecycle guard + per-profile observability."""
+from gateway import host_topology, served_profiles
 import pytest
 
 from gateway.config import GatewayConfig
@@ -83,11 +84,13 @@ class TestNamedProfileMultiplexerGuard:
         import gateway.status as status
 
         monkeypatch.setattr(gw, "_profile_suffix", lambda: "coder")
+        monkeypatch.setattr(host_topology, "_current_profile_name", lambda: "coder")
         monkeypatch.setattr(
             "hermes_constants.get_default_hermes_root", lambda: tmp_path
         )
         import json
         import os
+        monkeypatch.setattr(served_profiles, "live_default_gateway_pid", lambda: os.getpid())
         # Liveness is a verified identity (live PID + gateway command line + home), so this pytest
         # process stands in for the gateway by wearing a gateway command line.
         (tmp_path / "gateway.pid").write_text(str(os.getpid()), encoding="utf-8")
@@ -150,6 +153,7 @@ class TestNamedProfileMultiplexerGuard:
         assert gw.named_profile_served_by_running_multiplexer() is True
 
         monkeypatch.setattr(gw, "_profile_suffix", lambda: "")
+        monkeypatch.setattr(host_topology, "_current_profile_name", lambda: "default")
         assert gw.named_profile_served_by_running_multiplexer() is False
 
 

@@ -1248,7 +1248,7 @@ def multiplexer_liveness_for_profile(profile_dir: Path) -> Optional[tuple[int, d
     if not name:
         return None
     from gateway.host_topology import host_gateway_topology
-    from hermes_cli.gateway import named_profile_served_by_running_multiplexer
+    from gateway.host_topology import named_profile_served_by_running_multiplexer
     from gateway.served_profiles import live_default_gateway_pid
     from hermes_constants import get_default_hermes_root
     # The roster is matched by NAME, and the multiplexer only serves ``<default root>/profiles/<name>``:

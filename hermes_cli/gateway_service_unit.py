@@ -163,7 +163,9 @@ def generate_systemd_unit(system: bool = False, run_as_user: str | None = None) 
         _gw()._append_node_dir_for_service(path_entries)
 
     # TimeoutStopSec must cover the full stop budget (cron drain + cleanup) or systemd SIGKILLs mid-drain.
-    restart_timeout = _gw().resolve_systemd_timeout_stop_sec(_gw()._get_restart_drain_timeout(), _gw()._get_cron_drain_timeout())
+    from gateway.restart import get_restart_drain_timeout
+
+    restart_timeout = _gw().resolve_systemd_timeout_stop_sec(get_restart_drain_timeout(), _gw()._get_cron_drain_timeout())
 
     if system:
         username, group_name, home_dir, uid = _gw()._system_service_identity(run_as_user)
