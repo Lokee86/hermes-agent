@@ -1,0 +1,68 @@
+{
+  "version": 1,
+  "rules": [
+    {
+      "id": "nous-cli-legacy-seam-required",
+      "type": "require_path",
+      "path": "nous_cli/legacy.py"
+    },
+    {
+      "id": "nous-cli-must-use-only-the-legacy-seam",
+      "type": "forbid_content",
+      "regex": "^[ \\t]*(from|import)[ \\t]+hermes_cli([. \\t]|$)",
+      "include_paths": [
+        "nous_cli/*.py",
+        "nous_cli/**/*.py"
+      ],
+      "exclude_paths": [
+        "nous_cli/legacy.py"
+      ]
+    },
+    {
+      "id": "runtime-must-not-depend-on-nous-cli",
+      "type": "forbid_content",
+      "regex": "^[ \\t]*(from|import)[ \\t]+nous_cli([. \\t]|$)",
+      "include_paths": [
+        "agent/*.py",
+        "agent/**/*.py",
+        "gateway/*.py",
+        "gateway/**/*.py",
+        "providers/*.py",
+        "providers/**/*.py",
+        "tools/*.py",
+        "tools/**/*.py",
+        "profiles/*.py",
+        "profiles/**/*.py",
+        "runtime/*.py",
+        "runtime/**/*.py",
+        "storage/*.py",
+        "storage/**/*.py",
+        "auth/*.py",
+        "auth/**/*.py",
+        "kanban/*.py",
+        "kanban/**/*.py",
+        "automation/*.py",
+        "automation/**/*.py"
+      ]
+    },
+    {
+      "id": "migrated-runtime-must-not-depend-on-hermes-cli",
+      "type": "forbid_content",
+      "regex": "^[ \\t]*(from|import)[ \\t]+hermes_cli([. \\t]|$)",
+      "include_paths": [
+        "profiles/*.py",
+        "profiles/**/*.py",
+        "runtime/*.py",
+        "runtime/**/*.py",
+        "storage/*.py",
+        "storage/**/*.py",
+        "auth/*.py",
+        "auth/**/*.py",
+        "kanban/*.py",
+        "kanban/**/*.py",
+        "automation/*.py",
+        "automation/**/*.py"
+      ]
+    }
+  ]
+}
