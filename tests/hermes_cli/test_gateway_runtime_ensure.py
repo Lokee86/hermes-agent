@@ -1,4 +1,5 @@
 """Real local-control and subprocess boundaries, never real service mutations."""
+from gateway import systemd_runtime
 import asyncio
 import json
 import os
@@ -82,7 +83,7 @@ def test_installed_service_start_is_nonmutating_and_failed_manager_never_spawns(
                       + 'elif "start" in sys.argv: sys.exit(0)\n'
                       + 'else: sys.exit(91)\n', encoding="utf-8")
     helper.chmod(0o700)
-    monkeypatch.setattr(gw, "_systemctl_cmd", lambda system=False: [str(helper), "system" if system else "user"])
+    monkeypatch.setattr(systemd_runtime, "systemctl_cmd", lambda system=False: [str(helper), "system" if system else "user"])
     result = runtime.ensure_gateway_runtime(home, timeout=3.0)
     # Both scopes claiming this name is a conflict, never permission to choose one.
     assert result.state == "conflict"

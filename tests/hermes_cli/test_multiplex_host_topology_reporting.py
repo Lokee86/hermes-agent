@@ -8,6 +8,7 @@ Invariants (all fail on origin/main):
 * ``hermes claw``'s destructive-action warning FIRES for a served profile.
 * the state.db holder line names the shared host process and the profiles it serves.
 """
+from gateway import systemd_runtime
 
 import json
 import os
@@ -129,7 +130,7 @@ def test_doctor_checks_host_unit_linger_under_a_served_profile(served_host, tmp_
         monkeypatch.delenv("XDG_CONFIG_HOME", raising=False)
     monkeypatch.setattr("hermes_cli.gateway.is_linux", lambda: True)
     monkeypatch.setattr("hermes_cli.service_manager.detect_service_manager", lambda: "systemd")
-    monkeypatch.setattr("hermes_cli.gateway.get_systemd_linger_status", lambda *a, **k: (False, "off"))
+    monkeypatch.setattr("hermes_cli.systemd_runtime.linger_status", lambda *a, **k: (False, "off"))
 
     issues: list[str] = []
     doctor_platform._check_gateway_service_linger(issues)

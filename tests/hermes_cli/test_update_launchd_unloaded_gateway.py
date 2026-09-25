@@ -17,6 +17,7 @@ when the job is genuinely unloaded.
 """
 
 from __future__ import annotations
+from gateway import systemd_runtime
 
 import subprocess
 
@@ -148,7 +149,7 @@ class TestServicePidSweepExclusion:
 
         state = {"list_rc": 1, "print_rc": 0, "print_out": _PRINT_OUTPUT_RUNNING}
 
-        monkeypatch.setattr(gateway_mod, "supports_systemd_services", lambda: False)
+        monkeypatch.setattr(systemd_runtime, "supports_services", lambda: False)
         monkeypatch.setattr(gateway_mod, "get_launchd_label", lambda: "ai.hermes.gateway")
         monkeypatch.setattr(gateway_mod, "_launchd_domain", lambda: "gui/501")
 

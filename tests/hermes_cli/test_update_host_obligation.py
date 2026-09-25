@@ -13,6 +13,7 @@ again. These tests pin the host-scoped contract:
 """
 
 from __future__ import annotations
+from gateway import systemd_runtime
 
 import json
 import os

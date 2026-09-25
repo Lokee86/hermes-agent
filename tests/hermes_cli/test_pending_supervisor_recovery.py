@@ -1,4 +1,5 @@
 """A pending restart is discharged by supervisor evidence, not an empty PID scan."""
+from gateway import systemd_runtime
 import subprocess
 from types import SimpleNamespace
 

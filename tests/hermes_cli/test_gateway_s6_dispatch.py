@@ -6,6 +6,7 @@ the in-container S6ServiceManager instead of falling through to the
 host systemd/launchd/windows code path.
 """
 from __future__ import annotations
+from gateway import service_identity
 
 
 import pytest
@@ -131,7 +132,7 @@ def test_redirect_falls_back_when_sleep_missing(
     from hermes_cli import gateway as gw
 
     rec = _stub_s6(monkeypatch, on_s6=True)
-    monkeypatch.setattr("hermes_cli.gateway._profile_suffix", lambda: "")
+    monkeypatch.setattr("hermes_cli.service_identity.service_suffix", lambda: "")
 
     monkeypatch.setattr("hermes_cli.gateway.os.execvp", _raise_missing_sleep)
     block_calls: list[bool] = []
@@ -161,7 +162,7 @@ def _armed_watchdog(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.delenv(sw.ENV_STARTUP_WATCHDOG, raising=False)
     monkeypatch.delenv("HERMES_S6_SUPERVISED_CHILD", raising=False)
     monkeypatch.delenv("HERMES_GATEWAY_NO_SUPERVISE", raising=False)
-    monkeypatch.setattr("hermes_cli.gateway._profile_suffix", lambda: "")
+    monkeypatch.setattr("hermes_cli.service_identity.service_suffix", lambda: "")
     sw._reset_for_tests()
     handle = sw.arm_startup_watchdog(timeout_s=3600)
     assert handle is not None and handle.is_alive()

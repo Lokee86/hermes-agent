@@ -12,6 +12,7 @@ from __future__ import annotations
 import contextlib
 import os
 import subprocess
+import sys
 from pathlib import Path
 from typing import TYPE_CHECKING, Callable, Optional
 
@@ -26,8 +27,7 @@ def _pid_uid(pid: int) -> Optional[int]:
     """Owner uid of a live process: ``/proc`` where it exists, ``ps`` on macOS; None when unknown."""
     with contextlib.suppress(OSError):
         return os.stat(f"/proc/{pid}").st_uid
-    from hermes_cli.gateway import is_macos
-    if not is_macos():
+    if sys.platform != "darwin":
         return None
     with contextlib.suppress(OSError, ValueError, subprocess.SubprocessError):
         result = subprocess.run(["ps", "-o", "uid=", "-p", str(pid)], capture_output=True, text=True, encoding="utf-8",
@@ -39,8 +39,8 @@ def _pid_uid(pid: int) -> Optional[int]:
 
 def _system_unit_uid(unit_path: Path) -> Optional[int]:
     """uid a system unit runs as: its ``User=`` (root when absent); None when the name is unknown."""
-    from hermes_cli.gateway import _read_systemd_user_from_unit
-    user = _read_systemd_user_from_unit(unit_path)
+    from gateway.systemd_identity import read_unit_user
+    user = read_unit_user(unit_path)
     if user is None:
         return 0
     import pwd
@@ -59,7 +59,8 @@ def gateway_identity(home: Path, pid: Optional[int], services: list[tuple[str, b
     profile directory owner is the account the gateway runs as. None means unknown. runtime_home: the
     HERMES_HOME an installed unit pins, which is where the gateway really runs; ``home`` otherwise.
     """
-    from hermes_cli.gateway import _hermes_home_pinned_by_unit, get_systemd_unit_path
+    from gateway.service_identity import hermes_home_pinned_by_unit
+    from gateway.systemd_identity import unit_path as systemd_unit_path
     from gateway.migration import _home_env
 
     uid: Optional[int] = _pid_uid(pid) if pid is not None else None
@@ -69,14 +70,14 @@ def gateway_identity(home: Path, pid: Optional[int], services: list[tuple[str, b
         if kind != "systemd":
             continue
         with _home_env(home):
-            unit_path = get_systemd_unit_path(system=system)
-        pinned = _hermes_home_pinned_by_unit(unit_path)
+            current_unit_path = systemd_unit_path(system=system)
+        pinned = hermes_home_pinned_by_unit(current_unit_path)
         if pinned and runtime_home == home:
             runtime_home = Path(pinned).expanduser()
         if system:
             has_system_unit = True
             if uid is None:
-                uid = _system_unit_uid(unit_path)
+                uid = _system_unit_uid(current_unit_path)
     if uid is None and not has_system_unit:
         with contextlib.suppress(OSError):
             uid = home.stat().st_uid

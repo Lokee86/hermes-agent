@@ -1,6 +1,7 @@
 """Fixtures shared across hermes_cli tests."""
 
 from __future__ import annotations
+from gateway import systemd_runtime
 
 import pytest
 

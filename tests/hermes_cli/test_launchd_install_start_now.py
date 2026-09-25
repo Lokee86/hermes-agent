@@ -3,6 +3,7 @@
 The plist carries RunAtLoad, so loading it (`launchctl bootstrap`) starts the gateway on the spot. A
 no-start install must therefore write the plist without loading it; `hermes gateway start` loads it later.
 """
+from gateway import systemd_unit_state
 import argparse
 import plistlib
 import subprocess
@@ -40,7 +41,7 @@ def launchd(tmp_path, monkeypatch):
     monkeypatch.setattr(gateway_cli, "get_launchd_plist_path", lambda: state.plist)
     monkeypatch.setattr(gateway_cli, "get_launchd_label", lambda: LABEL)
     monkeypatch.setattr(gateway_cli, "_launchd_domain", lambda: DOMAIN)
-    monkeypatch.setattr(gateway_cli, "_refuse_temp_home_service_write", lambda *a: False)
+    monkeypatch.setattr(systemd_unit_state, "refuse_temp_home_write", lambda *a: False)
     monkeypatch.setattr(gateway_cli, "_clear_launchd_unsupported_marker", lambda: None)
     monkeypatch.setattr(gateway_cli, "_launchctl_supervised_pid", lambda label: state.supervised_pid)
     monkeypatch.setattr(gateway_cli, "_launchctl_bootstrap", lambda *a, **k: state.bootstraps.append(a))
