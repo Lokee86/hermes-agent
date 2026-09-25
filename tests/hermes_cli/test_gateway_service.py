@@ -1,4 +1,5 @@
 """Tests for gateway service management helpers."""
+from gateway import launchd_service
 from gateway import process_liveness
 from gateway import restart
 from gateway import service_identity
@@ -403,7 +404,7 @@ class TestGeneratedSystemdUnits:
         link_node = local_bin / "node"
         link_node.symlink_to(real_node)
 
-        monkeypatch.setattr(gateway_cli.shutil, "which", lambda cmd: str(link_node) if cmd == "node" else None)
+        monkeypatch.setattr(service_process.shutil, "which", lambda cmd: str(link_node) if cmd == "node" else None)
 
         plist = gateway_cli.generate_launchd_plist()
 
@@ -480,7 +481,7 @@ class TestLaunchdServiceRecovery:
         monkeypatch.setattr(
             "gateway.status._pid_exists", lambda pid: alive.pop(0) if alive else False
         )
-        monkeypatch.setattr(gateway_cli.time, "sleep", lambda s: None)
+        monkeypatch.setattr(launchd_service.time, "sleep", lambda s: None)
 
         assert process_liveness._wait_for_pid_exit(4242, timeout=30) is True
         assert not alive  # polled until the PID disappeared
@@ -501,8 +502,8 @@ class TestLaunchdServiceRecovery:
         plist_path = tmp_path / "ai.hermes.gateway.plist"
         plist_path.write_text("<plist>old content</plist>", encoding="utf-8")
 
-        monkeypatch.setattr(gateway_cli, "get_launchd_plist_path", lambda: plist_path)
-        monkeypatch.setattr(gateway_cli, "launchd_plist_is_current", lambda: False)
+        monkeypatch.setattr(launchd_service, "get_launchd_plist_path", lambda: plist_path)
+        monkeypatch.setattr(launchd_service, "launchd_plist_is_current", lambda: False)
         monkeypatch.setattr(
             gateway_cli,
             "generate_launchd_plist",
@@ -523,7 +524,7 @@ class TestLaunchdServiceRecovery:
             run_calls.append(cmd)
             return SimpleNamespace(returncode=0, stdout="", stderr="")
 
-        monkeypatch.setattr(gateway_cli.subprocess, "run", fake_run)
+        monkeypatch.setattr(launchd_service.subprocess, "run", fake_run)
 
         popen_calls = []
 
@@ -531,7 +532,7 @@ class TestLaunchdServiceRecovery:
             popen_calls.append((cmd, kwargs))
             return SimpleNamespace(pid=9999)
 
-        monkeypatch.setattr(gateway_cli.subprocess, "Popen", fake_popen)
+        monkeypatch.setattr(launchd_service.subprocess, "Popen", fake_popen)
 
         result = gateway_cli.refresh_launchd_plist_if_needed()
 
@@ -576,8 +577,8 @@ class TestLaunchdServiceRecovery:
         plist_path = tmp_path / "ai.hermes.gateway.plist"
         plist_path.write_text("<plist>old content</plist>", encoding="utf-8")
 
-        monkeypatch.setattr(gateway_cli, "get_launchd_plist_path", lambda: plist_path)
-        monkeypatch.setattr(gateway_cli, "launchd_plist_is_current", lambda: False)
+        monkeypatch.setattr(launchd_service, "get_launchd_plist_path", lambda: plist_path)
+        monkeypatch.setattr(launchd_service, "launchd_plist_is_current", lambda: False)
         monkeypatch.setattr(
             gateway_cli,
             "generate_launchd_plist",
@@ -598,11 +599,11 @@ class TestLaunchdServiceRecovery:
             run_calls.append(cmd)
             return SimpleNamespace(returncode=0, stdout="", stderr="")
 
-        monkeypatch.setattr(gateway_cli.subprocess, "run", fake_run)
+        monkeypatch.setattr(launchd_service.subprocess, "run", fake_run)
 
         popen_calls = []
         monkeypatch.setattr(
-            gateway_cli.subprocess, "Popen",
+            launchd_service.subprocess, "Popen",
             lambda cmd, **kw: popen_calls.append(cmd) or SimpleNamespace(pid=1),
         )
 
@@ -627,8 +628,8 @@ class TestLaunchdServiceRecovery:
         plist_path = tmp_path / "ai.hermes.gateway.plist"
         plist_path.write_text("<plist>old content</plist>", encoding="utf-8")
 
-        monkeypatch.setattr(gateway_cli, "get_launchd_plist_path", lambda: plist_path)
-        monkeypatch.setattr(gateway_cli, "launchd_plist_is_current", lambda: False)
+        monkeypatch.setattr(launchd_service, "get_launchd_plist_path", lambda: plist_path)
+        monkeypatch.setattr(launchd_service, "launchd_plist_is_current", lambda: False)
         monkeypatch.setattr(
             gateway_cli,
             "generate_launchd_plist",
@@ -639,7 +640,7 @@ class TestLaunchdServiceRecovery:
         )
         monkeypatch.setattr("gateway.status.get_running_pid", lambda *a, **k: 4242)
         monkeypatch.setattr(
-            gateway_cli.subprocess,
+            launchd_service.subprocess,
             "run",
             lambda cmd, check=False, **kw: SimpleNamespace(
                 returncode=0, stdout="", stderr=""
@@ -648,7 +649,7 @@ class TestLaunchdServiceRecovery:
 
         popen_calls = []
         monkeypatch.setattr(
-            gateway_cli.subprocess,
+            launchd_service.subprocess,
             "Popen",
             lambda cmd, **kw: popen_calls.append(cmd) or SimpleNamespace(pid=1),
         )
@@ -679,8 +680,8 @@ class TestLaunchdServiceRecovery:
         plist_path = tmp_path / "ai.hermes.gateway.plist"
         plist_path.write_text("<plist>old content</plist>", encoding="utf-8")
 
-        monkeypatch.setattr(gateway_cli, "get_launchd_plist_path", lambda: plist_path)
-        monkeypatch.setattr(gateway_cli, "launchd_plist_is_current", lambda: False)
+        monkeypatch.setattr(launchd_service, "get_launchd_plist_path", lambda: plist_path)
+        monkeypatch.setattr(launchd_service, "launchd_plist_is_current", lambda: False)
         monkeypatch.setattr(
             gateway_cli,
             "generate_launchd_plist",
@@ -694,7 +695,7 @@ class TestLaunchdServiceRecovery:
         def boom(cmd, **kwargs):
             raise OSError("launchctl submit unavailable")
 
-        monkeypatch.setattr(gateway_cli.subprocess, "Popen", boom)
+        monkeypatch.setattr(launchd_service.subprocess, "Popen", boom)
 
         waited = []
         monkeypatch.setattr(
@@ -717,7 +718,7 @@ class TestLaunchdServiceRecovery:
                 )
             return SimpleNamespace(returncode=0, stdout="", stderr="")
 
-        monkeypatch.setattr(gateway_cli.subprocess, "run", fake_run)
+        monkeypatch.setattr(launchd_service.subprocess, "run", fake_run)
 
         assert gateway_cli.refresh_launchd_plist_if_needed() is True
 
@@ -736,7 +737,7 @@ class TestLaunchdServiceRecovery:
         # non-Aqua/background sessions on macOS 26+ (issue #23387).
         # When gui/<uid> fails to probe and user/<uid> succeeds,
         # _launchd_domain() must return user/<uid>.
-        gateway_cli._resolved_launchd_domain = None
+        launchd_service._resolved_launchd_domain = None
         monkeypatch.setattr(os, "getuid", lambda: 501)
         label = gateway_cli.get_launchd_label()
 
@@ -745,14 +746,14 @@ class TestLaunchdServiceRecovery:
                 raise subprocess.CalledProcessError(1, cmd, stderr="Domain error")
             return SimpleNamespace(returncode=0, stdout="", stderr="")
 
-        monkeypatch.setattr(gateway_cli.subprocess, "run", fake_run)
+        monkeypatch.setattr(launchd_service.subprocess, "run", fake_run)
         assert gateway_cli._launchd_domain() == "user/501"
 
     def test_launchd_status_reports_fallback_when_unsupported_and_pid_running(self, tmp_path, monkeypatch, capsys):
         """When the unsupported marker exists and a fallback PID is running."""
         plist_path = tmp_path / "ai.hermes.gateway.plist"
         plist_path.write_text(gateway_cli.generate_launchd_plist(), encoding="utf-8")
-        monkeypatch.setattr(gateway_cli, "get_launchd_plist_path", lambda: plist_path)
+        monkeypatch.setattr(launchd_service, "get_launchd_plist_path", lambda: plist_path)
 
         def fake_run(cmd, capture_output=False, text=False, timeout=None, check=False, **kwargs):
             if isinstance(cmd, list) and cmd[:2] == ["launchctl", "list"]:
@@ -762,7 +763,7 @@ class TestLaunchdServiceRecovery:
                     stderr="",
                 )
             return SimpleNamespace(returncode=0, stdout="", stderr="")
-        monkeypatch.setattr(gateway_cli.subprocess, "run", fake_run)
+        monkeypatch.setattr(launchd_service.subprocess, "run", fake_run)
         monkeypatch.setattr("gateway.status.get_running_pid", lambda cleanup_stale=False: 88888)
         # Pre-seed the unsupported marker
         monkeypatch.setattr(gateway_cli, "get_hermes_home", lambda: tmp_path)
@@ -783,7 +784,7 @@ class TestLaunchdDomainDetection:
 
     def _reset_domain_cache(self):
         """Clear any cached domain result between tests."""
-        gateway_cli._resolved_launchd_domain = None
+        launchd_service._resolved_launchd_domain = None
 
     def test_prefers_gui_domain_when_service_loaded_there(self, monkeypatch):
         """In an Aqua session where the service is loaded under gui/<uid>,
@@ -798,7 +799,7 @@ class TestLaunchdDomainDetection:
             run_calls.append(cmd)
             return SimpleNamespace(returncode=0, stdout="", stderr="")
 
-        monkeypatch.setattr(gateway_cli.subprocess, "run", fake_run)
+        monkeypatch.setattr(launchd_service.subprocess, "run", fake_run)
 
         domain = gateway_cli._launchd_domain()
         assert domain == "gui/501"
@@ -817,7 +818,7 @@ class TestLaunchdDomainDetection:
                 return SimpleNamespace(returncode=0, stdout="Background\n", stderr="")
             return SimpleNamespace(returncode=0, stdout="", stderr="")
 
-        monkeypatch.setattr(gateway_cli.subprocess, "run", fake_run)
+        monkeypatch.setattr(launchd_service.subprocess, "run", fake_run)
 
         domain = gateway_cli._launchd_domain()
         assert domain == "user/501"
@@ -849,7 +850,7 @@ class TestLaunchdUnsupportedFallbackPolicy:
         exc = subprocess.CalledProcessError(
             5, ["launchctl", "bootstrap"], stderr="Bootstrap failed: 5: Input/output error"
         )
-        monkeypatch.setattr(gateway_cli, "get_launchd_label", lambda: "ai.hermes.gateway")
+        monkeypatch.setattr(launchd_service, "get_launchd_label", lambda: "ai.hermes.gateway")
         monkeypatch.setattr(
             gateway_cli, "_launchctl_label_supervising_process", lambda label: True
         )
@@ -864,7 +865,7 @@ class TestLaunchdUnsupportedFallbackPolicy:
     def test_eio_without_a_supervised_process_still_falls_back(self, monkeypatch):
         """The detached fallback for a domain that really cannot manage the job is unchanged."""
         exc = subprocess.CalledProcessError(125, ["launchctl", "kickstart"])
-        monkeypatch.setattr(gateway_cli, "get_launchd_label", lambda: "ai.hermes.gateway")
+        monkeypatch.setattr(launchd_service, "get_launchd_label", lambda: "ai.hermes.gateway")
         monkeypatch.setattr(
             gateway_cli, "_launchctl_label_supervising_process", lambda label: False
         )
@@ -925,7 +926,7 @@ class TestGatewaySystemServiceRouting:
         monkeypatch.setattr(systemd_runtime, "preflight_user", lambda **kwargs: None)
         monkeypatch.setattr(systemd_unit_state, "refresh_if_needed", lambda system=False: calls.append(("refresh", system)))
         # Wait budget covers after-turn deferral + drain + headroom (#77184).
-        monkeypatch.setattr(systemd_restart, "_get_restart_exit_wait_budget", lambda: 27.0)
+        monkeypatch.setattr(restart, "get_restart_exit_wait_budget", lambda: 27.0)
         monkeypatch.setattr(
             "gateway.status.get_running_pid",
             lambda: 654,
@@ -970,7 +971,7 @@ class TestGatewaySystemServiceRouting:
         monkeypatch.setattr(gateway_cli, "_require_service_installed", lambda action, system=False: None)
         monkeypatch.setattr(systemd_runtime, "preflight_user", lambda **kwargs: None)
         monkeypatch.setattr(systemd_unit_state, "refresh_if_needed", lambda system=False: None)
-        monkeypatch.setattr(systemd_restart, "_get_restart_exit_wait_budget", lambda: 27.0)
+        monkeypatch.setattr(restart, "get_restart_exit_wait_budget", lambda: 27.0)
         monkeypatch.setattr("gateway.status.get_running_pid", lambda: 654)
         monkeypatch.setattr(signal_restart, "_graceful_restart_via_sigusr1", lambda pid, timeout, **_: True)
         waits = iter((False, True))
@@ -1004,7 +1005,7 @@ class TestGatewaySystemServiceRouting:
         monkeypatch.setattr(gateway_cli, "_require_service_installed", lambda action, system=False: None)
         monkeypatch.setattr(systemd_runtime, "preflight_user", lambda **kwargs: None)
         monkeypatch.setattr(systemd_unit_state, "refresh_if_needed", lambda system=False: None)
-        monkeypatch.setattr(systemd_restart, "_get_restart_exit_wait_budget", lambda: 27.0)
+        monkeypatch.setattr(restart, "get_restart_exit_wait_budget", lambda: 27.0)
         monkeypatch.setattr("gateway.status.get_running_pid", lambda: 654)
         monkeypatch.setattr(signal_restart, "_graceful_restart_via_sigusr1", lambda pid, timeout, **_: True)
         monkeypatch.setattr(
@@ -1031,7 +1032,7 @@ class TestGatewaySystemServiceRouting:
         monkeypatch.setattr(gateway_cli, "_require_service_installed", lambda action, system=False: None)
         monkeypatch.setattr(systemd_runtime, "preflight_user", lambda **kwargs: None)
         monkeypatch.setattr(systemd_unit_state, "refresh_if_needed", lambda system=False: None)
-        monkeypatch.setattr(systemd_restart, "_get_restart_exit_wait_budget", lambda: 27.0)
+        monkeypatch.setattr(restart, "get_restart_exit_wait_budget", lambda: 27.0)
         monkeypatch.setattr("gateway.status.get_running_pid", lambda: 654)
         monkeypatch.setattr(signal_restart, "_graceful_restart_via_sigusr1", lambda pid, timeout, **_: True)
 
@@ -1061,7 +1062,7 @@ class TestGatewaySystemServiceRouting:
         monkeypatch.setattr(gateway_cli, "_require_service_installed", lambda action, system=False: None)
         monkeypatch.setattr(systemd_runtime, "preflight_user", lambda **kwargs: None)
         monkeypatch.setattr(systemd_unit_state, "refresh_if_needed", lambda system=False: None)
-        monkeypatch.setattr(systemd_restart, "_get_restart_exit_wait_budget", lambda: 27.0)
+        monkeypatch.setattr(restart, "get_restart_exit_wait_budget", lambda: 27.0)
         monkeypatch.setattr("gateway.status.get_running_pid", lambda: 654)
         monkeypatch.setattr(signal_restart, "_graceful_restart_via_sigusr1", lambda pid, timeout, **_: True)
         monkeypatch.setattr(
@@ -1155,8 +1156,8 @@ class TestGatewaySystemServiceRouting:
         """
         calls = []
 
-        monkeypatch.setattr(gateway_cli, "get_launchd_label", lambda: "ai.hermes.gateway")
-        monkeypatch.setattr(gateway_cli, "_launchd_domain", lambda: "gui/501")
+        monkeypatch.setattr(launchd_service, "get_launchd_label", lambda: "ai.hermes.gateway")
+        monkeypatch.setattr(launchd_service, "_launchd_domain", lambda: "gui/501")
         monkeypatch.setattr("gateway.status.get_running_pid", lambda *a, **k: 654)
         monkeypatch.setattr(gateway_cli, "_request_gateway_self_restart", lambda pid: False)
         monkeypatch.setattr(
@@ -1167,7 +1168,7 @@ class TestGatewaySystemServiceRouting:
         # Wait budget covers after-turn deferral + drain + headroom (#77184);
         # the raw drain timeout (0 by default) must not be used here.
         monkeypatch.setattr("gateway.restart.get_restart_drain_timeout", lambda: 0.0)
-        monkeypatch.setattr(systemd_restart, "_get_restart_exit_wait_budget", lambda: 27.0)
+        monkeypatch.setattr(restart, "get_restart_exit_wait_budget", lambda: 27.0)
         monkeypatch.setattr(
             signal_restart,
             "_graceful_restart_via_sigusr1",
@@ -1179,13 +1180,13 @@ class TestGatewaySystemServiceRouting:
             lambda pid, force=False: calls.append(("sigterm", pid)),
         )
         monkeypatch.setattr(
-            gateway_cli.subprocess,
+            launchd_service.subprocess,
             "run",
             lambda *a, **k: calls.append(("kickstart", a[0])) or SimpleNamespace(
                 returncode=0, stdout="", stderr=""
             ),
         )
-        monkeypatch.setattr(gateway_cli, "_clear_launchd_unsupported_marker", lambda: None)
+        monkeypatch.setattr(launchd_service, "_clear_launchd_unsupported_marker", lambda: None)
         # KeepAlive revives the label on a fresh PID — replacement observed.
         monkeypatch.setattr(
             gateway_cli,
@@ -1222,8 +1223,8 @@ class TestGatewaySystemServiceRouting:
         """
         calls = []
 
-        monkeypatch.setattr(gateway_cli, "get_launchd_label", lambda: "ai.hermes.gateway")
-        monkeypatch.setattr(gateway_cli, "_launchd_domain", lambda: "gui/501")
+        monkeypatch.setattr(launchd_service, "get_launchd_label", lambda: "ai.hermes.gateway")
+        monkeypatch.setattr(launchd_service, "_launchd_domain", lambda: "gui/501")
         monkeypatch.setattr("gateway.status.get_running_pid", lambda *a, **k: 654)
         monkeypatch.setattr(gateway_cli, "_request_gateway_self_restart", lambda pid: False)
         monkeypatch.setattr(
@@ -1231,7 +1232,7 @@ class TestGatewaySystemServiceRouting:
             "probe_gateway_loop_liveness",
             lambda pid, **kw: process_liveness.GATEWAY_LOOP_ALIVE,
         )
-        monkeypatch.setattr(systemd_restart, "_get_restart_exit_wait_budget", lambda: 27.0)
+        monkeypatch.setattr(restart, "get_restart_exit_wait_budget", lambda: 27.0)
         monkeypatch.setattr(
             signal_restart, "_graceful_restart_via_sigusr1", lambda pid, timeout, **_: True
         )
@@ -1241,13 +1242,13 @@ class TestGatewaySystemServiceRouting:
             lambda label, old_pid, timeout=10.0, *, domain: False,
         )
         monkeypatch.setattr(
-            gateway_cli.subprocess,
+            launchd_service.subprocess,
             "run",
             lambda *a, **k: calls.append(("kickstart", a[0])) or SimpleNamespace(
                 returncode=0, stdout="", stderr=""
             ),
         )
-        monkeypatch.setattr(gateway_cli, "_clear_launchd_unsupported_marker", lambda: None)
+        monkeypatch.setattr(launchd_service, "_clear_launchd_unsupported_marker", lambda: None)
 
         gateway_cli.launchd_restart()
 
@@ -2417,7 +2418,7 @@ class TestLaunchctlBootstrapEioRetry:
                 raise subprocess.CalledProcessError(5, cmd)
             return SimpleNamespace(returncode=0, stdout="", stderr="")
 
-        monkeypatch.setattr(gateway_cli.subprocess, "run", fake_run)
+        monkeypatch.setattr(launchd_service.subprocess, "run", fake_run)
 
         gateway_cli._launchctl_bootstrap(self.DOMAIN, self.PLIST, self.LABEL)
 
@@ -2435,7 +2436,7 @@ class TestLaunchctlBootstrapEioRetry:
                 raise subprocess.CalledProcessError(5, cmd)
             return SimpleNamespace(returncode=0, stdout="", stderr="")
 
-        monkeypatch.setattr(gateway_cli.subprocess, "run", fake_run)
+        monkeypatch.setattr(launchd_service.subprocess, "run", fake_run)
 
         with pytest.raises(subprocess.CalledProcessError) as excinfo:
             gateway_cli._launchctl_bootstrap(self.DOMAIN, self.PLIST, self.LABEL)
@@ -2470,10 +2471,10 @@ class TestLaunchdUnloadedJobStderrStaysOffTerminal:
         log = tmp_path / "calls.log"
         monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ['PATH']}")
         monkeypatch.setenv("FAKE_LAUNCHCTL_LOG", str(log))
-        monkeypatch.setattr(gateway_cli, "get_launchd_label", lambda: "ai.hermes.gateway")
-        monkeypatch.setattr(gateway_cli, "_launchd_domain", lambda: "gui/501")
-        monkeypatch.setattr(gateway_cli, "get_launchd_plist_path", lambda: tmp_path / "ai.hermes.gateway.plist")
-        monkeypatch.setattr(gateway_cli, "_clear_launchd_unsupported_marker", lambda: None)
+        monkeypatch.setattr(launchd_service, "get_launchd_label", lambda: "ai.hermes.gateway")
+        monkeypatch.setattr(launchd_service, "_launchd_domain", lambda: "gui/501")
+        monkeypatch.setattr(launchd_service, "get_launchd_plist_path", lambda: tmp_path / "ai.hermes.gateway.plist")
+        monkeypatch.setattr(launchd_service, "_clear_launchd_unsupported_marker", lambda: None)
         monkeypatch.setattr(signal_restart, "_mark_planned_stop", lambda *a, **k: None)
         monkeypatch.setattr(gateway_cli, "_wait_for_gateway_exit", lambda *a, **k: True)
         monkeypatch.setattr("gateway.status.get_running_pid", lambda *a, **k: None)
@@ -2540,12 +2541,12 @@ class TestRetryLaunchctlBootstrapUntilRegistered:
                 )
             return SimpleNamespace(returncode=0, stdout="", stderr="")
 
-        monkeypatch.setattr(gateway_cli.subprocess, "run", fake_run)
-        monkeypatch.setattr(gateway_cli.time, "sleep", lambda *_a, **_k: None)
+        monkeypatch.setattr(launchd_service.subprocess, "run", fake_run)
+        monkeypatch.setattr(launchd_service.time, "sleep", lambda *_a, **_k: None)
 
         ok = gateway_cli._retry_launchctl_bootstrap_until_registered(
             self.DOMAIN, self.PLIST, self.LABEL,
-            deadline=gateway_cli.time.monotonic() + 60,
+            deadline=launchd_service.time.monotonic() + 60,
         )
         assert ok is True
 
@@ -2570,12 +2571,12 @@ class TestRetryLaunchctlBootstrapUntilRegistered:
                 )
             return SimpleNamespace(returncode=0, stdout="", stderr="")
 
-        monkeypatch.setattr(gateway_cli.subprocess, "run", fake_run)
-        monkeypatch.setattr(gateway_cli.time, "sleep", lambda *_a, **_k: None)
+        monkeypatch.setattr(launchd_service.subprocess, "run", fake_run)
+        monkeypatch.setattr(launchd_service.time, "sleep", lambda *_a, **_k: None)
 
         ok = gateway_cli._retry_launchctl_bootstrap_until_registered(
             self.DOMAIN, self.PLIST, self.LABEL,
-            deadline=gateway_cli.time.monotonic() + 60,
+            deadline=launchd_service.time.monotonic() + 60,
         )
         assert ok is True
         assert attempts["bootstrap"] >= 2  # the timeout was retried, not raised
@@ -2600,12 +2601,12 @@ class TestRetryLaunchctlBootstrapUntilRegistered:
                 )
             return SimpleNamespace(returncode=0, stdout="", stderr="")
 
-        monkeypatch.setattr(gateway_cli.subprocess, "run", fake_run)
-        monkeypatch.setattr(gateway_cli.time, "sleep", lambda *_a, **_k: None)
+        monkeypatch.setattr(launchd_service.subprocess, "run", fake_run)
+        monkeypatch.setattr(launchd_service.time, "sleep", lambda *_a, **_k: None)
 
         ok = gateway_cli._retry_launchctl_bootstrap_until_registered(
             self.DOMAIN, self.PLIST, self.LABEL,
-            deadline=gateway_cli.time.monotonic() - 1,  # already expired
+            deadline=launchd_service.time.monotonic() - 1,  # already expired
         )
         assert ok is False
         assert list_calls["n"] >= 1

@@ -253,7 +253,7 @@ def _loaded_launchd_backend_jobs(
     import plistlib
     from xml.parsers.expat import ExpatError
 
-    from hermes_cli.gateway import _launchd_print_service_pid
+    from gateway.launchd_service import _launchd_print_service_pid
     uid = os.getuid()  # windows-footgun: ok — darwin-only branch
     jobs: list[tuple[str, str, list[str], int | None]] = []
     for kind, plist_dir in (plist_dirs if plist_dirs is not None else _launchd_plist_dirs()):
@@ -320,7 +320,7 @@ def _restart_launchd_job(domain: str, label: str, old_pid: int | None, *, timeou
     take that fresh process down), then require launchd to report a live PID other than *old_pid*
     within *timeout*. A kickstart that returns 0 only means "restart requested"; a job that is loaded
     but never comes back on a fresh PID is a failure the operator must hear about."""
-    from hermes_cli.gateway import _wait_for_launchd_service_pid
+    from gateway.launchd_service import _wait_for_launchd_service_pid
     try:
         if _run_probe(["launchctl", "kickstart", f"{domain}/{label}"], timeout=30).returncode != 0:
             return False

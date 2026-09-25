@@ -19,14 +19,13 @@ Moved bodies late-bind cli-level names via `from cli import ...` at call time, s
 handles input + autocomplete; `KawaiiSpinner` (`agent/display.py`) animates API calls and prints
 the `┊` activity feed. `load_cli_config()` in `cli.py` merges CLI defaults + user YAML.
 
-`hermes_cli/gateway.py` is the `hermes gateway` facade (process discovery, systemd backend, command
-dispatch); topical siblings re-exported by the facade: `gateway_service_unit.py` (systemd unit
-generation/refresh), `gateway_launchd.py` (macOS LaunchAgent backend), `gateway_setup_wizard.py`
-(`hermes gateway setup`: `_PLATFORMS` registry, status table, per-platform prompts, service offer),
-`gateway_windows*.py`, `gateway_supervised_restart.py`, `gateway_migrate*.py`, `gateway_multiplex_*.py`,
-`gateway_enroll.py`, `gateway_command_errors.py`. Sibling bodies read facade names through `_gw()`
-(late binding on `hermes_cli.gateway`), so monkeypatch on the facade; mutable state such as
-`_resolved_launchd_domain` stays a facade global.
+`hermes_cli/gateway.py` remains the `hermes gateway` compatibility/command facade while
+Gateway-owned lifecycle backends live under `gateway/`. The macOS LaunchAgent backend is
+`gateway/launchd_service.py`; it owns plist generation/refresh, launchctl lifecycle/probes, fleet-label
+discovery, and its `_resolved_launchd_domain` cache directly. Do not route launchd implementation
+through `hermes_cli.gateway` or restore the old `_gw()` late-binding seam. The facade may re-export
+backend symbols for compatibility while callers that own lifecycle behaviour import the Gateway module
+directly. Windows/service-manager ownership remains in its later refactor phase.
 `process_command()` resolves the canonical name via `resolve_command()` then dispatches through
 `HermesCLI._SLASH_DISPATCH` (`canonical -> (method name, pass_arg)`), falling back to a
 `_handle_<name>_command` method by naming convention. **There is no `elif` ladder — do not add one.**
@@ -249,10 +248,10 @@ every KeepAlive respawn, #110637).
 Service installs are a matrix, not a unit file: `gateway_service_unit.py::generate_systemd_unit(system=,
 run_as_user=)` (systemd unit generation / `systemd_unit_is_current` / `refresh_systemd_unit_if_needed` live in that
 sibling and read facade helpers late-bound through `hermes_cli.gateway`, so patch them on the facade; user unit AND `--system` unit with `User=`; an unresolvable `User=` is a blocker,
-never a dir-owner fallback), `gateway_launchd.py::generate_launchd_plist` (`gui/<uid>` then `user/<uid>` domains, never a
+never a dir-owner fallback), `gateway/launchd_service.py::generate_launchd_plist` (`gui/<uid>` then `user/<uid>` domains, never a
 `~/Library/LaunchAgents` glob; the whole launchd backend — plist refresh, `launchctl` bootstrap/kickstart,
-`launchd_start/stop/restart/status`, detached-process degrade — lives in that sibling, with the domain cache
-`_resolved_launchd_domain` staying a facade global), Windows Scheduled Task and the Desktop-spawned backend all carry the
+`launchd_start/stop/restart/status`, detached-process degrade — lives in Gateway ownership, with the domain
+cache `_resolved_launchd_domain` owned by `gateway.launchd_service`), Windows Scheduled Task and the Desktop-spawned backend all carry the
 profile's `HERMES_HOME` (and `HOME` for the service user) explicitly — a supervisor starts with an
 empty environment, so the env override that makes `-p` work interactively does not exist there. A
 change to install/restart/status regenerates and diffs every kind; both user and system units are
