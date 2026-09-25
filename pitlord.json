@@ -63,6 +63,15 @@
         "automation/*.py",
         "automation/**/*.py"
       ]
+    },
+    {
+      "id": "gateway-must-not-depend-on-cli-profiles",
+      "type": "forbid_content",
+      "regex": "hermes_cli\\.profiles",
+      "include_paths": [
+        "gateway/*.py",
+        "gateway/**/*.py"
+      ]
     }
   ]
 }
