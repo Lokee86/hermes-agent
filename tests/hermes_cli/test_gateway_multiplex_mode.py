@@ -70,7 +70,7 @@ def test_unset_flag_multiplexes_a_quiet_fleet_and_stays_standalone_beside_a_live
     assert "'coder'" in decision.reason and gm.MIGRATE_COMMAND in decision.reason
     assert cfg.multiplex_profiles is False
     # The CLI side agrees: no live multiplexer record and no explicit opt-in means coder is NOT served.
-    from hermes_cli.gateway import named_profile_served_by_running_multiplexer
+    from gateway.host_topology import named_profile_served_by_running_multiplexer
     assert named_profile_served_by_running_multiplexer("coder") is False
     assert mode.default_gateway_multiplexes(root) is False
 

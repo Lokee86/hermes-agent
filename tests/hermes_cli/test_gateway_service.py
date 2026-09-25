@@ -304,7 +304,7 @@ class TestGeneratedSystemdUnits:
         SIGKILLed that in-budget drain."""
         monkeypatch.delenv("HERMES_RESTART_DRAIN_TIMEOUT", raising=False)
         monkeypatch.delenv("HERMES_CRON_DRAIN_TIMEOUT", raising=False)
-        monkeypatch.setattr(gateway_cli, "_get_restart_drain_timeout", lambda: 0.0)
+        monkeypatch.setattr("gateway.restart.get_restart_drain_timeout", lambda: 0.0)
         monkeypatch.setattr(
             gateway_cli,
             "_get_cron_drain_timeout",
@@ -323,7 +323,7 @@ class TestGeneratedSystemdUnits:
     def test_timeout_stop_sec_keeps_the_floor_when_cron_drain_is_opted_out(
         self, monkeypatch
     ):
-        monkeypatch.setattr(gateway_cli, "_get_restart_drain_timeout", lambda: 0.0)
+        monkeypatch.setattr("gateway.restart.get_restart_drain_timeout", lambda: 0.0)
         monkeypatch.setattr(gateway_cli, "_get_cron_drain_timeout", lambda: 0.0)
 
         unit = gateway_cli.generate_systemd_unit(system=False)
@@ -1135,7 +1135,7 @@ class TestGatewaySystemServiceRouting:
         """launchd_restart must take the same graceful path as systemd_restart.
 
         Regression: it previously sent a bare SIGTERM and waited
-        ``_get_restart_drain_timeout()`` (default 0), so the wait could never
+        ``gateway.restart.get_restart_drain_timeout()`` (default 0), so the wait could never
         succeed and every restart fell through to ``kickstart -k``. A bare
         SIGTERM leaves ``restart_requested`` False, so the gateway exits 1
         instead of 75 and announces itself as "shutting down" rather than
@@ -1154,7 +1154,7 @@ class TestGatewaySystemServiceRouting:
         )
         # Wait budget covers after-turn deferral + drain + headroom (#77184);
         # the raw drain timeout (0 by default) must not be used here.
-        monkeypatch.setattr(gateway_cli, "_get_restart_drain_timeout", lambda: 0.0)
+        monkeypatch.setattr("gateway.restart.get_restart_drain_timeout", lambda: 0.0)
         monkeypatch.setattr(gateway_cli, "_get_restart_exit_wait_budget", lambda: 27.0)
         monkeypatch.setattr(
             gateway_cli,
@@ -2790,7 +2790,9 @@ class TestUnitAnchoredServiceIdentity:
         assert gateway_cli.get_service_name() == gateway_cli._SERVICE_BASE
         # The profile branch, consulted against the home that owns the profile, would have answered
         # with the readable suffix -- which is why the unit-pinned check has to be evaluated first.
-        assert gateway_cli._profile_name_from_home(profile_home, profile_home.parent.parent) == profile_home.name
+        from profiles.paths import profile_name_from_home
+
+        assert profile_name_from_home(profile_home, profile_home.parent.parent) == profile_home.name
 
     @pytest.mark.platforms("linux")
     def test_real_unit_sync_keeps_the_name_it_validated(self, tmp_path, monkeypatch):

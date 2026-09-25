@@ -126,7 +126,7 @@ def test_pause_stops_launcher_after_worker_drain(
     monkeypatch.setattr(
         gateway_mod, "find_profile_gateway_processes", lambda **_k: [profile_proc]
     )
-    monkeypatch.setattr(gateway_mod, "_get_restart_drain_timeout", lambda: 0.1)
+    monkeypatch.setattr("gateway.restart.get_restart_drain_timeout", lambda: 0.1)
     # Graceful drain succeeds: the worker exits, leaving zero survivors — and
     # an exited worker is UNINSPECTABLE afterwards, exactly like the real
     # process table. Resolving the launcher after this point is impossible,

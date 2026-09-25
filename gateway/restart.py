@@ -301,6 +301,18 @@ def parse_restart_drain_timeout(raw: object) -> float:
     return _parse_timeout_keeping_zero(raw or None, DEFAULT_GATEWAY_RESTART_DRAIN_TIMEOUT)
 
 
+def get_restart_drain_timeout() -> float:
+    """Return the configured gateway restart drain timeout in seconds."""
+    raw = os.getenv("HERMES_RESTART_DRAIN_TIMEOUT", "").strip()
+    if not raw:
+        from hermes_cli.config import read_raw_config
+
+        cfg = read_raw_config()
+        agent_cfg = cfg.get("agent", {}) if isinstance(cfg, dict) else {}
+        raw = str(agent_cfg.get("restart_drain_timeout", DEFAULT_GATEWAY_RESTART_DRAIN_TIMEOUT))
+    return parse_restart_drain_timeout(raw)
+
+
 def parse_restart_after_turn_timeout(raw: object) -> float:
     """Parse the after-turn wait cap for in-band restart (``0`` = legacy immediate drain)."""
     return _parse_timeout_keeping_zero(raw, DEFAULT_GATEWAY_RESTART_AFTER_TURN_TIMEOUT)
