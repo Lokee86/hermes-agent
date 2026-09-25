@@ -57,8 +57,8 @@ def test_cli_lifecycle_orders_marker_before_socket(homes, monkeypatch, capsys, v
     monkeypatch.setattr(gw, '_current_profile_name', lambda: 'worker')
     monkeypatch.setattr(gw, '_refuse_from_inside_gateway', lambda *a: None)
     monkeypatch.setattr(gw, 'find_gateway_pids', lambda **kw: [])
-    monkeypatch.setattr(gw, '_served_by_another_host_gateway', lambda *a: owner)
-    monkeypatch.setattr(gw, 'named_profile_served_by_running_multiplexer', lambda *a: True)
+    monkeypatch.setattr('gateway.host_topology.served_by_another_host_gateway', lambda *a: owner)
+    monkeypatch.setattr('gateway.host_topology.named_profile_served_by_running_multiplexer', lambda *a: True)
     monkeypatch.setattr(gw, '_host_multiplexer_for_all_verb', lambda: owner)
     calls = []
 
@@ -180,7 +180,7 @@ def test_default_status_distinguishes_served_and_parked(homes, monkeypatch, caps
     root, secondary = homes
     (secondary / 'gateway.parked').touch()
     monkeypatch.setattr(gw, '_current_profile_name', lambda: 'default')
-    monkeypatch.setattr(gw, 'host_multiplexer_serving', lambda: SimpleNamespace(
+    monkeypatch.setattr('gateway.host_topology.host_multiplexer_serving', lambda: SimpleNamespace(
         home=root, profiles=('default',)))
     assert print_parked_status() is False
     output = capsys.readouterr().out

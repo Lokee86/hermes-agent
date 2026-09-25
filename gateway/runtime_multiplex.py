@@ -26,7 +26,7 @@ def multiplexer_root_for(home: Path) -> Path | None:
 def multiplexer_serves_home(home: Path) -> Path | None:
     """The root whose (possibly stopped) multiplexer serves *home*, else None.
 
-    ``hermes_cli.gateway.named_profile_served_by_running_multiplexer`` answers the live question;
+    ``gateway.host_topology.named_profile_served_by_running_multiplexer`` answers the live question;
     this is its offline twin for the moment no gateway runs: an explicit ``true`` on the default
     profile, or a recorded ``served_profiles`` naming this profile (the boot-time verdict of an unset
     flag). An explicit ``false``, or no evidence, keeps the per-profile daemon.

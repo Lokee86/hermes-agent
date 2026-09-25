@@ -37,7 +37,7 @@ def test_default_home_is_reported_as_served_by_the_host_gateway(host_gateway):
 def test_unserved_profile_is_not_claimed_by_the_host_gateway(host_gateway, monkeypatch):
     from gateway import status
 
-    monkeypatch.setattr("hermes_cli.gateway.named_profile_served_by_running_multiplexer", lambda *a: False)
+    monkeypatch.setattr("gateway.host_topology.named_profile_served_by_running_multiplexer", lambda *a: False)
     (host_gateway / "profiles" / "other").mkdir()
     assert status.multiplexer_liveness_for_profile(host_gateway / "profiles" / "other") is None
 

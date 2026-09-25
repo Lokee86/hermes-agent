@@ -1639,9 +1639,9 @@ def _drain_gateway_pid(pid: int, drain_timeout: float) -> bool:
 def _windows_stop_drain_timeout() -> float:
     """Bounded stop grace period: a real graceful-drain window, but the CLI must never wedge."""
     try:
-        from hermes_cli.gateway import _get_restart_drain_timeout
+        from gateway.restart import get_restart_drain_timeout
 
-        configured = float(_get_restart_drain_timeout() or 30.0)
+        configured = float(get_restart_drain_timeout() or 30.0)
     except Exception:
         configured = 30.0
     return max(1.0, min(configured, 30.0))

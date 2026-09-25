@@ -19,6 +19,10 @@ def profile_lifecycle(command: str, args) -> bool:
     """True when a named-profile command was handled (including an unconfirmed request)."""
     from hermes_cli import gateway as gw
     from gateway.control_socket import request_unserve_profile, request_serve_profile_hot
+    from gateway.host_topology import (
+        named_profile_served_by_running_multiplexer,
+        served_by_another_host_gateway,
+    )
 
     name = gw._current_profile_name()
     if not name or name == "default" or getattr(args, "all", False) or getattr(args, "force", False):
@@ -50,8 +54,8 @@ def profile_lifecycle(command: str, args) -> bool:
     # A separate --force gateway still owns its normal process/service lifecycle.
     if gw.find_gateway_pids():
         return False
-    owner = gw._served_by_another_host_gateway()
-    if owner is None and not gw.named_profile_served_by_running_multiplexer():
+    owner = served_by_another_host_gateway()
+    if owner is None and not named_profile_served_by_running_multiplexer():
         return False
     host_home = owner.home if owner is not None else get_default_hermes_root()
     if command == "stop":
@@ -90,7 +94,9 @@ def print_parked_status() -> bool:
         parked = [profile for profile, home in profiles_to_serve(True, include_parked=True)
                   if profile != "default" and profile_is_parked(home)]
         if parked:
-            owner = gw.host_multiplexer_serving()
+            from gateway.host_topology import host_multiplexer_serving
+
+            owner = host_multiplexer_serving()
             if owner is not None:
                 print(f"Served profiles: {', '.join(owner.profiles)}")
             for profile in parked:
