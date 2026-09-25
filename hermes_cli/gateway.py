@@ -48,6 +48,12 @@ from gateway import systemd_unit_render as _systemd_unit_render
 from gateway import systemd_unit_state as _systemd_unit_state
 from profiles.paths import profile_name_from_home
 from gateway.restart import (  # noqa: F401 — resolved lazily by siblings through the facade
+    _get_parent_pid,
+    _is_pid_ancestor_of_current_process,
+    _request_gateway_self_restart,
+    _wait_for_api_server_port_free,
+    _wait_for_gateway_exit,
+    _wait_for_tcp_port_free,
     DEFAULT_GATEWAY_RESTART_DRAIN_TIMEOUT,
     EXTERNAL_GATEWAY_SUPERVISOR_ENV,
     GATEWAY_FATAL_CONFIG_EXIT_CODE,
@@ -219,64 +225,6 @@ def _get_service_pids(all_profiles: bool = False) -> set:
                 pass
 
     return pids
-
-
-def _get_parent_pid(pid: int) -> int | None:
-    """Parent PID for ``pid``, or None. psutil first (works on Windows, where ``ps`` doesn't)."""
-    if pid <= 1:
-        return None
-    try:
-        import psutil  # type: ignore
-        return psutil.Process(pid).ppid() or None
-    except ImportError:
-        pass
-    except Exception:
-        return None
-    # ps fallback, POSIX only: Git Bash's ps.exe would flash a console from the windowless backend.
-    if is_windows() or not shutil.which("ps"):
-        return None
-    try:
-        result = subprocess.run(["ps", "-o", "ppid=", "-p", str(pid)], timeout=5, **_CAPTURE_TEXT)
-    except (FileNotFoundError, subprocess.TimeoutExpired):
-        return None
-    raw = result.stdout.strip()
-    if result.returncode != 0 or not raw:
-        return None
-    try:
-        parent_pid = int(raw.splitlines()[-1].strip())
-    except ValueError:
-        return None
-    return parent_pid if parent_pid > 0 else None
-
-
-def _is_pid_ancestor_of_current_process(target_pid: int) -> bool:
-    """Return True when ``target_pid`` is this process or one of its ancestors."""
-    if target_pid <= 0:
-        return False
-
-    pid = os.getpid()
-    seen: set[int] = set()
-    while pid and pid not in seen:
-        if pid == target_pid:
-            return True
-        seen.add(pid)
-        pid = _get_parent_pid(pid) or 0
-    return False
-
-
-def _request_gateway_self_restart(pid: int) -> bool:
-    """Ask a running gateway ancestor to restart itself asynchronously."""
-    if not hasattr(signal, "SIGUSR1") or not _is_pid_ancestor_of_current_process(pid):
-        return False
-    try:
-        os.kill(pid, signal.SIGUSR1)  # windows-footgun: ok — POSIX signal, guarded by hasattr(signal, 'SIGUSR1') above
-    except (ProcessLookupError, PermissionError, OSError):
-        return False
-    return True
-
-
-
-
 
 
 # --- Wedged-gateway detection + bounded escalation ---------------------------
@@ -928,99 +876,6 @@ def _parse_kv_pairs(items) -> dict[str, str]:
 
 
 
-
-
-def _positive_pid(value) -> int | None:
-    """``int(value)`` when it parses and is > 0, else None."""
-    try:
-        pid = int(value or 0)
-    except (TypeError, ValueError):
-        return None
-    return pid if pid > 0 else None
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-def _parse_launchd_pid_from_list_output(output: str) -> int | None:
-    """PID from ``launchctl list <label>`` (``"PID" = <n>;``); None if absent (registered, not running)
-    or non-positive (crashed)."""
-    for line in output.splitlines():
-        stripped = line.strip()
-        if stripped.startswith(('"PID"', "PID")) and "=" in stripped:
-            return _positive_pid(stripped.split("=", 1)[1].strip().rstrip(";").strip('"'))
-    return None
-
-
-def _parse_launchd_pid_from_print_output(output: str) -> int | None:
-    """Live PID from ``launchctl print`` (first ``pid = <N>`` line wins); None if absent or non-positive."""
-    for line in output.splitlines():
-        stripped = line.strip()
-        if stripped.startswith("pid = "):
-            return _positive_pid(stripped[len("pid = "):].strip())
-    return None
-
-
-def _launchd_print_service_pid(domain: str, label: str) -> tuple[bool, int | None]:
-    """``(loaded, pid)`` for ``domain/label`` via ``launchctl print`` (domain-explicit; ``launchctl list``
-    infers it from caller context). ``TimeoutExpired`` propagates: a wedged launchctl is not "unloaded".
-
-    Domain-explicit on purpose: legacy ``launchctl list`` infers its domain from the caller's execution
-    context, which is exactly the ambiguity that sank the first fleet-restart attempt (#41403 review).
-    ``TimeoutExpired`` propagates — fleet-restart callers own per-label failure accounting (a wedged
-    launchctl call must be reported, not read as "unloaded").
-    """
-    try:
-        result = subprocess.run(["launchctl", "print", f"{domain}/{label}"], timeout=5, **_CAPTURE_TEXT)
-    except FileNotFoundError:
-        return (False, None)
-    if result.returncode != 0:
-        return (False, None)
-    return (True, _parse_launchd_pid_from_print_output(result.stdout))
-
-
-def _launchd_service_registered(label: str, *, timeout: int = 5) -> bool:
-    """True when launchd knows ``label`` (``launchctl list`` exit 0). Domain-agnostic, so still true on
-    macOS 26+ hosts whose per-user domains reject management. FileNotFoundError/TimeoutExpired propagate."""
-    result = subprocess.run(["launchctl", "list", label], timeout=timeout, **_CAPTURE_TEXT)
-    return result.returncode == 0
-
-
-def _locate_launchd_gateway_service(label: str) -> tuple[str | None, int | None]:
-    """``(domain, pid)`` for ``label``, probing ``gui/<uid>`` then ``user/<uid>``. Never uses the current
-    profile's cached ``_launchd_domain()`` — a fleet can mix domains. ``TimeoutExpired`` propagates."""
-    uid = os.getuid()  # windows-footgun: ok — POSIX launchd (macOS) helper, never invoked on Windows
-    for domain in (f"gui/{uid}", f"user/{uid}"):
-        loaded, pid = _launchd_print_service_pid(domain, label)
-        if loaded:
-            return (domain, pid)
-    return (None, None)
-
-
-def _probe_launchd_service_running() -> bool:
-    """True when the plist exists AND launchd is running a process for the current label."""
-    return get_launchd_plist_path().exists() and _launchctl_label_supervising_process(get_launchd_label())
 
 
 def _s6_gateway_snapshot(gateway_pids: tuple[int, ...]) -> GatewayRuntimeSnapshot | None:
@@ -1869,77 +1724,6 @@ def install_linux_gateway_from_setup(force: bool = False, enable_on_startup: boo
 
 
 
-def get_launchd_plist_path() -> Path:
-    """``~/Library/LaunchAgents/ai.hermes.gateway[-<profile>].plist`` under the real account home."""
-    import pwd
-    suffix = _service_identity.service_suffix()
-    name = f"ai.hermes.gateway-{suffix}" if suffix else "ai.hermes.gateway"
-    # Real account home: profile mode may point HOME at a profile dir.
-    home = Path(pwd.getpwuid(os.getuid()).pw_dir)  # windows-footgun: ok — POSIX launchd (macOS) helper, never invoked on Windows
-    return home / "Library" / "LaunchAgents" / f"{name}.plist"
-
-
-def launchd_gateway_labels_for_install() -> list[str]:
-    """Launchd labels for every profile of THIS install (root first, then profiles by name). Derived from
-    the profile layout, NOT by globbing ``~/Library/LaunchAgents``, so a sandboxed HERMES_HOME never
-    restarts another install's fleet. Names that can't map to a suffix are skipped."""
-    import re as _re
-    from hermes_cli.profiles import list_profiles
-    root_label: list[str] = []
-    profile_labels: list[str] = []
-    for profile in list_profiles():
-        if profile.is_default:
-            root_label.append("ai.hermes.gateway")
-        elif _re.match(r"^[a-z0-9][a-z0-9_-]{0,63}$", profile.name):
-            profile_labels.append(f"ai.hermes.gateway-{profile.name}")
-    return root_label + sorted(profile_labels)
-
-
-def legacy_launchd_labels_for_install(exclude=()) -> list[str]:
-    """Launchd labels of THIS install that the profile-layout derivation can't map (#115254).
-
-    A unit whose label predates the profile-name suffix scheme (``ai.hermes.gateway-<8hex>`` from the
-    historical hash suffix) is invisible to ``launchd_gateway_labels_for_install()`` and therefore to
-    the update restart pass. This reads the account's LaunchAgents and credits a plist only when its
-    pinned ``HERMES_HOME`` is this install's root or one of its ``profiles/<name>`` homes — ownership
-    judged from the plist's content, never from label shape or directory membership — so the
-    derivation's boundary holds: a sandboxed HERMES_HOME (tests, side-by-side installs) never
-    enumerates, let alone restarts, another install's fleet (#41403).
-    """
-    import plistlib
-    import pwd
-
-    from hermes_constants import get_default_hermes_root
-
-    try:
-        home = Path(pwd.getpwuid(os.getuid()).pw_dir)  # windows-footgun: ok — POSIX launchd (macOS) helper, never invoked on Windows
-        root = get_default_hermes_root().resolve()
-    except Exception:
-        return []
-    agents_dir = home / "Library" / "LaunchAgents"
-    if not agents_dir.is_dir():
-        return []
-    excluded = set(exclude)
-    labels: set[str] = set()
-    for plist_path in sorted(agents_dir.glob("ai.hermes.gateway*.plist")):
-        try:
-            data = plistlib.loads(plist_path.read_bytes())
-            label = data["Label"]
-            pinned = Path(str(data["EnvironmentVariables"]["HERMES_HOME"])).expanduser().resolve()
-            rel = pinned.relative_to(root).parts
-        except Exception:
-            continue  # unreadable plist, no pinned home, or a home outside this root: not ours — fail closed
-        if not isinstance(label, str) or label in excluded or not label.startswith("ai.hermes.gateway"):
-            continue
-        if not rel or (len(rel) == 2 and rel[0] == "profiles"):
-            labels.add(label)
-    return sorted(labels)
-
-
-
-
-
-
 # =============================================================================
 # Systemd (Linux)
 # =============================================================================
@@ -2099,8 +1883,17 @@ def systemd_status(deep: bool = False, system: bool = False, full: bool = False)
 # =============================================================================
 
 
-from hermes_cli.gateway_launchd import (  # noqa: E402,F401 — facade re-exports; tests patch here
+from gateway.launchd_service import (  # noqa: E402,F401 - compatibility re-exports
     get_launchd_label,
+    get_launchd_plist_path,
+    launchd_gateway_labels_for_install,
+    legacy_launchd_labels_for_install,
+    _parse_launchd_pid_from_list_output,
+    _parse_launchd_pid_from_print_output,
+    _launchd_print_service_pid,
+    _launchd_service_registered,
+    _locate_launchd_gateway_service,
+    _probe_launchd_service_running,
     _probe_launchd_domain_for_label,
     _launchd_domain,
     _LAUNCHD_JOB_UNLOADED_EXIT_CODES,
@@ -2142,85 +1935,6 @@ from hermes_cli.gateway_launchd import (  # noqa: E402,F401 — facade re-export
     wait_for_launchd_gateway_supervision,
     launchd_status,
 )
-
-
-# Cached launchd domain — probe once per process invocation.
-_resolved_launchd_domain: str | None = None
-
-
-
-def _wait_for_gateway_exit(timeout: float = 10.0, force_after: float | None = 5.0) -> bool:
-    """Wait up to ``timeout`` s for the gateway (by gateway.pid, not launchd labels, so multiple
-    HERMES_HOMEs work) to exit; SIGKILL it after ``force_after`` s of graceful waiting."""
-    from gateway.status import get_process_start_time, get_running_pid
-    deadline = time.monotonic() + timeout
-    force_deadline = (time.monotonic() + force_after) if force_after is not None else None
-    force_sent = False
-
-    while time.monotonic() < deadline:
-        pid = get_running_pid()
-        if pid is None:
-            return True  # Process exited cleanly.
-
-        if force_after is not None and not force_sent and time.monotonic() >= force_deadline:
-            # Grace period expired — force-kill the specific PID.
-            try:
-                terminate_pid(pid, force=True, expected_start_time=get_process_start_time(pid))
-                print(f"⚠ Gateway PID {pid} did not exit gracefully; sent SIGKILL")
-            except (ProcessLookupError, PermissionError, OSError):
-                return True  # Already gone or we can't touch it.
-            force_sent = True
-
-        time.sleep(0.3)
-
-    # Timed out even after force-kill.
-    remaining_pid = get_running_pid()
-    if remaining_pid is not None:
-        print(f"⚠ Gateway PID {remaining_pid} still running after {timeout}s — restart may fail")
-        return False
-    return True
-
-
-def _wait_for_tcp_port_free(host: str, port: int, *, timeout: float = 10.0) -> bool:
-    """Wait until nothing accepts TCP connections on host:port.
-
-    PID exit is not enough on macOS: api_server disables SO_REUSEADDR, so a restart that wins
-    the race logs EADDRINUSE and keeps running with no API. Connection-refused means the
-    listener is gone; a timed-out connect is a live listener with a slow accept queue.
-    """
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
-        try:
-            with socket.create_connection((host, port), timeout=0.2):
-                pass
-        except ConnectionRefusedError:
-            return True
-        except TimeoutError:
-            pass  # a slow accept queue is still a live listener
-        except OSError:
-            return True  # unresolvable/unreachable address: nothing to wait for; the bind retry covers it
-        time.sleep(0.1)
-    return False
-
-
-def _wait_for_api_server_port_free(*, timeout: float = 10.0) -> bool:
-    """Wait for the configured api_server listen address to stop accepting.
-
-    Only when api_server is enabled: with the platform off, a foreign listener on the default
-    port is nobody's race and must not delay the restart."""
-    from gateway.config import Platform
-    from gateway.platforms.api_server import listen_address
-    pconfig = load_gateway_config().platforms.get(Platform.API_SERVER)
-    if pconfig is None or not pconfig.enabled:
-        return True
-    host, port = listen_address(pconfig.extra or {})
-    freed = _wait_for_tcp_port_free(host, port, timeout=timeout)
-    if not freed:
-        print(
-            f"⚠ {host}:{port} still accepting connections — "
-            "new api_server may fail to bind"
-        )
-    return freed
 
 
 

@@ -303,7 +303,7 @@ def _installed_services(home: Path) -> list[tuple[str, bool]]:
         if supports_services():
             found.extend(("systemd", system) for system in (False, True) if unit_path(system=system).exists())
         if sys.platform == "darwin":
-            from hermes_cli.gateway import get_launchd_plist_path
+            from gateway.launchd_service import get_launchd_plist_path
             if get_launchd_plist_path().exists():
                 found.append(("launchd", False))
         if sys.platform == "win32" and _windows_task_installed():

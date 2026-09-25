@@ -1557,7 +1557,7 @@ def _cleanup_gateway_service(name: str, profile_dir: Path) -> None:
     home_token = set_hermes_home_override(str(profile_dir))
     try:
         os.environ["HERMES_HOME"] = str(profile_dir)
-        from hermes_cli.gateway import get_launchd_plist_path
+        from gateway.launchd_service import get_launchd_plist_path
         from gateway.service_identity import service_name
         from gateway.systemd_identity import user_unit_dir
 

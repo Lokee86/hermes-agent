@@ -387,7 +387,7 @@ def _refuse_gateway_ancestor_tree_kill(pids: list[int], *, gateway_mode: bool) -
     if gateway_mode or not pids:
         return False
     def _ancestors():
-        from hermes_cli.gateway import _is_pid_ancestor_of_current_process
+        from gateway.restart import _is_pid_ancestor_of_current_process
         return [int(pid) for pid in pids if _is_pid_ancestor_of_current_process(int(pid))]
 
     ancestors = _try_call(_ancestors, "Could not inspect gateway ancestry before tree-kill: %s")

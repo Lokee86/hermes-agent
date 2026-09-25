@@ -287,8 +287,10 @@ def _restart_running_gateway(any_messaging: bool, supports_systemd: bool) -> Non
     """Already running: offer a restart only when this pass may have changed platform config —
     a restart interrupts any active session, so it stays behind a prompt."""
     from hermes_cli.setup import print_error, prompt_yes_no
+    from gateway.launchd_service import launchd_restart
     from hermes_cli.gateway import (
-        launchd_restart, _system_scope_wizard_would_need_root, _print_system_scope_remediation,
+        _system_scope_wizard_would_need_root,
+        _print_system_scope_remediation,
     )
     from gateway.systemd_identity import SystemScopeRequiresRootError
     from gateway.systemd_restart import systemd_restart

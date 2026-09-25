@@ -1,12 +1,14 @@
 """Installed systemd unit comparison and refresh."""
 from __future__ import annotations
 
-import re
-import tempfile
 from pathlib import Path
 
 from gateway import systemd_identity, systemd_runtime, systemd_unit_render
-from gateway.service_definition import normalize_service_definition
+from gateway.service_definition import (
+    normalize_service_definition,
+    refuse_temp_home_write,
+    temp_home_in_definition,
+)
 
 
 def unit_is_current(system: bool = False) -> bool:
@@ -24,45 +26,6 @@ def unit_is_current(system: bool = False) -> bool:
         )
 
     return norm(installed) == norm(expected)
-
-
-def temp_home_in_definition(definition: str) -> str | None:
-    candidates = re.findall(r'HERMES_HOME=([^"\n]+)', definition)
-    candidates += re.findall(
-        r"<key>HERMES_HOME</key>\s*<string>(.*?)</string>",
-        definition,
-        flags=re.S,
-    )
-    temp_roots = {
-        Path(tempfile.gettempdir()).resolve(),
-        Path("/tmp"),
-        Path("/var/tmp"),
-        Path("/private/tmp"),
-        Path("/private/var/tmp"),
-    }
-    for raw in candidates:
-        try:
-            resolved = Path(raw.strip().strip('"')).resolve()
-        except (OSError, ValueError):
-            continue
-        if any(resolved == root or root in resolved.parents for root in temp_roots):
-            return raw.strip()
-    return None
-
-
-def refuse_temp_home_write(definition: str, kind: str) -> bool:
-    temp_home = temp_home_in_definition(definition)
-    if temp_home is None:
-        return False
-    print(
-        f"✗ Refusing to write the gateway {kind}: HERMES_HOME resolves "
-        f"to a temporary directory ({temp_home})."
-    )
-    print(
-        "  This usually means a test/E2E environment exported HERMES_HOME. "
-        "Unset it (or run from a clean shell) and retry."
-    )
-    return True
 
 
 def retire_replace_dropin(system: bool = False) -> bool:

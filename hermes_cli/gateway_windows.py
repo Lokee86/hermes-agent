@@ -1771,7 +1771,7 @@ def restart() -> None:
                 "start a duplicate. Investigate stray PIDs before retrying."
             )
 
-    from hermes_cli.gateway import _wait_for_api_server_port_free  # avoid circular init
+    from gateway.restart import _wait_for_api_server_port_free  # avoid circular init
 
     _wait_for_api_server_port_free()
     start()
