@@ -111,8 +111,8 @@ def test_parked_status_and_topology_keep_roster(homes, monkeypatch, capsys):
 
 def test_parked_profile_keeps_implicit_host_multiplexed(homes, monkeypatch):
     from gateway.config import GatewayConfig
-    from hermes_cli import gateway_migrate
-    from hermes_cli.gateway_multiplex_mode import resolve_multiplex_mode
+    from gateway import migration as gateway_migrate
+    from gateway.multiplex_mode import resolve_multiplex_mode
     _, secondary = homes
     (secondary / 'gateway.parked').touch()
     monkeypatch.setattr(gateway_migrate, '_host_supports_migration', lambda: None)

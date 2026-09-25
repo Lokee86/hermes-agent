@@ -194,7 +194,7 @@ def _collect_profile_gateway_topology() -> Dict[str, Any]:
         mode = {0: "none", 1: "single"}.get(len(gateways), "multiple")
     # A guard refusal on a multi-profile host is what the dashboard banner shows; a single-profile
     # install has nothing unserved and gets no banner.
-    from hermes_cli.gateway_multiplex_mode import SINGLE_PROFILE_REASON
+    from gateway.multiplex_mode import SINGLE_PROFILE_REASON
     if standalone_reason == SINGLE_PROFILE_REASON or len(homes) < 2:
         standalone_reason = None
     return {
@@ -598,7 +598,7 @@ def multiplexed_profile_refusal(profile: Optional[str], verb: str) -> Optional[s
             return None  # parks the profile inside the host
         return (f"The default gateway already serves profile '{requested}' as a multiplexer; "
                 f"{verb} it from the default profile instead of a separate gateway for this profile.")
-    from hermes_cli.gateway_migrate import _installed_services
+    from gateway.migration import _installed_services
     if _installed_services(profile_dir):
         return None  # a --force-installed fleet member is not NEW; its own service is started normally
     return (f"Profile '{requested}' does not get a gateway of its own: one host gateway serves every "

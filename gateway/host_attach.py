@@ -276,7 +276,7 @@ def _unknown_served_message(gateway: HostGateway, profile: str) -> str:
 
 
 def _refuse_message(gateway: HostGateway, profile: str) -> str:
-    from hermes_cli.gateway_migrate import MIGRATE_COMMAND
+    from gateway.migration import MIGRATE_COMMAND
 
     return (
         f"❌ A gateway already owns this host and will not serve profile '{profile}'.\n"
@@ -390,7 +390,7 @@ def decide(our_home: Path, *, replace: bool = False) -> HostAttachDecision:
         # every unit but the first to claim the host lock. Start beside it. decide() runs twice per
         # start (CLI guard + start_gateway), so this is INFO; the host-lock claim in run.py logs the
         # one WARNING with the `gateway migrate --multiplex` converge hint.
-        from hermes_cli.gateway_migrate import MIGRATE_COMMAND
+        from gateway.migration import MIGRATE_COMMAND
 
         logger.info(
             "Another profile's standalone gateway owns this host (%s); starting profile '%s' beside it. "

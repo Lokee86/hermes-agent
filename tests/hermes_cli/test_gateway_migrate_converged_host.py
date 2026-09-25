@@ -20,7 +20,7 @@ from pathlib import Path
 import pytest
 
 import hermes_constants
-from hermes_cli import gateway_migrate as gm
+from gateway import migration as gm
 
 
 @pytest.fixture

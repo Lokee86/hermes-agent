@@ -13,7 +13,7 @@ import pytest
 import yaml
 
 import hermes_constants
-from hermes_cli import gateway_migrate as gm
+from gateway import migration as gm
 from hermes_cli.profile_channels import (
     channel_platforms_configured, shared_channel_credentials, strip_channel_env_file,
 )

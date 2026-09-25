@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Callable, Optional
 
 if TYPE_CHECKING:
-    from hermes_cli.gateway_migrate import MigrationPlan, ProfileGateway
+    from gateway.migration import MigrationPlan, ProfileGateway
 
 
 # --------------------------------------------------------------------------- identity resolution
@@ -60,7 +60,7 @@ def gateway_identity(home: Path, pid: Optional[int], services: list[tuple[str, b
     HERMES_HOME an installed unit pins, which is where the gateway really runs; ``home`` otherwise.
     """
     from hermes_cli.gateway import _hermes_home_pinned_by_unit, get_systemd_unit_path
-    from hermes_cli.gateway_migrate import _home_env
+    from gateway.migration import _home_env
 
     uid: Optional[int] = _pid_uid(pid) if pid is not None else None
     runtime_home = home
@@ -105,7 +105,7 @@ def _guard_service_domain(plan: MigrationPlan, profile: ProfileGateway) -> Optio
     reference = plan.default.services or ([target] if target is not None else [])
     if set(profile.services) == set(reference):
         return None
-    from hermes_cli.gateway_migrate import _service_label as _kind_label
+    from gateway.migration import _service_label as _kind_label
     against = (f"the default gateway runs under {_service_label(plan.default)}" if plan.default.services
                else f"the fleet converges on {_kind_label(target)}")
     return (f"Profile '{profile.name}' runs under {_service_label(profile)} while {against}: "
@@ -166,7 +166,7 @@ def auto_migration_opted_out(default_home: Path) -> bool:
     an administrator's managed ``false`` wins over a user's ``true`` and a YAML string ``"false"`` is
     false, not truthy. Only the nested key counts, there is no top-level alias."""
     from hermes_cli.config import load_config_readonly
-    from hermes_cli.gateway_migrate import _home_env
+    from gateway.migration import _home_env
     from utils import is_truthy_value
     with _home_env(default_home):
         gateway_section = load_config_readonly().get("gateway")

@@ -475,9 +475,9 @@ def _launch_home_may_multiplex(config=None) -> bool:
     name = profile_name_for_home(get_hermes_home())
     if name in (None, "default"):
         return True
-    from hermes_cli.gateway_multiplex_mode import explicit_multiplex_flag
+    from gateway.multiplex_mode import explicit_multiplex_flag
     if config is not None and not explicit_multiplex_flag(get_hermes_home()):
-        from hermes_cli.gateway_multiplex_mode import MultiplexDecision, log_multiplex_decision
+        from gateway.multiplex_mode import MultiplexDecision, log_multiplex_decision
         decision = MultiplexDecision(
             False, "guard",
             f"profile {name!r} launched the gateway, and only the default profile runs the multiplexer "

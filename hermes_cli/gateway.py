@@ -1541,7 +1541,7 @@ def _print_gateway_process_mismatch(snapshot: GatewayRuntimeSnapshot) -> None:
 
 def _print_multiplex_standalone_reason() -> None:
     """The boot guard kept an unset-default gateway standalone: say so in status, with the remedy."""
-    from hermes_cli.gateway_multiplex_mode import recorded_standalone_warning_lines
+    from gateway.multiplex_mode import recorded_standalone_warning_lines
     for line in recorded_standalone_warning_lines():
         print(line)
 
@@ -1599,7 +1599,7 @@ def _print_duplicate_credential_warnings() -> None:
     """The migrate preflight's duplicate-credential findings, so ``gateway status`` explains a parked
     or racing bot (and why the fleet will not fold) with the same words as ``migrate --dry-run``."""
     with contextlib.suppress(Exception):
-        from hermes_cli.gateway_migrate import duplicate_credential_findings
+        from gateway.migration import duplicate_credential_findings
         lines = duplicate_credential_findings()
         if lines:
             print()
@@ -3622,7 +3622,7 @@ def named_profile_served_by_running_multiplexer(profile_name: str | None = None)
 
         # No record (older gateway): only an EXPLICIT opt-in counts. The unset default is settled by
         # the gateway at boot (it may have stayed standalone); a CLI process must not guess it on.
-        from hermes_cli.gateway_multiplex_mode import explicit_multiplex_flag
+        from gateway.multiplex_mode import explicit_multiplex_flag
         return explicit_multiplex_flag(default_root) is True  # a multiplexer serves every named profile
     except Exception:
         logger.debug("Multiplexer-serving probe failed", exc_info=True)
@@ -3722,7 +3722,7 @@ def _named_profile_refused_under_multiplexer(force: bool = False) -> bool:
     print(f"  HERMES_HOME outside profiles/) needs --force:  hermes -p {suffix} gateway install --force")
     print()
     from hermes_constants import display_hermes_home
-    from hermes_cli.gateway_multiplex_mode import STANDALONE_DEPRECATION_NOTICE
+    from gateway.multiplex_mode import STANDALONE_DEPRECATION_NOTICE
     print("  Temporary compatibility path while multiplexing gaps are closed: set")
     print(f"  gateway.standalone: true in {display_hermes_home(get_hermes_home())}/config.yaml,")
     print("  then wait for the host gateway to rescan (<=30s) or send its rescan-profiles control verb.")
@@ -4973,7 +4973,7 @@ def _cmd_status(args):
     active_standalone = ((get_active_profile_name() or "default") != "default"
                          and profile_is_standalone(get_hermes_home()))
     if active_standalone:
-        from hermes_cli.gateway_multiplex_mode import STANDALONE_DEPRECATION_NOTICE
+        from gateway.multiplex_mode import STANDALONE_DEPRECATION_NOTICE
         print("standalone by config (gateway.standalone: true) — temporary compatibility shim")
         print(f"  {STANDALONE_DEPRECATION_NOTICE}")
     _windows_service_installed = is_windows() and _gw_windows().is_installed()
@@ -5045,7 +5045,7 @@ def _cmd_migrate_legacy(args):
 
 
 def _cmd_migrate(args):
-    from hermes_cli.gateway_migrate import cmd_migrate
+    from gateway.migration import cmd_migrate
     cmd_migrate(args)
 
 

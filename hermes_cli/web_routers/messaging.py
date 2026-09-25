@@ -840,7 +840,7 @@ def _multiplex_port_binding_conflict(platform_id: str, requested_profile: Option
     # The flag that matters is the one the shared gateway settled at startup: its served record when
     # it runs, else the DEFAULT profile's explicit config (plus the process-wide
     # GATEWAY_MULTIPLEX_PROFILES override). An unset flag is decided by the gateway, not guessed here.
-    from hermes_cli.gateway_multiplex_mode import default_gateway_multiplexes
+    from gateway.multiplex_mode import default_gateway_multiplexes
     if not default_gateway_multiplexes():
         return None
 

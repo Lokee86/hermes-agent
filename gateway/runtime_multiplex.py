@@ -34,7 +34,7 @@ def multiplexer_serves_home(home: Path) -> Path | None:
     root = multiplexer_root_for(home)
     if root is None:
         return None
-    from hermes_cli.gateway_multiplex_mode import explicit_multiplex_flag
+    from gateway.multiplex_mode import explicit_multiplex_flag
     flag = explicit_multiplex_flag(root)
     if flag is True:
         return root
