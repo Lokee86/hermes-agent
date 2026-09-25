@@ -165,7 +165,7 @@ def test_clone_is_published_atomically_after_stripping(home, monkeypatch):
 def test_clone_channels_refusal_lives_in_create_profile(home, monkeypatch):
     """REST/TUI call ``create_profile`` directly: the live-multiplexer refusal must fire there, not
     only in the CLI, and ``--clone-channels`` without a clone source is an error, not a no-op."""
-    from hermes_cli import gateway_multiplex_served as served_mod
+    from gateway import served_profiles as served_mod
     monkeypatch.setattr(served_mod, "recorded_served_profiles", lambda root=None: ["default", "other"])
     with pytest.raises(ValueError, match="already serves"):
         create_profile("twin", clone_config=True, no_alias=True, clone_channels=True)

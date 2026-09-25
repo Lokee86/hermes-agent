@@ -71,7 +71,7 @@ def test_probe_survives_a_missing_default_pid_file(served_root):
     (``hermes -p X status``, ``cron list``, the dashboard ladder) say "not running" about the gateway
     that was in fact serving the profile."""
     from hermes_cli.gateway import named_profile_served_by_running_multiplexer
-    from hermes_cli.gateway_multiplex_served import live_default_gateway_pid
+    from gateway.served_profiles import live_default_gateway_pid
     (served_root / "gateway.pid").unlink()
     assert live_default_gateway_pid() == os.getpid()
     assert named_profile_served_by_running_multiplexer("coder") is True
@@ -137,7 +137,7 @@ def test_recycled_pid_does_not_lend_a_stale_record_its_served_profiles(served_ro
     import subprocess
     import gateway.status as status
     from hermes_cli.gateway import named_profile_served_by_running_multiplexer
-    from hermes_cli.gateway_multiplex_served import live_default_gateway_pid, recorded_served_profiles
+    from gateway.served_profiles import live_default_gateway_pid, recorded_served_profiles
     child = subprocess.Popen(["sleep", "60"])
     try:
         stale_start = (status._get_process_start_time(child.pid) or 10**9) - 4242
