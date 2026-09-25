@@ -128,7 +128,7 @@ def _served_from_identity(identity: dict) -> tuple[str, ...]:
     it serves its own profile and nothing else, which is not the same as "unknown".
 
     The unified runtime publishes each served profile as ``{"profile_id", "home"}`` (what
-    ``hermes_cli.gateway_runtime`` matches homes against); older gateways published bare names.
+    ``gateway.runtime`` matches homes against); older gateways published bare names.
     Both spell the same roster, so a dict entry is reduced to its profile name here."""
     served = identity.get("served_profiles")
     if isinstance(served, list) and served:
