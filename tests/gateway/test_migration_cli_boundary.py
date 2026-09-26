@@ -37,13 +37,7 @@ def test_gateway_python_never_imports_phase2_cli_owners() -> None:
             if ref.startswith(forbidden_prefixes) or ref == "hermes_cli.profiles" or ref in profile_lifecycle:
                 offenders.append((str(path.relative_to(gateway_root)), ref))
 
-    # These two pre-existing crossings are the remaining Phase 2 cleanup tracked
-    # separately from this guard fix. Pin them exactly so no new crossing can hide
-    # behind the temporary debt; remove this expectation when those callers move.
-    assert sorted(offenders) == [
-        ("launchd_service.py", "hermes_cli.profiles"),
-        ("process_discovery.py", "hermes_cli.profiles"),
-    ]
+    assert offenders == []
 
 
 def test_migration_domain_does_not_render_terminal_output() -> None:
