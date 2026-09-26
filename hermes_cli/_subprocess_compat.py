@@ -530,9 +530,9 @@ def bounded_probe_run(
         # Cygwin/MSYS `exec` lets the forked stub exit once the new image runs, so a Git Bash grandchild
         # (`sleep`, `cat`) has a dead parent and survives the tree-kill holding our pipes (#73403, proven
         # on windows-latest). KILL_ON_JOB_CLOSE reaches it regardless of ancestry.
-        from hermes_cli.local_runtime.processes import spawn_server
+        from runtime.processes import spawn_contained_process
 
-        proc, job = spawn_server(
+        proc, job = spawn_contained_process(
             list(argv), stdout=subprocess.PIPE, stderr=subprocess.PIPE, stdin=subprocess.DEVNULL,
             text=True, encoding="utf-8", errors=errors,
             env=dict(env) if env is not None else None, cwd=cwd, **_popen_kwargs)

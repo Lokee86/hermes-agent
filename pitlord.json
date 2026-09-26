@@ -123,6 +123,51 @@
         "tools/*.py",
         "tools/**/*.py"
       ]
+    },
+    {
+      "id": "runtime-processes-owner-must-exist",
+      "type": "require_path",
+      "path": "runtime/processes.py"
+    },
+    {
+      "id": "retired-cli-local-runtime-processes-path",
+      "type": "forbid_path",
+      "path": "hermes_cli/local_runtime/processes.py"
+    },
+    {
+      "id": "retired-cli-local-runtime-processes-must-not-be-imported",
+      "type": "forbid_content",
+      "regex": "^[ \\t]*(?:import[ \\t]+hermes_cli[.]local_runtime[.]processes(?:[ \\t]|$)|from[ \\t]+hermes_cli[.]local_runtime[.]processes[ \\t]+import|from[ \\t]+hermes_cli[.]local_runtime[ \\t]+import[ \\t]+processes(?:[ \\t,]|$))",
+      "include_paths": [
+        "agent/*.py",
+        "agent/**/*.py",
+        "cron/*.py",
+        "cron/**/*.py",
+        "gateway/*.py",
+        "gateway/**/*.py",
+        "hermes_cli/*.py",
+        "hermes_cli/**/*.py",
+        "plugins/*.py",
+        "plugins/**/*.py",
+        "profiles/*.py",
+        "profiles/**/*.py",
+        "providers/*.py",
+        "providers/**/*.py",
+        "runtime/*.py",
+        "runtime/**/*.py",
+        "storage/*.py",
+        "storage/**/*.py",
+        "auth/*.py",
+        "auth/**/*.py",
+        "kanban/*.py",
+        "kanban/**/*.py",
+        "automation/*.py",
+        "automation/**/*.py",
+        "tools/*.py",
+        "tools/**/*.py",
+        "tests/*.py",
+        "tests/**/*.py"
+      ]
     }
   ]
 }
