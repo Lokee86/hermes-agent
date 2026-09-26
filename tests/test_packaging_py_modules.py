@@ -81,6 +81,11 @@ def test_pyproject_has_no_static_py_modules_list():
     )
 
 
+def test_hermes_console_script_stays_on_legacy_cli_until_phase11():
+    cfg = tomllib.loads((REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+    assert cfg["project"]["scripts"]["hermes"] == "hermes_cli.main:main"
+
+
 def test_extracted_packages_are_in_wheel_discovery():
     includes = _package_find_includes()
     for package in ("profiles", "runtime"):
