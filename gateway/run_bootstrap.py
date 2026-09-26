@@ -529,8 +529,10 @@ async def start_gateway(config: Optional[GatewayConfig] = None, replace: bool = 
     # Set here (not at import) so incidental gateway.run imports from CLI code don't poison it.
     os.environ["HERMES_EXEC_ASK"] = "1"
 
-    from hermes_cli.resource_limits import apply_nofile_soft_limit
-    apply_nofile_soft_limit()
+    from hermes_cli.config import load_config_readonly
+    from runtime.resource_limits import apply_nofile_soft_limit
+
+    _best_effort(lambda: apply_nofile_soft_limit(load_config_readonly()))
 
     # Snapshot the revision while sys.modules matches disk so a later `git pull` is detected safely.
     from gateway.code_skew import record_boot_fingerprint

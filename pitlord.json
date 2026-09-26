@@ -225,6 +225,100 @@
         "tests/*.py",
         "tests/**/*.py"
       ]
+    },
+    {
+      "id": "runtime-stdio-owner-must-exist",
+      "type": "require_path",
+      "path": "runtime/stdio.py"
+    },
+    {
+      "id": "runtime-resource-limits-owner-must-exist",
+      "type": "require_path",
+      "path": "runtime/resource_limits.py"
+    },
+    {
+      "id": "retired-cli-stdio-path",
+      "type": "forbid_path",
+      "path": "hermes_cli/stdio.py"
+    },
+    {
+      "id": "retired-cli-resource-limits-path",
+      "type": "forbid_path",
+      "path": "hermes_cli/resource_limits.py"
+    },
+    {
+      "id": "retired-cli-stdio-must-not-be-referenced",
+      "type": "forbid_content",
+      "regex": "hermes_cli(?:[.]|/)stdio(?:[.]py)?",
+      "include_paths": [
+        "agent/*.py",
+        "agent/**/*.py",
+        "cron/*.py",
+        "cron/**/*.py",
+        "gateway/*.py",
+        "gateway/**/*.py",
+        "hermes_cli/*.py",
+        "hermes_cli/**/*.py",
+        "plugins/*.py",
+        "plugins/**/*.py",
+        "profiles/*.py",
+        "profiles/**/*.py",
+        "providers/*.py",
+        "providers/**/*.py",
+        "runtime/*.py",
+        "runtime/**/*.py",
+        "storage/*.py",
+        "storage/**/*.py",
+        "auth/*.py",
+        "auth/**/*.py",
+        "kanban/*.py",
+        "kanban/**/*.py",
+        "automation/*.py",
+        "automation/**/*.py",
+        "tools/*.py",
+        "tools/**/*.py",
+        "tui_gateway/*.py",
+        "tui_gateway/**/*.py",
+        "tests/*.py",
+        "tests/**/*.py"
+      ]
+    },
+    {
+      "id": "retired-cli-resource-limits-must-not-be-referenced",
+      "type": "forbid_content",
+      "regex": "hermes_cli(?:[.]|/)resource_limits(?:[.]py)?",
+      "include_paths": [
+        "agent/*.py",
+        "agent/**/*.py",
+        "cron/*.py",
+        "cron/**/*.py",
+        "gateway/*.py",
+        "gateway/**/*.py",
+        "hermes_cli/*.py",
+        "hermes_cli/**/*.py",
+        "plugins/*.py",
+        "plugins/**/*.py",
+        "profiles/*.py",
+        "profiles/**/*.py",
+        "providers/*.py",
+        "providers/**/*.py",
+        "runtime/*.py",
+        "runtime/**/*.py",
+        "storage/*.py",
+        "storage/**/*.py",
+        "auth/*.py",
+        "auth/**/*.py",
+        "kanban/*.py",
+        "kanban/**/*.py",
+        "automation/*.py",
+        "automation/**/*.py",
+        "tools/*.py",
+        "tools/**/*.py",
+        "tui_gateway/*.py",
+        "tui_gateway/**/*.py",
+        "tests/*.py",
+        "tests/**/*.py"
+      ]
     }
   ]
 }

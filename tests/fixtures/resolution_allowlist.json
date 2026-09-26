@@ -365,7 +365,7 @@
     "kind": "bare_which"
   },
   {
-    "path": "hermes_cli/stdio.py",
+    "path": "runtime/stdio.py",
     "symbol": "_default_windows_editor",
     "kind": "bare_which"
   },

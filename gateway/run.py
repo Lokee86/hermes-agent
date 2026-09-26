@@ -5196,7 +5196,7 @@ def main():
 
     def _utf8_stdio() -> None:
         # Windows: gateway logs and banner would UnicodeEncodeError on cp1252 consoles. No-op on POSIX.
-        from hermes_cli.stdio import configure_windows_stdio
+        from runtime.stdio import configure_windows_stdio
         configure_windows_stdio()
 
     for _step in (_register_identity, _arm_watchdog, _utf8_stdio):

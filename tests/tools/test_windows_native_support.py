@@ -20,54 +20,6 @@ import pytest
 
 
 # ---------------------------------------------------------------------------
-# configure_windows_stdio
-# ---------------------------------------------------------------------------
-
-
-class TestConfigureWindowsStdio:
-    """``hermes_cli.stdio.configure_windows_stdio`` wiring.
-
-    The function must:
-    - be a no-op on non-Windows
-    - only configure once per process (idempotent)
-    - set PYTHONIOENCODING / PYTHONUTF8 without overriding explicit user settings
-    - reconfigure sys.stdout/stderr/stdin to UTF-8 on Windows
-    - flip the console code page to CP_UTF8 (65001) via ctypes
-    - respect HERMES_DISABLE_WINDOWS_UTF8 opt-out
-    """
-
-    @pytest.fixture(autouse=True)
-    def _reset_configured(self, monkeypatch):
-        """Reload the module before each test so the _CONFIGURED flag resets."""
-        # Remove from sys.modules so import triggers a fresh load
-        sys.modules.pop("hermes_cli.stdio", None)
-        # Fresh import now; tests import from hermes_cli.stdio themselves,
-        # but this guarantees the module they get is a brand-new copy.
-        import hermes_cli.stdio as _s
-        _s._CONFIGURED = False
-        yield
-        sys.modules.pop("hermes_cli.stdio", None)
-
-    def test_no_op_on_posix(self, monkeypatch):
-        from hermes_cli import stdio
-
-        monkeypatch.setattr(stdio, "is_windows", lambda: False)
-        result = stdio.configure_windows_stdio()
-        assert result is False
-
-
-
-    def test_reconfigure_stream_handles_missing_method(self, monkeypatch):
-        """StringIO-like objects without .reconfigure() must not blow up."""
-        from hermes_cli import stdio
-        import io
-
-        buf = io.StringIO()
-        # Must not raise
-        stdio._reconfigure_stream(buf)
-
-
-# ---------------------------------------------------------------------------
 # terminate_pid — the centralized kill primitive
 # ---------------------------------------------------------------------------
 

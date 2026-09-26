@@ -127,6 +127,8 @@ Generic process spawning/containment slice complete: `runtime.processes.spawn_co
 
 Subprocess compatibility slice complete: generic platform launch/probe compatibility lives in `runtime/subprocess_compat.py`; process-tree lifecycle is consolidated in `runtime/processes.py`; hardened internal Git execution lives in `runtime/git_subprocess.py`; and the Windows Gateway breakaway marker is owned by `gateway/windows_launch.py`. All in-tree consumers and compatibility-manifest pointers target the new owners, `hermes_cli/_subprocess_compat.py` is deleted, runtime-owned probe/tree tests live under `tests/runtime/`, and both Pitlord and `tests/runtime/test_subprocess_ownership_boundary.py` prevent the retired CLI seam from being recreated or referenced.
 
+Stdio/resource-limit slice complete: Windows UTF-8 stdio/bootstrap mechanics live in `runtime/stdio.py`, and RLIMIT_NOFILE interpretation/application lives in `runtime/resource_limits.py`. Resource-limit configuration loading remains owned by the existing CLI/config layer: callers load canonical config and pass the mapping into runtime. `DEFAULT_NOFILE_SOFT_LIMIT` is runtime-owned and reused by `hermes_cli.config_defaults`, both retired CLI implementation paths are deleted, runtime primitive tests live under `tests/runtime/`, caller integration coverage remains at the CLI/service edges, and Pitlord plus `tests/runtime/test_stdio_resource_limits_boundary.py` prevent either retired seam or a runtime-to-upper-layer dependency from returning.
+
 ## Phase 4 — Plugin runtime
 
 Separate plugin runtime from plugin CLI management.
