@@ -10,6 +10,8 @@ import hashlib
 import json
 import logging
 import os
+import re
+import sys
 import threading
 import time
 from dataclasses import asdict, dataclass
@@ -30,6 +32,7 @@ logger = logging.getLogger(__name__)
 # psutil centiseconds), so 200 means 2 s on either platform — a recycled PID is essentially never
 # that close to the original's start time.
 START_TIME_DRIFT_TOLERANCE = 200
+IS_WINDOWS = sys.platform == "win32"
 
 
 def install_id(project_root: Optional[Path] = None) -> str:
@@ -74,6 +77,69 @@ def get_process_start_time(pid: int) -> Optional[int]:
         return int(round(psutil.Process(pid).create_time() * 100))
     except Exception:
         return None
+
+
+def _process_start_time(pid: int) -> int | None:
+    """The repository's stable process-start fingerprint, if available."""
+    try:
+        return get_process_start_time(pid)
+    except Exception:
+        return None
+
+
+def _text_names_hermes(text: str) -> bool:
+    r"""True when *text* names Hermes at a path-segment / token boundary.
+
+    A bare ``"hermes" in text`` substring test would also match unrelated processes whose paths
+    merely contain the letters (``...\\shermesa\\...``) - the false-positive class this prevents.
+    """
+    return any(
+        token.startswith(("hermes", ".hermes"))
+        for token in re.split(r"[\\/\s=,;\"']+", text.lower())
+    )
+
+
+def _process_command_is_hermes(pid: int) -> bool:
+    """Best-effort check that *pid* currently runs Hermes code."""
+    try:
+        import psutil
+
+        process = psutil.Process(pid)
+        command = " ".join(process.cmdline() or [])
+        executable = process.exe() or ""
+        return _text_names_hermes(f"{command} {executable}")
+    except Exception:
+        return False
+
+
+def pid_is_hermes(pid: int, *, expected_start_time: int | None = None) -> bool:
+    """Whether it is safe to use destructive process-tree termination for *pid*.
+
+    The PID must be valid, currently exist, and identify a Hermes process on Windows. When the
+    caller captured a start-time fingerprint before the destructive action, the live process must
+    still have the same ``(pid, start_time)`` identity. Any ambiguity fails closed.
+    """
+    if not isinstance(pid, int) or isinstance(pid, bool) or pid <= 0:
+        return False
+    if not IS_WINDOWS:
+        if expected_start_time is None:
+            return True
+        try:
+            return _process_start_time(pid) == expected_start_time
+        except Exception:
+            return False
+    try:
+        current_start_time = _process_start_time(pid)
+    except Exception:
+        return False
+    if current_start_time is None:
+        return False
+    if expected_start_time is not None and current_start_time != expected_start_time:
+        return False
+    try:
+        return _process_command_is_hermes(pid)
+    except Exception:
+        return False
 
 
 def start_time_fingerprints_match(
@@ -394,18 +460,23 @@ __all__ = [
     "LedgerEntry",
     "REAPABLE_PURPOSES",
     "SPAWN_ENV_VAR",
+    "IS_WINDOWS",
     "START_TIME_DRIFT_TOLERANCE",
     "SpawnTag",
     "_append_entry",
     "_ledger_path",
     "_pid_alive_matches",
+    "_process_command_is_hermes",
     "_process_create_time",
+    "_process_start_time",
     "_same_incarnation",
+    "_text_names_hermes",
     "build_spawn_tag",
     "get_process_start_time",
     "install_id",
     "ledger_entries",
     "parse_spawn_tag",
+    "pid_is_hermes",
     "reap_orphaned_mcp_helpers",
     "register_child",
     "register_self",

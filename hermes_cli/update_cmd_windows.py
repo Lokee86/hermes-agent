@@ -609,8 +609,8 @@ def _stop_process_trees(pids: list[int] | list[tuple[int, int]]) -> None:
 
     See #70026.
     """
-    from runtime.process_identity import get_process_start_time
-    from hermes_cli._subprocess_compat import pid_is_hermes, windows_hide_flags
+    from runtime.process_identity import get_process_start_time, pid_is_hermes
+    from runtime.subprocess_compat import windows_hide_flags
     for entry in pids:
         pid, expected_start_time = entry if isinstance(entry, tuple) else (int(entry), get_process_start_time(int(entry)))
         try:

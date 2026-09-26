@@ -251,7 +251,7 @@ def test_native_windows_discovery_uses_same_user_pipe(tmp_path):
 def test_native_windows_spawn_never_retries_without_breakaway(tmp_path, monkeypatch):
     from gateway import runtime_start as start
     from gateway.runtime_service import RuntimeStartError
-    from hermes_cli._subprocess_compat import windows_detach_flags
+    from runtime.subprocess_compat import windows_detach_flags
     calls = []
     def denied(argv, **kwargs):
         calls.append(kwargs)

@@ -115,7 +115,7 @@
     "kind": "bare_which"
   },
   {
-    "path": "hermes_cli/_subprocess_compat.py",
+    "path": "runtime/subprocess_compat.py",
     "symbol": "resolve_node_command",
     "kind": "bare_which"
   },

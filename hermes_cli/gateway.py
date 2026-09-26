@@ -291,7 +291,7 @@ def _spawn_gateway_restart_watcher(old_pid: int, run_argv: list[str]) -> bool:
     (the watcher would die with the CLI console), so ``windows_detach_popen_kwargs()`` supplies flags."""
     if old_pid <= 0 or not run_argv:
         return False
-    from hermes_cli._subprocess_compat import windows_detach_flags_without_breakaway, windows_detach_popen_kwargs
+    from runtime.subprocess_compat import windows_detach_flags_without_breakaway, windows_detach_popen_kwargs
 
     # Windows: ``run_argv`` leads with the venv's console ``python.exe`` — the interpreter we want:
     # the watcher respawns it under CREATE_NO_WINDOW detach flags so the gateway owns one hidden
@@ -317,8 +317,9 @@ def _spawn_gateway_restart_watcher(old_pid: int, run_argv: list[str]) -> bool:
         import subprocess
         import sys
         import time
-        from hermes_cli._subprocess_compat import (
-            _WINDOWS_GATEWAY_BREAKAWAY_ENV, windows_detach_flags, windows_detach_flags_without_breakaway,
+        from gateway.windows_launch import _WINDOWS_GATEWAY_BREAKAWAY_ENV
+        from runtime.subprocess_compat import (
+            windows_detach_flags, windows_detach_flags_without_breakaway,
         )
 
         pid = int(sys.argv[1])
@@ -351,7 +352,7 @@ def _spawn_gateway_restart_watcher(old_pid: int, run_argv: list[str]) -> bool:
         # Platform-appropriate detach for the respawned gateway: POSIX start_new_session (setsid);
         # Windows needs explicit creationflags. CREATE_BREAKAWAY_FROM_JOB is critical: the watcher may
         # itself sit inside a job object (Electron/Tauri parent) and without breakaway the respawned
-        # gateway dies when that job tears down. See _subprocess_compat.windows_detach_flags().
+        # gateway dies when that job tears down. See runtime.subprocess_compat.windows_detach_flags().
         _popen_kwargs = {{"stdout": _stdio_target, "stderr": _stdio_target}}
         # Anchor at the stable working dir and overlay the env (VIRTUAL_ENV / PYTHONPATH /
         # HERMES_HOME) the windowless base interpreter needs to import hermes_cli. Empty on POSIX.
@@ -1037,7 +1038,7 @@ def _windows_gateway_breakaway_state() -> bool | None:
     """Consume private spawn metadata without guessing for older launchers."""
     if not is_windows():
         return None
-    from hermes_cli._subprocess_compat import _WINDOWS_GATEWAY_BREAKAWAY_ENV
+    from gateway.windows_launch import _WINDOWS_GATEWAY_BREAKAWAY_ENV
     return {"1": True, "0": False}.get(os.environ.pop(_WINDOWS_GATEWAY_BREAKAWAY_ENV, None))
 
 

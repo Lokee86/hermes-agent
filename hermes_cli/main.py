@@ -30,7 +30,7 @@ if _early_recovery_mod.restore_interrupted_pull():
 # Windows: neutralize CPython's ``platform._syscmd_ver`` before anything else
 # imports — it shells out ``cmd /c ver`` and flashes a console when this
 # process is windowless (pythonw gateway, kanban workers). No-op on POSIX.
-from hermes_cli._subprocess_compat import suppress_platform_ver_console
+from runtime.subprocess_compat import suppress_platform_ver_console
 
 suppress_platform_ver_console()
 

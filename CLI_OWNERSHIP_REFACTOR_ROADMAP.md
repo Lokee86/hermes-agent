@@ -125,6 +125,8 @@ Process-identity slice complete: generic process identity/incarnation, spawn-led
 
 Generic process spawning/containment slice complete: `runtime.processes.spawn_contained_process()` owns cross-platform spawning plus Windows suspended-start Job Object containment; bounded probes and the llama-server supervisor consume that runtime seam directly. Llama-specific credential scrubbing remains application policy under `hermes_cli.local_runtime.child_env`. The old `hermes_cli/local_runtime/processes.py` seam is deleted, containment tests now live under `tests/runtime/`, and Pitlord requires the runtime owner while forbidding recreation or import of the retired CLI path.
 
+Subprocess compatibility slice complete: generic platform launch/probe compatibility lives in `runtime/subprocess_compat.py`; process-tree lifecycle is consolidated in `runtime/processes.py`; hardened internal Git execution lives in `runtime/git_subprocess.py`; and the Windows Gateway breakaway marker is owned by `gateway/windows_launch.py`. All in-tree consumers and compatibility-manifest pointers target the new owners, `hermes_cli/_subprocess_compat.py` is deleted, runtime-owned probe/tree tests live under `tests/runtime/`, and both Pitlord and `tests/runtime/test_subprocess_ownership_boundary.py` prevent the retired CLI seam from being recreated or referenced.
+
 ## Phase 4 — Plugin runtime
 
 Separate plugin runtime from plugin CLI management.
