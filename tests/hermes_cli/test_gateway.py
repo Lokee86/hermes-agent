@@ -958,11 +958,11 @@ def test_find_windows_gateway_services_ignores_task_scheduler_ancestor(monkeypat
 def test_find_profile_gateway_processes_strict_propagates_profile_listing_failure(
     monkeypatch,
 ):
-    import hermes_cli.profiles as profiles_mod
+    import profiles.registry as profile_registry
 
     monkeypatch.setattr(
-        profiles_mod,
-        "list_profiles",
+        profile_registry,
+        "list_profile_names",
         lambda: (_ for _ in ()).throw(RuntimeError("profile listing failed")),
     )
 
