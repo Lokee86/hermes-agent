@@ -1,4 +1,4 @@
-"""Ownership guards for the Gateway migration / CLI boundary."""
+"""Phase 2 ownership guards for the Gateway / CLI boundary."""
 from __future__ import annotations
 
 import ast
@@ -7,37 +7,45 @@ from pathlib import Path
 import gateway.migration as migration
 
 
-def _imports(path: Path) -> list[str]:
+def _import_refs(path: Path) -> list[str]:
     tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
-    names: list[str] = []
+    refs: list[str] = []
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
-            names.extend(alias.name for alias in node.names)
+            refs.extend(alias.name for alias in node.names)
         elif isinstance(node, ast.ImportFrom) and node.module:
-            names.append(node.module)
-    return names
+            refs.extend(f"{node.module}.{alias.name}" for alias in node.names)
+    return refs
 
 
-def test_gateway_python_never_imports_its_cli_gateway_facade() -> None:
+def test_gateway_python_never_imports_phase2_cli_owners() -> None:
+    """Gateway control/topology/lifecycle must never route back through CLI owners."""
     gateway_root = Path(migration.__file__).parent
+    forbidden_prefixes = ("hermes_cli.gateway", "hermes_cli.service_manager")
+    profile_lifecycle = {
+        "hermes_cli.profiles._check_gateway_running",
+        "hermes_cli.profiles._maybe_register_gateway_service",
+        "hermes_cli.profiles._maybe_unregister_gateway_service",
+        "hermes_cli.profiles._cleanup_gateway_service",
+        "hermes_cli.profiles._stop_profile_backends",
+        "hermes_cli.profiles._stop_gateway_process",
+    }
     offenders: list[tuple[str, str]] = []
     for path in gateway_root.rglob("*.py"):
-        for name in _imports(path):
-            if name == "hermes_cli.gateway" or name.startswith("hermes_cli.gateway."):
-                offenders.append((str(path.relative_to(gateway_root)), name))
+        for ref in _import_refs(path):
+            if ref.startswith(forbidden_prefixes) or ref == "hermes_cli.profiles" or ref in profile_lifecycle:
+                offenders.append((str(path.relative_to(gateway_root)), ref))
     assert offenders == []
-
-
-def test_migration_does_not_import_cli_profile_lifecycle() -> None:
-    path = Path(migration.__file__)
-    assert "hermes_cli.profiles" not in _imports(path)
 
 
 def test_migration_domain_does_not_render_terminal_output() -> None:
     path = Path(migration.__file__)
     tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
     print_calls = [
-        node for node in ast.walk(tree)
-        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "print"
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "print"
     ]
     assert print_calls == []

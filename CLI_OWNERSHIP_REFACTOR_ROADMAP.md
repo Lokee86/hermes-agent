@@ -99,6 +99,8 @@ Migration follows the ownership rule explicitly: `gateway/migration.py` owns pla
 
 Gateway should not import its own control-plane behaviour from a CLI package.
 
+Phase 2 exit gate: `pitlord.json` and `tests/gateway/test_migration_cli_boundary.py` forbid Gateway imports from the retired CLI-owned Gateway/control families (`hermes_cli.gateway*`, `hermes_cli.service_manager`, and lifecycle helpers from `hermes_cli.profiles`). Config imports remain explicitly outside this gate until #122245 settles.
+
 ## Phase 3 — Runtime and persistence primitives
 
 Extract generic infrastructure currently parked under `hermes_cli`.

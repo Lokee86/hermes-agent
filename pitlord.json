@@ -65,9 +65,27 @@
       ]
     },
     {
-      "id": "gateway-must-not-depend-on-cli-profiles",
+      "id": "gateway-must-not-depend-on-cli-profile-lifecycle",
       "type": "forbid_content",
-      "regex": "hermes_cli\\.profiles",
+      "regex": "^[ \\\\t]*(?:import[ \\\\t]+hermes_cli[.]profiles(?:[ \\\\t]|$)|from[ \\\\t]+hermes_cli[ \\\\t]+import[ \\\\t]+profiles(?:[ \\\\t,]|$)|from[ \\\\t]+hermes_cli[.]profiles[ \\\\t]+import[ \\\\t]+.*(_check_gateway_running|_maybe_register_gateway_service|_maybe_unregister_gateway_service|_cleanup_gateway_service|_stop_profile_backends|_stop_gateway_process))",
+      "include_paths": [
+        "gateway/*.py",
+        "gateway/**/*.py"
+      ]
+    },
+    {
+      "id": "gateway-must-not-depend-on-cli-gateway-control",
+      "type": "forbid_content",
+      "regex": "^[ \\t]*(from[ \\t]+hermes_cli[ \\t]+import[ \\t]+gateway|(?:from|import)[ \\t]+hermes_cli[.]gateway)",
+      "include_paths": [
+        "gateway/*.py",
+        "gateway/**/*.py"
+      ]
+    },
+    {
+      "id": "gateway-must-not-depend-on-cli-service-manager",
+      "type": "forbid_content",
+      "regex": "^[ \\t]*(from[ \\t]+hermes_cli[ \\t]+import[ \\t]+service_manager|(?:from|import)[ \\t]+hermes_cli[.]service_manager)",
       "include_paths": [
         "gateway/*.py",
         "gateway/**/*.py"
