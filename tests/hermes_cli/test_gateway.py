@@ -514,7 +514,7 @@ class TestStopProfileGateway:
     @pytest.mark.windows_only
     def test_windows_stop_drains_marker_before_force_termination(self, monkeypatch):
         """Windows must let the marker watcher run before escalating (#112750)."""
-        import hermes_cli.gateway_windows as gateway_windows
+        import gateway.windows_service as gateway_windows
 
         pid = 12345
         calls = []
@@ -541,7 +541,7 @@ class TestStopProfileGateway:
     @pytest.mark.windows_only
     def test_windows_stop_force_terminates_only_after_drain_timeout(self, monkeypatch):
         """A wedged Windows gateway still has a bounded force-stop fallback (#112750)."""
-        import hermes_cli.gateway_windows as gateway_windows
+        import gateway.windows_service as gateway_windows
 
         pid = 12345
         calls = []
@@ -573,7 +573,7 @@ class TestStopProfileGateway:
         refusal fires instead of killing an unrelated process. Reading it at kill time is a vacuous
         self-comparison."""
         import gateway.status as status
-        import hermes_cli.gateway_windows as gateway_windows
+        import gateway.windows_service as gateway_windows
 
         pid = 4242
         calls = []
@@ -902,7 +902,7 @@ def test_find_windows_gateway_services_ignores_task_scheduler_ancestor(monkeypat
     gateway's supervisor, so a task-launched gateway is a plain process (#97208); the same tree under a
     Hermes-owned service (by binary path) stays SCM-supervised."""
     import psutil
-    import hermes_cli.gateway_windows as gateway_windows
+    import gateway.windows_service as gateway_windows
 
     monkeypatch.setattr(gateway_windows, "hermes_service_roots", lambda: (r"C:\hermes\hermes-agent",))
     profile = SimpleNamespace(profile="default", pid=18480, create_time=18480.0)

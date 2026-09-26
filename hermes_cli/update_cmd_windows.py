@@ -800,7 +800,7 @@ def _windows_cold_start_plan() -> dict | None:
     ``hermes gateway status``/``start`` consumes, so execution authorizes the spawn from the token and
     consumes only that generation (#110020 review)."""
     from hermes_cli.update_cmd import _desktop_owns_gateway_lifecycle
-    from hermes_cli import gateway_windows
+    from gateway import windows_service as gateway_windows
     with _best_effort('Could not check Windows gateway autostart state before update: %s'):
         if not gateway_windows.is_installed():
             return None
@@ -858,7 +858,7 @@ def _pause_windows_gateway_services(service_gateways, token: dict, profiles: dic
 
 def _discover_windows_gateways():
     """``(profile_processes, service_gateways, service_gateway_pids, running_pids)`` for the pause; any indeterminate probe aborts."""
-    from hermes_cli.gateway import find_gateway_pids, find_profile_gateway_processes, find_windows_gateway_services
+    from gateway.process_discovery import find_gateway_pids, find_profile_gateway_processes, find_windows_gateway_services
     with _abort_on_error("Could not map Windows gateway PIDs to profiles"):
         profile_process_list = find_profile_gateway_processes(strict=True)
         profile_processes = {proc.pid: proc for proc in profile_process_list}
@@ -984,7 +984,7 @@ def _record_attested_cold_start_profiles(token: dict, running_profiles: set) -> 
     Desktop-owned installs need this (elsewhere autostart brings the profile back); the active profile is
     left to the existing plan so it is never spawned twice. Best-effort: never blocks the pause."""
     from hermes_cli.update_cmd import _desktop_owns_gateway_lifecycle
-    from hermes_cli import gateway_windows
+    from gateway import windows_service as gateway_windows
     with _best_effort("Could not evaluate per-profile attested cold-starts before update: %s"):
         if not _desktop_owns_gateway_lifecycle():
             return
@@ -1006,7 +1006,7 @@ def _record_attested_cold_start_profiles(token: dict, running_profiles: set) -> 
 def _cold_start_attested_profiles(token: dict) -> None:
     """Spawn each ``cold_start_profiles`` entry under its own HERMES_HOME and consume exactly the
     generation that authorized it; one profile's failure never aborts the others (#110959)."""
-    from hermes_cli import gateway_windows
+    from gateway import windows_service as gateway_windows
     from profiles.paths import get_profile_dir
     pending = dict(token.get("cold_start_profiles") or {})
     if not pending:
@@ -1058,8 +1058,8 @@ def _cold_start_windows_gateway_after_update(token: dict | None = None) -> bool:
     if not _m()._is_windows():
         return True
     with _abort_on_error("Could not load Windows gateway cold-start helpers"):
-        from hermes_cli import gateway_windows
-        from hermes_cli.gateway import find_gateway_pids
+        from gateway import windows_service as gateway_windows
+        from gateway.process_discovery import find_gateway_pids
     with _abort_on_error("Could not re-check gateway liveness before cold-start"):
         if list(find_gateway_pids(all_profiles=True)):
             return True
@@ -1108,7 +1108,7 @@ def _refresh_windows_gateway_launchers() -> None:
     if not _m()._is_windows():
         return
     with _best_effort('Could not refresh Windows gateway launchers after update: %s'):
-        from hermes_cli import gateway_windows
+        from gateway import windows_service as gateway_windows
         if gateway_windows.is_installed():
             gateway_windows._write_task_script()
             print("  ✓ Refreshed Windows gateway launcher scripts")
@@ -1238,7 +1238,7 @@ def _verify_relaunched_gateways_alive(token: dict, profiles: dict, unmapped: lis
     ``all_profiles=True`` covers the fleet. Vouched PIDs are persisted so a death AFTER updater exit
     is reported by the next CLI invocation (best-effort)."""
     with _abort_on_error("Could not load Windows gateway liveness helpers"):
-        from hermes_cli import gateway_windows
+        from gateway import windows_service as gateway_windows
     ready_pids = gateway_windows._wait_for_gateway_ready(timeout_s=30.0, all_profiles=True)
     if not ready_pids:
         token["profiles"] = dict(profiles)

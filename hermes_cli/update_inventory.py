@@ -165,7 +165,7 @@ def _supervisor_classifier() -> Callable[[int], str]:
     """``pid -> supervisor`` over the service-PID sets; each probe degrades to an empty set."""
     service_pids: set = set()
     with _probe("Service-PID probe"):
-        from hermes_cli.gateway import _get_service_pids
+        from gateway.process_discovery import _get_service_pids
 
         service_pids = _get_service_pids(all_profiles=True) or set()
     # Windows SCM services (no-op off Windows): the update's pause phase stops these via `sc.exe
@@ -175,7 +175,7 @@ def _supervisor_classifier() -> Callable[[int], str]:
     # service PIDs (no-op off Windows). See #91277.
     windows_service_pids: set = set()
     with _probe("Windows SCM service-ownership probe"):
-        from hermes_cli.gateway import find_windows_gateway_services
+        from gateway.process_discovery import find_windows_gateway_services
 
         windows_service_pids = {int(service.gateway_pid) for service in find_windows_gateway_services()}
     return lambda pid: _detect_supervisor_for_pid(pid, service_pids, windows_service_pids)
@@ -211,7 +211,7 @@ def _collect_gateway_runtimes(plan: UpdatePlan, profile_homes: list, seen: set[i
                 sup = supervisor(pid)
             plan.runtimes.append(_runtime("gateway", profile, pid, sup, record.get("code_sha"), record.get("code_version")))
     with _probe("PID-file gateway inventory"):
-        from hermes_cli.gateway import find_profile_gateway_processes
+        from gateway.process_discovery import find_profile_gateway_processes
 
         for proc in find_profile_gateway_processes():
             if proc.pid not in seen:

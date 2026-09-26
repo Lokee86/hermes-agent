@@ -1112,7 +1112,7 @@ class TestPythonpathSelectiveStrip:
         """The real producer spelling is derived and consumed end to end."""
         import tools.environments.local as local
         from tools.environments import local_pythonpath
-        from hermes_cli.gateway_windows import _preserve_hermes_home_path
+        from gateway.windows_service import _preserve_hermes_home_path
 
         physical_home = tmp_path / "physical-home"
         physical_root = _physical_repo_root(tmp_path)

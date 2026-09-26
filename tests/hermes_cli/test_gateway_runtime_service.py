@@ -144,7 +144,7 @@ def test_loaded_launchd_identity_is_independent_of_disk(configured, command, rea
 ])
 def test_task_xml_binds_actual_action_and_principal(case, reason, tmp_path):
     from gateway.runtime_service_identity import verify_windows_task
-    from hermes_cli.gateway_windows import _build_scheduled_task_xml
+    from gateway.windows_service import _build_scheduled_task_xml
     home = tmp_path / 'requested'
     home.mkdir()
     script = home / 'gateway.vbs'
@@ -232,7 +232,7 @@ def test_native_launchd_checks_loaded_job_before_disk(case, reason, tmp_path, mo
 @pytest.mark.parametrize("wrong", [False, True])
 def test_native_task_query_uses_installed_xml_and_vendor_launcher(wrong, tmp_path, monkeypatch):
     from gateway import runtime_service as service
-    from hermes_cli.gateway_windows import _build_gateway_vbs_script, _build_scheduled_task_xml
+    from gateway.windows_service import _build_gateway_vbs_script, _build_scheduled_task_xml
     home = tmp_path / 'profile'
     home.mkdir()
     monkeypatch.setenv('HERMES_HOME', str(home))
@@ -243,7 +243,7 @@ def test_native_task_query_uses_installed_xml_and_vendor_launcher(wrong, tmp_pat
     original = script.read_bytes()
     # whoami is read-only native account evidence; no task-manager mutation.
     identity = subprocess.run(['whoami.exe', '/USER', '/FO', 'CSV', '/NH'], stdin=subprocess.DEVNULL, capture_output=True, timeout=5)
-    from hermes_cli.gateway_windows import _schtasks_encoding
+    from gateway.windows_service import _schtasks_encoding
     import csv
     account, sid = next(csv.reader(identity.stdout.decode(_schtasks_encoding()).splitlines()))
     suffix = service_identity.service_suffix_for_home(home)

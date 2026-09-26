@@ -220,7 +220,7 @@
     "kind": "bare_which"
   },
   {
-    "path": "hermes_cli/gateway_windows.py",
+    "path": "gateway/windows_service.py",
     "symbol": "_exec_schtasks",
     "kind": "bare_which"
   },
