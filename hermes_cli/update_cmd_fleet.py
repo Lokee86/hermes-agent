@@ -2106,7 +2106,7 @@ def _verify_fleet_after_update(restart, *, _pre_update_plan, _windows_gateway_re
     # Fleet is healthy on the new code: fold per-profile gateways into one multiplexer when nothing
     # blocks it (deterministic; never prompts), else print the blockers and the one-liner to run later.
     with _best_effort('Multiplex auto-migration after update failed: %s'):
-        from gateway.migration import maybe_auto_migrate_after_update
+        from nous_cli.gateway_migrate import maybe_auto_migrate_after_update
         maybe_auto_migrate_after_update()
 
 

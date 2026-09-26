@@ -232,14 +232,14 @@ tool registry overlays) key on `hermes_constants.hermes_home_key()`, never a sin
 no preflight blocker, migratable host → `True`; else `False` + a logged reason. Explicit values pass
 through. CLI/dashboard readers use `default_gateway_multiplexes` (live `served_profiles` record, then
 the explicit flag) — never the merged default, which would guess a verdict only the gateway makes.
-Migration from per-profile gateways: `hermes_cli/gateway_migrate.py` (`hermes gateway migrate
+Migration from per-profile gateways: domain/apply/rollback lives in `gateway/migration.py`; CLI rendering, prompting, exits, and the update hook live in `nous_cli/gateway_migrate.py` (`hermes gateway migrate
 --multiplex`, the only mode — `--standalone` is deleted and a per-profile fleet is not a supported
 target; table-driven `_PREFLIGHT_CHECKS`; manifest `<default>/gateway_migration.json` = UNFINISHED,
 a re-run resumes from it; a named profile's `gateway install|start|run` refuse without `--force` via
 `gateway.py::_named_profile_refused_under_multiplexer`, dashboard twin
 `web_server_gateway.py::multiplexed_profile_refusal`);
-`update_cmd_fleet._verify_fleet_after_update` calls `maybe_auto_migrate_after_update` on the success
-path only; `gateway_migrate_guards.py` holds the auto-path-only refusals (table `_AUTO_MIGRATION_GUARDS`:
+`update_cmd_fleet._verify_fleet_after_update` calls `nous_cli.gateway_migrate.maybe_auto_migrate_after_update` on the success
+path only; `gateway/migration_guards.py` holds the auto-path-only refusals (table `_AUTO_MIGRATION_GUARDS`:
 other service domain / UNIX user / HERMES_HOME outside `profiles/` — notices for the explicit command,
 blockers for the hook) and the `gateway.auto_multiplex_migration` opt-out (#109954). Blockers reuse `GatewayRunner._adapter_credential_fingerprint` and `platform_binds_port`;
 "has a `/p/<profile>/` ingress" is the adapter class attribute `serves_profile_prefix` — set it on a
