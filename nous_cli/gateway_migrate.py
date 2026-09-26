@@ -158,7 +158,7 @@ def cmd_migrate(args) -> None:
     if plan.manifest is None and (plan.blocked or len(plan.profiles) < 2):
         raise SystemExit(1 if plan.blocked else 0)
     if not getattr(args, "yes", False) and sys.stdin.isatty():
-        from hermes_cli.setup import prompt_yes_no
+        from nous_cli.legacy import prompt_yes_no
 
         if not prompt_yes_no("Apply this migration now?", True):
             print("Aborted; nothing changed.")
