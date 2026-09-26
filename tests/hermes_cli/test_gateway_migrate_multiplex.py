@@ -19,6 +19,7 @@ import pytest
 
 import hermes_constants
 from gateway import migration as gm
+from nous_cli import gateway_migrate as migrate_cli
 
 
 @pytest.fixture
@@ -136,19 +137,33 @@ def _config_flag(root: Path):
     return (raw.get("gateway") or {}).get("multiplex_profiles")
 
 
+def _render_migration_result(result: gm.MigrationResult) -> bool:
+    if result.lines:
+        print("\n".join(result.lines))
+    return result.succeeded
+
+
+def _apply_migration(plan, *, served_wait=gm._SERVED_WAIT_SECONDS) -> bool:
+    return _render_migration_result(gm.apply_migration_result(plan, served_wait=served_wait))
+
+
+def _rollback_migration(default_home=None) -> bool:
+    return _render_migration_result(gm.rollback_migration_result(default_home))
+
+
 def test_dry_run_and_blocked_preflight_change_nothing(fleet, capsys):
     plan = gm.build_migration_plan()
     assert not plan.blocked and plan.eligible_for_migration()
     assert [p.name for p in plan.standalone_secondaries] == ["coder", "ops"]
 
-    gm.cmd_migrate(SimpleNamespace(multiplex=True, dry_run=True, yes=True))  # returns; no exit
+    migrate_cli.cmd_migrate(SimpleNamespace(multiplex=True, dry_run=True, yes=True))  # returns; no exit
     assert "dry run" in capsys.readouterr().out
     # Blocked: coder reuses the default's Telegram token -> the gateway's own fingerprint says duplicate.
     (fleet.root / "profiles/coder/.env").write_text("TELEGRAM_BOT_TOKEN=111111:default-token\n", encoding="utf-8")
     blocked = gm.build_migration_plan()
     assert blocked.blocked and "profile_routes" in blocked.blockers[0] and "'coder'" in blocked.blockers[0]
     with pytest.raises(SystemExit) as exc:
-        gm.cmd_migrate(SimpleNamespace(multiplex=True, dry_run=False, yes=True))
+        migrate_cli.cmd_migrate(SimpleNamespace(multiplex=True, dry_run=False, yes=True))
     assert exc.value.code == 1
     assert fleet.ops == [] and fleet.services == {"coder": ("systemd", False), "ops": ("systemd", False)}
     assert fleet.pids == {"coder": 4101, "ops": 4102} and _config_flag(fleet.root) is None
@@ -189,7 +204,7 @@ def test_migration_removes_parked_footprint_without_waiting_for_it_to_serve(flee
 
     monkeypatch.setattr(gm, "_service_op", boot_unparked_profiles)
     plan = gm.build_migration_plan()
-    assert any("verify it serves 2 profiles" in line for line in gm.format_plan(plan, dry_run=True))
+    assert any("verify it serves 2 profiles" in line for line in migrate_cli.format_plan(plan, dry_run=True))
     ok, manifest = _apply_capturing_manifest(plan, served_wait=0.1)
     assert ok
     assert "coder" not in fleet.pids and "coder" not in fleet.services
@@ -211,7 +226,7 @@ def _apply_capturing_manifest(plan, *, served_wait=5.0, restore=False):
 
     gm._wait_for_served = _wait
     try:
-        ok = gm.apply_migration(plan, served_wait=served_wait)
+        ok = _apply_migration(plan, served_wait=served_wait)
     finally:
         gm._wait_for_served = real_wait
     if restore:  # put it back to drive the compensator, which only ever runs on an UNfinished apply
@@ -234,7 +249,7 @@ def test_apply_clears_the_manifest_on_success_and_the_compensator_restores(fleet
     assert "serves 3 profiles" in capsys.readouterr().out
     # Idempotent: a second run sees the live multiplexer and refuses cleanly.
     again = gm.build_migration_plan()
-    assert again.already_multiplexed and gm.apply_migration(again) is True
+    assert again.already_multiplexed and _apply_migration(again) is True
 
     runtime_path = fleet.root / "gateway_state.json"
     runtime = json.loads(runtime_path.read_text(encoding="utf-8"))
@@ -246,7 +261,7 @@ def test_apply_clears_the_manifest_on_success_and_the_compensator_restores(fleet
     runtime_path.write_text(json.dumps(runtime), encoding="utf-8")
     fleet.ops.clear()
     gm._write_manifest(fleet.root, manifest)  # the compensator only ever runs on a FAILED apply
-    assert gm.rollback_migration(fleet.root) is True
+    assert _rollback_migration(fleet.root) is True
     assert _config_flag(fleet.root) is False
     # ONE gateway, not a fleet: the flipped host lock refuses N per-profile gateways, and the
     # compensator clears the served record first, so every secondary it used to start would lose
@@ -289,7 +304,7 @@ def test_migration_preserves_root_system_service_user_for_default_install(fleet,
     monkeypatch.setattr(gm, "_service_op", _service_op)
     monkeypatch.setattr(gm, "_wait_for_served", lambda *args: ["default", "coder", "ops"])
 
-    assert gm.apply_migration(plan, served_wait=0.1) is True
+    assert _apply_migration(plan, served_wait=0.1) is True
     assert installs == [("systemd", True, "root")]
 
 
@@ -310,7 +325,7 @@ def test_rollback_that_cannot_bring_the_gateway_back_reports_failure_and_keeps_t
 
     monkeypatch.setattr(gm, "_service_op", _silent_start)
     monkeypatch.setattr(gm, "_COMPENSATOR_WAIT_SECONDS", 0.5)
-    assert gm.rollback_migration(fleet.root) is False
+    assert _rollback_migration(fleet.root) is False
     out = capsys.readouterr().out
     assert "no gateway confirmed serving this host" in out and "Compensation incomplete" in out
     assert _config_flag(fleet.root) is False
@@ -333,14 +348,14 @@ def test_rollback_never_respawns_a_detached_secondary(fleet, monkeypatch):
         return _fake_spawn(fleet, home)
 
     monkeypatch.setattr(gm, "_spawn_detached_gateway", _spawn)
-    assert gm.rollback_migration(fleet.root) is True
+    assert _rollback_migration(fleet.root) is True
     assert spawned == ["default"]
 
 
 def test_malformed_manifest_is_refused_before_any_mutation(fleet, capsys):
     (fleet.root / gm.MANIFEST_NAME).write_text(
         json.dumps({"version": 1, "flag_was": False, "default": [], "secondaries": [{"home": "x"}]}), encoding="utf-8")
-    assert gm.rollback_migration(fleet.root) is False
+    assert _rollback_migration(fleet.root) is False
     assert _config_flag(fleet.root) is None and fleet.ops == []
     assert "fix or delete the manifest" in capsys.readouterr().out
 
@@ -376,7 +391,7 @@ def test_serves_profile_prefix_is_read_from_adapter_classes():
 
 def test_update_hook_migrates_when_unblocked_and_only_warns_when_blocked(fleet, capsys):
     fleet.services["default"] = ("systemd", False)  # same service domain as the secondaries
-    gm.maybe_auto_migrate_after_update()
+    migrate_cli.maybe_auto_migrate_after_update()
     out = capsys.readouterr().out
     assert "Migrating per-profile gateways" in out and "serves 3 profiles" in out
     assert _config_flag(fleet.root) is True and not (fleet.root / gm.MANIFEST_NAME).exists()
@@ -388,7 +403,7 @@ def test_update_hook_migrates_when_unblocked_and_only_warns_when_blocked(fleet, 
     fleet.services.update({"coder": ("systemd", False), "default": ("systemd", False)})
     fleet.pids.update({"coder": 4101}); fleet.ops.clear()
     (fleet.root / "profiles/coder/.env").write_text("TELEGRAM_BOT_TOKEN=111111:default-token\n", encoding="utf-8")
-    gm.maybe_auto_migrate_after_update()
+    migrate_cli.maybe_auto_migrate_after_update()
     out = capsys.readouterr().out
     assert gm.MIGRATE_COMMAND in out and "profile_routes" in out
     assert fleet.ops == [] and _config_flag(fleet.root) is None
@@ -396,7 +411,7 @@ def test_update_hook_migrates_when_unblocked_and_only_warns_when_blocked(fleet, 
 
 def test_update_hook_never_touches_single_profile_or_already_multiplexed(fleet, capsys):
     fleet.services.clear(); fleet.pids.clear()  # secondaries exist but run no gateway of their own
-    gm.maybe_auto_migrate_after_update()
+    migrate_cli.maybe_auto_migrate_after_update()
     assert capsys.readouterr().out == "" and _config_flag(fleet.root) is None
 
 
@@ -425,7 +440,7 @@ def test_update_hook_refuses_to_cross_service_user_or_home_boundary(
         raising=False,  # absent on the pre-fix module: the test must then fail on behaviour, not on the seam
     )
 
-    gm.maybe_auto_migrate_after_update()
+    migrate_cli.maybe_auto_migrate_after_update()
 
     out = capsys.readouterr().out
     assert expected in out and gm.MIGRATE_COMMAND in out and "'ops'" in out
@@ -435,7 +450,7 @@ def test_update_hook_refuses_to_cross_service_user_or_home_boundary(
 
     plan = gm.build_migration_plan()
     assert not plan.blocked and any(expected in n for n in plan.notices)
-    gm.cmd_migrate(SimpleNamespace(multiplex=True, dry_run=True, yes=True))
+    migrate_cli.cmd_migrate(SimpleNamespace(multiplex=True, dry_run=True, yes=True))
     assert expected in capsys.readouterr().out
 
 
@@ -445,7 +460,7 @@ def test_update_hook_still_migrates_same_user_same_scope_profiles_under_the_defa
     fleet.services["default"] = ("systemd", False)
     monkeypatch.setattr(gm, "_gateway_identity", lambda home, pid, service: (1000, home), raising=False)
 
-    gm.maybe_auto_migrate_after_update()
+    migrate_cli.maybe_auto_migrate_after_update()
 
     out = capsys.readouterr().out
     assert "Migrating per-profile gateways" in out and "serves 3 profiles" in out
@@ -466,7 +481,7 @@ def test_update_hook_folds_a_unit_less_default_when_every_secondary_shares_one_m
     assert plan.target_service_kind() == ("launchd", False)
     assert auto_migration_blockers(plan) == []
 
-    gm.maybe_auto_migrate_after_update()
+    migrate_cli.maybe_auto_migrate_after_update()
     out = capsys.readouterr().out
     assert "serves 3 profiles" in out and _config_flag(fleet.root) is True
     assert ("coder", "uninstall") in fleet.ops and ("ops", "uninstall") in fleet.ops
@@ -493,7 +508,7 @@ def test_auto_multiplex_migration_false_opts_out_of_the_update_hook_but_not_the_
         "model:\n  default: x\nauto_multiplex_migration: false\ngateway:\n  auto_multiplex_migration: false\n",
         encoding="utf-8")
 
-    gm.maybe_auto_migrate_after_update()
+    migrate_cli.maybe_auto_migrate_after_update()
     assert capsys.readouterr().out == ""
     assert fleet.ops == [] and _config_flag(fleet.root) is None
     assert fleet.services == {"coder": ("systemd", False), "ops": ("systemd", False)}
@@ -515,7 +530,7 @@ def test_auto_multiplex_migration_false_opts_out_of_the_update_hook_but_not_the_
     (fleet.root / "config.yaml").write_text(
         "model:\n  default: x\ngateway:\n  auto_multiplex_migration: false\n", encoding="utf-8")
     with pytest.raises(SystemExit) as exc:
-        gm.cmd_migrate(SimpleNamespace(multiplex=True, dry_run=False, yes=True))
+        migrate_cli.cmd_migrate(SimpleNamespace(multiplex=True, dry_run=False, yes=True))
     assert exc.value.code == 0
     assert _config_flag(fleet.root) is True and not (fleet.root / gm.MANIFEST_NAME).exists()
 
@@ -540,7 +555,7 @@ def test_explicit_migrate_with_no_standalone_secondaries_still_flips_flag_and_re
         seen.setdefault("m", json.loads((home / gm.MANIFEST_NAME).read_text(encoding="utf-8"))),
         real_wait(home, exp, t))[1])
     with pytest.raises(SystemExit) as exc:
-        gm.cmd_migrate(SimpleNamespace(multiplex=True, dry_run=False, yes=True))
+        migrate_cli.cmd_migrate(SimpleNamespace(multiplex=True, dry_run=False, yes=True))
     assert exc.value.code == 0
     manifest = seen["m"]
     assert fleet.services.pop("default-detached") is True
@@ -552,7 +567,7 @@ def test_explicit_migrate_with_no_standalone_secondaries_still_flips_flag_and_re
     assert "serves 3 profiles" in out
     # That same manifest is what the compensator would have used: flag restored, nothing to reinstall.
     gm._write_manifest(fleet.root, manifest)
-    assert gm.rollback_migration(fleet.root) is True and _config_flag(fleet.root) is False
+    assert _rollback_migration(fleet.root) is True and _config_flag(fleet.root) is False
 
 
 def test_failed_default_bringup_compensates_to_one_detached_gateway(fleet, monkeypatch, capsys):
@@ -568,7 +583,7 @@ def test_failed_default_bringup_compensates_to_one_detached_gateway(fleet, monke
         real_op(kind, system, verb, home, run_as_user=run_as_user)
 
     monkeypatch.setattr(gm, "_service_op", _refusing)
-    assert gm.apply_migration(gm.build_migration_plan(), served_wait=0.1) is False
+    assert _apply_migration(gm.build_migration_plan(), served_wait=0.1) is False
     out = capsys.readouterr().out
     assert "Restoring one host gateway" in out and "Compensated: one host gateway is running" in out
     assert "falling back to a detached gateway" in out
@@ -591,7 +606,7 @@ def test_interrupted_apply_is_resumed_from_the_manifest_not_short_circuited(flee
     with pytest.MonkeyPatch.context() as dying:
         dying.setattr(gm, "_restart_default", lambda *a, **k: (_ for _ in ()).throw(KeyboardInterrupt()))
         with pytest.raises(KeyboardInterrupt):
-            gm.apply_migration(gm.build_migration_plan(), served_wait=0.1)
+            _apply_migration(gm.build_migration_plan(), served_wait=0.1)
     assert _config_flag(fleet.root) is True and "coder" not in fleet.services and "default" not in fleet.services
     installs = []
     real_op = gm._service_op
@@ -604,7 +619,7 @@ def test_interrupted_apply_is_resumed_from_the_manifest_not_short_circuited(flee
     monkeypatch.setattr(gm, "_service_op", _recording)
     plan = gm.build_migration_plan()
     assert plan.interrupted and not plan.already_multiplexed
-    assert gm.apply_migration(plan, served_wait=5.0) is True
+    assert _apply_migration(plan, served_wait=5.0) is True
     assert installs == [("default", "systemd", True, "root")]
     assert "serves 3 profiles" in capsys.readouterr().out
 
@@ -623,7 +638,7 @@ def test_every_installed_unit_of_a_secondary_is_removed_and_recorded(fleet, caps
     coder_rec = next(r for r in manifest["secondaries"] if r["profile"] == "coder")
     assert [(s["kind"], s["system"]) for s in coder_rec["services"]] == [("systemd", False), ("systemd", True)]
     capsys.readouterr()
-    assert gm.rollback_migration(fleet.root) is True
+    assert _rollback_migration(fleet.root) is True
     assert [op for op in fleet.ops if op[0] == "coder" and op[1] in ("install", "start")] == [], \
         "the compensator restores one gateway, not a two-unit per-profile fleet"
 
@@ -633,7 +648,7 @@ def test_every_installed_unit_of_a_secondary_is_removed_and_recorded(fleet, caps
     (fleet.root / "config.yaml").write_text("model:\n  default: x\n", encoding="utf-8")
     fleet.services.update({"default": ("systemd", False), "coder": [("systemd", False), ("systemd", True)]})
     fleet.pids.update({"coder": 4101, "ops": 4102}); fleet.ops.clear()
-    gm.maybe_auto_migrate_after_update()
+    migrate_cli.maybe_auto_migrate_after_update()
     assert "more than one installed service" in capsys.readouterr().out and fleet.ops == []
 
 
@@ -655,7 +670,7 @@ def test_unresolvable_system_unit_user_is_unknown_principal_not_directory_owner(
     fleet.services.update({"default": ("systemd", True), "coder": ("systemd", True)})
     monkeypatch.setattr(gm, "_gateway_identity",
                         lambda home, pid, services: (None if _name(home) == "coder" else 1000, home))
-    gm.maybe_auto_migrate_after_update()
+    migrate_cli.maybe_auto_migrate_after_update()
     out = capsys.readouterr().out
     assert "cannot be resolved" in out and gm.MIGRATE_COMMAND in out
     assert fleet.ops == [] and _config_flag(fleet.root) is None
@@ -686,7 +701,7 @@ def test_opt_out_reads_effective_config_managed_false_wins_and_string_false_is_f
     with gm._home_env(fleet.root):
         assert cfg.load_config()["gateway"]["auto_multiplex_migration"] is False
     assert auto_migration_opted_out(fleet.root) is True
-    gm.maybe_auto_migrate_after_update()
+    migrate_cli.maybe_auto_migrate_after_update()
     assert fleet.ops == [] and _config_flag(fleet.root) is None
 
 
@@ -710,14 +725,14 @@ def test_interruption_after_the_default_unit_exists_is_still_interrupted_not_alr
     with pytest.MonkeyPatch.context() as dying:
         dying.setattr(gm, "_service_op", _killed_at_start)
         with pytest.raises(KeyboardInterrupt):
-            gm.apply_migration(gm.build_migration_plan(), served_wait=0.1)
+            _apply_migration(gm.build_migration_plan(), served_wait=0.1)
     assert _config_flag(fleet.root) is True and fleet.services == {"default": ("systemd", False)}
     assert (fleet.root / gm.MANIFEST_NAME).exists()
 
     plan = gm.build_migration_plan()
     assert plan.interrupted and not plan.already_multiplexed
     fleet.ops.clear()
-    assert gm.apply_migration(plan, served_wait=5.0) is True
+    assert _apply_migration(plan, served_wait=5.0) is True
     assert fleet.ops[-1] == ("default", "restart") and "serves 3 profiles" in capsys.readouterr().out
     # Postcondition met: the next plan sees the live multiplexer and stops.
     assert gm.build_migration_plan().already_multiplexed
@@ -741,7 +756,7 @@ def test_failure_anywhere_in_the_destructive_phase_restores_the_removed_secondar
         real_flag = gm._write_multiplex_flag
         monkeypatch.setattr(gm, "_write_multiplex_flag",
                             lambda home, value: (_ for _ in ()).throw(OSError("read-only config")) if value else real_flag(home, value))
-    assert gm.apply_migration(gm.build_migration_plan(), served_wait=0.1) is False
+    assert _apply_migration(gm.build_migration_plan(), served_wait=0.1) is False
     out = capsys.readouterr().out
     assert "Restoring one host gateway" in out and "Compensated: one host gateway is running" in out
     assert _config_flag(fleet.root) is not True
@@ -765,7 +780,7 @@ def test_known_bringup_refusal_is_rejected_before_any_secondary_is_touched(fleet
     monkeypatch.setattr(systemd_identity, "require_root", lambda action: None)  # we are "root"
     for var in ("SUDO_USER", "USER", "LOGNAME"):
         monkeypatch.setenv(var, "root")
-    assert gm.apply_migration(gm.build_migration_plan(), served_wait=0.1) is False
+    assert _apply_migration(gm.build_migration_plan(), served_wait=0.1) is False
     out = capsys.readouterr().out
     assert "before changing anything" in out and "--run-as-user root" in out
     assert fleet.ops == [] and _config_flag(fleet.root) is None and not (fleet.root / gm.MANIFEST_NAME).exists()
@@ -791,7 +806,7 @@ def test_unknown_default_system_principal_blocks_the_update_hook(fleet, tmp_path
     assert gateway_identity(fleet.root, None, [("systemd", True)])[0] is None
     blockers = auto_migration_blockers(plan)
     assert len(blockers) == 1 and "default gateway" in blockers[0] and "cannot be resolved" in blockers[0]
-    gm.maybe_auto_migrate_after_update()
+    migrate_cli.maybe_auto_migrate_after_update()
     out = capsys.readouterr().out
     assert "cannot be resolved" in out and gm.MIGRATE_COMMAND in out
     assert fleet.ops == [] and _config_flag(fleet.root) is None
@@ -815,7 +830,7 @@ def test_migrate_leaves_exactly_one_host_unit_serving_every_profile_and_is_idemp
     fleet.services["default"] = ("systemd", False)
     assert len(fleet.services) == 3  # default + the two per-profile units
     with pytest.raises(SystemExit) as exc:
-        gm.cmd_migrate(SimpleNamespace(multiplex=True, dry_run=False, yes=True))
+        migrate_cli.cmd_migrate(SimpleNamespace(multiplex=True, dry_run=False, yes=True))
     assert exc.value.code == 0
     assert fleet.services == {"default": ("systemd", False)}
     assert fleet.pids == {}
@@ -826,7 +841,7 @@ def test_migrate_leaves_exactly_one_host_unit_serving_every_profile_and_is_idemp
     fleet.ops.clear()
     plan = gm.build_migration_plan()
     assert plan.already_multiplexed and not plan.standalone_secondaries
-    gm.cmd_migrate(SimpleNamespace(multiplex=True, dry_run=False, yes=True))  # returns, no exit
+    migrate_cli.cmd_migrate(SimpleNamespace(multiplex=True, dry_run=False, yes=True))  # returns, no exit
     assert fleet.ops == [] and fleet.services == {"default": ("systemd", False)}
     assert "already multiplexing" in capsys.readouterr().out
 
@@ -849,7 +864,7 @@ def test_half_migrated_host_converges_on_a_re_run(fleet, capsys):
     assert [p.name for p in plan.standalone_secondaries] == ["coder"]
 
     with pytest.raises(SystemExit) as exc:
-        gm.cmd_migrate(SimpleNamespace(multiplex=True, dry_run=False, yes=True))
+        migrate_cli.cmd_migrate(SimpleNamespace(multiplex=True, dry_run=False, yes=True))
     assert exc.value.code == 0
     assert fleet.services == {"default": ("systemd", False)} and fleet.pids == {}
     out = capsys.readouterr().out
@@ -859,7 +874,7 @@ def test_half_migrated_host_converges_on_a_re_run(fleet, capsys):
 
 def test_plan_names_every_process_it_will_sigterm_before_it_signals_anything(fleet, capsys):
     """A running gateway is never stopped silently: the dry run names the pids and changes nothing."""
-    gm.cmd_migrate(SimpleNamespace(multiplex=True, dry_run=True, yes=True))
+    migrate_cli.cmd_migrate(SimpleNamespace(multiplex=True, dry_run=True, yes=True))
     out = capsys.readouterr().out
     assert "SIGTERM" in out and "coder (pid 4101)" in out and "ops (pid 4102)" in out
     assert fleet.ops == [] and fleet.pids == {"coder": 4101, "ops": 4102}
@@ -908,4 +923,4 @@ def test_standalone_profile_is_listed_left_alone_and_not_a_fold_target(fleet):
     payload = json.loads(json.dumps(plan.to_dict()))
     assert payload["standalone_by_config"] == list(plan.standalone_by_config)
     assert "ops" not in [p["profile"] for p in payload["profiles"]]
-    assert any("ops" in line for line in gm.format_plan(plan, dry_run=True))
+    assert any("ops" in line for line in migrate_cli.format_plan(plan, dry_run=True))

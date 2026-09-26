@@ -3081,7 +3081,7 @@ def _cmd_migrate_legacy(args):
 
 
 def _cmd_migrate(args):
-    from gateway.migration import cmd_migrate
+    from nous_cli.gateway_migrate import cmd_migrate
     cmd_migrate(args)
 
 
