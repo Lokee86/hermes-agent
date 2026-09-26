@@ -547,7 +547,7 @@ class TestStopProfileGateway:
         calls = []
         monkeypatch.setattr("gateway.status.get_running_pid", lambda: pid)
         monkeypatch.setattr(gateway_windows, "_windows_stop_drain_timeout", lambda: 7.0)
-        monkeypatch.setattr("gateway.status.get_process_start_time", lambda target: 100)
+        monkeypatch.setattr("runtime.process_identity.get_process_start_time", lambda target: 100)
         monkeypatch.setattr(
             gateway_windows,
             "_drain_gateway_pid",

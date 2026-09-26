@@ -43,7 +43,7 @@ def _abort_on_error(prefix: str):
 def _write_update_planned_stop_marker(profile_path: Path, pid: int) -> bool:
     """Write a planned-stop marker into a specific profile home."""
     try:
-        from gateway.status import _get_process_start_time
+        from runtime.process_identity import get_process_start_time as _get_process_start_time
         from utils import atomic_json_write
         atomic_json_write(
             Path(profile_path) / ".gateway-planned-stop.json",
@@ -409,7 +409,7 @@ def _ledger_manual_serve_holders(matches: list[tuple[int, str, str]]) -> list[di
     NOT alive (a Desktop-owned backend keeps its live Electron spawner and must keep the refusal — the app would
     respawn what we kill). Full entries let the relauncher rebuild from host/port/profile, not argv."""
     try:
-        from hermes_cli.process_identity import ledger_entries, spawner_is_dead
+        from runtime.process_identity import ledger_entries, spawner_is_dead
     except Exception:
         return []
     holder_pids = {int(pid) for pid, _name, _cmd in matches}
@@ -525,7 +525,7 @@ def _orphaned_desktop_backend_pids(matches: list[tuple[int, str, str]]) -> list[
         try:
             proc = psutil.Process(int(pid))
             # Fingerprint from the SAME psutil handle, centisecond-quantized like
-            # gateway.status.get_process_start_time so pid_is_hermes round-trips at kill time.
+            # runtime.process_identity.get_process_start_time so pid_is_hermes round-trips at kill time.
             process_start_time = int(round(proc.create_time() * 100))
         except psutil.NoSuchProcess:
             continue  # exited during classification — nothing to reap
@@ -566,7 +566,7 @@ def _ledger_reapable_backend_pids(matches: list[tuple[int, str, str]]) -> list[i
     (PID reuse can't forge it), purpose is a REAPABLE kind (never interactive), and the recorded SPAWNER is
     provably dead. Safe in ANY context. Unlisted holders fall to later rungs and never disqualify identified ones."""
     try:
-        from hermes_cli.process_identity import REAPABLE_PURPOSES, ledger_entries, spawner_is_dead
+        from runtime.process_identity import REAPABLE_PURPOSES, ledger_entries, spawner_is_dead
         entries = ledger_entries()
     except Exception:
         return []
@@ -609,7 +609,7 @@ def _stop_process_trees(pids: list[int] | list[tuple[int, int]]) -> None:
 
     See #70026.
     """
-    from gateway.status import get_process_start_time
+    from runtime.process_identity import get_process_start_time
     from hermes_cli._subprocess_compat import pid_is_hermes, windows_hide_flags
     for entry in pids:
         pid, expected_start_time = entry if isinstance(entry, tuple) else (int(entry), get_process_start_time(int(entry)))
@@ -654,7 +654,7 @@ def _desktop_owns_gateway_lifecycle() -> bool:
     """
     from hermes_cli.update_cmd import _m
     with _best_effort('Desktop-lifecycle ledger probe failed: %s'):
-        from hermes_cli.process_identity import ledger_entries, spawner_is_dead
+        from runtime.process_identity import ledger_entries, spawner_is_dead
         if any(e.get("purpose") in _BACKEND_PURPOSES and spawner_is_dead(e) is False for e in ledger_entries()):
             return True
     psutil = _psutil()
@@ -927,7 +927,8 @@ def _pause_windows_gateways_for_update() -> dict | None:
     if not _m()._is_windows():
         return None
     with _abort_on_error("Could not prepare Windows gateway pause for update"):
-        from gateway.status import get_process_start_time, terminate_pid
+        from gateway.status import terminate_pid
+        from runtime.process_identity import get_process_start_time
         from hermes_cli.gateway import _capture_gateway_argv
     profile_processes, service_gateways, service_gateway_pids, running_pids = _discover_windows_gateways()
     if not running_pids:
@@ -1346,7 +1347,8 @@ def _reap_and_rescan(message: str, pids, stop=None) -> list[tuple[int, str, str]
 
 def _terminate_leftover_gateways(pids) -> None:
     """Force-stop leftover gateways one by one; a failure is logged, never raised."""
-    from gateway.status import get_process_start_time, terminate_pid
+    from gateway.status import terminate_pid
+    from runtime.process_identity import get_process_start_time
     for _pid in pids:
         _try_call(lambda p=int(_pid): terminate_pid(p, force=True, expected_start_time=get_process_start_time(p)),
                   "Could not stop leftover gateway %s: %s", _pid)

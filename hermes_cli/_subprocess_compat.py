@@ -384,7 +384,7 @@ def noninteractive_git_env(base: "Mapping[str, str] | None" = None) -> dict[str,
 def _process_start_time(pid: int) -> int | None:
     """The repository's stable process-start fingerprint, if available."""
     try:
-        from gateway.status import get_process_start_time
+        from runtime.process_identity import get_process_start_time
 
         return get_process_start_time(pid)
     except Exception:

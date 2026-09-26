@@ -204,7 +204,7 @@ def test_missing_psutil_keeps_refusal():
 
 def test_stop_process_trees_kills_full_tree():
 
-    with patch("gateway.status.get_process_start_time", return_value=123), patch(
+    with patch("runtime.process_identity.get_process_start_time", return_value=123), patch(
         "hermes_cli._subprocess_compat.pid_is_hermes", return_value=True
     ), patch.object(update_cmd.subprocess, "run") as run:
         cli_main._stop_process_trees([111, 222])

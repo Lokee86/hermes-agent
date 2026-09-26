@@ -49,7 +49,8 @@ def _cleanup(proc: subprocess.Popen) -> None:
 
 class TestTerminatePidIdentityLive:
     def test_matching_identity_kills_real_process(self):
-        from gateway.status import get_process_start_time, terminate_pid
+        from gateway.status import terminate_pid
+        from runtime.process_identity import get_process_start_time
 
         proc = _spawn_sleeper()
         try:
@@ -73,7 +74,8 @@ class TestTerminatePidIdentityLive:
 
     def test_mismatched_identity_refuses_and_process_survives(self):
         """The recycled-PID scenario: recorded identity != live identity."""
-        from gateway.status import get_process_start_time, terminate_pid
+        from gateway.status import terminate_pid
+        from runtime.process_identity import get_process_start_time
 
         # Simulate recycling: capture the identity of a process that then
         # dies, and respawn a DIFFERENT process. We can't force Windows to
@@ -98,7 +100,8 @@ class TestTerminatePidIdentityLive:
             _cleanup(impostor)
 
     def test_dead_pid_identity_unavailable_refuses(self):
-        from gateway.status import get_process_start_time, terminate_pid
+        from gateway.status import terminate_pid
+        from runtime.process_identity import get_process_start_time
 
         proc = _spawn_sleeper(1)
         pid = proc.pid
@@ -130,7 +133,7 @@ class TestPidIsHermesLive:
             _cleanup(proc)
 
     def test_stale_fingerprint_is_refused_even_for_hermes_argv(self):
-        from gateway.status import get_process_start_time
+        from runtime.process_identity import get_process_start_time
         from hermes_cli._subprocess_compat import pid_is_hermes
 
         proc = _spawn_sleeper()

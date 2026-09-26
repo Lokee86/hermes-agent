@@ -44,6 +44,7 @@ _bootstrap_root = os.path.realpath(os.path.join(os.path.dirname(__file__), os.pa
 if _bootstrap_root not in sys.path:
     sys.path.insert(0, _bootstrap_root)
 from hermes_cli import _startup_fast  # noqa: E402
+from runtime.desktop_identity import is_desktop_ssh_backend_argv  # noqa: E402
 
 # A literal ``~``/``$VAR`` in HERMES_HOME (fish, or any quoted value) must become absolute
 # before the first reader — otherwise it resolves against cwd and scaffolds <cwd>/~/.hermes.
@@ -610,7 +611,7 @@ def _apply_profile_override() -> None:
         return
 
     if (profile_name is None and not _under_gateway_supervisor(argv)
-            and not _startup_fast.is_desktop_ssh_backend_argv(argv)
+            and not is_desktop_ssh_backend_argv(argv)
             and not _s6_supervised_gateway_run(argv)):
         try:
             from hermes_constants import get_default_hermes_root
@@ -788,7 +789,7 @@ from hermes_cli.main_platform_setup import (
     cmd_whatsapp,
     cmd_whatsapp_cloud,
 )
-from hermes_cli.process_identity import is_desktop_owned_backend as _is_desktop_owned_backend
+from runtime.desktop_identity import is_desktop_owned_backend as _is_desktop_owned_backend
 from hermes_cli.main_dashboard import (
     _attach_to_host_backend,
     _finalize_update_output,

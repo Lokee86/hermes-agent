@@ -641,7 +641,7 @@ def kill_gateway_processes(force: bool = False, exclude_pids: set | None = None,
                 # anything that no longer looks like a gateway — refuse those.
                 if _capture_gateway_argv(pid) is None:
                     continue
-                from gateway.status import get_process_start_time
+                from runtime.process_identity import get_process_start_time
                 expected_start_time = get_process_start_time(pid)
             terminate_pid(pid, force=force, expected_start_time=expected_start_time)
             killed += 1
@@ -714,7 +714,8 @@ def _reap_unsupervised_gateway_orphans(extra_exclude: set | None = None) -> bool
         if _windows_scheduled_task_supervises(_task_name):
             return False
 
-    from gateway.status import _pid_exists, get_process_start_time, write_planned_stop_marker
+    from gateway.status import _pid_exists, write_planned_stop_marker
+    from runtime.process_identity import get_process_start_time
     own = _reaper_exclusion_pids(extra_exclude)
     try:
         # On Windows also drop Task Scheduler-owned candidates (the pidfile-less gap).
@@ -873,7 +874,7 @@ def stop_profile_gateway() -> bool:
         # Windows maps SIGTERM to TerminateProcess. The marker watcher is the
         # gateway's graceful-stop IPC, so wait for it before force-killing a
         # wedged process.
-        from gateway.status import get_process_start_time
+        from runtime.process_identity import get_process_start_time
         from gateway.windows_service import (
             _drain_gateway_pid,
             _force_terminate_known_gateway_pids,

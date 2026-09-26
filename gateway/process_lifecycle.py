@@ -42,7 +42,8 @@ def wait_then_force_kill(
 
     Returns True when every PID exited during the graceful wait.
     """
-    from gateway.status import _pid_exists, get_process_start_time, terminate_pid
+    from gateway.status import _pid_exists, terminate_pid
+    from runtime.process_identity import get_process_start_time
 
     for _ in range(int(wait / 0.5)):
         time.sleep(0.5)
@@ -75,11 +76,8 @@ def stop_gateway_process(profile_dir: Path) -> GatewayProcessStopResult:
         raw = pid_file.read_text(encoding="utf-8").strip()
         data = json.loads(raw) if raw.startswith("{") else {"pid": int(raw)}
         pid = int(data["pid"])
-        from gateway.status import (
-            get_process_start_time,
-            recorded_gateway_home_conflicts,
-            terminate_pid,
-        )
+        from gateway.status import recorded_gateway_home_conflicts, terminate_pid
+        from runtime.process_identity import get_process_start_time
 
         if recorded_gateway_home_conflicts(data, expected_home=profile_dir):
             return GatewayProcessStopResult("refused", profile_dir, pid)

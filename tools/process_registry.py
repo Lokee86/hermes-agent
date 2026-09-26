@@ -883,7 +883,7 @@ class ProcessRegistry(ProcessCheckpointMixin):
     def _safe_host_start_time(pid: Optional[int]) -> Optional[int]:
         """Kernel start ticks for a host PID, or None when unavailable."""
         try:
-            from gateway.status import get_process_start_time
+            from runtime.process_identity import get_process_start_time
             return get_process_start_time(pid) if pid else None
         except Exception:
             return None

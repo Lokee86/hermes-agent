@@ -121,6 +121,8 @@ Includes:
 - resource limits;
 - generic SQLite helpers such as transactions, database opening, and schema utilities.
 
+Process-identity slice complete: generic process identity/incarnation, spawn-ledger ownership, Desktop backend identity, and Windows self-containment now live under `runtime/`; all in-tree consumers are rewired; `hermes_cli/process_identity.py` is deleted. The exit gate is enforced by `pitlord.json` and `tests/runtime/test_process_identity_boundary.py`.
+
 ## Phase 4 — Plugin runtime
 
 Separate plugin runtime from plugin CLI management.
