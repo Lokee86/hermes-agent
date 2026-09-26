@@ -163,7 +163,7 @@ def _launchd(home: Path, deadline: float) -> ExistingService | None:
 
 
 def _windows(home: Path, deadline: float) -> ExistingService | None:
-    from hermes_cli.gateway_windows import _startup_dir, _schtasks_encoding
+    from gateway.windows_service import _startup_dir, _schtasks_encoding
     suffix = service_suffix_for_home(home)
     name = f"Hermes_Gateway{'_' + suffix if suffix else ''}"
     result = _run(["schtasks.exe", "/Query", "/FO", "CSV", "/NH"], deadline, encoding=_schtasks_encoding())

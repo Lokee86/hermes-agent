@@ -22,10 +22,12 @@ the `┊` activity feed. `load_cli_config()` in `cli.py` merges CLI defaults + u
 `hermes_cli/gateway.py` remains the `hermes gateway` compatibility/command facade while
 Gateway-owned lifecycle backends live under `gateway/`. The macOS LaunchAgent backend is
 `gateway/launchd_service.py`; it owns plist generation/refresh, launchctl lifecycle/probes, fleet-label
-discovery, and its `_resolved_launchd_domain` cache directly. Do not route launchd implementation
-through `hermes_cli.gateway` or restore the old `_gw()` late-binding seam. The facade may re-export
-backend symbols for compatibility while callers that own lifecycle behaviour import the Gateway module
-directly. Windows/service-manager ownership remains in its later refactor phase.
+discovery, and its `_resolved_launchd_domain` cache directly. The Windows backend is
+`gateway/windows_service.py`; Scheduled Task/Startup fallback lifecycle and legacy-launcher cleanup
+live with it under `gateway/`, and process/service discovery lives in `gateway/process_discovery.py`.
+Do not route launchd or Windows implementation through `hermes_cli.gateway`, restore the old launchd
+`_gw()` seam, or import the retired `hermes_cli.gateway_windows` module. The facade may re-export
+backend/discovery symbols for compatibility while lifecycle owners import the Gateway modules directly.
 `process_command()` resolves the canonical name via `resolve_command()` then dispatches through
 `HermesCLI._SLASH_DISPATCH` (`canonical -> (method name, pass_arg)`), falling back to a
 `_handle_<name>_command` method by naming convention. **There is no `elif` ladder — do not add one.**

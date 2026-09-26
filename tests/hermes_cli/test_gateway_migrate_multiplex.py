@@ -873,7 +873,7 @@ def test_windows_task_detection_reads_both_the_task_and_the_startup_fallback(mon
     """`hermes gateway install` falls back to a Startup-folder entry when it cannot register a
     task; a migration that removed only the task would leave that entry launching a second
     gateway at the next logon."""
-    from hermes_cli import gateway_windows as gww
+    from gateway import windows_service as gww
     for task, startup, expected in ((True, False, True), (False, True, True), (False, False, False)):
         monkeypatch.setattr(gww, "is_task_registered", lambda t=task: t)
         monkeypatch.setattr(gww, "is_startup_entry_installed", lambda s=startup: s)

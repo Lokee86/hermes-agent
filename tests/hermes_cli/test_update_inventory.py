@@ -36,9 +36,9 @@ def fleet(monkeypatch, tmp_path):
     # A runtime is a VERIFIED gateway identity: live PID whose command line is a gateway's for that home.
     monkeypatch.setattr("gateway.status._read_process_cmdline", lambda pid: {
         100: "hermes gateway run", 200: "hermes --profile work gateway run"}.get(pid))
-    monkeypatch.setattr("hermes_cli.gateway._get_service_pids", lambda all_profiles=False: {100})
-    monkeypatch.setattr("hermes_cli.systemd_runtime.supports_services", lambda: True)
-    monkeypatch.setattr("hermes_cli.gateway.find_profile_gateway_processes", lambda exclude_pids=None: [])
+    monkeypatch.setattr("gateway.process_discovery._get_service_pids", lambda all_profiles=False: {100})
+    monkeypatch.setattr("gateway.systemd_runtime.supports_services", lambda: True)
+    monkeypatch.setattr("gateway.process_discovery.find_profile_gateway_processes", lambda exclude_pids=None: [])
     monkeypatch.setattr(
         "hermes_cli.build_info.get_code_identity",
         lambda refresh=False: {"sha": "a" * 40, "short_sha": "a" * 8, "version": "1.0", "source": "git"},
@@ -98,10 +98,10 @@ class TestCollectInventory:
 
     def test_pid_file_fallback_covers_unstamped_profiles(self, fleet, monkeypatch):
         """Gateways with a PID file but no runtime-status record still appear."""
-        from hermes_cli.gateway import ProfileGatewayProcess
+        from gateway.process_discovery import ProfileGatewayProcess
 
         monkeypatch.setattr(
-            "hermes_cli.gateway.find_profile_gateway_processes",
+            "gateway.process_discovery.find_profile_gateway_processes",
             lambda exclude_pids=None: [
                 ProfileGatewayProcess(profile="legacy", path=Path("/x"), pid=300),
                 # duplicate of an already-seen pid — must be deduped
@@ -122,8 +122,8 @@ class TestCollectInventory:
             "hermes_cli.config.detect_install_method",
             "hermes_cli.build_info.get_code_identity",
             "profiles.paths._get_default_hermes_home",
-            "hermes_cli.gateway._get_service_pids",
-            "hermes_cli.gateway.find_profile_gateway_processes",
+            "gateway.process_discovery._get_service_pids",
+            "gateway.process_discovery.find_profile_gateway_processes",
         ):
             monkeypatch.setattr(target, _boom)
         plan = ui.collect_runtime_inventory()

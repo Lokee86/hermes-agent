@@ -319,7 +319,7 @@ def _windows_task_installed() -> bool:
     entry when it cannot register a scheduled task, and a migration that removed only the task
     would leave the fallback launching a second gateway at the next logon.
     """
-    from hermes_cli import gateway_windows as gww
+    from gateway import windows_service as gww
     with contextlib.suppress(Exception):
         return bool(gww.is_task_registered() or gww.is_startup_entry_installed())
     return False
@@ -346,7 +346,7 @@ def _service_op(kind: str, system: bool, verb: str, home: Path, *, run_as_user: 
             elif kind == "windows":
                 # Non-interactive: the migration already asked; prompting here would hang a
                 # supervised/`--yes` run on a console that has no operator.
-                from hermes_cli import gateway_windows as gww
+                from gateway import windows_service as gww
                 gww.install(start_now=True, start_on_login=True)
             else:
                 from gateway.systemd_lifecycle import install

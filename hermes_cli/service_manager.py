@@ -100,15 +100,16 @@ def _s6_running() -> bool:
 
 # ---------------------------------------------------------------------------
 # Host backends: thin facades over ``hermes_cli.gateway`` (systemd/launchd) and
-# ``hermes_cli.gateway_windows``. The protocol's ``name`` parameter is unused here — host backends
+# ``gateway.windows_service``. The protocol's ``name`` parameter is unused here — host backends
 # operate on the currently active profile (``hermes -p <profile>``); the shape exists for s6 where
 # each profile maps to a distinct service directory.
 # ---------------------------------------------------------------------------
 
 
 class _HostServiceManager:
-    """``start``/``stop``/``restart`` resolve to ``<_fn_prefix><op>`` on ``hermes_cli.<_backend>``
-    at call time (lazy import; tests monkeypatch the submodule or its functions). Runtime
+    """``start``/``stop``/``restart`` resolve to the selected host backend at call time.
+    The default implementation lazy-loads ``hermes_cli.<_backend>``; Windows overrides it for
+    ``gateway.windows_service``. Runtime
     registration is unsupported on every host backend.
     """
 
@@ -179,14 +180,19 @@ class LaunchdServiceManager(_HostServiceManager):
 
 
 class WindowsServiceManager(_HostServiceManager):
-    """Wraps ``hermes_cli.gateway_windows`` (Scheduled Task / Startup-folder fallback).
+    """Wraps ``gateway.windows_service`` (Scheduled Task / Startup-folder fallback).
 
     Not a true init service but the lifecycle protocol is the same. ``install`` takes
     Windows-specific kwargs passed straight through — non-Windows callers must never call it.
     """
 
     kind: ServiceManagerKind = "windows"
-    _backend = "gateway_windows"
+    _backend = "windows_service"
+
+    def _backend_module(self):
+        from gateway import windows_service
+
+        return windows_service
 
     def install(
         self,
@@ -201,7 +207,8 @@ class WindowsServiceManager(_HostServiceManager):
         )
 
     def is_running(self, name: str) -> bool:
-        from hermes_cli.gateway import find_gateway_pids
+        from gateway.process_discovery import find_gateway_pids
+
         if not self._backend_module().is_installed():
             return False
         return bool(find_gateway_pids())

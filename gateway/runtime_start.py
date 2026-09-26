@@ -25,7 +25,7 @@ def spawn_unmanaged_gateway(profile_home: Path, *, deadline: float) -> subproces
     command = [sys.executable, "-m", "hermes_cli.main", *selector, "gateway", "run", "--quiet"]
     env = dict(os.environ)
     if sys.platform == "win32":
-        from hermes_cli.gateway_windows import windowless_gateway_restart_spec
+        from gateway.windows_service import windowless_gateway_restart_spec
         command, _, overlay = windowless_gateway_restart_spec(command)
         if not overlay:
             raise RuntimeStartError("windows_interpreter_unavailable")
