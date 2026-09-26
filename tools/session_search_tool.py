@@ -436,9 +436,10 @@ def _discover(db, query: str, role_filter: Optional[List[str]], limit: int, sort
 
 def _resolve_profile_db(profile: str):
     """Another profile's ``state.db`` opened read-only (safe on a live DB); None = current."""
+    from hermes_state import SessionDB
+
     if profile is None or not str(profile).strip():
         return None
-        from hermes_state import SessionDB
     canon = profile_names.normalize_profile_name(profile)
     profile_names.validate_profile_name(canon)
     if not profile_registry.profile_exists(canon):
