@@ -730,7 +730,7 @@ def _run_pending_fleet_restart() -> bool:
                 failed.append("launchd")
         if is_windows():
             try:
-                from hermes_cli import gateway_windows
+                from gateway import windows_service as gateway_windows
                 if gateway_windows.is_installed():
                     gateway_windows.restart()
             except Exception as exc:

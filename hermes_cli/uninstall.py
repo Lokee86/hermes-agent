@@ -233,7 +233,7 @@ def _remove_launchd_gateway() -> bool:
 def _remove_windows_gateway() -> bool:
     """Windows: uninstall Scheduled Task + Startup-folder entry via ``gateway_windows`` (it owns
     schtasks /Delete, the .cmd unlink and stopping the detached pythonw gateway)."""
-    from hermes_cli import gateway_windows as gw
+    from gateway import windows_service as gw
     if not any(probe() for probe in (gw.is_installed, gw.is_task_registered, gw.is_startup_entry_installed)):
         return False
     try:
