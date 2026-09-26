@@ -216,7 +216,7 @@ def _transaction():
 
 def _start_time(pid: int) -> Optional[int]:
     try:
-        from gateway.status import get_process_start_time  # lazy: tests monkeypatch gateway.status
+        from runtime.process_identity import get_process_start_time
         return get_process_start_time(pid)
     except Exception:
         return None
@@ -255,7 +255,7 @@ def _owner_alive(pid: Any, started_at: Any) -> bool:
         except Exception:
             return False
     try:
-        from gateway.status import start_time_fingerprints_match
+        from runtime.process_identity import start_time_fingerprints_match
         return started_at is None or start_time_fingerprints_match(started_at, current_start)
     except (TypeError, ValueError):
         return True

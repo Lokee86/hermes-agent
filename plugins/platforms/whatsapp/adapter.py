@@ -113,7 +113,8 @@ def _bridge_pid_is_ours(pid: int, expected_start) -> bool:
         return False
     if expected_start is None:
         return False
-    return status.get_process_start_time(pid) == expected_start
+    from runtime.process_identity import get_process_start_time
+    return get_process_start_time(pid) == expected_start
 
 
 def _unlink_quietly(path: Path) -> None:
@@ -149,7 +150,7 @@ def _kill_stale_bridge_by_pidfile(session_path: Path) -> None:
 def _write_bridge_pidfile(session_path: Path, pid: int) -> None:
     """Write the bridge PID plus its kernel start time (line 2) for identity-checked cleanup."""
     with suppress(OSError):
-        from gateway.status import get_process_start_time
+        from runtime.process_identity import get_process_start_time
         start = get_process_start_time(pid)
         (session_path / "bridge.pid").write_text(str(pid) if start is None else f"{pid}\n{start}", encoding="utf-8")
 

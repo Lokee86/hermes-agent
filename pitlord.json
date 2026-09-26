@@ -90,6 +90,39 @@
         "gateway/*.py",
         "gateway/**/*.py"
       ]
+    },
+    {
+      "id": "retired-cli-process-identity-must-not-be-imported",
+      "type": "forbid_content",
+      "regex": "^[ \\t]*(?:import[ \\t]+hermes_cli[.]process_identity(?:[ \\t]|$)|from[ \\t]+hermes_cli[.]process_identity[ \\t]+import|from[ \\t]+hermes_cli[ \\t]+import[ \\t]+process_identity(?:[ \\t,]|$))",
+      "include_paths": [
+        "agent/*.py",
+        "agent/**/*.py",
+        "cron/*.py",
+        "cron/**/*.py",
+        "gateway/*.py",
+        "gateway/**/*.py",
+        "hermes_cli/*.py",
+        "hermes_cli/**/*.py",
+        "plugins/*.py",
+        "plugins/**/*.py",
+        "profiles/*.py",
+        "profiles/**/*.py",
+        "providers/*.py",
+        "providers/**/*.py",
+        "runtime/*.py",
+        "runtime/**/*.py",
+        "storage/*.py",
+        "storage/**/*.py",
+        "auth/*.py",
+        "auth/**/*.py",
+        "kanban/*.py",
+        "kanban/**/*.py",
+        "automation/*.py",
+        "automation/**/*.py",
+        "tools/*.py",
+        "tools/**/*.py"
+      ]
     }
   ]
 }

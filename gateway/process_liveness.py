@@ -183,7 +183,7 @@ def _escalate_wedged_gateway(pid: int, *, term_grace: float = 5.0, kill_wait: fl
 
     See #86684.
     """
-    from gateway.status import get_process_start_time
+    from runtime.process_identity import get_process_start_time
     expected_start_time = get_process_start_time(pid)
     try:
         terminate_pid(pid, force=False)

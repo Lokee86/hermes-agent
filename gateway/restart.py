@@ -476,7 +476,8 @@ def _request_gateway_self_restart(pid: int) -> bool:
 
 def _wait_for_gateway_exit(timeout: float = 10.0, force_after: float | None = 5.0) -> bool:
     """Wait for the active gateway PID to exit, forcing it after the grace period."""
-    from gateway.status import get_process_start_time, get_running_pid, terminate_pid
+    from gateway.status import get_running_pid, terminate_pid
+    from runtime.process_identity import get_process_start_time
 
     deadline = time.monotonic() + timeout
     force_deadline = (time.monotonic() + force_after) if force_after is not None else None

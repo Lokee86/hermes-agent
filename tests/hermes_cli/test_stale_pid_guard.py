@@ -146,7 +146,7 @@ class TestStopProcessTrees:
 
     def test_foreign_pids_only_probed(self):
         with mock.patch(
-            "gateway.status.get_process_start_time", return_value=123
+            "runtime.process_identity.get_process_start_time", return_value=123
         ), mock.patch(
             "hermes_cli._subprocess_compat.pid_is_hermes", return_value=False
         ), mock.patch.object(update_cmd.subprocess, "run") as run:
@@ -155,7 +155,7 @@ class TestStopProcessTrees:
 
     def test_hermes_pid_probed_then_taskkilled(self):
         with mock.patch(
-            "gateway.status.get_process_start_time", return_value=123
+            "runtime.process_identity.get_process_start_time", return_value=123
         ), mock.patch(
             "hermes_cli._subprocess_compat.pid_is_hermes", return_value=True
         ), mock.patch.object(
@@ -180,7 +180,7 @@ class TestKillStaleDashboardProcesses:
         with self._patch_find(), mock.patch.object(
             dashboard_procs.sys, "platform", "win32"
         ), mock.patch(
-            "gateway.status.get_process_start_time", return_value=123
+            "runtime.process_identity.get_process_start_time", return_value=123
         ), mock.patch(
             "hermes_cli._subprocess_compat.pid_is_hermes", return_value=False
         ), mock.patch.object(dashboard_procs.subprocess, "run") as run:
@@ -196,7 +196,7 @@ class TestKillStaleDashboardProcesses:
         with self._patch_find(), mock.patch.object(
             dashboard_procs.sys, "platform", "win32"
         ), mock.patch(
-            "gateway.status.get_process_start_time", return_value=123
+            "runtime.process_identity.get_process_start_time", return_value=123
         ), mock.patch(
             "hermes_cli._subprocess_compat.pid_is_hermes", return_value=True
         ), mock.patch.object(

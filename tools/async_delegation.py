@@ -157,7 +157,7 @@ def _persist_dispatch(record: Dict[str, Any]) -> None:
         return remote.dispatch(record)
     now = time.time()
     try:
-        from gateway.status import get_process_start_time
+        from runtime.process_identity import get_process_start_time
         owner_started_at = get_process_start_time(os.getpid())
     except Exception:
         owner_started_at = None
@@ -256,7 +256,8 @@ def _owner_liveness() -> Optional[Callable[[Any, Any], bool]]:
     """``alive(owner_pid, owner_started_at)`` over the shared drift-tolerant start-time comparator,
     or None when the liveness probes cannot be imported."""
     try:
-        from gateway.status import _pid_exists, get_process_start_time, start_time_fingerprints_match
+        from gateway.status import _pid_exists
+        from runtime.process_identity import get_process_start_time, start_time_fingerprints_match
     except Exception:
         return None
 

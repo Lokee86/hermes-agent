@@ -97,7 +97,7 @@ class TestTerminatePidRoutingOnWindows:
             return result
 
         monkeypatch.setattr(status.subprocess, "run", fake_run)
-        monkeypatch.setattr(status, "_get_process_start_time", lambda pid: 123456)
+        monkeypatch.setattr(status._process_identity, "get_process_start_time", lambda pid: 123456)
         status.terminate_pid(12345, force=True, expected_start_time=123456)
 
         assert captured["args"][0] == "taskkill"
@@ -117,7 +117,7 @@ class TestTerminatePidRoutingOnWindows:
             return result
 
         monkeypatch.setattr(status.subprocess, "run", fake_run)
-        monkeypatch.setattr(status, "_get_process_start_time", lambda pid: 123456)
+        monkeypatch.setattr(status._process_identity, "get_process_start_time", lambda pid: 123456)
         with pytest.raises(OSError, match="cannot be terminated"):
             status.terminate_pid(12345, force=True, expected_start_time=123456)
 
@@ -157,7 +157,7 @@ class TestTerminatePidRoutingOnWindows:
 
         monkeypatch.setattr(status.subprocess, "run", fake_run)
         monkeypatch.setattr(status.os, "kill", fake_kill)
-        monkeypatch.setattr(status, "_get_process_start_time", lambda pid: 123456)
+        monkeypatch.setattr(status._process_identity, "get_process_start_time", lambda pid: 123456)
         status.terminate_pid(42, force=True, expected_start_time=123456)
 
         assert captured["pid"] == 42

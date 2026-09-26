@@ -23,7 +23,7 @@ import time
 import urllib.parse
 
 from hermes_cli.install_identity import get_install_id as _shared_get_install_id
-from hermes_cli.process_identity import is_desktop_owned_backend
+from runtime.desktop_identity import is_desktop_owned_backend
 from hermes_cli.pty_session import run_reaper
 from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
@@ -1156,7 +1156,7 @@ def _on_server_started(
         _reap_orphaned_desktop_local_serves()
 
     def _reap_mcp_helpers() -> None:
-        from hermes_cli.process_identity import reap_orphaned_mcp_helpers
+        from runtime.process_identity import reap_orphaned_mcp_helpers
 
         reap_orphaned_mcp_helpers()
 
@@ -1189,7 +1189,8 @@ def _on_server_started(
     # ACTUAL port — what lets `hermes update` relaunch a manually-started serve
     # on its real endpoint (#63206).
     def _register_identity() -> None:
-        from hermes_cli.process_identity import attach_self_to_kill_on_close_job, register_self
+        from runtime.processes import attach_self_to_kill_on_close_job
+        from runtime.process_identity import register_self
 
         register_self(
             "serve" if headless else "dashboard",

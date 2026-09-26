@@ -837,7 +837,8 @@ def _kill_known_pids(proc, descendants) -> None:
 def _kill_process_windows(proc) -> None:
     """Identity-checked terminate (start time guards against PID reuse), else kill."""
     try:
-        from gateway.status import get_process_start_time, terminate_pid
+        from gateway.status import terminate_pid
+        from runtime.process_identity import get_process_start_time
         terminate_pid(proc.pid, force=True, expected_start_time=get_process_start_time(proc.pid))
     except Exception:
         proc.kill()
