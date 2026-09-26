@@ -48,15 +48,15 @@ def get_launchd_plist_path() -> Path:
 def launchd_gateway_labels_for_install() -> list[str]:
     """Launchd labels for every profile owned by this Hermes install."""
     import re as _re
-    from hermes_cli.profiles import list_profiles
+    from profiles.registry import list_profile_names
 
     root_label: list[str] = []
     profile_labels: list[str] = []
-    for profile in list_profiles():
-        if profile.is_default:
+    for profile_name in list_profile_names():
+        if profile_name == "default":
             root_label.append("ai.hermes.gateway")
-        elif _re.match(r"^[a-z0-9][a-z0-9_-]{0,63}$", profile.name):
-            profile_labels.append(f"ai.hermes.gateway-{profile.name}")
+        elif _re.match(r"^[a-z0-9][a-z0-9_-]{0,63}$", profile_name):
+            profile_labels.append(f"ai.hermes.gateway-{profile_name}")
     return root_label + sorted(profile_labels)
 
 
