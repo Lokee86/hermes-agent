@@ -30,7 +30,7 @@ The migration follows one rule:
 
 > Move functionality to the subsystem that owns it; move only actual CLI parsing, presentation, and command orchestration into `nous_cli`.
 
-`nous_cli` is a strangler surface, not a second implementation of Hermes functionality.
+`nous_cli` is a strangler surface, not a second implementation of Hermes functionality. This is not a blanket move of `hermes_cli` into `runtime/`: reusable runtime/domain primitives move to the subsystem that owns them, while CLI-specific parsing, presentation, policy, and command orchestration stay at the CLI edge and migrate to `nous_cli`.
 
 As each area migrates:
 
