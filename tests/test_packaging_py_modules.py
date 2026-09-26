@@ -24,6 +24,7 @@ PACKAGES = (
     "nous_cli",
     "profiles",
     "runtime",
+    "storage",
     "gateway",
     "tui_gateway",
     "cron",
@@ -89,7 +90,7 @@ def test_hermes_console_script_stays_on_legacy_cli_until_phase11():
 def test_extracted_packages_are_in_wheel_discovery():
     cfg = tomllib.loads((REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8"))
     includes = set(cfg["tool"]["setuptools"]["packages"]["find"]["include"])
-    for package in ("profiles", "runtime"):
+    for package in ("profiles", "runtime", "storage"):
         assert {package, f"{package}.*"} <= includes, (
             f"{package} must be included in setuptools package discovery so installed wheels ship it"
         )

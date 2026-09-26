@@ -325,7 +325,7 @@ def _post_update_sqlite_runtime_status():
     """Return whether the interpreter used after update has safe SQLite."""
     from hermes_cli.update_cmd import _m
     from hermes_constants import project_venv_dir
-    from hermes_cli.sqlite_runtime import probe_sqlite_runtime
+    from runtime.sqlite_runtime import probe_sqlite_runtime
     venv_dir = project_venv_dir(_m().PROJECT_ROOT)
     python = (venv_python_path(venv_dir, windows=_m()._is_windows()) if venv_dir is not None else Path(sys.executable))
     info = probe_sqlite_runtime(python)
