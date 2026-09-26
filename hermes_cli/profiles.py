@@ -1503,7 +1503,7 @@ def _s6_runtime_manager():
     """The s6 service manager inside the container, else None. Silent on host: a failing/
     absent detector must never print a confusing s6 warning to non-container users."""
     try:
-        from hermes_cli.service_manager import detect_service_manager, get_service_manager
+        from gateway.service_manager import detect_service_manager, get_service_manager
         if detect_service_manager() != "s6":
             return None
         mgr = get_service_manager()

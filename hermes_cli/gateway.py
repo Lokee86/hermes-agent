@@ -429,7 +429,7 @@ def _parse_kv_pairs(items) -> dict[str, str]:
 
 def _s6_gateway_snapshot(gateway_pids: tuple[int, ...]) -> GatewayRuntimeSnapshot | None:
     """Snapshot for an s6-supervised container gateway, or None when s6 isn't the service manager."""
-    from hermes_cli.service_manager import detect_service_manager, get_service_manager
+    from gateway.service_manager import detect_service_manager, get_service_manager
     if detect_service_manager() != "s6":
         return None
     service_name = f"gateway-{_current_profile_name()}"
@@ -2096,7 +2096,7 @@ def _print_info_lines(*lines: str) -> None:
 
 
 def _running_under_s6() -> bool:
-    from hermes_cli.service_manager import detect_service_manager
+    from gateway.service_manager import detect_service_manager
     return detect_service_manager() == "s6"
 
 
@@ -2159,10 +2159,8 @@ def _service_call(backend: str, verb: str, system: bool | None = False) -> None:
 def _dispatch_via_service_manager_if_s6(action: str, profile: str | None = None) -> bool:
     """Dispatch start/stop/restart via s6 inside an s6 container; True iff dispatched (caller returns).
     Profile defaults to the current one; missing slot / s6 errors become actionable CLI messages."""
-    from hermes_cli.service_manager import (
-        GatewayNotRegisteredError, detect_service_manager, get_service_manager,
-        register_unregistered_profile_gateway,
-    )
+    from gateway.service_manager import detect_service_manager, get_service_manager
+    from gateway.s6_manager import GatewayNotRegisteredError, register_unregistered_profile_gateway
 
     if detect_service_manager() != "s6":
         return False
@@ -2193,7 +2191,7 @@ def _dispatch_all_via_service_manager_if_s6(action: str) -> bool:
     """Dispatch ``--all`` stop/restart to every registered profile gateway under s6; True iff dispatched.
     A bare pkill is seen by s6-supervise as a crash and restarted ~1s later; the service manager flips
     ``want up``/``want down`` correctly. ``start --all`` is not a CLI surface."""
-    from hermes_cli.service_manager import (detect_service_manager, get_service_manager)
+    from gateway.service_manager import detect_service_manager, get_service_manager
     if detect_service_manager() != "s6" or action not in ("stop", "restart"):
         return False
     mgr = get_service_manager()

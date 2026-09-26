@@ -25,6 +25,9 @@ Gateway-owned lifecycle backends live under `gateway/`. The macOS LaunchAgent ba
 discovery, and its `_resolved_launchd_domain` cache directly. The Windows backend is
 `gateway/windows_service.py`; Scheduled Task/Startup fallback lifecycle and legacy-launcher cleanup
 live with it under `gateway/`, and process/service discovery lives in `gateway/process_discovery.py`.
+Service-manager protocol/detection and host backend selection live in `gateway/service_manager.py`;
+s6 runtime registration, state, and lifecycle live in `gateway/s6_manager.py`. Do not restore
+`hermes_cli.service_manager` or route host service adapters back through `hermes_cli.gateway`.
 Do not route launchd or Windows implementation through `hermes_cli.gateway`, restore the old launchd
 `_gw()` seam, or import the retired `hermes_cli.gateway_windows` module. The facade may re-export
 backend/discovery symbols for compatibility while lifecycle owners import the Gateway modules directly.

@@ -285,14 +285,14 @@ def _installed_services(home: Path) -> list[tuple[str, bool]]:
     Under s6 the footprint is the SLOT: the root slot always (it is what a restart goes through),
     a named profile's slot only while it is UP — a registered-down slot is what the container's
     boot leaves behind for every named profile and is not a gateway."""
-    from hermes_cli.service_manager import detect_service_manager
+    from gateway.service_manager import detect_service_manager
     from gateway.systemd_identity import unit_path
     from gateway.systemd_runtime import supports_services
 
     found: list[tuple[str, bool]] = []
     if detect_service_manager() == "s6":
         from gateway.s6_service import named_slot_name, slot_is_up
-        from hermes_cli.service_manager import S6ServiceManager
+        from gateway.s6_manager import S6ServiceManager
         from hermes_constants import profile_name_for_home
         name = profile_name_for_home(home) or "default"
         slot_dir = S6ServiceManager().scandir / named_slot_name(name)
@@ -1163,11 +1163,11 @@ def _host_supports_migration() -> Optional[str]:
     same way the container's boot does it (``gateway.s6_service``). What cannot be
     done from here is register a slot the boot never created — that is the one refusal left.
     """
-    from hermes_cli.service_manager import detect_service_manager
+    from gateway.service_manager import detect_service_manager
     if detect_service_manager() != "s6":
         return None
     from gateway.s6_service import named_slot_name
-    from hermes_cli.service_manager import S6ServiceManager
+    from gateway.s6_manager import S6ServiceManager
     scandir = S6ServiceManager().scandir
     if not (scandir / named_slot_name("default")).is_dir():
         return (f"s6-supervised container without a root gateway slot ({scandir / named_slot_name('default')}); "

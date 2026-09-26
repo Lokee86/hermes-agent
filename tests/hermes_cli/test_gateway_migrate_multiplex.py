@@ -886,7 +886,7 @@ def test_windows_task_detection_reads_both_the_task_and_the_startup_fallback(mon
 def test_windows_is_migratable_and_only_s6_is_refused(monkeypatch):
     """The host predicate: Windows used to be a flat refusal with hand-migration instructions.
     s6 stays refused -- its per-profile gateways are slots the container's own boot registers."""
-    import hermes_cli.service_manager as service_manager
+    import gateway.service_manager as service_manager
     monkeypatch.setattr(service_manager, "detect_service_manager", lambda: "systemd")
     assert gm._host_supports_migration() is None
 

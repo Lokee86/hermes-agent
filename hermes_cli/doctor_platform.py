@@ -206,7 +206,8 @@ def _check_s6_supervision(issues: list[str]) -> None:
     """Under our s6 /init, report static services and the ONE host gateway slot; no-op elsewhere.
     Counterpart to :func:`_check_gateway_service_linger` (systemd-on-host)."""
     try:
-        from hermes_cli.service_manager import S6ServiceManager, detect_service_manager
+        from gateway.service_manager import detect_service_manager
+        from gateway.s6_manager import S6ServiceManager
     except Exception:
         return
     if detect_service_manager() != "s6":
@@ -302,7 +303,7 @@ def _check_gateway_service_linger(issues: list[str]) -> None:
         from gateway.service_identity import SERVICE_BASE
         from gateway.systemd_identity import unit_path, user_unit_dir
         from gateway.systemd_runtime import is_linux, linger_status
-        from hermes_cli.service_manager import detect_service_manager
+        from gateway.service_manager import detect_service_manager
     except Exception as e:
         return check_warn("Gateway service linger", f"(could not import gateway helpers: {e})")
     if not is_linux() or detect_service_manager() == "s6":
