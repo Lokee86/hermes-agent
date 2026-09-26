@@ -20,7 +20,8 @@ jobs:
           cache: false
 
       - name: Install Pitlord
-        run: go install github.com/Lokee86/pitlord/cmd/pitlord@v0.1.2
+        # v0.1.2 — pin the required policy gate to immutable source.
+        run: go install github.com/Lokee86/pitlord/cmd/pitlord@c6b9c035b46e54c49408e7972cfe5e53c27779bd
 
       - name: Validate architecture policy
         run: pitlord validate --policy pitlord.json
