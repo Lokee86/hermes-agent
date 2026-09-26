@@ -31,6 +31,9 @@ s6 runtime registration, state, and lifecycle live in `gateway/s6_manager.py`. D
 Do not route launchd or Windows implementation through `hermes_cli.gateway`, restore the old launchd
 `_gw()` seam, or import the retired `hermes_cli.gateway_windows` module. The facade may re-export
 backend/discovery symbols for compatibility while lifecycle owners import the Gateway modules directly.
+Phase 2 is protected by Pitlord plus `tests/gateway/test_migration_cli_boundary.py`: `gateway/` must not
+import `hermes_cli.gateway*`, `hermes_cli.service_manager`, or lifecycle helpers from
+`hermes_cli.profiles`. Profile inventory reads remain allowed; config stays deferred under #122245.
 `process_command()` resolves the canonical name via `resolve_command()` then dispatches through
 `HermesCLI._SLASH_DISPATCH` (`canonical -> (method name, pass_arg)`), falling back to a
 `_handle_<name>_command` method by naming convention. **There is no `elif` ladder — do not add one.**
