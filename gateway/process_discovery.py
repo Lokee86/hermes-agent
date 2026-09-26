@@ -382,7 +382,8 @@ def find_profile_gateway_processes(exclude_pids: set | None = None, *, strict: b
     processes: list[ProfileGatewayProcess] = []
     try:
         from gateway.status import get_running_pid, get_running_pid_identity_strict
-        from hermes_cli.profiles import list_profiles
+        from profiles.paths import get_profile_dir
+        from profiles.registry import list_profile_names
     except Exception:
         if strict:
             raise
@@ -390,28 +391,29 @@ def find_profile_gateway_processes(exclude_pids: set | None = None, *, strict: b
 
     seen: set[int] = set()
     try:
-        profiles = list_profiles()
+        profile_names = list_profile_names()
     except Exception:
         if strict:
             raise
         return processes
-    for profile in profiles:
+    for profile_name in profile_names:
         try:
+            profile_path = get_profile_dir(profile_name)
             if strict:
-                identity = get_running_pid_identity_strict(profile.path / "gateway.pid")
+                identity = get_running_pid_identity_strict(profile_path / "gateway.pid")
                 pid = identity[0] if identity else None
                 create_time = identity[1] if identity else 0.0
             else:
-                pid = get_running_pid(profile.path / "gateway.pid", cleanup_stale=False)
+                pid = get_running_pid(profile_path / "gateway.pid", cleanup_stale=False)
                 create_time = 0.0
         except Exception as exc:
             if strict:
-                raise RuntimeError(f"Could not inspect gateway PID for profile {profile.name}") from exc
+                raise RuntimeError(f"Could not inspect gateway PID for profile {profile_name}") from exc
             continue
         if pid is None or pid <= 0 or pid in _exclude or pid in seen:
             continue
         seen.add(pid)
-        processes.append(ProfileGatewayProcess(profile=profile.name, path=profile.path, pid=pid, create_time=create_time))
+        processes.append(ProfileGatewayProcess(profile=profile_name, path=profile_path, pid=pid, create_time=create_time))
     return processes
 
 
