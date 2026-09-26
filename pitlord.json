@@ -168,6 +168,63 @@
         "tests/*.py",
         "tests/**/*.py"
       ]
+    },
+    {
+      "id": "runtime-subprocess-compat-owner-must-exist",
+      "type": "require_path",
+      "path": "runtime/subprocess_compat.py"
+    },
+    {
+      "id": "runtime-git-subprocess-owner-must-exist",
+      "type": "require_path",
+      "path": "runtime/git_subprocess.py"
+    },
+    {
+      "id": "gateway-windows-launch-owner-must-exist",
+      "type": "require_path",
+      "path": "gateway/windows_launch.py"
+    },
+    {
+      "id": "retired-cli-subprocess-compat-path",
+      "type": "forbid_path",
+      "path": "hermes_cli/_subprocess_compat.py"
+    },
+    {
+      "id": "retired-cli-subprocess-compat-must-not-be-referenced",
+      "type": "forbid_content",
+      "regex": "hermes_cli[.]_subprocess_compat",
+      "include_paths": [
+        "agent/*.py",
+        "agent/**/*.py",
+        "cron/*.py",
+        "cron/**/*.py",
+        "gateway/*.py",
+        "gateway/**/*.py",
+        "hermes_cli/*.py",
+        "hermes_cli/**/*.py",
+        "plugins/*.py",
+        "plugins/**/*.py",
+        "profiles/*.py",
+        "profiles/**/*.py",
+        "providers/*.py",
+        "providers/**/*.py",
+        "runtime/*.py",
+        "runtime/**/*.py",
+        "storage/*.py",
+        "storage/**/*.py",
+        "auth/*.py",
+        "auth/**/*.py",
+        "kanban/*.py",
+        "kanban/**/*.py",
+        "automation/*.py",
+        "automation/**/*.py",
+        "tools/*.py",
+        "tools/**/*.py",
+        "tui_gateway/*.py",
+        "tui_gateway/**/*.py",
+        "tests/*.py",
+        "tests/**/*.py"
+      ]
     }
   ]
 }

@@ -1824,8 +1824,8 @@ _PLUGIN_COMPAT_LAZY = {
     'upsert_custom_endpoint': ('hermes_cli.web_routers.config_env', 'upsert_custom_endpoint'),
     'validate_custom_endpoint': ('hermes_cli.web_routers.config_env', 'validate_custom_endpoint'),
     'validate_provider_credential': ('hermes_cli.web_routers.config_env', 'validate_provider_credential'),
-    'windows_detach_flags': ('hermes_cli._subprocess_compat', 'windows_detach_flags'),
-    'windows_hide_flags': ('hermes_cli._subprocess_compat', 'windows_hide_flags'),
+    'windows_detach_flags': ('runtime.subprocess_compat', 'windows_detach_flags'),
+    'windows_hide_flags': ('runtime.subprocess_compat', 'windows_hide_flags'),
     'write_platform_config_field': ('hermes_cli.config', 'write_platform_config_field'),
 }
 

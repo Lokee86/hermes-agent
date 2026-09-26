@@ -20,7 +20,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import yaml
 
-from hermes_cli._subprocess_compat import noninteractive_git_env
+from runtime.git_subprocess import noninteractive_git_env
 from utils import rmtree_readonly
 
 

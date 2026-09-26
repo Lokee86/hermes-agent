@@ -28,8 +28,8 @@ from gateway import process_discovery as _process_discovery
 from gateway import service_identity as _service_identity
 from gateway import service_process as _service_process
 
-from hermes_cli._subprocess_compat import (
-    _WINDOWS_GATEWAY_BREAKAWAY_ENV,
+from gateway.windows_launch import _WINDOWS_GATEWAY_BREAKAWAY_ENV
+from runtime.subprocess_compat import (
     windows_detach_flags,
     windows_detach_flags_without_breakaway,
     windows_hide_flags,

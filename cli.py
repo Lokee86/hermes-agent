@@ -1252,7 +1252,7 @@ class HermesCLI(CLIInitMixin, CLITuiRuntimeMixin, CLIProcessNotificationsMixin, 
             # shell=True is intentional (user-authored config snippets, never LLM controlled);
             # the env is sanitized because this process holds every API key.
             from tools.environments.local import build_subprocess_env
-            from hermes_cli._subprocess_compat import windows_hide_flags
+            from runtime.subprocess_compat import windows_hide_flags
             result = subprocess.run(
                 exec_cmd, shell=True, capture_output=True, text=True, encoding="utf-8", errors="replace",
                 timeout=30, env=build_subprocess_env(),

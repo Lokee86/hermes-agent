@@ -255,17 +255,17 @@ class TestTzdataDependencyDeclared:
 
 
 # ---------------------------------------------------------------------------
-# _subprocess_compat shared helpers
+# runtime.subprocess_compat shared helpers
 # ---------------------------------------------------------------------------
 
 
 class TestSubprocessCompatHelpers:
-    """hermes_cli/_subprocess_compat.py POSIX + Windows behaviour."""
+    """runtime/subprocess_compat.py POSIX + Windows behaviour."""
 
 
     def test_resolve_node_command_returns_absolute_on_posix(self):
         """On Linux, resolve_node_command('sh', ['-c','echo hi']) picks up /bin/sh."""
-        from hermes_cli._subprocess_compat import resolve_node_command
+        from runtime.subprocess_compat import resolve_node_command
         # We can't assert "npm is on PATH" portably; use `sh` which is
         # guaranteed on POSIX.  On Windows the test only confirms the
         # no-crash fallback path.
@@ -293,7 +293,7 @@ class TestSubprocessCompatHelpers:
            all descendants inherit (parent-console root cause isolated by
            the desktop backend fix, commit aa2ae36c3f).
         """
-        from hermes_cli import _subprocess_compat as sc
+        from runtime import subprocess_compat as sc
         assert not sc.windows_detach_flags() & 0x00000008, (
             "DETACHED_PROCESS must not be in windows_detach_flags(): it makes "
             "CREATE_NO_WINDOW a no-op and re-creates the per-descendant "
@@ -318,7 +318,7 @@ class TestSubprocessCompatHelpers:
         ``fix/windows-gateway-reliability`` (PR #40909) and the bit must
         stay in the default bundle going forward.
         """
-        from hermes_cli import _subprocess_compat as sc
+        from runtime import subprocess_compat as sc
         assert sc.windows_detach_flags() & 0x01000000, (
             "CREATE_BREAKAWAY_FROM_JOB (0x01000000) must remain in the "
             "default detach flag bundle so the Desktop GUI update flow "
@@ -336,7 +336,7 @@ class TestSubprocessCompatHelpers:
         It must drop ONLY the breakaway bit — DETACHED_PROCESS et al.
         are still required for the child to survive the parent's exit.
         """
-        from hermes_cli import _subprocess_compat as sc
+        from runtime import subprocess_compat as sc
         full = sc.windows_detach_flags()
         fallback = sc.windows_detach_flags_without_breakaway()
         # Fallback equals full minus the breakaway bit, nothing else changed.
@@ -525,7 +525,7 @@ class TestGatewayRunRestartWatcherOuterPopenFallback:
 
     ``windows_only``: this used to run on Linux behind a ``sys.platform``
     patch, and the breakaway-bit assertions had to be skipped there anyway
-    (``_subprocess_compat`` caches ``IS_WINDOWS`` at import, so the flags
+    (``runtime.subprocess_compat`` caches ``IS_WINDOWS`` at import, so the flags
     were all 0) — i.e. the most important assertions in the class never
     executed. On the Windows runner they do.
     """
@@ -547,7 +547,7 @@ class TestGatewayRunRestartWatcherOuterPopenFallback:
 
     def test_outer_watcher_retries_without_breakaway_on_oserror(self, monkeypatch):
         import gateway.run as gr
-        from hermes_cli._subprocess_compat import (
+        from runtime.subprocess_compat import (
             windows_detach_flags_without_breakaway,
             windows_detach_popen_kwargs,
         )

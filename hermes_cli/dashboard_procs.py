@@ -48,7 +48,7 @@ def _iter_process_table() -> list[tuple[int, str]]:
         # join indefinitely (#87134). It also passes CREATE_NO_WINDOW: this scan can run from the windowless
         # pythonw.exe desktop/gateway backend during an update, where a bare wmic spawn would pop a console
         # window.
-        from hermes_cli._subprocess_compat import bounded_probe_run
+        from runtime.subprocess_compat import bounded_probe_run
         result = bounded_probe_run(
             ["wmic", "process", "get", "ProcessId,CommandLine", "/FORMAT:LIST"],
             timeout=10, errors="ignore")
@@ -412,8 +412,8 @@ def _is_caller_wrapper_shell(pid: int, ancestors: set[int]) -> bool:
 
 def _kill_pids_windows(pids: list[int], killed: list[int], failed: list[tuple[int, str]]) -> None:
     """``taskkill /F`` each PID after re-verifying its identity."""
-    from runtime.process_identity import get_process_start_time
-    from hermes_cli._subprocess_compat import pid_is_hermes, windows_hide_flags
+    from runtime.process_identity import get_process_start_time, pid_is_hermes
+    from runtime.subprocess_compat import windows_hide_flags
     # Identity captured right after discovery: a PID reused before the kill fails the check.
     pid_start_times = {pid: get_process_start_time(pid) for pid in pids}
     for pid in pids:
