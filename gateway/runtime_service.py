@@ -68,7 +68,7 @@ def _exists(path: Path) -> bool:
 
 
 def _systemd(home: Path, deadline: float) -> ExistingService | None:
-    from hermes_cli.service_manager import _s6_running
+    from gateway.service_manager import _s6_running
     from gateway.runtime_service_identity import ForeignRoot, SYSTEMD_IDENTITY_PROPERTIES, verify_systemd
     if _s6_running():
         raise RuntimeStartError("external_supervisor")

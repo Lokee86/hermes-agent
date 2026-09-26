@@ -317,7 +317,7 @@ class TestS6ContainerGatewayRun:
     def test_the_redirected_run_keeps_the_root_home_despite_the_active_profile(
         self, tmp_path, monkeypatch
     ):
-        monkeypatch.setattr("hermes_cli.service_manager._s6_running", lambda: True)
+        monkeypatch.setattr("gateway.service_manager._s6_running", lambda: True)
         root = tmp_path / ".hermes"
         result = _run_apply_profile_override(
             tmp_path, monkeypatch, hermes_home=str(root), active_profile="coder",
@@ -328,7 +328,7 @@ class TestS6ContainerGatewayRun:
     def test_a_foreground_run_and_other_verbs_still_follow_the_active_profile(
         self, tmp_path, monkeypatch
     ):
-        monkeypatch.setattr("hermes_cli.service_manager._s6_running", lambda: True)
+        monkeypatch.setattr("gateway.service_manager._s6_running", lambda: True)
         root = tmp_path / ".hermes"
         for argv in (["hermes", "gateway", "run", "--no-supervise"], ["hermes", "chat"]):
             result = _run_apply_profile_override(
