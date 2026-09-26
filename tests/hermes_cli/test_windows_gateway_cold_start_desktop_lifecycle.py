@@ -26,7 +26,7 @@ import gateway.profile_serving as profile_serving
 import profiles.current as profile_current
 import profiles.paths as profile_paths
 from hermes_cli import gateway as hermes_gateway
-from hermes_cli import gateway_windows
+from gateway import windows_service as gateway_windows
 from hermes_cli import main as cli_main
 from hermes_cli import process_identity
 from hermes_cli import update_cmd
