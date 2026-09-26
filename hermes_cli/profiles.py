@@ -1258,22 +1258,6 @@ def _profile_bound_backend_pids(canon: str, profile_dir: Path) -> list[int]:
     return pids
 
 
-def _wait_then_force_kill(pids: List[int], start_times: dict, *, wait: float = 10.0) -> bool:
-    """After a graceful ``terminate_pid``, wait up to *wait* seconds (0.5s polls) for *pids*
-    to exit, then force-kill stragglers. True when every pid exited gracefully.
-    ``start_times`` pins each force kill to the same process incarnation (PID reuse guard)."""
-    from gateway.status import _pid_exists, get_process_start_time, terminate_pid
-    for _ in range(int(wait / 0.5)):
-        time.sleep(0.5)
-        if not any(_pid_exists(pid) for pid in pids):
-            return True
-    for pid in pids:
-        if _pid_exists(pid):
-            with contextlib.suppress(ProcessLookupError, PermissionError, OSError):
-                terminate_pid(pid, force=True, expected_start_time=start_times.get(pid, get_process_start_time(pid)))
-    return False
-
-
 def _stop_profile_backends(canon: str, profile_dir: Path) -> None:
     """Terminate Desktop-spawned / stray backends bound to this profile. Complements
     ``_stop_gateway_process`` (which only knows ``gateway.pid``): a live ``serve``/``dashboard``
@@ -1290,7 +1274,8 @@ def _stop_profile_backends(canon: str, profile_dir: Path) -> None:
             terminate_pid(pid)  # graceful first
         except (ProcessLookupError, PermissionError, OSError):
             continue
-    _wait_then_force_kill(pids, {})
+    from gateway.process_lifecycle import wait_then_force_kill
+    wait_then_force_kill(pids, {})
     print(f"✓ Stopped {len(pids)} profile backend process(es)")
 
 
@@ -1590,39 +1575,26 @@ def _cleanup_gateway_service(name: str, profile_dir: Path) -> None:
 
 
 def _stop_gateway_process(profile_dir: Path) -> None:
-    """Stop a running gateway process via its PID file."""
-    pid_file = profile_dir / "gateway.pid"
-    if not pid_file.exists():
+    """Stop a running gateway process via the Gateway-owned lifecycle primitive."""
+    from gateway.process_lifecycle import stop_gateway_process
+
+    result = stop_gateway_process(profile_dir)
+    if result.status == "absent":
         return
-    try:
-        raw = pid_file.read_text(encoding="utf-8").strip()
-        data = json.loads(raw) if raw.startswith("{") else {"pid": int(raw)}
-        pid = int(data["pid"])
-        # Cross-profile kill refusal: the record's hermes_home stamp names the gateway's TRUE
-        # owner. A poisoned gateway.pid in this dir can point at another profile's live
-        # gateway — killing it starts a mutual SIGTERM restart loop.
-        from gateway.status import get_process_start_time, recorded_gateway_home_conflicts, terminate_pid
-        if recorded_gateway_home_conflicts(data, expected_home=profile_dir):
-            print(
-                f"✗ Refusing to stop PID {pid}: its recorded HERMES_HOME "
-                f"belongs to a different profile than {profile_dir} "
-                "(stale/poisoned PID record, #89315)."
-            )
-            return
-        # terminate_pid picks the Windows primitive (taskkill /T cascades to children; raw
-        # os.kill with SIGKILL fails at import on Windows).
-        expected_start_time = data.get("start_time")
-        if expected_start_time is None:
-            expected_start_time = get_process_start_time(pid)
-        terminate_pid(pid)  # graceful first
-        if _wait_then_force_kill([pid], {pid: expected_start_time}):
-            print(f"✓ Gateway stopped (PID {pid})")
-        else:
-            print(f"✓ Gateway force-stopped (PID {pid})")
-    except (ProcessLookupError, PermissionError):
+    if result.status == "refused":
+        print(
+            f"✗ Refusing to stop PID {result.pid}: its recorded HERMES_HOME "
+            f"belongs to a different profile than {profile_dir} "
+            "(stale/poisoned PID record, #89315)."
+        )
+    elif result.status == "stopped":
+        print(f"✓ Gateway stopped (PID {result.pid})")
+    elif result.status == "force-stopped":
+        print(f"✓ Gateway force-stopped (PID {result.pid})")
+    elif result.status == "already-stopped":
         print("✓ Gateway already stopped")
-    except Exception as e:
-        print(f"⚠ Could not stop gateway: {e}")
+    else:
+        print(f"⚠ Could not stop gateway: {result.error}")
 
 
 # Active profile (sticky default)

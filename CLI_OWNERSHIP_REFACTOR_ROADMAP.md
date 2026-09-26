@@ -95,6 +95,8 @@ Includes:
 - migration machinery;
 - restart/drain/runtime ownership helpers.
 
+Migration follows the ownership rule explicitly: `gateway/migration.py` owns planning/apply/compensation, while `nous_cli/gateway_migrate.py` owns terminal rendering, prompts, exit codes, and update-command orchestration. Gateway process-stop primitives live under `gateway/`, not `hermes_cli.profiles`.
+
 Gateway should not import its own control-plane behaviour from a CLI package.
 
 ## Phase 3 — Runtime and persistence primitives
