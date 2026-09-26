@@ -1348,9 +1348,13 @@ def start_server(
 
     # Dashboard-mode starts don't route through main.py's `serve` path, which
     # applies the same RLIMIT_NOFILE floor (policy in resource_limits, #81547).
-    from hermes_cli.resource_limits import apply_nofile_soft_limit
+    try:
+        from hermes_cli.config import load_config_readonly
+        from runtime.resource_limits import apply_nofile_soft_limit
 
-    apply_nofile_soft_limit()
+        apply_nofile_soft_limit(load_config_readonly())
+    except Exception:
+        _log.debug("Could not apply RLIMIT_NOFILE startup policy", exc_info=True)
 
     import uvicorn  # noqa: F401 — fail fast (before any side effects) when the dashboard extra is missing
 

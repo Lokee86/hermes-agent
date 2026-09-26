@@ -1717,7 +1717,7 @@ def main(
 
     # UTF-8 stdio on Windows before any print (Rich box-drawing would UnicodeEncodeError on cp1252).
     with suppress(Exception):
-        from hermes_cli.stdio import configure_windows_stdio
+        from runtime.stdio import configure_windows_stdio
         configure_windows_stdio()
 
     os.environ["HERMES_INTERACTIVE"] = "1"  # terminal_tool: interactive sudo prompts with timeout

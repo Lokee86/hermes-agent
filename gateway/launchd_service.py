@@ -494,8 +494,10 @@ def generate_launchd_plist() -> str:
     # rewrite would otherwise strip a manual limit and reintroduce EMFILE crashes.
     nofile_block = ""
     try:
-        from hermes_cli.resource_limits import configured_nofile_soft_limit
-        nofile_target = configured_nofile_soft_limit()
+        from hermes_cli.config import load_config_readonly
+        from runtime.resource_limits import configured_nofile_soft_limit
+
+        nofile_target = configured_nofile_soft_limit(load_config_readonly())
     except Exception:
         nofile_target = None
     if nofile_target:

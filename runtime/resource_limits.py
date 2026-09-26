@@ -1,12 +1,10 @@
-"""Best-effort process resource-limit adjustments for long-running services."""
+"""Best-effort process resource-limit primitives for long-running services."""
 
 from __future__ import annotations
 
 import logging
 from collections.abc import Mapping
 from typing import Any
-
-from hermes_cli.config_defaults import DEFAULT_CONFIG
 
 try:  # ``resource`` is POSIX-only (and unavailable on Windows).
     import resource as _resource
@@ -15,25 +13,16 @@ except (ImportError, ModuleNotFoundError):  # pragma: no cover - Windows only
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_NOFILE_SOFT_LIMIT = int(DEFAULT_CONFIG["runtime"]["nofile_soft_limit"])
+DEFAULT_NOFILE_SOFT_LIMIT = 4096
 _MISSING = object()
 
 
-def configured_nofile_soft_limit(config: Mapping[str, Any] | None = None) -> int | None:
-    """``runtime.nofile_soft_limit`` from a loaded config, or ``None`` when disabled/unresolvable.
+def configured_nofile_soft_limit(config: Mapping[str, Any] | None) -> int | None:
+    """Resolve ``runtime.nofile_soft_limit`` from an already-loaded config.
 
-    Missing key → default. Explicit ``0``/``false``/``null`` disable; other non-int or negative
-    values are ignored (caller fails open). Shared by the in-process floor and service-definition
-    generators (launchd plist) so both use one knob.
+    Missing key -> default. Explicit ``0``/``false``/``null`` disable; other non-int or negative
+    values are ignored. Configuration loading belongs to the caller, not this runtime primitive.
     """
-    if config is None:
-        try:
-            # Profile-aware loader (applies managed-scope overlays and defaults).
-            from hermes_cli.config import load_config_readonly
-            config = load_config_readonly()
-        except Exception:
-            logger.debug("Could not load config for RLIMIT_NOFILE", exc_info=True)
-            return None
     if not isinstance(config, Mapping):
         return None
     runtime = config.get("runtime", _MISSING)
@@ -49,7 +38,7 @@ def configured_nofile_soft_limit(config: Mapping[str, Any] | None = None) -> int
     return raw_value
 
 
-def apply_nofile_soft_limit(config: Mapping[str, Any] | None = None) -> bool:
+def apply_nofile_soft_limit(config: Mapping[str, Any] | None) -> bool:
     """Best-effort raise of this process's ``RLIMIT_NOFILE`` soft limit; ``True`` iff changed.
 
     Target = ``runtime.nofile_soft_limit`` (default :data:`DEFAULT_NOFILE_SOFT_LIMIT`), clamped
@@ -79,4 +68,8 @@ def apply_nofile_soft_limit(config: Mapping[str, Any] | None = None) -> bool:
         return False
 
 
-__all__ = ["DEFAULT_NOFILE_SOFT_LIMIT", "apply_nofile_soft_limit", "configured_nofile_soft_limit"]
+__all__ = [
+    "DEFAULT_NOFILE_SOFT_LIMIT",
+    "apply_nofile_soft_limit",
+    "configured_nofile_soft_limit",
+]
