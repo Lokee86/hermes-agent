@@ -51,7 +51,7 @@ def test_cloud_traversal_policy_blocks_broad_roots_but_allows_explicit_cloud_acc
         ) is None, command
 
 
-@pytest.mark.windows_only
+@pytest.mark.platforms("windows")
 def test_terminal_guard_blocks_profile_scan_before_execution(tmp_path, monkeypatch):
     profile = tmp_path / "profile"
     profile.mkdir()
