@@ -23,13 +23,17 @@ from hermes_constants import (
     named_profile_has_identity, named_profile_is_deleted, named_profile_is_live,
 )
 from profiles.current import (
+    current_profile_name as _profile_current_name,
     get_active_profile as _profile_get_active,
     get_active_profile_name as _profile_active_name,
     set_active_profile as _profile_set_active,
 )
 from profiles.metadata import (
+    PROFILE_ROLES as _profile_roles,
+    SETUP_ROLE as _profile_setup_role,
     _load_yaml_dict as _profile_load_yaml,
     drop_profile_role as _profile_drop_role,
+    format_profile_label as _profile_format_label,
     read_profile_meta as _profile_read_meta,
     write_profile_meta as _profile_write_meta,
 )
@@ -67,6 +71,38 @@ from gateway.profile_serving import (
     profile_is_standalone as _profile_is_standalone,
     profiles_to_serve as _profiles_to_serve,
 )
+
+# Compatibility facade: profile-domain ownership lives in profiles/* and
+# gateway.profile_serving, but historical imports from hermes_cli.profiles
+# remain supported during the ownership refactor.
+PROFILE_ROLES = _profile_roles
+SETUP_ROLE = _profile_setup_role
+current_profile_name = _profile_current_name
+drop_profile_role = _profile_drop_role
+format_profile_label = _profile_format_label
+get_active_profile = _profile_get_active
+get_active_profile_name = _profile_active_name
+get_profile_dir = _profile_get_dir
+list_profile_names = _profile_list_names
+normalize_profile_name = _profile_normalize_name
+parked_marker_path = _profile_parked_marker
+profile_exists = _profile_exists
+profile_is_parked = _profile_is_parked
+profile_is_standalone = _profile_is_standalone
+profile_matches_home = _profile_matches_home
+profile_root_for_env_home = _profile_root_for_env_home
+profiles_to_serve = _profiles_to_serve
+read_profile_meta = _profile_read_meta
+resolve_profile_env = _profile_resolve_env
+set_active_profile = _profile_set_active
+validate_alias_name = _profile_validate_alias
+validate_profile_name = _profile_validate_name
+write_profile_meta = _profile_write_meta
+
+# Private compatibility seams still used by in-tree callers/tests. These are
+# aliases only; the canonical implementations remain in profiles.paths.
+_get_default_hermes_home = _profile_default_home
+_get_profiles_root = _profile_profiles_root
 
 logger = logging.getLogger(__name__)
 
@@ -1703,7 +1739,7 @@ def _inside_git_checkout(path: Path) -> bool:
 def _profile_export_directory() -> Path:
     """Choose an export directory that cannot become source-tree input."""
     import tempfile
-    export_dir = _profile_default_home() / "profile-exports"
+    export_dir = _get_default_hermes_home() / "profile-exports"
     if not _inside_git_checkout(export_dir):
         return export_dir
 
