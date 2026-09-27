@@ -22,12 +22,22 @@ import sys
 import threading
 import types
 from contextlib import suppress
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from functools import cached_property, wraps
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Mapping, Optional, Set, Tuple, Union
 
 from hermes_constants import get_hermes_home, get_process_hermes_home, hermes_home_key
+from plugin_runtime.loading import (
+    LoadedPlugin,
+    PluginLoaderMixin,
+    _BARE_MODULE_SCOPE,
+    _MODULE_NAMESPACE_LOCK,
+    _NS_PARENT,
+    _evict_modules,
+    _serialized_replacement,
+    in_plugin_load_worker,
+)
 from plugin_runtime.ownership import PluginOwnershipMixin
 from plugin_runtime.registration import PluginRegistration, replacement_coordinator
 from utils import env_var_enabled
@@ -46,10 +56,6 @@ from plugin_runtime.manifest import (  # noqa: F401 — re-exported
 from plugin_runtime.discovery import (  # noqa: F401 — re-exported
     ENTRY_POINTS_GROUP, _get_disabled_plugins, _get_enabled_plugins, collect_directory_manifests,
     discover_entrypoint_manifests, gate_manifest, resolve_manifest_winners, scan_directory,
-)
-from hermes_cli.plugins_loader import (
-    PluginLoaderMixin, _BARE_MODULE_SCOPE, _MODULE_NAMESPACE_LOCK, _NS_PARENT, _evict_modules,
-    _serialized_replacement, in_plugin_load_worker,
 )
 from plugin_runtime.scope import plugin_home_scope as _plugin_home_scope
 from hermes_cli.plugins_dispatch import (  # noqa: F401 — re-exported
@@ -211,22 +217,6 @@ SHELL_UNSUPPORTED_HOOKS: Set[str] = {"transform_api_error_classification"}
 
 _env_enabled = env_var_enabled  # imported by plugins/memory
 _UNSET = object()
-
-
-@dataclass
-class LoadedPlugin:
-    """Runtime state for a single loaded plugin."""
-
-    manifest: PluginManifest
-    module: Optional[types.ModuleType] = None
-    tools_registered: List[str] = field(default_factory=list)
-    hooks_registered: List[str] = field(default_factory=list)
-    middleware_registered: List[str] = field(default_factory=list)
-    commands_registered: List[str] = field(default_factory=list)
-    enabled: bool = False
-    error: Optional[str] = None
-    # Bundled platform recorded as a not-yet-imported loader (see _register_deferred_platform).
-    deferred: bool = False
 
 
 class PluginContext:
@@ -1262,6 +1252,47 @@ class PluginManager(PluginLoaderMixin, PluginDispatchMixin, PluginOwnershipMixin
         # and contributed tool names (so `hermes plugins list` still attributes them).
         self._predeclared_modules: Dict[str, types.ModuleType] = {}
         self._predeclared_tools: Dict[str, List[str]] = {}
+
+    def context_for(self, manifest: PluginManifest) -> PluginContext:
+        """Construct the CLI-owned plugin API facade requested by runtime loading."""
+        return PluginContext(manifest, self)
+
+    @staticmethod
+    def _plugin_load_disable_reason(manifest: PluginManifest) -> Optional[str]:
+        """Apply CLI-owned compatibility policy without coupling runtime loading to it."""
+        from hermes_cli.plugin_compat import disable_reason
+
+        return disable_reason(manifest)
+
+    def on_plugin_loaded(self, callback: Callable[[List[Dict[str, Any]]], Any]) -> Callable[[], None]:
+        """Subscribe to discovery sweeps that load plugins this process did not already have."""
+        if not callable(callback):
+            raise ValueError("on_plugin_loaded requires a callable")
+        listeners = self._plugin_loaded_listeners
+        listeners.append(callback)
+
+        def _unsubscribe() -> None:
+            try:
+                listeners.remove(callback)
+            except ValueError:
+                pass
+
+        return _unsubscribe
+
+    def _notify_plugin_loaded(self, loaded_before: frozenset) -> None:
+        """Notify process-owned listeners about plugins newly loaded by this discovery sweep."""
+        if not self._plugin_loaded_listeners:
+            return
+        from hermes_cli.plugins_activation import activation_summaries
+
+        summaries = [s for s in activation_summaries(self) if s["key"] not in loaded_before]
+        if not summaries:
+            return
+        for callback in list(self._plugin_loaded_listeners):
+            try:
+                callback(summaries)
+            except Exception:
+                logger.warning("plugin-loaded listener %r raised", callback, exc_info=True)
 
     @property
     def has_gateway_message_injector(self) -> bool:

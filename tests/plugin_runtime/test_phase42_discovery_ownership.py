@@ -67,16 +67,16 @@ def test_compat_manifest_points_discovery_export_at_runtime_owner():
 
 def test_primary_discovery_consumers_bind_canonical_runtime_exports():
     import hermes_cli.plugins as plugins
-    import hermes_cli.plugins_loader as loader
     import plugin_runtime.discovery as discovery
+    import plugin_runtime.loading as loading
 
     assert plugins.collect_directory_manifests is discovery.collect_directory_manifests
     assert plugins.discover_entrypoint_manifests is discovery.discover_entrypoint_manifests
     assert plugins.gate_manifest is discovery.gate_manifest
     assert plugins.resolve_manifest_winners is discovery.resolve_manifest_winners
     assert plugins.scan_directory is discovery.scan_directory
-    assert loader._select_entry_point_group is discovery._select_entry_point_group
-    assert loader.ENTRY_POINTS_GROUP == discovery.ENTRY_POINTS_GROUP
+    assert loading._select_entry_point_group is discovery._select_entry_point_group
+    assert loading.ENTRY_POINTS_GROUP == discovery.ENTRY_POINTS_GROUP
 
 
 def test_cli_relay_cutover_module_is_compatibility_only():

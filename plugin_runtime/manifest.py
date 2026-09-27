@@ -447,7 +447,7 @@ def requires_hermes_error(manifest: "PluginManifest") -> Optional[str]:
 
 def portable_plugin_manifest(child: Path, source: str, prefix: str) -> PluginManifest:
     """Build the manifest for a portable Agent Plugin directory (``plugin.json``); diagnostics warn."""
-    from hermes_cli.agent_plugins import read_agent_plugin_manifest
+    from plugin_runtime.portable import read_agent_plugin_manifest
     data, diagnostics = read_agent_plugin_manifest(child)
     for diagnostic in diagnostics:
         logger.warning("Agent Plugin '%s': %s", child, diagnostic.message)
