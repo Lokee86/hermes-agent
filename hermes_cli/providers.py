@@ -1,4 +1,4 @@
-"""Single source of truth for provider identity in Hermes Agent."""
+"""CLI-side provider resolution built on the canonical ``providers`` domain."""
 
 from __future__ import annotations
 
@@ -6,6 +6,7 @@ import logging
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Tuple
 
+from providers import ResolvedProvider, get_provider_profile, normalize_provider
 from utils import base_url_host_matches, base_url_hostname
 
 logger = logging.getLogger(__name__)
@@ -92,24 +93,6 @@ HERMES_OVERLAYS: Dict[str, HermesOverlay] = {
 }
 
 
-# -- Resolved provider -------------------------------------------------------
-
-@dataclass
-class ProviderDef:
-    """Complete provider definition — merged from models.dev + overlay + user config."""
-
-    id: str
-    name: str
-    transport: str                        # openai_chat | anthropic_messages | codex_responses
-    api_key_env_vars: Tuple[str, ...]     # all env vars to check for API key
-    base_url: str = ""
-    base_url_env_var: str = ""
-    is_aggregator: bool = False
-    auth_type: str = "api_key"
-    doc: str = ""
-    source: str = ""                      # "models.dev", "hermes", "user-config"
-
-
 # -- Aliases: human-friendly / legacy names grouped by canonical (models.dev where possible) id;
 # ``ALIASES`` is the inverted lookup table. ---------------------------------------------------
 _ALIAS_GROUPS: Dict[str, Tuple[str, ...]] = {
@@ -161,12 +144,6 @@ TRANSPORT_TO_API_MODE: Dict[str, str] = {
 
 # -- Helper functions ---------------------------------------------------------
 
-def normalize_provider(name: str) -> str:
-    """Resolve aliases and normalise casing to a canonical provider id."""
-    key = name.strip().lower()
-    return ALIASES.get(key, key)
-
-
 def is_actual_route(provider: str = "", base_url: str = "") -> bool:
     """Identify Actual by provider/alias or its hosted endpoint, including custom routes."""
     return (
@@ -185,103 +162,92 @@ def _models_dev_info(canonical: str, allow_network: bool = True):
         return None
 
 
-def _overlay_pdef(canonical, ov: HermesOverlay, name, env_vars, base_url, doc, source) -> ProviderDef:
-    return ProviderDef(id=canonical, name=name, transport=ov.transport, api_key_env_vars=env_vars, base_url=base_url,
-                       base_url_env_var=ov.base_url_env_var, is_aggregator=ov.is_aggregator, auth_type=ov.auth_type, doc=doc,
-                       source=source)
-
-
-def get_provider(name: str, *, allow_network: bool = True) -> Optional[ProviderDef]:
-    """Look up a built-in provider by id or alias: models.dev catalog merged with the Hermes overlay;
-    Hermes-only overlay (nous, openai-codex, …); plugin provider profiles with a concrete endpoint."""
-    canonical = normalize_provider(name)
-    mdev_info = _models_dev_info(canonical, allow_network)
-    overlay = HERMES_OVERLAYS.get(canonical)
-    if mdev_info is not None:
-        ov = overlay or HermesOverlay()
-        env_vars = list(mdev_info.env)
-        for ev in ov.extra_env_vars:
-            if ev not in env_vars:
-                env_vars.append(ev)
-        return _overlay_pdef(canonical, ov, mdev_info.name, tuple(env_vars), ov.base_url_override or mdev_info.api,
-                             mdev_info.doc, "models.dev")
-    if overlay is not None:
-        return _overlay_pdef(canonical, overlay, _LABEL_OVERRIDES.get(canonical, canonical), overlay.extra_env_vars,
-                             overlay.base_url_override, "", "hermes")
-    # Plugin-registered profiles (plugins/model-providers/<name>/) absent from models.dev and
-    # HERMES_OVERLAYS would otherwise be "Unknown provider" in /model, --provider and model-switch
-    # even though the picker lists them. Only profiles with a literal or env-configured endpoint
-    # resolve at this rung: placeholder profiles like ``custom`` (aliases ollama/local/vllm) ship
-    # an empty base_url and are completed by config.yaml custom_providers — resolving them would
-    # preempt resolve_provider_full's custom step and collapse keyed ``custom:<name>`` ids to bare
-    # custom. Profiles whose endpoint is minted at runtime resolve at the END of
-    # resolve_provider_full, after every user-configured rung.
-    pdef = _plugin_profile_pdef(canonical)
-    if pdef is None or not (pdef.base_url or (pdef.auth_type == "api_key" and pdef.api_key_env_vars and pdef.base_url_env_var)):
-        return None
-    return pdef
-
-
-def _plugin_profile_pdef(name: str) -> Optional[ProviderDef]:
-    """The registered ``ProviderProfile`` for *name* (or one of its aliases) as a ProviderDef; the
-    id is the profile's canonical name so an alias switch persists and resolves credentials under
-    the same identity as the profile itself. URL-shaped env vars are the endpoint, not the key."""
+def _profile_resolved_provider(name: str, mdev_info=None, *, source: str = "plugin-profile") -> Optional[ResolvedProvider]:
+    """Project a registered ProviderProfile into the canonical resolved-provider value."""
     try:
-        from providers import get_provider_profile as _profile
-        prof = _profile(name)
+        profile = get_provider_profile(name)
     except Exception:
         return None
-    if prof is None:
+    if profile is None:
         return None
-    env_vars = tuple(prof.env_vars or ())
-    url_vars = tuple(v for v in env_vars if v.endswith(("_BASE_URL", "_URL")))
-    key_vars = tuple(v for v in env_vars if v not in url_vars)
-    api_mode_to_transport = {v: k for k, v in TRANSPORT_TO_API_MODE.items()}
-    # A mode outside the reverse table is a plugin-registered dialect: keep its name so
-    # ``determine_api_mode`` can check the transport registry instead of degrading it.
-    mode = (prof.api_mode or "").strip()
-    return ProviderDef(id=prof.name, name=prof.display_name or prof.name or name,
-                       transport=api_mode_to_transport.get(mode, mode or "openai_chat"),
-                       api_key_env_vars=key_vars, base_url=(prof.base_url or "").strip(),
-                       base_url_env_var=next(iter(url_vars), ""),
-                       auth_type=prof.auth_type or "api_key", source="plugin-profile")
+
+    profile_env = tuple(profile.env_vars or ())
+    base_url_env_var = str(profile.base_url_env_var or "").strip()
+    url_vars = tuple(
+        value for value in profile_env
+        if value == base_url_env_var or value.endswith(("_BASE_URL", "_URL"))
+    )
+    if not base_url_env_var:
+        base_url_env_var = next(iter(url_vars), "")
+
+    env_vars = list(tuple(getattr(mdev_info, "env", ()) or ()))
+    for value in profile_env:
+        if value not in url_vars and value not in env_vars:
+            env_vars.append(value)
+
+    routing_aggregator = (
+        profile.is_routing_aggregator
+        if profile.is_routing_aggregator is not None
+        else profile.is_aggregator
+    )
+    return ResolvedProvider(
+        id=profile.name,
+        display_name=profile.display_name or getattr(mdev_info, "name", "") or profile.name or name,
+        api_mode=(profile.api_mode or "chat_completions").strip(),
+        auth_type=profile.auth_type or "api_key",
+        env_vars=tuple(env_vars),
+        base_url=(profile.base_url or getattr(mdev_info, "api", "") or "").strip(),
+        base_url_env_var=base_url_env_var,
+        is_aggregator=bool(profile.is_aggregator),
+        is_routing_aggregator=bool(routing_aggregator),
+        source=source,
+    )
 
 
-def get_label(provider_id: str) -> str:
-    """Human-readable display name: label override, else models.dev name, else the id."""
-    canonical = normalize_provider(provider_id)
-    if canonical in _LABEL_OVERRIDES:
-        return _LABEL_OVERRIDES[canonical]
-    pdef = get_provider(canonical)
-    return pdef.name if pdef else canonical
+def _models_dev_resolved_provider(canonical: str, mdev_info) -> ResolvedProvider:
+    """Project a models.dev-only provider into the canonical resolved-provider value."""
+    return ResolvedProvider(
+        id=canonical,
+        display_name=mdev_info.name or canonical,
+        api_mode="chat_completions",
+        auth_type="api_key",
+        env_vars=tuple(mdev_info.env or ()),
+        base_url=mdev_info.api or "",
+        source="models.dev",
+    )
 
 
-def is_aggregator(provider: str) -> bool:
-    """Return True when the provider is a multi-model aggregator."""
-    provider_norm = normalize_provider(provider or "")
-    if provider_norm.startswith("custom:"):
-        return True
-    pdef = get_provider(provider_norm)
-    return pdef.is_aggregator if pdef else False
+def get_provider(name: str, *, allow_network: bool = True) -> Optional[ResolvedProvider]:
+    """Resolve a built-in/profile provider without owning provider identity declarations."""
+    canonical = normalize_provider(name)
+    mdev_info = _models_dev_info(canonical, allow_network)
+    resolved = _profile_resolved_provider(
+        canonical,
+        mdev_info,
+        source="models.dev" if mdev_info is not None else "plugin-profile",
+    )
+    if resolved is not None:
+        # Match the historical resolver boundary: placeholder/runtime-minted profiles with no
+        # endpoint do not preempt configured custom-provider resolution at this rung.
+        if (
+            mdev_info is not None
+            or resolved.base_url
+            or (
+                resolved.auth_type == "api_key"
+                and resolved.env_vars
+                and resolved.base_url_env_var
+            )
+        ):
+            return resolved
+        return None
+    if mdev_info is not None:
+        return _models_dev_resolved_provider(canonical, mdev_info)
+    return None
 
 
-# Flat-namespace resellers (opencode-go, opencode-zen) are flagged ``is_aggregator=True`` because
-# their live ``/v1/models`` returns bare model IDs ("deepseek-v4-flash") rather than
-# ``vendor/model`` routing slugs — model_switch searches their flat catalog on that flag. But they
-# are NOT routing aggregators: every listed model is first-party under their own subscription, so
-# picker dedup (build_models_payload) must not strip a reseller's "minimax-m3" just because a
-# user's custom proxy serves a same-named model. Normalized ids: "opencode-zen" -> "opencode".
-_FLAT_NAMESPACE_RESELLERS: frozenset[str] = frozenset({"opencode-go", "opencode"})
-
-
-def is_routing_aggregator(provider: str) -> bool:
-    """True only for TRUE routing aggregators (OpenRouter, named ``custom:*`` proxies) — excludes
-    flat-namespace resellers whose catalog is first-party. Use for "would selecting this model
-    silently re-route away from the intended provider?" (picker dedup)."""
-    provider_norm = normalize_provider(provider or "")
-    if provider_norm in _FLAT_NAMESPACE_RESELLERS:
-        return False
-    return is_aggregator(provider_norm)
+def _plugin_profile_pdef(name: str) -> Optional[ResolvedProvider]:
+    """Resolve a registered profile directly for the final full-resolution rung."""
+    return _profile_resolved_provider(name)
 
 
 def is_official_openai_host(base_url: str) -> bool:
@@ -381,11 +347,9 @@ def determine_api_mode(provider: str, base_url: str = "", model: str = "") -> st
         return nous_api_mode(model)
     pdef = get_provider(provider)
     if pdef is not None:
-        if pdef.transport in TRANSPORT_TO_API_MODE:
-            return TRANSPORT_TO_API_MODE[pdef.transport]
-        # A plugin profile's transport IS its api_mode when a plugin registered that dialect.
         from agent.transports import registered_api_modes
-        return pdef.transport if pdef.transport in registered_api_modes() else "chat_completions"
+        mode = (pdef.api_mode or "").strip()
+        return mode if mode in registered_api_modes() else "chat_completions"
     if provider == "bedrock":
         return "bedrock_converse"
     return "chat_completions"
@@ -393,13 +357,23 @@ def determine_api_mode(provider: str, base_url: str = "", model: str = "") -> st
 
 # -- Provider from user config ------------------------------------------------
 
-def _user_pdef(pid: str, name: str, base_url: str, key_env: str, transport: str = "openai_chat") -> ProviderDef:
-    """``source="user-config"`` ProviderDef shared by ``providers:`` and ``custom_providers:`` entries."""
-    return ProviderDef(id=pid, name=name, transport=transport, api_key_env_vars=(key_env,) if key_env else (),
-                       base_url=base_url, is_aggregator=False, auth_type="api_key", source="user-config")
+def _user_pdef(pid: str, name: str, base_url: str, key_env: str, transport: str = "openai_chat") -> ResolvedProvider:
+    """Canonical resolved-provider value shared by configured provider entry shapes."""
+    api_mode = TRANSPORT_TO_API_MODE.get(transport, transport or "chat_completions")
+    return ResolvedProvider(
+        id=pid,
+        display_name=name,
+        api_mode=api_mode,
+        env_vars=(key_env,) if key_env else (),
+        base_url=base_url,
+        is_aggregator=False,
+        is_routing_aggregator=False,
+        auth_type="api_key",
+        source="user-config",
+    )
 
 
-def resolve_user_provider(name: str, user_config: Dict[str, Any]) -> Optional[ProviderDef]:
+def resolve_user_provider(name: str, user_config: Dict[str, Any]) -> Optional[ResolvedProvider]:
     """Resolve a provider from the user's config.yaml ``providers:`` section."""
     entry = user_config.get(name) if isinstance(user_config, dict) and user_config else None
     if not isinstance(entry, dict):
@@ -435,14 +409,14 @@ def custom_provider_aliases(display_name: str, provider_key: str = "") -> frozen
     return frozenset(aliases)
 
 
-def resolve_custom_provider(name: str, custom_providers: Optional[List[Dict[str, Any]]]) -> Optional[ProviderDef]:
+def resolve_custom_provider(name: str, custom_providers: Optional[List[Dict[str, Any]]]) -> Optional[ResolvedProvider]:
     """Resolve a provider from the user's config.yaml ``custom_providers`` list. A stored bare
     ``"custom"`` (corrupt state from a prior model-switch bug) falls back to the first valid entry
     so existing configs self-heal."""
     requested = (name or "").strip().lower()
     if not requested or not custom_providers or not isinstance(custom_providers, list):
         return None
-    first_valid: Optional[ProviderDef] = None
+    first_valid: Optional[ResolvedProvider] = None
     # If the stored provider is the bare string "custom" (corrupt state from a prior model-switch bug), fall
     # back to the first custom provider entry so existing configs self-heal. (GH #17478)
     for entry in custom_providers:
@@ -464,7 +438,7 @@ def resolve_custom_provider(name: str, custom_providers: Optional[List[Dict[str,
     return None
 
 
-def _lossy_alias_registry_pdef(raw: str, canonical: str) -> Optional[ProviderDef]:
+def _lossy_alias_registry_pdef(raw: str, canonical: str) -> Optional[ResolvedProvider]:
     """Exact Hermes registry ids win over LOSSY alias collapsing (kimi-coding-cn must stay distinct
     from kimi-coding instead of collapsing through the shared models.dev alias "kimi-for-coding").
     A collapse is lossy only when MULTIPLE registry providers normalize to the same canonical name;
@@ -476,9 +450,14 @@ def _lossy_alias_registry_pdef(raw: str, canonical: str) -> Optional[ProviderDef
         if _pcfg is None:
             return None
         if sum(1 for _rid in _AUTH_PROVIDER_REGISTRY if normalize_provider(_rid) == canonical) > 1:
-            return ProviderDef(id=_pcfg.id, name=_pcfg.name, transport="openai_chat",
-                               api_key_env_vars=tuple(_pcfg.api_key_env_vars or ()), base_url=_pcfg.inference_base_url or "",
-                               source="hermes-auth-registry")
+            return ResolvedProvider(
+                id=_pcfg.id,
+                display_name=_pcfg.name,
+                api_mode="chat_completions",
+                env_vars=tuple(_pcfg.api_key_env_vars or ()),
+                base_url=_pcfg.inference_base_url or "",
+                source="hermes-auth-registry",
+            )
     except Exception:
         pass
     return None
@@ -501,7 +480,7 @@ def _has_staged_local_models() -> bool:
         return False
 
 
-def _llamacpp_pdef() -> Optional[ProviderDef]:
+def _llamacpp_pdef() -> Optional[ResolvedProvider]:
     """The llamacpp aliases are a real provider whenever the managed server (or a detected external
     one) resolves — reachability is the credential — OR a model is staged for the runtime to serve.
     The picker's Local row is built from staged GGUFs and is deliberately offline-first (selection
@@ -516,14 +495,20 @@ def _llamacpp_pdef() -> Optional[ProviderDef]:
         endpoint = None
     if not endpoint and not _has_staged_local_models():
         return None
-    return ProviderDef(id=LLAMACPP_PROVIDER_ID, name="Local", transport="openai_chat", api_key_env_vars=(),
-                       base_url=(endpoint or {}).get("base_url", ""), source="local-runtime")
+    return ResolvedProvider(
+        id=LLAMACPP_PROVIDER_ID,
+        display_name="Local",
+        api_mode="chat_completions",
+        env_vars=(),
+        base_url=(endpoint or {}).get("base_url", ""),
+        source="local-runtime",
+    )
 
 
 def resolve_provider_full(name: str, user_providers: Optional[Dict[str, Any]] = None,
-                          custom_providers: Optional[List[Dict[str, Any]]] = None) -> Optional[ProviderDef]:
+                          custom_providers: Optional[List[Dict[str, Any]]] = None) -> Optional[ResolvedProvider]:
     """Full resolution chain: user ``providers.<raw name>`` -> lossy-alias registry id -> built-in
-    (models.dev + overlays) -> user providers (canonical, then raw) -> ``custom_providers`` ->
+    provider profiles/models.dev -> user providers (canonical, then raw) -> ``custom_providers`` ->
     managed llamacpp -> models.dev directly. User-defined ``providers.<name>`` is tried FIRST on
     the raw (pre-alias) name: a configured ``providers.openai`` pointing at api.openai.com must not
     be hijacked by the legacy "openai" -> "openrouter" alias."""
@@ -559,8 +544,7 @@ def resolve_provider_full(name: str, user_providers: Optional[Dict[str, Any]] = 
     try:
         mdev_info = _models_dev_info(canonical)
         if mdev_info is not None:
-            return ProviderDef(id=canonical, name=mdev_info.name, transport="openai_chat", api_key_env_vars=mdev_info.env,
-                               base_url=mdev_info.api, source="models.dev")
+            return _models_dev_resolved_provider(canonical, mdev_info)
     except Exception:
         pass
     # Plugin profiles whose endpoint is minted at runtime (empty base_url, e.g. a token exchange
