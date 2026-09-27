@@ -28,7 +28,8 @@ from pathlib import Path
 from typing import Any, Callable, Dict, List, Mapping, Optional, Set, Tuple, Union
 
 from hermes_constants import get_hermes_home, get_process_hermes_home, hermes_home_key
-from registration_lifecycle import replacement_coordinator
+from plugin_runtime.ownership import PluginOwnershipMixin
+from plugin_runtime.registration import PluginRegistration, replacement_coordinator
 from utils import env_var_enabled
 from hermes_cli.config import load_config_readonly
 from hermes_cli.middleware import VALID_MIDDLEWARE
@@ -48,8 +49,9 @@ from plugin_runtime.discovery import (  # noqa: F401 — re-exported
 )
 from hermes_cli.plugins_loader import (
     PluginLoaderMixin, _BARE_MODULE_SCOPE, _MODULE_NAMESPACE_LOCK, _NS_PARENT, _evict_modules,
-    _plugin_home_scope, _serialized_replacement, in_plugin_load_worker,
+    _serialized_replacement, in_plugin_load_worker,
 )
+from plugin_runtime.scope import plugin_home_scope as _plugin_home_scope
 from hermes_cli.plugins_dispatch import (  # noqa: F401 — re-exported
     DEFAULT_SYSTEM_PROMPT_SECTION_MAX_CHARS, HERMES_EVENT_NAMESPACE, MAX_SYSTEM_PROMPT_SECTION_CHARS,
     MAX_SYSTEM_PROMPT_SECTIONS_TOTAL_CHARS, PLUGIN_SECTIONS_END, PLUGIN_SECTIONS_START,
@@ -59,7 +61,6 @@ from hermes_cli.plugins_dispatch import (  # noqa: F401 — re-exported
     RenderedPluginSystemPromptSection, _EventSubscription, format_system_prompt_sections,
     is_valid_system_prompt_section_id,
 )
-from hermes_cli.plugins_ledger import PluginLedgerMixin, PluginRegistration
 from plugin_runtime.state import PluginState
 from hermes_cli.plugins_state import (
     _nested_plugin_mapping, _nested_plugin_value, _plugin_relative_segments,
@@ -1179,7 +1180,7 @@ def _resolve_hook_callback_timeout() -> float:
     return timeout
 
 
-class PluginManager(PluginLoaderMixin, PluginDispatchMixin, PluginLedgerMixin):
+class PluginManager(PluginLoaderMixin, PluginDispatchMixin, PluginOwnershipMixin):
     """Central manager that discovers, loads, and invokes plugins."""
 
     def __init__(self, scope_key: Optional[str] = None) -> None:

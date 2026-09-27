@@ -372,8 +372,8 @@ class _ProviderCollector:
 
     def collect(self, register, *, source=None):
         """Run ``register`` with this collector; hooks it registers form the fallback group that
-        general discovery of the same source replaces (see ``PluginLedgerMixin``)."""
-        from hermes_cli.plugins_ledger import _hook_source_of
+        general discovery of the same source replaces (see ``PluginOwnershipMixin``)."""
+        from plugin_runtime.registration import _hook_source_of
 
         module = sys.modules.get(getattr(register, "__module__", ""))
         self._hook_source = _hook_source_of(self.name, SimpleNamespace(__file__=source) if source else module)

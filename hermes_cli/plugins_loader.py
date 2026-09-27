@@ -17,13 +17,13 @@ import re
 import sys
 import threading
 import types
-from contextlib import contextmanager
 from functools import wraps
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable, Dict, List, Mapping, Optional, Union
 
-from hermes_constants import get_hermes_home, reset_hermes_home_override, set_hermes_home_override
-from registration_lifecycle import replacement_coordinator
+from hermes_constants import get_hermes_home
+from plugin_runtime.registration import _hook_source_of, replacement_coordinator
+from plugin_runtime.scope import plugin_home_scope
 from plugin_runtime.discovery import ENTRY_POINTS_GROUP, _select_entry_point_group
 from plugin_runtime.manifest import PluginManifest, manifest_key, portable_mcp_server_name, validate_config_schema
 from hermes_cli.plugins_state import _plugin_settings_entry
@@ -151,16 +151,6 @@ def _serialized_replacement(method):
     return wrapped
 
 
-@contextmanager
-def _plugin_home_scope(home: Path):
-    """Bind discovery and loading to the manager's immutable Hermes home."""
-    token = set_hermes_home_override(home)
-    try:
-        yield
-    finally:
-        reset_hermes_home_override(token)
-
-
 def _load_error_text(exc: BaseException) -> str:
     """Human-readable load failure; ``sys.exit(0)`` has an empty ``str()`` so name the class and code."""
     if isinstance(exc, SystemExit):
@@ -260,7 +250,7 @@ class PluginLoaderMixin:
             def _loader(_manifest: PluginManifest = manifest) -> None:
                 # Lock before checking cancellation: if an unload won the race it restored the predecessor
                 # and this loader must publish nothing; if loading won, unload waits and disposes the set.
-                with self._discovery_lock, _plugin_home_scope(self.home_path):
+                with self._discovery_lock, plugin_home_scope(self.home_path):
                     if platform_registry.is_deferred_load_cancelled(platform_name, scope=scope):
                         return
                     self._load_plugin_scoped(_manifest)
@@ -412,7 +402,7 @@ class PluginLoaderMixin:
 
     def _load_plugin(self, manifest: PluginManifest) -> None:
         """Import a plugin module and call its ``register(ctx)`` function."""
-        with self._discovery_lock, _plugin_home_scope(self.home_path):
+        with self._discovery_lock, plugin_home_scope(self.home_path):
             self._load_plugin_scoped(manifest)
 
     def _load_plugin_scoped(self, manifest: PluginManifest) -> None:
@@ -478,8 +468,6 @@ class PluginLoaderMixin:
             if run_with_load_deadline(plugin_key, ctx, _import_and_register):
                 self._attribute_registrations(loaded, plugin_key, registration_start)
                 loaded.enabled = True
-                from hermes_cli.plugins_ledger import _hook_source_of
-
                 self._drop_fallback_hooks(_hook_source_of(manifest.name, loaded.module))
         except (Exception, SystemExit) as exc:
             # SystemExit too: a plugin module with an unguarded ``main()``/``sys.exit()`` must not take the
@@ -490,9 +478,6 @@ class PluginLoaderMixin:
             self._dispose_registrations(owned)
             self._forget_registrations(owned)
             loaded.error = _load_error_text(exc)
-            # register() may have subscribed before raising; a failed plugin must leave no callable reachable
-            # from later event dispatch.
-            self._remove_plugin_subscriptions(plugin_key)
             logger.warning("Failed to load plugin '%s': %s", manifest.name, _load_error_text(exc), exc_info=_PLUGINS_DEBUG)
         # The failure path swept this plugin's whole ledger (not just the registration_start slice), so
         # discovery-time pre-registrations are gone too.

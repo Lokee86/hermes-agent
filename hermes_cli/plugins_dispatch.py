@@ -20,6 +20,7 @@ from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, Mapping, Optional, Set, Union
 
 from hermes_cli.middleware import OBSERVER_SCHEMA_VERSION
+from plugin_runtime.registration import PluginRegistration
 
 logger = logging.getLogger("hermes_cli.plugins")
 
@@ -358,32 +359,39 @@ class PluginDispatchMixin:
             raise failure["exc"]
         return outcome.get("value")
 
-    def _subscribe_event(self, owner: str, event: str, callback: Callable) -> None:
-        """Add an owner-tagged event subscription in registration order."""
+    def _subscribe_event(self, owner: str, event: str, callback: Callable) -> PluginRegistration:
+        """Add an owner-tagged event subscription in registration order and ledger-track its cleanup."""
         if not callable(callback):
             raise TypeError("Event subscriber callback must be callable")
+        subscription = _EventSubscription(owner, callback)
         with self._event_lock:
-            self._subscriptions.setdefault(event, []).append(_EventSubscription(owner, callback))
+            self._subscriptions.setdefault(event, []).append(subscription)
+
+        def _release() -> None:
+            with self._event_lock:
+                entries = self._subscriptions.get(event)
+                if not entries:
+                    return
+                index = next((i for i in range(len(entries) - 1, -1, -1) if entries[i] is subscription), None)
+                if index is None:
+                    return
+                del entries[index]
+                if not entries:
+                    self._subscriptions.pop(event, None)
+
+        return self._track_owner_registration(owner, "event_subscription", event, _release)
 
     def _remove_plugin_subscriptions(self, owner: str) -> int:
-        """Remove every subscription owned by *owner*; return the count. Queued envelopes re-check
-        membership per callback, so this also cancels already-snapshotted deliveries.
-
-        TODO(#64229): when the central plugin ownership ledger / registration handles land, route this
-        owner-tagged bookkeeping through that ledger so per-plugin unload cancels event subscriptions
-        alongside every other registration surface. This method is the integration seam.
-        """
-        removed = 0
-        with self._event_lock:
-            for event in list(self._subscriptions):
-                entries = self._subscriptions[event]
-                retained = [entry for entry in entries if entry.owner != owner]
-                removed += len(entries) - len(retained)
-                if retained:
-                    self._subscriptions[event] = retained
-                else:
-                    del self._subscriptions[event]
-        return removed
+        """Dispose every ledger-owned event subscription for *owner*; return the count.
+        Queued envelopes re-check membership per callback, so disposal also cancels already-snapshotted
+        deliveries."""
+        registrations = [
+            registration for registration in self._ownership_ledger.get(owner, [])
+            if registration.kind == "event_subscription" and registration.active
+        ]
+        self._dispose_registrations(registrations)
+        self._forget_registrations(registrations)
+        return len(registrations)
 
     def _ensure_event_worker_locked(self) -> None:
         worker = self._event_worker

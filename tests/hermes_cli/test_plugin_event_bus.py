@@ -279,6 +279,49 @@ def test_async_subscriber_is_awaited():
     assert observed == [7]
 
 
+def test_event_subscription_is_a_normal_owned_registration():
+    manager = _fresh_manager()
+    ctx_a = _make_ctx(manager, "plugin_a", key="a")
+    ctx_b = _make_ctx(manager, "plugin_b", key="b")
+    observed = []
+
+    ctx_a.subscribe("b:ping", lambda **payload: observed.append(payload))
+
+    [registration] = [
+        item for item in manager._ownership_ledger["a"]
+        if item.kind == "event_subscription" and item.key == "b:ping"
+    ]
+    assert registration.active
+    assert registration in manager._registration_order
+
+    assert manager.unload("a")
+    assert not registration.active
+    assert "a" not in manager._ownership_ledger
+    assert "b:ping" not in manager._subscriptions
+    assert ctx_b.emit("ping", {"value": 1}) == 0
+    _drain(manager)
+    assert observed == []
+
+
+def test_unload_all_disposes_event_subscription_handles():
+    manager = _fresh_manager()
+    ctx_a = _make_ctx(manager, "plugin_a", key="a")
+    ctx_b = _make_ctx(manager, "plugin_b", key="b")
+
+    ctx_a.subscribe("b:ping", lambda **payload: None)
+    ctx_b.subscribe("a:ping", lambda **payload: None)
+    registrations = [
+        item for item in manager._registration_order
+        if item.kind == "event_subscription"
+    ]
+    assert len(registrations) == 2
+
+    assert manager.unload()
+    assert all(not item.active for item in registrations)
+    assert manager._subscriptions == {}
+    assert manager._ownership_ledger == {}
+
+
 def test_remove_plugin_subscriptions_cancels_owner_entries():
     manager = _fresh_manager()
     ctx_a = _make_ctx(manager, "plugin_a", key="a")
