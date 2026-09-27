@@ -46,6 +46,11 @@ class ProviderProfile:
     name: str
     api_mode: str = "chat_completions"
     aliases: tuple = ()
+    is_aggregator: bool = False
+    # None means routing aggregation follows is_aggregator. Set explicitly when
+    # a multi-model provider exposes a flat first-party namespace rather than
+    # routing arbitrary upstream provider/model pairs.
+    is_routing_aggregator: bool | None = None
 
     # ── Human-readable metadata ───────────────────────────────
     display_name: str = ""       # e.g. "GMI Cloud" — shown in picker/labels
@@ -55,6 +60,7 @@ class ProviderProfile:
     # ── Auth & endpoints ─────────────────────────────────────
     env_vars: tuple = ()
     base_url: str = ""
+    base_url_env_var: str = ""
     models_url: str = ""  # explicit models endpoint; falls back to {base_url}/models
     auth_type: str = "api_key"   # api_key|oauth_device_code|oauth_external|copilot|aws_sdk
     supports_health_check: bool = True  # False → doctor skips /models probe for this provider
