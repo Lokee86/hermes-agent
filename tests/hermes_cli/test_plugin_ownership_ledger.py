@@ -117,7 +117,7 @@ def test_load_force_reload_and_unload_remove_every_manager_registration(
     monkeypatch,
 ):
     """A real temporary plugin has one live registration after each reload."""
-    import hermes_cli.plugins as plugins_mod
+    from plugin_runtime import discovery as runtime_discovery
     from gateway.platform_registry import platform_registry
     from hermes_cli.plugins import PluginManager
     from tools.registry import registry
@@ -126,7 +126,7 @@ def test_load_force_reload_and_unload_remove_every_manager_registration(
     _write_plugin(hermes_home)
     monkeypatch.setenv("HERMES_HOME", str(hermes_home))
     monkeypatch.setattr(
-        plugins_mod,
+        runtime_discovery,
         "get_bundled_plugins_dir",
         lambda: tmp_path / "empty-bundled",
     )
@@ -1170,6 +1170,7 @@ def test_same_name_tool_and_platform_are_isolated_by_hermes_home(
 ):
     """Real A→B→A profile switching keeps dispatch and adapters isolated."""
     import hermes_cli.plugins as plugins_mod
+    from plugin_runtime import discovery as runtime_discovery
     from gateway.platform_registry import platform_registry
     from hermes_constants import reset_hermes_home_override, set_hermes_home_override
     from hermes_cli.plugins import PluginManager
@@ -1180,7 +1181,7 @@ def test_same_name_tool_and_platform_are_isolated_by_hermes_home(
     _write_profile_probe(home_a, "profile-a")
     _write_profile_probe(home_b, "profile-b")
     monkeypatch.setattr(
-        plugins_mod,
+        runtime_discovery,
         "get_bundled_plugins_dir",
         lambda: tmp_path / "empty-bundled",
     )
@@ -1231,7 +1232,7 @@ def test_manager_discovery_uses_its_home_not_the_ambient_profile(
     monkeypatch,
 ):
     """A retained manager cannot scan another concurrently active profile."""
-    import hermes_cli.plugins as plugins_mod
+    from plugin_runtime import discovery as runtime_discovery
     from gateway.platform_registry import platform_registry
     from hermes_constants import reset_hermes_home_override, set_hermes_home_override
     from hermes_cli.plugins import PluginManager
@@ -1242,7 +1243,7 @@ def test_manager_discovery_uses_its_home_not_the_ambient_profile(
     _write_profile_probe(home_a, "retained-a")
     _write_profile_probe(home_b, "ambient-b")
     monkeypatch.setattr(
-        plugins_mod,
+        runtime_discovery,
         "get_bundled_plugins_dir",
         lambda: tmp_path / "empty-bundled",
     )
@@ -1274,7 +1275,7 @@ def test_same_slug_profiles_allocate_distinct_modules_concurrently(
     monkeypatch,
 ):
     """Policy binding and import use one atomic profile-specific namespace."""
-    import hermes_cli.plugins as plugins_mod
+    from plugin_runtime import discovery as runtime_discovery
     from hermes_cli.plugins import PluginManager
 
     home_a = tmp_path / "concurrent-a"
@@ -1282,7 +1283,7 @@ def test_same_slug_profiles_allocate_distinct_modules_concurrently(
     _write_profile_probe(home_a, "concurrent-a")
     _write_profile_probe(home_b, "concurrent-b")
     monkeypatch.setattr(
-        plugins_mod,
+        runtime_discovery,
         "get_bundled_plugins_dir",
         lambda: tmp_path / "empty-bundled",
     )

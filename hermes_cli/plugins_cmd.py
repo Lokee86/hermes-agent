@@ -640,7 +640,7 @@ def cmd_enable(name: str, allow_tool_override: Optional[bool] = None) -> None:
     ``allow_tool_override`` grant changes only with an explicit True/False flag;
     None leaves it unchanged. Bundled plugins are trusted.
     """
-    from hermes_cli.relay_plugin_cutover import LEGACY_RELAY_PLUGIN_KEYS, RELAY_PLUGINS_CONFIG_ENV
+    from plugin_runtime.relay_policy import LEGACY_RELAY_PLUGIN_KEYS, RELAY_PLUGINS_CONFIG_ENV
     console = _console()
 
     def _refuse_legacy_relay(plugin: str) -> None:

@@ -550,7 +550,7 @@ class TestManifestParsingRobustness:
     def test_list_manifest_is_rejected_with_a_clear_reason_and_hooks_alias(self, hermes_home, caplog):
         """A list-typed plugin.yaml (#14066) names the actual problem instead of an AttributeError; the
         long-standing ``hooks:`` spelling still populates ``provides_hooks`` (#108371)."""
-        from hermes_cli.plugins_discovery import scan_directory
+        from plugin_runtime.discovery import scan_directory
         bad = hermes_home / "plugins" / "listy"
         bad.mkdir()
         (bad / "plugin.yaml").write_text("- name: listy\n")

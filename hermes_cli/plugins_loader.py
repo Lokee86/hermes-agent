@@ -24,7 +24,7 @@ from typing import TYPE_CHECKING, Any, Callable, Dict, List, Mapping, Optional, 
 
 from hermes_constants import get_hermes_home, reset_hermes_home_override, set_hermes_home_override
 from registration_lifecycle import replacement_coordinator
-from hermes_cli.plugins_discovery import ENTRY_POINTS_GROUP, _select_entry_point_group
+from plugin_runtime.discovery import ENTRY_POINTS_GROUP, _select_entry_point_group
 from plugin_runtime.manifest import PluginManifest, manifest_key, portable_mcp_server_name, validate_config_schema
 from hermes_cli.plugins_state import _plugin_settings_entry
 

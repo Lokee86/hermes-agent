@@ -138,7 +138,7 @@ def test_unreadable_plugin_dir_is_skipped_by_every_manifest_scan(monkeypatch, tm
     """One plugin directory the process cannot stat() into (Windows WinError 5, POSIX mode 000)
     must be warned about and skipped — not abort discovery for every other plugin (#111804).
     Covers the loader scan (``scan_directory``) and the list/hub scan (``_scan_level``)."""
-    from hermes_cli.plugins_discovery import scan_directory
+    from plugin_runtime.discovery import scan_directory
 
     user_dir = tmp_path / "plugins"
     bundled_dir = tmp_path / "bundled"

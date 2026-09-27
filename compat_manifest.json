@@ -4332,7 +4332,7 @@
    "facade": "hermes_cli.plugins",
    "name": "ENTRY_POINT_CAPABILITIES_GROUP",
    "kind": "moved-lazy",
-   "target": "hermes_cli.plugins_discovery"
+   "target": "plugin_runtime.discovery"
   },
   {
    "facade": "hermes_cli.plugins",

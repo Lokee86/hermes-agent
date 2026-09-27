@@ -17,6 +17,28 @@ def load_plugin_config() -> dict[str, Any]:
     return load_config()
 
 
+def read_enabled_plugins() -> set[str] | None:
+    """Return the plugins.enabled allow-list; None means missing or malformed."""
+    try:
+        config = load_plugin_config()
+        plugins = config.get("plugins") if isinstance(config, dict) else None
+        enabled = plugins.get("enabled") if isinstance(plugins, dict) else None
+        return set(enabled) if isinstance(enabled, list) else None
+    except Exception:
+        return None
+
+
+def read_disabled_plugins() -> set[str]:
+    """Return the plugins.disabled deny-list; failures and malformed values are empty."""
+    try:
+        config = load_plugin_config()
+        plugins = config.get("plugins") if isinstance(config, dict) else None
+        disabled = plugins.get("disabled", []) if isinstance(plugins, dict) else []
+        return set(disabled) if isinstance(disabled, list) else set()
+    except Exception:
+        return set()
+
+
 def save_plugin_config(config: dict[str, Any]) -> None:
     """Persist plugin-owned config changes through the canonical config writer."""
     from hermes_cli.config import save_config

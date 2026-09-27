@@ -1569,7 +1569,7 @@ to the public equivalent or the new module. Test monkeypatch seams are likewise 
 | name | kind | new location |
 |---|---|---|
 | `CAPABILITY_REGISTRY` | moved-lazy | `plugin_runtime.capabilities` |
-| `ENTRY_POINT_CAPABILITIES_GROUP` | moved-lazy | `hermes_cli.plugins_discovery` |
+| `ENTRY_POINT_CAPABILITIES_GROUP` | moved-lazy | `plugin_runtime.discovery` |
 | `Iterable` | import | `typing` |
 | `LEGACY_RELAY_PLUGIN_KEYS` | moved-lazy | `hermes_cli.relay_plugin_cutover` |
 | `MAX_SYSTEM_PROMPT_SECTIONS` | moved-lazy | `hermes_cli.plugins_dispatch` |

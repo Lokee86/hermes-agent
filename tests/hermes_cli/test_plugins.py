@@ -158,7 +158,7 @@ class TestPluginDiscovery:
         self, tmp_path, monkeypatch
     ):
         from hermes_cli.agent_plugins import MCP_SCHEMA_V1, PLUGIN_SCHEMA_V1
-        from hermes_cli import plugins as plugins_mod
+        from plugin_runtime import discovery as runtime_discovery
 
         home = tmp_path / "home"
         plugin = home / "plugins" / "portable"
@@ -204,7 +204,7 @@ class TestPluginDiscovery:
         empty_bundled.mkdir()
         monkeypatch.setenv("HOME", str(tmp_path / "os-home"))
         monkeypatch.setenv("HERMES_HOME", str(home))
-        monkeypatch.setattr(plugins_mod, "get_bundled_plugins_dir", lambda: empty_bundled)
+        monkeypatch.setattr(runtime_discovery, "get_bundled_plugins_dir", lambda: empty_bundled)
 
         manager = PluginManager()
         manager.discover_and_load()
@@ -235,7 +235,7 @@ class TestPluginDiscovery:
         """Readable server names can clash where the old digest could not: the second plugin's server
         is skipped with a warning naming the first, and the first's config is the one served."""
         from hermes_cli.agent_plugins import MCP_SCHEMA_V1, PLUGIN_SCHEMA_V1
-        from hermes_cli import plugins as plugins_mod
+        from plugin_runtime import discovery as runtime_discovery
 
         home = tmp_path / ".hermes"
         # Two unrelated plugins both call their server "shared": one readable name, one owner.
@@ -253,7 +253,7 @@ class TestPluginDiscovery:
         empty_bundled.mkdir()
         monkeypatch.setenv("HOME", str(tmp_path / "os-home"))
         monkeypatch.setenv("HERMES_HOME", str(home))
-        monkeypatch.setattr(plugins_mod, "get_bundled_plugins_dir", lambda: empty_bundled)
+        monkeypatch.setattr(runtime_discovery, "get_bundled_plugins_dir", lambda: empty_bundled)
 
         manager = PluginManager()
         manager.discover_and_load()
@@ -264,7 +264,7 @@ class TestPluginDiscovery:
 
     def test_disabled_portable_plugin_registers_nothing(self, tmp_path, monkeypatch):
         from hermes_cli.agent_plugins import PLUGIN_SCHEMA_V1
-        from hermes_cli import plugins as plugins_mod
+        from plugin_runtime import discovery as runtime_discovery
 
         home = tmp_path / "home"
         plugin = home / "plugins" / "portable"
@@ -286,7 +286,7 @@ class TestPluginDiscovery:
         empty_bundled.mkdir()
         monkeypatch.setenv("HOME", str(tmp_path / "os-home"))
         monkeypatch.setenv("HERMES_HOME", str(home))
-        monkeypatch.setattr(plugins_mod, "get_bundled_plugins_dir", lambda: empty_bundled)
+        monkeypatch.setattr(runtime_discovery, "get_bundled_plugins_dir", lambda: empty_bundled)
 
         manager = PluginManager()
         manager.discover_and_load()
@@ -592,8 +592,8 @@ class TestPluginLoading:
         hermes_home.mkdir(exist_ok=True)
         (hermes_home / "config.yaml").write_text(yaml.safe_dump({"plugins": {"enabled": ["chronos"]}}))
         monkeypatch.setenv("HERMES_HOME", str(hermes_home))
-        from hermes_cli import plugins as plugins_mod
-        monkeypatch.setattr(plugins_mod, "get_bundled_plugins_dir", lambda: bundled)
+        from plugin_runtime import discovery as runtime_discovery
+        monkeypatch.setattr(runtime_discovery, "get_bundled_plugins_dir", lambda: bundled)
 
         mgr = PluginManager()
         mgr.discover_and_load()

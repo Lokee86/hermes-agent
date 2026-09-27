@@ -16,7 +16,6 @@ import importlib.metadata
 import inspect
 import json
 import logging
-import os
 import queue
 import re
 import sys
@@ -35,14 +34,15 @@ from hermes_cli.config import load_config_readonly
 from hermes_cli.middleware import VALID_MIDDLEWARE
 from plugin_runtime.capabilities import plugin_capability_granted
 from plugin_runtime.debug import plugin_debug_enabled, refresh_plugin_debug
-from hermes_cli.relay_plugin_cutover import RELAY_PLUGINS_CONFIG_ENV, legacy_relay_plugin_keys
+from plugin_runtime.discovery import get_bundled_plugins_dir
+from plugin_runtime.relay_policy import RELAY_PLUGINS_CONFIG_ENV, legacy_relay_plugin_keys
 # Sibling modules' names are re-exported here (origin) so plugins and tests keep one import path.
 from plugin_runtime.manifest import (  # noqa: F401 — re-exported
     _CONFIG_SCHEMA_TYPES, SUPPORTED_MANIFEST_VERSION, PluginManifest, _portable_skill_namespace,
     manifest_key, parse_manifest_file, resolve_module_origin, resolve_plugin_load_order,
     validate_config_schema,
 )
-from hermes_cli.plugins_discovery import (  # noqa: F401 — re-exported
+from plugin_runtime.discovery import (  # noqa: F401 — re-exported
     ENTRY_POINTS_GROUP, _get_disabled_plugins, _get_enabled_plugins, collect_directory_manifests,
     discover_entrypoint_manifests, gate_manifest, resolve_manifest_winners, scan_directory,
 )
@@ -65,15 +65,6 @@ from hermes_cli.plugins_state import (
     _nested_plugin_mapping, _nested_plugin_value, _plugin_relative_segments,
     _plugin_settings_entry, save_plugin_setting,
 )
-
-
-def get_bundled_plugins_dir() -> Path:
-    """Bundled ``plugins/`` dir: ``HERMES_BUNDLED_PLUGINS`` (Nix wrapper / packaged installs, read-only
-    store paths) first, else the in-repo path."""
-    env_override = os.getenv("HERMES_BUNDLED_PLUGINS")
-    if env_override:
-        return Path(env_override)
-    return Path(__file__).resolve().parent.parent / "plugins"
 
 
 class PluginToolOverrideError(PermissionError):
@@ -106,6 +97,14 @@ def _install_plugin_debug_handler(force: bool = False) -> None:
 
 
 _install_plugin_debug_handler()
+
+
+def _installed_plugin_removal(name: str, plugin_dir: Any):
+    """CLI-owned adapter for the discovery recall gate; import stays lazy and offline."""
+    from hermes_cli.plugins_cmd_catalog import installed_plugin_removal
+
+    return installed_plugin_removal(name, plugin_dir)
+
 
 VALID_HOOKS: Set[str] = {
     "pre_tool_call", "post_tool_call", "transform_terminal_output", "transform_tool_result",
@@ -1456,7 +1455,9 @@ class PluginManager(PluginLoaderMixin, PluginDispatchMixin, PluginLedgerMixin):
         """Route one winning manifest per :func:`gate_manifest`: load now, defer, or record as
         skipped (introspection-only placeholder). Returns True only for plugins that go through the
         dependency-ordered load pass."""
-        verdict = gate_manifest(manifest, disabled, enabled)
+        verdict = gate_manifest(
+            manifest, disabled, enabled, installed_plugin_removal=_installed_plugin_removal,
+        )
         if verdict.action == "load":
             return True
         if verdict.action == "load_now":
@@ -2294,8 +2295,8 @@ def unload_plugins(
 
 _PLUGIN_COMPAT_LAZY = {
     'CAPABILITY_REGISTRY': ('plugin_runtime.capabilities', 'CAPABILITY_REGISTRY'),
-    'ENTRY_POINT_CAPABILITIES_GROUP': ('hermes_cli.plugins_discovery', 'ENTRY_POINT_CAPABILITIES_GROUP'),
-    'LEGACY_RELAY_PLUGIN_KEYS': ('hermes_cli.relay_plugin_cutover', 'LEGACY_RELAY_PLUGIN_KEYS'),
+    'ENTRY_POINT_CAPABILITIES_GROUP': ('plugin_runtime.discovery', 'ENTRY_POINT_CAPABILITIES_GROUP'),
+    'LEGACY_RELAY_PLUGIN_KEYS': ('plugin_runtime.relay_policy', 'LEGACY_RELAY_PLUGIN_KEYS'),
     'MAX_SYSTEM_PROMPT_SECTIONS': ('hermes_cli.plugins_dispatch', 'MAX_SYSTEM_PROMPT_SECTIONS'),
     'OBSERVER_SCHEMA_VERSION': ('hermes_cli.middleware', 'OBSERVER_SCHEMA_VERSION'),
     'VALID_CAPABILITY_IDS': ('plugin_runtime.capabilities', 'VALID_CAPABILITY_IDS'),

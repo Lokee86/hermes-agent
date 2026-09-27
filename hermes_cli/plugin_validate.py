@@ -252,7 +252,7 @@ def emit(payload):
 if provider_kind:
     # `kind: model-provider` plugins register at import via
     # providers.register_provider(ProviderProfile) — the PluginManager never
-    # calls a register(ctx) on them (plugins_discovery skips the kind), so the
+    # calls a register(ctx) on them (runtime discovery skips the kind), so the
     # probe records that call instead of demanding an entry point that would
     # be dead code.
     try:
