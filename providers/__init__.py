@@ -47,6 +47,13 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from providers.base import ProviderProfile
+from providers.identity import (
+    ResolvedProvider,
+    get_provider_label,
+    is_aggregator,
+    is_routing_aggregator,
+    normalize_provider,
+)
 
 logger = logging.getLogger(__name__)
 
