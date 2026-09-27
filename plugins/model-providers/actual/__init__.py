@@ -85,6 +85,7 @@ actual = ActualProfile(
     signup_url="https://actual.inc",
     env_vars=("ACTUAL_API_KEY",),
     base_url=DEFAULT_ACTUAL_BASE_URL,
+    base_url_env_var="ACTUAL_BASE_URL",
     auth_type="api_key",
     api_mode="chat_completions",
 )

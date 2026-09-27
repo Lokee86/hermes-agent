@@ -62,6 +62,7 @@ class KimiProfile(ProviderProfile):
 def _kimi(name: str, aliases: tuple, env_vars: tuple, base_url: str) -> KimiProfile:
     return KimiProfile(
         name=name, aliases=aliases, env_vars=env_vars, base_url=base_url,
+        base_url_env_var="KIMI_BASE_URL" if name == "kimi-coding" else "",
         fixed_temperature=OMIT_TEMPERATURE, default_max_tokens=32000,
         default_headers=dict(_HEADERS), default_aux_model="kimi-k2-turbo-preview",
     )

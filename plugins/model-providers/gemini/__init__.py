@@ -32,9 +32,11 @@ class GeminiProfile(ProviderProfile):
 
 
 gemini = GeminiProfile(
-    name="gemini", aliases=("google", "google-gemini", "google-ai-studio"), api_mode="chat_completions",
+    name="gemini", aliases=("google", "google-gemini", "google-ai-studio"),
+    display_name="Google AI Studio", api_mode="chat_completions",
     env_vars=("GOOGLE_API_KEY", "GEMINI_API_KEY"),
-    base_url="https://generativelanguage.googleapis.com/v1beta", auth_type="api_key",
+    base_url="https://generativelanguage.googleapis.com/v1beta", base_url_env_var="GEMINI_BASE_URL",
+    auth_type="api_key",
     default_aux_model="gemini-3.6-flash",
 )
 

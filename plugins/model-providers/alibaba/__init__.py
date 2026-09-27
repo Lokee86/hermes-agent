@@ -9,8 +9,9 @@ from providers import register_provider
 from providers.base import ProviderProfile
 
 alibaba = ProviderProfile(
-    name="alibaba", aliases=("dashscope", "alibaba-cloud", "qwen-dashscope", "aliyun"), env_vars=("DASHSCOPE_API_KEY",),
-    base_url="https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
+    name="alibaba", aliases=("dashscope", "alibaba-cloud", "qwen-dashscope", "aliyun"),
+    display_name="Qwen Cloud", env_vars=("DASHSCOPE_API_KEY",),
+    base_url="https://dashscope-intl.aliyuncs.com/compatible-mode/v1", base_url_env_var="DASHSCOPE_BASE_URL",
 )
 
 alibaba_cn = ProviderProfile(

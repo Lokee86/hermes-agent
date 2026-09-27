@@ -36,8 +36,9 @@ class OllamaCloudProfile(ProviderProfile):
 
 
 ollama_cloud = OllamaCloudProfile(
-    name="ollama-cloud", aliases=("ollama_cloud",), default_aux_model="nemotron-3-nano:30b",
-    env_vars=("OLLAMA_API_KEY",), base_url="https://ollama.com/v1",
+    name="ollama-cloud", aliases=("ollama_cloud",), display_name="Ollama Cloud",
+    default_aux_model="nemotron-3-nano:30b", env_vars=("OLLAMA_API_KEY",),
+    base_url="https://ollama.com/v1", base_url_env_var="OLLAMA_BASE_URL",
 )
 
 register_provider(ollama_cloud)

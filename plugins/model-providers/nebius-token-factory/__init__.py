@@ -37,7 +37,7 @@ nebius_token_factory = NebiusTokenFactoryProfile(
     display_name="Nebius Token Factory", description="Nebius Token Factory — OpenAI-compatible inference",
     signup_url="https://tokenfactory.nebius.com/",
     env_vars=("NEBIUS_API_KEY", "NEBIUS_TOKEN_FACTORY_API_KEY", "NEBIUS_BASE_URL"),
-    base_url="https://api.tokenfactory.nebius.com/v1",
+    base_url="https://api.tokenfactory.nebius.com/v1", base_url_env_var="NEBIUS_BASE_URL",
     models_url="https://api.tokenfactory.nebius.com/v1/models?verbose=true", auth_type="api_key",
     default_aux_model="nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B",
     fallback_models=(

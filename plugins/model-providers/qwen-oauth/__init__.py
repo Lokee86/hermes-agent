@@ -66,7 +66,8 @@ class QwenProfile(ProviderProfile):
 
 qwen = QwenProfile(
     name="qwen-oauth", aliases=("qwen", "qwen-portal", "qwen-cli"), env_vars=("QWEN_API_KEY",),
-    base_url="https://portal.qwen.ai/v1", auth_type="oauth_external", default_max_tokens=65536,
+    base_url="https://portal.qwen.ai/v1", base_url_env_var="HERMES_QWEN_BASE_URL",
+    auth_type="oauth_external", default_max_tokens=65536,
 )
 
 register_provider(qwen)

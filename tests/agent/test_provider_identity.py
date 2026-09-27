@@ -75,6 +75,41 @@ def test_named_custom_routes_are_routing_aggregators(identity_profiles) -> None:
     assert is_routing_aggregator("custom:fixture") is True
 
 
+def test_bundled_profiles_own_representative_identity_declarations() -> None:
+    openrouter = providers.get_provider_profile("openrouter")
+    assert openrouter is not None
+    assert openrouter.base_url_env_var == "OPENROUTER_BASE_URL"
+    assert openrouter.is_aggregator is True
+    assert is_routing_aggregator("openrouter") is True
+
+    opencode = providers.get_provider_profile("opencode")
+    assert opencode is not None
+    assert opencode.name == "opencode-zen"
+    assert opencode.is_aggregator is True
+    assert opencode.is_routing_aggregator is False
+
+    openai = providers.get_provider_profile("openai-api")
+    assert openai is not None
+    assert openai.display_name == "OpenAI API"
+    assert openai.api_mode == "codex_responses"
+    assert openai.base_url_env_var == "OPENAI_BASE_URL"
+
+    xai_oauth = providers.get_provider_profile("grok-oauth")
+    assert xai_oauth is not None
+    assert xai_oauth.name == "xai-oauth"
+    assert xai_oauth.auth_type == "oauth_external"
+
+    moa = providers.get_provider_profile("moa")
+    assert moa is not None
+    assert moa.auth_type == "virtual"
+    assert moa.base_url == "moa://local"
+
+    tokenplan = providers.get_provider_profile("tencent-tokenplan")
+    assert tokenplan is not None
+    assert tokenplan.api_mode == "anthropic_messages"
+    assert tokenplan.base_url_env_var == "TOKENPLAN_BASE_URL"
+
+
 def test_resolved_provider_is_an_immutable_value_object() -> None:
     resolved = ResolvedProvider(
         id="fixture-router",

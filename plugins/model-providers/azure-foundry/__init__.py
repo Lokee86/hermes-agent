@@ -9,6 +9,7 @@ azure_foundry = ProviderProfile(
     description="Microsoft Foundry - OpenAI-compatible endpoint (user-supplied base URL)",
     signup_url="https://ai.azure.com/", env_vars=("AZURE_FOUNDRY_API_KEY", "AZURE_FOUNDRY_BASE_URL"),
     base_url="",  # per-resource; user provides at setup
+    base_url_env_var="AZURE_FOUNDRY_BASE_URL",
     auth_type="api_key",
 )
 

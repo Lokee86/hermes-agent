@@ -116,14 +116,18 @@ class OpenCodeZenProfile(ProviderProfile):
 
 
 opencode_zen = OpenCodeZenProfile(
-    name="opencode-zen", aliases=("opencode", "opencode_zen", "zen"), env_vars=("OPENCODE_ZEN_API_KEY",),
-    base_url="https://opencode.ai/zen/v1", default_headers=dict(_ATTRIBUTION_HEADERS),
+    name="opencode-zen", aliases=("opencode", "opencode_zen", "zen"), display_name="OpenCode Zen",
+    env_vars=("OPENCODE_ZEN_API_KEY",), base_url="https://opencode.ai/zen/v1",
+    base_url_env_var="OPENCODE_ZEN_BASE_URL", is_aggregator=True, is_routing_aggregator=False,
+    default_headers=dict(_ATTRIBUTION_HEADERS),
     default_aux_model="gemini-3-flash",
 )
 
 opencode_go = OpenCodeGoProfile(
-    name="opencode-go", aliases=("opencode_go", "go", "opencode-go-sub"), env_vars=("OPENCODE_GO_API_KEY",),
-    base_url="https://opencode.ai/zen/go/v1", default_headers=dict(_ATTRIBUTION_HEADERS),
+    name="opencode-go", aliases=("opencode_go", "go", "opencode-go-sub"), display_name="OpenCode Go",
+    env_vars=("OPENCODE_GO_API_KEY",), base_url="https://opencode.ai/zen/go/v1",
+    base_url_env_var="OPENCODE_GO_BASE_URL", is_aggregator=True, is_routing_aggregator=False,
+    default_headers=dict(_ATTRIBUTION_HEADERS),
     default_aux_model="glm-5",
     # The Go relay's upstream validates tool content as a strict string: list-type tool
     # content (native vision embeds) 422s with ``messages.N.tool.content.str Input should

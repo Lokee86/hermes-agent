@@ -38,13 +38,15 @@ class MiniMaxProfile(ProviderProfile):
 
 
 minimax = MiniMaxProfile(
-    name="minimax", aliases=("mini-max",), api_mode="anthropic_messages", env_vars=("MINIMAX_API_KEY",),
-    base_url="https://api.minimax.io/anthropic", auth_type="api_key", default_aux_model="MiniMax-M3",
+    name="minimax", aliases=("mini-max",), display_name="MiniMax", api_mode="anthropic_messages",
+    env_vars=("MINIMAX_API_KEY",), base_url="https://api.minimax.io/anthropic",
+    base_url_env_var="MINIMAX_BASE_URL", auth_type="api_key", default_aux_model="MiniMax-M3",
 )
 
 minimax_cn = MiniMaxProfile(
-    name="minimax-cn", aliases=("minimax-china", "minimax_cn"), api_mode="anthropic_messages",
-    env_vars=("MINIMAX_CN_API_KEY",), base_url="https://api.minimaxi.com/anthropic", auth_type="api_key",
+    name="minimax-cn", aliases=("minimax-china", "minimax_cn"), display_name="MiniMax (China)",
+    api_mode="anthropic_messages", env_vars=("MINIMAX_CN_API_KEY",),
+    base_url="https://api.minimaxi.com/anthropic", base_url_env_var="MINIMAX_CN_BASE_URL", auth_type="api_key",
     default_aux_model="MiniMax-M3",
 )
 

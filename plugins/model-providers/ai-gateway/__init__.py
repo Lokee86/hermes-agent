@@ -20,7 +20,9 @@ class VercelAIGatewayProfile(ProviderProfile):
 
 vercel = VercelAIGatewayProfile(
     name="ai-gateway", aliases=("vercel", "vercel-ai-gateway", "ai_gateway", "aigateway"),
-    env_vars=("AI_GATEWAY_API_KEY",), base_url="https://ai-gateway.vercel.sh/v1",
+    display_name="Vercel AI Gateway", env_vars=("AI_GATEWAY_API_KEY",),
+    base_url="https://ai-gateway.vercel.sh/v1", base_url_env_var="AI_GATEWAY_BASE_URL",
+    is_aggregator=True,
     default_headers={"HTTP-Referer": "https://hermes-agent.nousresearch.com", "X-Title": "Hermes Agent"},
     default_aux_model="google/gemini-3-flash",
 )
