@@ -4350,13 +4350,13 @@
    "facade": "hermes_cli.plugins",
    "name": "MAX_SYSTEM_PROMPT_SECTIONS",
    "kind": "moved-lazy",
-   "target": "hermes_cli.plugins_dispatch"
+   "target": "plugin_runtime.dispatch"
   },
   {
    "facade": "hermes_cli.plugins",
    "name": "OBSERVER_SCHEMA_VERSION",
    "kind": "moved-lazy",
-   "target": "hermes_cli.middleware"
+   "target": "plugin_runtime.dispatch"
   },
   {
    "facade": "hermes_cli.plugins",
@@ -4404,7 +4404,7 @@
    "facade": "hermes_cli.plugins",
    "name": "format_system_prompt_section",
    "kind": "moved-lazy",
-   "target": "hermes_cli.plugins_dispatch"
+   "target": "plugin_runtime.dispatch"
   },
   {
    "facade": "hermes_cli.plugins",

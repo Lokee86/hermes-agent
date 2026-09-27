@@ -58,3 +58,28 @@ def test_bridge_activation_reads_preserve_fail_closed_semantics(monkeypatch):
     monkeypatch.setattr(config_mod, "load_config", _broken)
     assert read_enabled_plugins() is None
     assert read_disabled_plugins() == set()
+
+
+def test_bridge_reads_raw_hook_callback_timeout(monkeypatch):
+    from hermes_cli import config as config_mod
+    from plugin_runtime.config_bridge import read_hook_callback_timeout_seconds
+
+    monkeypatch.setattr(
+        config_mod,
+        "load_config_readonly",
+        lambda: {"plugins": {"hook_callback_timeout": "0.75"}},
+    )
+
+    assert read_hook_callback_timeout_seconds() == "0.75"
+
+
+def test_bridge_hook_callback_timeout_read_fails_closed(monkeypatch):
+    from hermes_cli import config as config_mod
+    from plugin_runtime.config_bridge import read_hook_callback_timeout_seconds
+
+    def _broken():
+        raise RuntimeError("fixture")
+
+    monkeypatch.setattr(config_mod, "load_config_readonly", _broken)
+
+    assert read_hook_callback_timeout_seconds() is None

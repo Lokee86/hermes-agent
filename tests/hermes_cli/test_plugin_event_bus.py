@@ -216,9 +216,9 @@ def test_emit_returns_before_blocking_subscriber_finishes():
 
 
 def test_pending_budget_drops_new_event_without_blocking(monkeypatch, caplog):
-    from hermes_cli import plugins_dispatch
+    from plugin_runtime import dispatch as runtime_dispatch
 
-    monkeypatch.setattr(plugins_dispatch, "_EVENT_PENDING_CAP", 1)
+    monkeypatch.setattr(runtime_dispatch, "_EVENT_PENDING_CAP", 1)
     manager = _fresh_manager()
     ctx_a = _make_ctx(manager, "plugin_a", key="a")
     ctx_b = _make_ctx(manager, "plugin_b", key="b")

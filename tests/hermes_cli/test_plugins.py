@@ -1164,7 +1164,7 @@ class TestForceReloadSymmetry:
         import time
 
         monkeypatch.setattr(
-            "hermes_cli.plugins._resolve_hook_callback_timeout", lambda: 0.15
+            "plugin_runtime.dispatch._resolve_hook_callback_timeout", lambda: 0.15
         )
 
         hold = threading.Event()
@@ -1198,7 +1198,7 @@ class TestForceReloadSymmetry:
 
     def test_hook_exception_still_isolated_under_timeout_path(self, monkeypatch):
         monkeypatch.setattr(
-            "hermes_cli.plugins._resolve_hook_callback_timeout", lambda: 1.0
+            "plugin_runtime.dispatch._resolve_hook_callback_timeout", lambda: 1.0
         )
 
         def boom(**_kwargs):
@@ -1211,7 +1211,7 @@ class TestForceReloadSymmetry:
     def test_system_exit_is_reported_under_timeout_path(self, monkeypatch, caplog):
         """Bounded hooks isolate SystemExit without losing its failure report."""
         monkeypatch.setattr(
-            "hermes_cli.plugins._resolve_hook_callback_timeout", lambda: 1.0
+            "plugin_runtime.dispatch._resolve_hook_callback_timeout", lambda: 1.0
         )
 
         def exits(**_kwargs):
@@ -1230,7 +1230,7 @@ class TestForceReloadSymmetry:
         (#109624), on both the caller-thread and the bounded-worker path, and the block message
         names the callback and the error so a crashing guard is distinguishable from a slow one."""
         monkeypatch.setattr(
-            "hermes_cli.plugins._resolve_hook_callback_timeout", lambda: timeout
+            "plugin_runtime.dispatch._resolve_hook_callback_timeout", lambda: timeout
         )
 
         def boom(**_kwargs):
@@ -1263,7 +1263,7 @@ class TestForceReloadSymmetry:
     def test_subagent_stop_stays_on_caller_thread(self, monkeypatch):
         """Caller-thread hooks must not move the body onto a timeout worker."""
         monkeypatch.setattr(
-            "hermes_cli.plugins._resolve_hook_callback_timeout", lambda: 1.0
+            "plugin_runtime.dispatch._resolve_hook_callback_timeout", lambda: 1.0
         )
         seen = {}
 
@@ -1280,7 +1280,7 @@ class TestForceReloadSymmetry:
     def test_system_exit_from_caller_thread_hook_is_isolated(self, monkeypatch, caplog):
         """A plugin dependency calling sys.exit() must not terminate hook dispatch."""
         monkeypatch.setattr(
-            "hermes_cli.plugins._resolve_hook_callback_timeout", lambda: 1.0
+            "plugin_runtime.dispatch._resolve_hook_callback_timeout", lambda: 1.0
         )
 
         def exits(**_kwargs):
@@ -1296,7 +1296,7 @@ class TestForceReloadSymmetry:
     def test_keyboard_interrupt_from_caller_thread_hook_propagates(self, monkeypatch):
         """Plugin isolation must not swallow an operator's Ctrl-C."""
         monkeypatch.setattr(
-            "hermes_cli.plugins._resolve_hook_callback_timeout", lambda: 1.0
+            "plugin_runtime.dispatch._resolve_hook_callback_timeout", lambda: 1.0
         )
         later_calls = []
 
@@ -1330,7 +1330,7 @@ class TestForceReloadSymmetry:
         import time
 
         monkeypatch.setattr(
-            "hermes_cli.plugins._resolve_hook_callback_timeout", lambda: 0.1
+            "plugin_runtime.dispatch._resolve_hook_callback_timeout", lambda: 0.1
         )
 
         hold = threading.Event()
@@ -1357,7 +1357,7 @@ class TestForceReloadSymmetry:
         """Two concurrent calls of one tool are different work, not a duplicate (#98382)."""
         import time
         monkeypatch.setattr(
-            "hermes_cli.plugins._resolve_hook_callback_timeout", lambda: 5.0
+            "plugin_runtime.dispatch._resolve_hook_callback_timeout", lambda: 5.0
         )
 
         hold = threading.Event()
@@ -1396,7 +1396,7 @@ class TestForceReloadSymmetry:
         """Negative control: the same call identity stays a duplicate while its worker
         is still running, so the running gate (not timeout suppression) dedupes it."""
         monkeypatch.setattr(
-            "hermes_cli.plugins._resolve_hook_callback_timeout", lambda: 5.0
+            "plugin_runtime.dispatch._resolve_hook_callback_timeout", lambda: 5.0
         )
 
         hold = threading.Event()
@@ -1432,10 +1432,10 @@ class TestForceReloadSymmetry:
         ``_HOOK_MAX_ABANDONED_WORKERS`` live ones — a hung plugin leaks a bounded few threads,
         never one per call (#98382), and past the cap it is skipped with a warning that names
         the callback (#105223)."""
-        import hermes_cli.plugins_dispatch as dispatch
+        import plugin_runtime.dispatch as dispatch
 
         monkeypatch.setattr(
-            "hermes_cli.plugins._resolve_hook_callback_timeout", lambda: 0.1
+            "plugin_runtime.dispatch._resolve_hook_callback_timeout", lambda: 0.1
         )
 
         hold = threading.Event()
@@ -1467,7 +1467,7 @@ class TestForceReloadSymmetry:
         from hermes_cli.plugins import _PRE_TOOL_CALL_TIMEOUT_BLOCK_MESSAGE
 
         monkeypatch.setattr(
-            "hermes_cli.plugins._resolve_hook_callback_timeout", lambda: 0.1
+            "plugin_runtime.dispatch._resolve_hook_callback_timeout", lambda: 0.1
         )
         hold = threading.Event()
         starts = []
@@ -1494,7 +1494,7 @@ class TestForceReloadSymmetry:
         """If the worker completes between the wait expiring and the timeout branch taking the
         lock, it has already released its token; recording it as abandoned anyway would block
         every later call id for that callback until reload. A fresh call must still run."""
-        import hermes_cli.plugins_dispatch as dispatch
+        import plugin_runtime.dispatch as dispatch
 
         class _RacingEvent(threading.Event):
             def wait(self, timeout=None):
@@ -1509,7 +1509,7 @@ class TestForceReloadSymmetry:
 
         monkeypatch.setattr(dispatch, "threading", _Threading())
         monkeypatch.setattr(
-            "hermes_cli.plugins._resolve_hook_callback_timeout", lambda: 0.1
+            "plugin_runtime.dispatch._resolve_hook_callback_timeout", lambda: 0.1
         )
         starts = []
 
@@ -1537,7 +1537,7 @@ class TestForceReloadSymmetry:
         )
 
         monkeypatch.setattr(
-            "hermes_cli.plugins._resolve_hook_callback_timeout", lambda: 0.1
+            "plugin_runtime.dispatch._resolve_hook_callback_timeout", lambda: 0.1
         )
 
         hold = threading.Event()
@@ -1572,7 +1572,7 @@ class TestForceReloadSymmetry:
         from hermes_cli.plugins import _PRE_TOOL_CALL_TIMEOUT_BLOCK_MESSAGE
 
         monkeypatch.setattr(
-            "hermes_cli.plugins._resolve_hook_callback_timeout", lambda: 1.0
+            "plugin_runtime.dispatch._resolve_hook_callback_timeout", lambda: 1.0
         )
 
         calls = []
@@ -1609,7 +1609,7 @@ class TestForceReloadSymmetry:
         from hermes_cli.plugins import _PRE_TOOL_CALL_TIMEOUT_BLOCK_MESSAGE
 
         monkeypatch.setattr(
-            "hermes_cli.plugins._resolve_hook_callback_timeout", lambda: 0.1
+            "plugin_runtime.dispatch._resolve_hook_callback_timeout", lambda: 0.1
         )
 
         hold = threading.Event()

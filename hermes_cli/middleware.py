@@ -11,9 +11,10 @@ from copy import deepcopy
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List
 
+from plugin_runtime.dispatch import OBSERVER_SCHEMA_VERSION
+
 logger = logging.getLogger(__name__)
 
-OBSERVER_SCHEMA_VERSION = "hermes.observer.v1"
 MIDDLEWARE_SCHEMA_VERSION = "hermes.middleware.v1"
 
 TOOL_REQUEST_MIDDLEWARE = "tool_request"

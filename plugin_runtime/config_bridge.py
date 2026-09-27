@@ -53,6 +53,20 @@ def read_plugin_load_timeout_seconds() -> Any:
         return None
 
 
+def read_hook_callback_timeout_seconds() -> Any:
+    """Return the raw configured hook callback timeout, or None when absent/unreadable."""
+    try:
+        from hermes_cli.config import load_config_readonly
+
+        config = load_config_readonly() or {}
+        plugins = config.get("plugins") if isinstance(config, dict) else None
+        if not isinstance(plugins, dict):
+            return None
+        return plugins.get("hook_callback_timeout")
+    except Exception:
+        return None
+
+
 def read_plugin_settings(plugin_id: str) -> Mapping[str, Any]:
     """Return one plugin's effective settings/config mapping for runtime validation."""
     try:

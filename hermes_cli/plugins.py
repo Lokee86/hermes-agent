@@ -16,7 +16,6 @@ import importlib.metadata
 import inspect
 import json
 import logging
-import queue
 import re
 import sys
 import threading
@@ -58,14 +57,14 @@ from plugin_runtime.discovery import (  # noqa: F401 — re-exported
     discover_entrypoint_manifests, gate_manifest, resolve_manifest_winners, scan_directory,
 )
 from plugin_runtime.scope import plugin_home_scope as _plugin_home_scope
-from hermes_cli.plugins_dispatch import (  # noqa: F401 — re-exported
+from plugin_runtime.dispatch import (  # noqa: F401 — re-exported
     DEFAULT_SYSTEM_PROMPT_SECTION_MAX_CHARS, HERMES_EVENT_NAMESPACE, MAX_SYSTEM_PROMPT_SECTION_CHARS,
     MAX_SYSTEM_PROMPT_SECTIONS_TOTAL_CHARS, PLUGIN_SECTIONS_END, PLUGIN_SECTIONS_START,
     SYSTEM_PROMPT_SECTION_POSITIONS, _EVENT_EMIT_DEPTH_CAP, _EVENT_PENDING_CAP,
     _HOOK_CALLBACK_TIMEOUT_SECS, _HOOK_TIMEOUT_SUPPRESSION_SECONDS, _MAX_HOOK_CALLBACK_TIMEOUT_SECS,
-    _PRE_TOOL_CALL_TIMEOUT_BLOCK_MESSAGE, PluginDispatchMixin, PluginSystemPromptSection,
-    RenderedPluginSystemPromptSection, _EventSubscription, format_system_prompt_sections,
-    is_valid_system_prompt_section_id,
+    _PRE_TOOL_CALL_TIMEOUT_BLOCK_MESSAGE, _resolve_hook_callback_timeout, PluginDispatchMixin,
+    PluginSystemPromptSection, RenderedPluginSystemPromptSection, _EventSubscription,
+    format_system_prompt_sections, is_valid_system_prompt_section_id,
 )
 from plugin_runtime.state import PluginState
 from hermes_cli.plugins_state import (
@@ -1142,36 +1141,20 @@ for _name, _method in list(vars(PluginContext).items()):
 del _name, _method
 
 
-def _resolve_hook_callback_timeout() -> float:
-    """Effective hook-callback timeout from ``plugins.hook_callback_timeout`` (default 30s; ``<= 0``
-    disables the threaded path; clamped to ``_MAX_HOOK_CALLBACK_TIMEOUT_SECS``).
-
-    ``invoke_hook`` calls this once per hook invocation; ``load_config_readonly()`` serves cache hits
-    without ``_CONFIG_LOCK``, so this is a stat + dict lookup per call and needs no memo of its own.
-    """
-    default = _HOOK_CALLBACK_TIMEOUT_SECS
-    try:
-        plugins_cfg = (load_config_readonly() or {}).get("plugins")
-        if not isinstance(plugins_cfg, dict) or plugins_cfg.get("hook_callback_timeout") is None:
-            return default
-        timeout = float(plugins_cfg["hook_callback_timeout"])
-    except (TypeError, ValueError):
-        logger.warning("plugins.hook_callback_timeout is not a number; using default %gs", default)
-        return default
-    except Exception:
-        return default
-    if timeout < 0:
-        logger.warning("plugins.hook_callback_timeout=%g is negative; using default %gs", timeout, default)
-        return default
-    if timeout > _MAX_HOOK_CALLBACK_TIMEOUT_SECS:
-        logger.warning("plugins.hook_callback_timeout=%g exceeds max %gs; clamping", timeout,
-                       _MAX_HOOK_CALLBACK_TIMEOUT_SECS)
-        return _MAX_HOOK_CALLBACK_TIMEOUT_SECS
-    return timeout
-
-
 class PluginManager(PluginLoaderMixin, PluginDispatchMixin, PluginOwnershipMixin):
     """Central manager that discovers, loads, and invokes plugins."""
+
+    @staticmethod
+    def _plugin_dispatch_safe_worker_enabled() -> bool:
+        """Supply the host-owned safe-worker admission policy to runtime dispatch."""
+        from agent.safe_worker_policy import safe_worker_enabled
+
+        return safe_worker_enabled()
+
+    @staticmethod
+    def _plugin_dispatch_resolve_result(result: Any) -> Any:
+        """Supply the host-owned plugin await/result resolver to runtime dispatch."""
+        return resolve_plugin_command_result(result)
 
     def __init__(self, scope_key: Optional[str] = None) -> None:
         # Capture the home immutably. Unload can run from a different ambient
@@ -1211,25 +1194,7 @@ class PluginManager(PluginLoaderMixin, PluginDispatchMixin, PluginOwnershipMixin
         self._platform_handler_factories: Dict[str, List[tuple]] = {}
         # Process-owned discovery listeners (``on_plugin_loaded``); never cleared by unload().
         self._plugin_loaded_listeners: List[Callable] = []
-        # Event bus: owner-tagged subscriptions (unload removes zombies); one daemon worker keeps
-        # registration order while emitters never block; per-worker chain depth caps mutual emitters.
-        self._subscriptions: Dict[str, List[_EventSubscription]] = {}
-        self._event_lock = threading.RLock()
-        self._event_idle = threading.Condition(self._event_lock)
-        self._event_generation = 0
-        self._event_pending_by_generation: Dict[int, int] = {0: 0}
-        self._event_queue: queue.Queue[Any] = queue.Queue(maxsize=_EVENT_PENDING_CAP)
-        self._event_worker: Optional[threading.Thread] = None
-        self._emit_depth = threading.local()
-        # In-flight / recently-timed-out hook callbacks keyed by (hook_name, id(cb), call_identity)
-        # so a stuck policy hook cannot spawn a new abandoned thread on every fire.
-        self._hook_running_callbacks: Dict[tuple, object] = {}
-        self._hook_abandoned: Dict[tuple, set] = {}
-        self._hook_timeout_suppressed_until: Dict[tuple, float] = {}
-        self._hook_timeout_lock = threading.Lock()
-        self._hook_timeout_suppression_seconds = _HOOK_TIMEOUT_SUPPRESSION_SECONDS
-        # (hook_name, id(cb), repr(exc)) already reported at WARNING; identical repeats go to DEBUG.
-        self._hook_failures_reported: set = set()
+        self._init_dispatch_runtime_state()
         # Ledger per plugin (ownership) plus global order (reverse teardown across plugins). Process-
         # global registries are shared across profiles while several managers coexist, so the ledger
         # is keyed per (hermes_home, plugin_id) and every inverse is identity-conditional — one
@@ -2329,12 +2294,12 @@ _PLUGIN_COMPAT_LAZY = {
     'CAPABILITY_REGISTRY': ('plugin_runtime.capabilities', 'CAPABILITY_REGISTRY'),
     'ENTRY_POINT_CAPABILITIES_GROUP': ('plugin_runtime.discovery', 'ENTRY_POINT_CAPABILITIES_GROUP'),
     'LEGACY_RELAY_PLUGIN_KEYS': ('plugin_runtime.relay_policy', 'LEGACY_RELAY_PLUGIN_KEYS'),
-    'MAX_SYSTEM_PROMPT_SECTIONS': ('hermes_cli.plugins_dispatch', 'MAX_SYSTEM_PROMPT_SECTIONS'),
-    'OBSERVER_SCHEMA_VERSION': ('hermes_cli.middleware', 'OBSERVER_SCHEMA_VERSION'),
+    'MAX_SYSTEM_PROMPT_SECTIONS': ('plugin_runtime.dispatch', 'MAX_SYSTEM_PROMPT_SECTIONS'),
+    'OBSERVER_SCHEMA_VERSION': ('plugin_runtime.dispatch', 'OBSERVER_SCHEMA_VERSION'),
     'VALID_CAPABILITY_IDS': ('plugin_runtime.capabilities', 'VALID_CAPABILITY_IDS'),
     'cfg_get': ('hermes_cli.config', 'cfg_get'),
     'fast_safe_load': ('utils', 'fast_safe_load'),
-    'format_system_prompt_section': ('hermes_cli.plugins_dispatch', 'format_system_prompt_section'),
+    'format_system_prompt_section': ('plugin_runtime.dispatch', 'format_system_prompt_section'),
     'reset_hermes_home_override': ('hermes_constants', 'reset_hermes_home_override'),
     'set_hermes_home_override': ('hermes_constants', 'set_hermes_home_override'),
 }

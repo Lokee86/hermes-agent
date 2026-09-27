@@ -1,7 +1,7 @@
-"""Plugin hook / middleware / event-bus / system-prompt-section dispatch.
+"""Plugin runtime dispatch contracts and shared execution metadata.
 
-Mixed into :class:`hermes_cli.plugins.PluginManager`. ``_resolve_hook_callback_timeout`` stays on
-the origin (tests patch it there) and is looked up lazily.
+Hook, event, middleware, and prompt-section execution are runtime-owned. This module also
+owns runtime-neutral contracts, limits, helpers, and observer schema metadata.
 """
 
 from __future__ import annotations
@@ -14,32 +14,21 @@ import logging
 import queue
 import re
 import threading
-import time
 import types
+import time
 from dataclasses import dataclass
-from typing import Any, Callable, Dict, List, Mapping, Optional, Set, Union
+from typing import Any, Callable, Dict, List, Mapping, Optional, Protocol, Set, Union
 
-from hermes_cli.middleware import OBSERVER_SCHEMA_VERSION
+from plugin_runtime.config_bridge import read_hook_callback_timeout_seconds
 from plugin_runtime.registration import PluginRegistration
+
 
 logger = logging.getLogger("hermes_cli.plugins")
 
+OBSERVER_SCHEMA_VERSION = "hermes.observer.v1"
+
 # Allowlist of agent-turn hot-path hooks bounded by plugins.hook_callback_timeout (fail-open:
 # abandon without join — joining reintroduced a shutdown hang). Unlisted hooks run synchronously.
-# Intentionally unbounded: on_session_finalize/reset (last-chance flush — abandon can lose state);
-# subagent_start (observer); pre_gateway_dispatch (policy gate — neither fail mode is acceptable);
-# pre/post_approval_* (approval UX has its own timeout); kanban_* (own heartbeat/stale reclaim).
-# The goal is to stop a hung Python plugin callback from wedging the conversation loop (#76821) without
-# joining the worker (avoids the #6622 ThreadPoolExecutor shutdown hang). Hooks not listed below run
-# synchronously to completion. (on_session_start/end stay bounded — they sit on the common session-boundary
-# path.) - subagent_start — observer only; blocking delegation belongs in pre_tool_call. Lower frequency
-# than tool/LLM hooks. Abandoning is unsafe either way (fail-open skips auth-like checks; fail-closed can
-# drop legitimate messages). Prefer finish-or-exception fallthrough. - pre_approval_request /
-# post_approval_response — observers only (cannot veto); the approval UX already has its own timeout; not on
-# the tool loop hot path. - kanban_task_* — fire after the board DB commit, observers only, in
-# dispatcher/worker processes; kanban has its own heartbeat/stale reclaim. Abandon-without-join also leaves
-# a daemon thread that may still mutate shared state — safer for value-returning observers than for
-# gates/flushes.
 _HOOK_TIMEOUT_BOUNDED_HOOKS: Set[str] = {
     "post_tool_call", "transform_terminal_output", "transform_tool_result", "transform_llm_output",
     "pre_llm_call", "post_llm_call", "pre_api_request", "post_api_request", "api_request_error",
@@ -48,22 +37,28 @@ _HOOK_TIMEOUT_BOUNDED_HOOKS: Set[str] = {
 
 # Policy hooks: timeout / still-running must fail closed (block the tool).
 _HOOK_TIMEOUT_FAIL_CLOSED_HOOKS: Set[str] = {"pre_tool_call"}
-# Documented parent-thread serialization contract — never run on a timeout worker (hooks.md).
+# Documented parent-thread serialization contract — never run on a timeout worker.
 _HOOK_CALLER_THREAD_HOOKS: Set[str] = {"subagent_stop"}
 # After a timeout, suppress the same callback this long so a hung hook cannot pile up threads.
 _HOOK_TIMEOUT_SUPPRESSION_SECONDS = 60.0
-# Live workers a hung callback may accumulate before it is skipped outright (#105223 / #98382).
+# Live workers a hung callback may accumulate before it is skipped outright.
 _HOOK_MAX_ABANDONED_WORKERS = 3
 _PRE_TOOL_CALL_TIMEOUT_BLOCK_MESSAGE = "pre_tool_call plugin callback timed out or is still running"
 
 
-def _policy_error_block_directive(hook_name: str, cb: Callable, exc: BaseException) -> Dict[str, str]:
-    """Block directive for a fail-closed hook whose callback raised: names the callback and the
-    error (truncated — a hook that embeds tool args in its exception must not grow the tool
-    result) so the operator can tell a crashing guard from a slow one."""
+def _policy_error_block_directive(
+    hook_name: str, cb: Callable, exc: BaseException,
+) -> Dict[str, str]:
+    """Build the fail-closed directive for a policy hook callback failure."""
     callback_name = getattr(cb, "__name__", repr(cb))
-    return {"action": "block",
-            "message": f"{hook_name} plugin callback {callback_name} raised {type(exc).__name__}: {str(exc)[:200]}"}
+    return {
+        "action": "block",
+        "message": (
+            f"{hook_name} plugin callback {callback_name} raised "
+            f"{type(exc).__name__}: {str(exc)[:200]}"
+        ),
+    }
+
 
 # System-prompt sections are tightly bounded: they become high-trust prompt bytes charged every turn.
 SYSTEM_PROMPT_SECTION_POSITIONS = frozenset({"after_memory"})
@@ -78,7 +73,7 @@ PLUGIN_SECTIONS_END = "<!-- hermes-plugin-sections:end -->"
 
 
 def is_valid_system_prompt_section_id(value: Any) -> bool:
-    """Return whether *value* is a stable, heading-safe section identifier."""
+    """Return whether value is a stable, heading-safe section identifier."""
     return isinstance(value, str) and bool(_SYSTEM_PROMPT_SECTION_ID_RE.fullmatch(value))
 
 
@@ -86,7 +81,8 @@ def format_system_prompt_section(section_id: str, content: str) -> str:
     """Render an auditable, length-framed block recoverable from the full prompt."""
     return (
         f"{_SYSTEM_PROMPT_SECTION_HEADING_PREFIX}{section_id}\n"
-        f"<!-- hermes-plugin-section-chars:{len(content)} -->\n\n{content}")
+        f"<!-- hermes-plugin-section-chars:{len(content)} -->\n\n{content}"
+    )
 
 
 def format_system_prompt_sections(sections: list) -> str:
@@ -97,9 +93,9 @@ def format_system_prompt_sections(sections: list) -> str:
     return f"{PLUGIN_SECTIONS_START}\n" + "\n\n".join(blocks) + f"\n{PLUGIN_SECTIONS_END}"
 
 
-# Reserved event namespace prefix — only core may publish ``hermes:<event>``.
+# Reserved event namespace prefix — only core may publish hermes:<event>.
 HERMES_EVENT_NAMESPACE = "hermes"
-# Event recursion depth cap (subscribers may emit); over-deep emits are dropped with a warning.
+# Event recursion depth cap; over-deep emits are dropped with a warning.
 _EVENT_EMIT_DEPTH_CAP = 8
 # Max queued + running events per manager generation; emit never waits — a full budget drops.
 _EVENT_PENDING_CAP = 64
@@ -144,27 +140,43 @@ class _QueuedPluginEvent:
     subscriptions: tuple[_EventSubscription, ...]
     depth: int
     generation: int
-    # The emitter's contextvars: the single worker thread serves every profile, so each delivery
-    # runs under the profile scope the emit happened in (#118538).
     context: contextvars.Context
 
 
-# Hook callback timeout (non-blocking abandon). Default cap per Python hook callback; overridden by
-# ``plugins.hook_callback_timeout``. Shell hooks enforce their own subprocess timeout.
+# Hook callback timeout (non-blocking abandon). Default cap per Python hook callback.
 _HOOK_CALLBACK_TIMEOUT_SECS = 30.0
 _MAX_HOOK_CALLBACK_TIMEOUT_SECS = 600.0
-_HOOK_SKIPPED = object()  # returned by _run_hook_callback_bounded on skip/timeout
+_HOOK_SKIPPED = object()
+
+
+def _resolve_hook_callback_timeout() -> float:
+    """Resolve the effective hook callback timeout from runtime configuration."""
+    default = _HOOK_CALLBACK_TIMEOUT_SECS
+    raw_timeout = read_hook_callback_timeout_seconds()
+    if raw_timeout is None:
+        return default
+    try:
+        timeout = float(raw_timeout)
+    except (TypeError, ValueError):
+        logger.warning("plugins.hook_callback_timeout is not a number; using default %gs", default)
+        return default
+    if timeout < 0:
+        logger.warning(
+            "plugins.hook_callback_timeout=%g is negative; using default %gs", timeout, default,
+        )
+        return default
+    if timeout > _MAX_HOOK_CALLBACK_TIMEOUT_SECS:
+        logger.warning(
+            "plugins.hook_callback_timeout=%g exceeds max %gs; clamping",
+            timeout,
+            _MAX_HOOK_CALLBACK_TIMEOUT_SECS,
+        )
+        return _MAX_HOOK_CALLBACK_TIMEOUT_SECS
+    return timeout
 
 
 def _hook_call_identity(kwargs: Dict[str, Any]) -> Optional[str]:
-    """Identity of the call this callback fires for, or ``None`` when the event has none.
-
-    Concurrent invocations of the same tool in one session must not collapse into one
-    gate key: they are different work, and treating the second as a duplicate drops the
-    hook as if a callback had timed out (upstream #98382). The identity is already in the
-    payload; nothing new is plumbed. Deliberately not ``api_request_id`` — one API request
-    carries many tool calls, which would re-collapse the keys.
-    """
+    """Identity of the call this callback fires for, or None when the event has none."""
     for field in ("tool_call_id", "turn_id"):
         value = kwargs.get(field)
         if isinstance(value, str) and value:
@@ -173,13 +185,31 @@ def _hook_call_identity(kwargs: Dict[str, Any]) -> Optional[str]:
 
 
 def _hook_uses_callback_timeout(hook_name: str, timeout: float) -> bool:
-    """Whether *hook_name* should run under the non-blocking timeout path."""
+    """Whether hook_name should run under the non-blocking timeout path."""
     if timeout <= 0 or hook_name in _HOOK_CALLER_THREAD_HOOKS:
         return False
     return hook_name in _HOOK_TIMEOUT_BOUNDED_HOOKS or hook_name in _HOOK_TIMEOUT_FAIL_CLOSED_HOOKS
 
+class PluginHookDispatchHost(Protocol):
+    """Structural host contract required by runtime hook execution."""
 
-class PluginDispatchMixin:
+    _hooks: Dict[str, List[Callable]]
+    _hook_running_callbacks: Dict[tuple, object]
+    _hook_abandoned: Dict[tuple, set]
+    _hook_timeout_suppressed_until: Dict[tuple, float]
+    _hook_timeout_lock: Any
+    _hook_timeout_suppression_seconds: float
+    _hook_failures_reported: set
+
+    @staticmethod
+    def _plugin_dispatch_safe_worker_enabled() -> bool: ...
+
+    @staticmethod
+    def _plugin_dispatch_resolve_result(result: Any) -> Any: ...
+
+
+class PluginHookDispatchMixin:
+    """Canonical sync/async plugin hook execution runtime."""
     @staticmethod
     def _hook_callback_kwargs(callback: Callable, payload: Dict[str, Any]) -> Dict[str, Any]:
         """The slice of *payload* a callback accepts: everything for ``**kwargs`` (or
@@ -196,16 +226,16 @@ class PluginDispatchMixin:
             if name in parameters and parameters[name].kind in keyword_kinds
         }
 
-    @classmethod
-    def _invoke_hook_callback(cls, callback: Callable, payload: Dict[str, Any]) -> Any:
+    def _invoke_hook_callback(self, callback: Callable, payload: Dict[str, Any]) -> Any:
         """Invoke a hook while withholding additive fields from narrow legacy callbacks.
 
         An ``async def`` callback returns a coroutine; resolve it the way plugin slash commands
         are (loop-safe), otherwise the bare coroutine object is appended to the results and the
         plugin's body never runs (#12449).
         """
-        from hermes_cli.plugins import resolve_plugin_command_result
-        return resolve_plugin_command_result(callback(**cls._hook_callback_kwargs(callback, payload)))
+        return self._plugin_dispatch_resolve_result(
+            callback(**self._hook_callback_kwargs(callback, payload))
+        )
 
     def invoke_hook(self, hook_name: str, **kwargs: Any) -> List[Any]:
         """Call all callbacks for *hook_name*; return their non-``None`` results.
@@ -216,11 +246,8 @@ class PluginDispatchMixin:
         closed with a block directive, others skip. ``_HOOK_CALLER_THREAD_HOOKS`` always run on the
         caller thread. ``pre_llm_call`` may return ``{"context": "..."}`` (or a str) to inject.
         """
-        from agent.safe_worker_policy import safe_worker_enabled
-
-        if safe_worker_enabled():
+        if self._plugin_dispatch_safe_worker_enabled():
             return []
-        from hermes_cli.plugins import _resolve_hook_callback_timeout
         # Gateway platform events define event-local envelopes; a bus-wide version here would turn
         # unrelated adapter payloads into one monolithic compatibility contract.
         if hook_name != "gateway_platform_event":
@@ -359,6 +386,80 @@ class PluginDispatchMixin:
             raise failure["exc"]
         return outcome.get("value")
 
+    def has_hook(self, hook_name: str) -> bool:
+        """Return True when at least one callback is registered for a hook."""
+        if self._plugin_dispatch_safe_worker_enabled():
+            return False
+        return bool(self._hooks.get(hook_name))
+
+    async def ainvoke_hook(self, hook_name: str, **kwargs: Any) -> List[Any]:
+        """:meth:`invoke_hook` for callers that are already on an event loop.
+
+        Same payload narrowing, per-callback isolation and result contract. The difference is
+        where an ``async def`` callback runs: here it is awaited on the caller's own loop, so a
+        callback that awaits anything scheduled on that loop can make progress. Through the
+        sync path it runs on a helper thread while the caller blocks in ``done.wait()`` — on the
+        gateway that stalls the whole event loop for the callback's duration. Sync callbacks
+        run inline. Bounded hooks keep ``plugins.hook_callback_timeout`` via ``asyncio.wait_for``
+        (the coroutine is cancelled, not abandoned); a timed-out ``pre_tool_call`` fails closed.
+        """
+        if hook_name != "gateway_platform_event":
+            kwargs.setdefault("telemetry_schema_version", OBSERVER_SCHEMA_VERSION)
+        results: List[Any] = []
+        timeout = _resolve_hook_callback_timeout()
+        use_timeout = _hook_uses_callback_timeout(hook_name, timeout)
+        fail_closed = hook_name in _HOOK_TIMEOUT_FAIL_CLOSED_HOOKS
+        for cb in self._hooks.get(hook_name, []):
+            callback_name = getattr(cb, "__name__", repr(cb))
+            try:
+                ret = cb(**self._hook_callback_kwargs(cb, kwargs))
+                if inspect.isawaitable(ret):
+                    ret = await (asyncio.wait_for(ret, timeout) if use_timeout else ret)
+                if ret is not None:
+                    results.append(ret)
+            except asyncio.TimeoutError:
+                logger.warning("Hook '%s' callback %s timed out after %.0fs", hook_name, callback_name, timeout)
+                if fail_closed:  # policy hook: fail closed with a block directive
+                    results.append({"action": "block", "message": _PRE_TOOL_CALL_TIMEOUT_BLOCK_MESSAGE})
+            except (Exception, SystemExit) as exc:
+                # Same isolation + failure contract as the sync path (#111922 warn-once, #109624
+                # a raising policy guard fails closed).
+                self._report_hook_failure(hook_name, cb, kwargs, exc)
+                if fail_closed:
+                    results.append(_policy_error_block_directive(hook_name, cb, exc))
+        return results
+
+    def iter_hook_callbacks(self, hook_name: str) -> tuple[Callable, ...]:
+        """Return a stable snapshot of callbacks registered for a hook."""
+        if self._plugin_dispatch_safe_worker_enabled():
+            return ()
+        return tuple(self._hooks.get(hook_name, ()))
+
+class PluginEventDispatchHost(PluginHookDispatchHost, Protocol):
+    """Structural host contract required by runtime event dispatch."""
+
+    _subscriptions: Dict[str, List[_EventSubscription]]
+    _event_lock: Any
+    _event_idle: Any
+    _event_generation: int
+    _event_pending_by_generation: Dict[int, int]
+    _event_queue: queue.Queue[Any]
+    _event_worker: Optional[threading.Thread]
+    _emit_depth: Any
+    _ownership_ledger: Dict[str, List[PluginRegistration]]
+
+    def _track_owner_registration(
+        self, plugin_key: str, kind: str, key: str, release: Callable[[], None], *,
+        persistent: bool = False,
+    ) -> PluginRegistration: ...
+
+    def _dispose_registrations(self, registrations: List[PluginRegistration]) -> None: ...
+
+    def _forget_registrations(self, registrations: List[PluginRegistration]) -> None: ...
+
+
+class PluginEventDispatchMixin(PluginHookDispatchMixin):
+    """Canonical plugin event subscription and asynchronous delivery runtime."""
     def _subscribe_event(self, owner: str, event: str, callback: Callable) -> PluginRegistration:
         """Add an owner-tagged event subscription in registration order and ledger-track its cleanup."""
         if not callable(callback):
@@ -425,7 +526,6 @@ class PluginDispatchMixin:
 
     def _deliver_event(self, item: _QueuedPluginEvent) -> None:
         """Deliver one queued event on the host-owned worker thread."""
-        from hermes_cli.plugins import resolve_plugin_command_result
         with self._event_lock:
             if item.generation != self._event_generation:
                 return
@@ -442,7 +542,7 @@ class PluginDispatchMixin:
                 callback = subscription.callback
                 try:
                     # Fresh deep copy per subscriber: no callback can mutate what the next sees.
-                    resolve_plugin_command_result(
+                    self._plugin_dispatch_resolve_result(
                         item.context.copy().run(callback, **copy.deepcopy(item.payload)))
                 except (Exception, SystemExit) as exc:
                     # A subscriber that fails identically on every emit is reported once (#111922).
@@ -488,67 +588,42 @@ class PluginDispatchMixin:
             self._ensure_event_worker_locked()
             return len(subscriptions)
 
-    def has_hook(self, hook_name: str) -> bool:
-        """Return True when at least one callback is registered for a hook."""
-        from agent.safe_worker_policy import safe_worker_enabled
+class PluginDispatchHost(PluginEventDispatchHost, Protocol):
+    """Structural host contract for complete runtime dispatch execution."""
 
-        if safe_worker_enabled():
-            return False
-        return bool(self._hooks.get(hook_name))
+    _middleware: Dict[str, List[Callable]]
+    _system_prompt_sections: Dict[str, PluginSystemPromptSection]
 
-    async def ainvoke_hook(self, hook_name: str, **kwargs: Any) -> List[Any]:
-        """:meth:`invoke_hook` for callers that are already on an event loop.
 
-        Same payload narrowing, per-callback isolation and result contract. The difference is
-        where an ``async def`` callback runs: here it is awaited on the caller's own loop, so a
-        callback that awaits anything scheduled on that loop can make progress. Through the
-        sync path it runs on a helper thread while the caller blocks in ``done.wait()`` — on the
-        gateway that stalls the whole event loop for the callback's duration. Sync callbacks
-        run inline. Bounded hooks keep ``plugins.hook_callback_timeout`` via ``asyncio.wait_for``
-        (the coroutine is cancelled, not abandoned); a timed-out ``pre_tool_call`` fails closed.
-        """
-        from hermes_cli.plugins import _resolve_hook_callback_timeout
-        if hook_name != "gateway_platform_event":
-            kwargs.setdefault("telemetry_schema_version", OBSERVER_SCHEMA_VERSION)
-        results: List[Any] = []
-        timeout = _resolve_hook_callback_timeout()
-        use_timeout = _hook_uses_callback_timeout(hook_name, timeout)
-        fail_closed = hook_name in _HOOK_TIMEOUT_FAIL_CLOSED_HOOKS
-        for cb in self._hooks.get(hook_name, []):
-            callback_name = getattr(cb, "__name__", repr(cb))
-            try:
-                ret = cb(**self._hook_callback_kwargs(cb, kwargs))
-                if inspect.isawaitable(ret):
-                    ret = await (asyncio.wait_for(ret, timeout) if use_timeout else ret)
-                if ret is not None:
-                    results.append(ret)
-            except asyncio.TimeoutError:
-                logger.warning("Hook '%s' callback %s timed out after %.0fs", hook_name, callback_name, timeout)
-                if fail_closed:  # policy hook: fail closed with a block directive
-                    results.append({"action": "block", "message": _PRE_TOOL_CALL_TIMEOUT_BLOCK_MESSAGE})
-            except (Exception, SystemExit) as exc:
-                # Same isolation + failure contract as the sync path (#111922 warn-once, #109624
-                # a raising policy guard fails closed).
-                self._report_hook_failure(hook_name, cb, kwargs, exc)
-                if fail_closed:
-                    results.append(_policy_error_block_directive(hook_name, cb, exc))
-        return results
+class PluginDispatchMixin(PluginEventDispatchMixin):
+    """Canonical plugin hook, event, middleware, and prompt-section execution runtime."""
 
-    def iter_hook_callbacks(self, hook_name: str) -> tuple[Callable, ...]:
-        """Return a stable snapshot of callbacks registered for a hook."""
-        from agent.safe_worker_policy import safe_worker_enabled
+    def _init_dispatch_runtime_state(self) -> None:
+        """Initialize manager-local state used exclusively by runtime dispatch execution."""
+        # Event bus: owner-tagged subscriptions, one non-blocking worker, generation-local
+        # pending accounting, and emitter context used for recursion-depth propagation.
+        self._subscriptions: Dict[str, List[_EventSubscription]] = {}
+        self._event_lock = threading.RLock()
+        self._event_idle = threading.Condition(self._event_lock)
+        self._event_generation = 0
+        self._event_pending_by_generation: Dict[int, int] = {0: 0}
+        self._event_queue: queue.Queue[Any] = queue.Queue(maxsize=_EVENT_PENDING_CAP)
+        self._event_worker: Optional[threading.Thread] = None
+        self._emit_depth = threading.local()
 
-        if safe_worker_enabled():
-            return ()
-        return tuple(self._hooks.get(hook_name, ()))
+        # In-flight / recently timed-out hook callbacks and warn-once failure bookkeeping.
+        self._hook_running_callbacks: Dict[tuple, object] = {}
+        self._hook_abandoned: Dict[tuple, set] = {}
+        self._hook_timeout_suppressed_until: Dict[tuple, float] = {}
+        self._hook_timeout_lock = threading.Lock()
+        self._hook_timeout_suppression_seconds = _HOOK_TIMEOUT_SUPPRESSION_SECONDS
+        self._hook_failures_reported: set = set()
 
     def render_system_prompt_sections(
         self, session_info: Mapping[str, Any]
     ) -> List[RenderedPluginSystemPromptSection]:
         """Render all registered sections deterministically and fail open."""
-        from agent.safe_worker_policy import safe_worker_enabled
-
-        if safe_worker_enabled():
+        if self._plugin_dispatch_safe_worker_enabled():
             return []
         frozen_info = types.MappingProxyType(dict(session_info))
         rendered: List[RenderedPluginSystemPromptSection] = []
@@ -610,17 +685,13 @@ class PluginDispatchMixin:
 
     def has_middleware(self, kind: str) -> bool:
         """Return True when at least one callback is registered for middleware."""
-        from agent.safe_worker_policy import safe_worker_enabled
-
-        if safe_worker_enabled():
+        if self._plugin_dispatch_safe_worker_enabled():
             return False
         return bool(self._middleware.get(kind))
 
     def invoke_middleware(self, kind: str, **kwargs: Any) -> List[Any]:
         """Call middleware callbacks for *kind* (each isolated); return non-``None`` results."""
-        from agent.safe_worker_policy import safe_worker_enabled
-
-        if safe_worker_enabled():
+        if self._plugin_dispatch_safe_worker_enabled():
             return []
         results: List[Any] = []
         for cb in self._middleware.get(kind, []):
