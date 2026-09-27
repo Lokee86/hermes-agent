@@ -11,6 +11,29 @@ import time
 import pytest
 
 
+def test_gateway_ensure_is_bound_from_full_cli_parser():
+    from gateway.runtime_cli import cmd_gateway_ensure
+    from hermes_cli.main import _build_cli_parser
+
+    parser, _ = _build_cli_parser()
+    args = parser.parse_args(["gateway", "ensure", "--json"])
+
+    assert args.func is cmd_gateway_ensure
+
+
+def test_cli_help_builds_gateway_parser():
+    result = subprocess.run(
+        [sys.executable, "-m", "hermes_cli.main", "--help"],
+        stdin=subprocess.DEVNULL,
+        capture_output=True,
+        text=True,
+        timeout=15,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "gateway" in result.stdout
+
+
 @pytest.mark.platforms("linux")
 def test_ensure_waits_for_real_control_owner_without_claiming_pending_is_ready(tmp_path):
     from gateway.control_socket import GatewayControlServer
