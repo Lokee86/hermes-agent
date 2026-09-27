@@ -586,7 +586,7 @@ def _s6_supervised_gateway_run(argv: list) -> bool:
         return False
     if os.environ.get("HERMES_GATEWAY_NO_SUPERVISE", "").lower() in ("1", "true", "yes"):
         return False
-    from hermes_cli.service_manager import _s6_running
+    from gateway.service_manager import _s6_running
     return _s6_running()
 
 

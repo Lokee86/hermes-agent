@@ -87,7 +87,7 @@ def default_gateway_multiplexes(default_home: Optional[Path] = None) -> bool:
     it made every CLI surface contradict the gateway that was about to multiplex anyway.
     """
     from hermes_constants import get_default_hermes_root
-    from hermes_cli.gateway_multiplex_served import recorded_served_profiles
+    from gateway.served_profiles import recorded_served_profiles
     root = Path(default_home) if default_home is not None else get_default_hermes_root()
     recorded = recorded_served_profiles(root)
     if recorded is not None:
@@ -148,7 +148,7 @@ def implicit_multiplex_blocker() -> Optional[str]:
     # Parking is reversible without a host restart, so keep the reconcile watcher alive.
     if len(profiles_to_serve(multiplex=True, include_parked=True)) < 2:
         return SINGLE_PROFILE_REASON
-    from hermes_cli.gateway_migrate import MIGRATE_COMMAND, _host_supports_migration, build_migration_plan
+    from gateway.migration import MIGRATE_COMMAND, _host_supports_migration, build_migration_plan
     host_reason = _host_supports_migration()
     if host_reason:
         return host_reason
@@ -185,7 +185,7 @@ def persist_resolved_default(decision: MultiplexDecision, default_home: Optional
         in_file = cfg.get("multiplex_profiles", section.get("multiplex_profiles"))
         if in_file is True:
             return False
-        from hermes_cli.gateway_migrate import _write_multiplex_flag
+        from gateway.migration import _write_multiplex_flag
         _write_multiplex_flag(default_home, True)
         if decision.source == "retired-opt-out":
             (default_home / REWRITTEN_MARKER_NAME).write_text(RETIRED_OPT_OUT_REASON + "\n", encoding="utf-8")
@@ -312,7 +312,7 @@ def standalone_warning_lines(decision: MultiplexDecision, unserved: Optional[lis
             unserved = []
     if not unserved:
         return []
-    from hermes_cli.gateway_migrate import MIGRATE_COMMAND
+    from gateway.migration import MIGRATE_COMMAND
     body = [
         "⚠ This gateway is STANDALONE: it serves only its own profile.",
         "Profiles NOT served (their bots stay silent): " + ", ".join(unserved),
