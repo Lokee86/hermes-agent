@@ -33,10 +33,11 @@ from registration_lifecycle import replacement_coordinator
 from utils import env_var_enabled
 from hermes_cli.config import load_config_readonly
 from hermes_cli.middleware import VALID_MIDDLEWARE
-from hermes_cli.plugin_capabilities import plugin_capability_granted
+from plugin_runtime.capabilities import plugin_capability_granted
+from plugin_runtime.debug import plugin_debug_enabled, refresh_plugin_debug
 from hermes_cli.relay_plugin_cutover import RELAY_PLUGINS_CONFIG_ENV, legacy_relay_plugin_keys
 # Sibling modules' names are re-exported here (origin) so plugins and tests keep one import path.
-from hermes_cli.plugins_manifest import (  # noqa: F401 — re-exported
+from plugin_runtime.manifest import (  # noqa: F401 — re-exported
     _CONFIG_SCHEMA_TYPES, SUPPORTED_MANIFEST_VERSION, PluginManifest, _portable_skill_namespace,
     manifest_key, parse_manifest_file, resolve_module_origin, resolve_plugin_load_order,
     validate_config_schema,
@@ -59,9 +60,10 @@ from hermes_cli.plugins_dispatch import (  # noqa: F401 — re-exported
     is_valid_system_prompt_section_id,
 )
 from hermes_cli.plugins_ledger import PluginLedgerMixin, PluginRegistration
+from plugin_runtime.state import PluginState
 from hermes_cli.plugins_state import (
-    PluginState, _locked_plugin_state, _nested_plugin_mapping, _nested_plugin_value,
-    _plugin_relative_segments, _plugin_settings_entry, save_plugin_setting,
+    _nested_plugin_mapping, _nested_plugin_value, _plugin_relative_segments,
+    _plugin_settings_entry, save_plugin_setting,
 )
 
 
@@ -82,7 +84,7 @@ logger = logging.getLogger(__name__)
 
 # ``HERMES_PLUGINS_DEBUG=1`` tees verbose discovery logs to stderr in addition to agent.log. Read
 # once at import; tests flip it mid-process via ``_install_plugin_debug_handler(force=True)``.
-_PLUGINS_DEBUG = env_var_enabled("HERMES_PLUGINS_DEBUG")
+_PLUGINS_DEBUG = plugin_debug_enabled()
 _DEBUG_HANDLER_INSTALLED = False
 
 
@@ -90,7 +92,7 @@ def _install_plugin_debug_handler(force: bool = False) -> None:
     """When HERMES_PLUGINS_DEBUG is on, tee plugin logs to stderr at DEBUG (once per process)."""
     global _DEBUG_HANDLER_INSTALLED, _PLUGINS_DEBUG
     if force:
-        _PLUGINS_DEBUG = env_var_enabled("HERMES_PLUGINS_DEBUG")
+        _PLUGINS_DEBUG = refresh_plugin_debug()
     if not _PLUGINS_DEBUG or _DEBUG_HANDLER_INSTALLED:
         return
     handler = logging.StreamHandler(sys.stderr)
@@ -2291,12 +2293,12 @@ def unload_plugins(
 
 
 _PLUGIN_COMPAT_LAZY = {
-    'CAPABILITY_REGISTRY': ('hermes_cli.plugin_capabilities', 'CAPABILITY_REGISTRY'),
+    'CAPABILITY_REGISTRY': ('plugin_runtime.capabilities', 'CAPABILITY_REGISTRY'),
     'ENTRY_POINT_CAPABILITIES_GROUP': ('hermes_cli.plugins_discovery', 'ENTRY_POINT_CAPABILITIES_GROUP'),
     'LEGACY_RELAY_PLUGIN_KEYS': ('hermes_cli.relay_plugin_cutover', 'LEGACY_RELAY_PLUGIN_KEYS'),
     'MAX_SYSTEM_PROMPT_SECTIONS': ('hermes_cli.plugins_dispatch', 'MAX_SYSTEM_PROMPT_SECTIONS'),
     'OBSERVER_SCHEMA_VERSION': ('hermes_cli.middleware', 'OBSERVER_SCHEMA_VERSION'),
-    'VALID_CAPABILITY_IDS': ('hermes_cli.plugin_capabilities', 'VALID_CAPABILITY_IDS'),
+    'VALID_CAPABILITY_IDS': ('plugin_runtime.capabilities', 'VALID_CAPABILITY_IDS'),
     'cfg_get': ('hermes_cli.config', 'cfg_get'),
     'fast_safe_load': ('utils', 'fast_safe_load'),
     'format_system_prompt_section': ('hermes_cli.plugins_dispatch', 'format_system_prompt_section'),

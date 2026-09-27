@@ -398,7 +398,7 @@ class TestCtxHasPlugin:
 class TestRequiresHermes:
     def test_gate_reads_the_running_code_version_not_dist_metadata(self, monkeypatch):
         """Compatibility gates use the running code's base release version."""
-        from hermes_cli import plugins_manifest
+        from plugin_runtime import manifest as plugins_manifest
         monkeypatch.setattr(
             "hermes_cli.version_info.get_version_info",
             lambda: SimpleNamespace(base_version="0.21.4"),
@@ -414,13 +414,13 @@ class TestRequiresHermes:
         ("banana", "0.21.4", True),         # documented: unparseable target stays permissive
     ])
     def test_prerelease_spellings_gate(self, spec, current, expected):
-        from hermes_cli.plugins_manifest import version_satisfies
+        from plugin_runtime.manifest import version_satisfies
         assert version_satisfies(spec, current) is expected
 
     def test_unsatisfied_requires_hermes_skips_without_importing(self, hermes_home, monkeypatch):
         """A too-new ``requires_hermes`` records an error and never runs register(); a satisfied one loads."""
         import sys
-        from hermes_cli import plugins_manifest
+        from plugin_runtime import manifest as plugins_manifest
         monkeypatch.setattr(plugins_manifest, "running_hermes_version", lambda: "1.2.3")
         _write_plugin(hermes_home / "plugins", "future", manifest_extra={"requires_hermes": ">=99.0"},
                       register_body="import sys; sys._rh_future = True")
@@ -569,7 +569,7 @@ class TestDirectoryPluginKeepsIdentityOverEntryPoint:
     carries catalog provenance and is what update/remove act on); the entry point must not displace it."""
 
     def test_loader_and_listing_prefer_the_installed_directory(self, hermes_home, monkeypatch):
-        from hermes_cli.plugins_manifest import PluginManifest
+        from plugin_runtime.manifest import PluginManifest
         _write_plugin(hermes_home / "plugins", "twin")
         _enable(hermes_home, ["twin"])
         twin_ep = PluginManifest(name="twin", version="9.9.9", description="pip twin",

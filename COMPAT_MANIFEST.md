@@ -1568,14 +1568,14 @@ to the public equivalent or the new module. Test monkeypatch seams are likewise 
 
 | name | kind | new location |
 |---|---|---|
-| `CAPABILITY_REGISTRY` | moved-lazy | `hermes_cli.plugin_capabilities` |
+| `CAPABILITY_REGISTRY` | moved-lazy | `plugin_runtime.capabilities` |
 | `ENTRY_POINT_CAPABILITIES_GROUP` | moved-lazy | `hermes_cli.plugins_discovery` |
 | `Iterable` | import | `typing` |
 | `LEGACY_RELAY_PLUGIN_KEYS` | moved-lazy | `hermes_cli.relay_plugin_cutover` |
 | `MAX_SYSTEM_PROMPT_SECTIONS` | moved-lazy | `hermes_cli.plugins_dispatch` |
 | `OBSERVER_SCHEMA_VERSION` | moved-lazy | `hermes_cli.middleware` |
 | `Type` | import | `typing` |
-| `VALID_CAPABILITY_IDS` | moved-lazy | `hermes_cli.plugin_capabilities` |
+| `VALID_CAPABILITY_IDS` | moved-lazy | `plugin_runtime.capabilities` |
 | `cfg_get` | moved-lazy | `hermes_cli.config` |
 | `contextmanager` | import | `contextlib` |
 | `contextvars` | import | `contextvars` |

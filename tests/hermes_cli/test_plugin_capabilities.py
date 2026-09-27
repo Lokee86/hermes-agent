@@ -13,7 +13,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 import hermes_yaml as yaml
 
-from hermes_cli.plugin_capabilities import (
+from plugin_runtime.capabilities import (
     CAPABILITY_REGISTRY,
     capability_set_hash,
     consent_hash,

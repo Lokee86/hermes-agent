@@ -90,7 +90,7 @@ def test_loader_skips_hitting_plugin_after_date(tmp_path, monkeypatch):
     """))
     monkeypatch.setenv("HERMES_HOME", str(tmp_path))
     mgr = PluginManager(scope_key=str(tmp_path))
-    from hermes_cli.plugins_manifest import PluginManifest
+    from plugin_runtime.manifest import PluginManifest
     real = PluginManifest(name="oldpaths", version="0.1", description="t", source="user", path=str(plugin))
     mgr._load_plugin(real)
     loaded = next(lp for lp in mgr._plugins.values() if lp.manifest.name == "oldpaths")
@@ -107,7 +107,7 @@ def test_discovery_refreshes_report_file(tmp_path, monkeypatch):
     plugin = tmp_path / "plugins" / "oldpaths"; plugin.mkdir(parents=True)
     (plugin / "plugin.yaml").write_text("name: oldpaths\nversion: 0.1\ndescription: t\n")
     (plugin / "__init__.py").write_text("from tools.web_tools import prefers_gateway\ndef register(ctx):\n    pass\n")
-    from hermes_cli.plugins_manifest import PluginManifest
+    from plugin_runtime.manifest import PluginManifest
     real = PluginManifest(name="oldpaths", version="0.1", description="t", source="user", path=str(plugin))
     mgr = PluginManager(scope_key=str(tmp_path))
     mgr._refresh_plugin_compat_report([real])

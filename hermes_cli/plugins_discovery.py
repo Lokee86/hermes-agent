@@ -14,9 +14,9 @@ from typing import Any, Dict, List, Optional, Set
 
 from hermes_constants import get_hermes_home
 from hermes_cli.config import cfg_get
-from hermes_cli.plugin_capabilities import VALID_CAPABILITY_IDS
-from hermes_cli.plugin_capabilities import parse_declared_capabilities as _parse_declared_capabilities
-from hermes_cli.plugins_manifest import (
+from plugin_runtime.capabilities import VALID_CAPABILITY_IDS
+from plugin_runtime.capabilities import parse_declared_capabilities as _parse_declared_capabilities
+from plugin_runtime.manifest import (
     PluginManifest, _detect_kind_from_source, manifest_key, _resolve_module_source,
     parse_manifest_file, portable_plugin_manifest,
 )

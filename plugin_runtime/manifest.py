@@ -15,7 +15,8 @@ from pathlib import Path
 from typing import Any, Callable, Dict, List, Mapping, Optional, Set, Union
 
 from utils import fast_safe_load
-from hermes_cli.plugin_capabilities import parse_declared_capabilities as _parse_declared_capabilities
+from plugin_runtime.capabilities import parse_declared_capabilities as _parse_declared_capabilities
+from plugin_runtime.debug import plugin_debug_enabled
 
 try:
     import hermes_yaml as yaml
@@ -52,8 +53,7 @@ _CONFIG_SCHEMA_TYPES: Dict[str, tuple] = {
 
 
 def _plugins_debug() -> bool:
-    from hermes_cli import plugins as _origin
-    return _origin._PLUGINS_DEBUG
+    return plugin_debug_enabled()
 
 
 def _portable_skill_namespace(key: str) -> str:

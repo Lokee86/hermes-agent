@@ -4326,7 +4326,7 @@
    "facade": "hermes_cli.plugins",
    "name": "CAPABILITY_REGISTRY",
    "kind": "moved-lazy",
-   "target": "hermes_cli.plugin_capabilities"
+   "target": "plugin_runtime.capabilities"
   },
   {
    "facade": "hermes_cli.plugins",
@@ -4368,7 +4368,7 @@
    "facade": "hermes_cli.plugins",
    "name": "VALID_CAPABILITY_IDS",
    "kind": "moved-lazy",
-   "target": "hermes_cli.plugin_capabilities"
+   "target": "plugin_runtime.capabilities"
   },
   {
    "facade": "hermes_cli.plugins",

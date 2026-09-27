@@ -25,7 +25,7 @@ from typing import TYPE_CHECKING, Any, Callable, Dict, List, Mapping, Optional, 
 from hermes_constants import get_hermes_home, reset_hermes_home_override, set_hermes_home_override
 from registration_lifecycle import replacement_coordinator
 from hermes_cli.plugins_discovery import ENTRY_POINTS_GROUP, _select_entry_point_group
-from hermes_cli.plugins_manifest import PluginManifest, manifest_key, portable_mcp_server_name, validate_config_schema
+from plugin_runtime.manifest import PluginManifest, manifest_key, portable_mcp_server_name, validate_config_schema
 from hermes_cli.plugins_state import _plugin_settings_entry
 
 if TYPE_CHECKING:  # pragma: no cover
@@ -428,7 +428,7 @@ class PluginLoaderMixin:
             self._load_portable_plugin(manifest, loaded)
             return
         # requires_hermes gate: skip cleanly (no import, no traceback) on a version mismatch.
-        from hermes_cli.plugins_manifest import requires_hermes_error
+        from plugin_runtime.manifest import requires_hermes_error
         reason = requires_hermes_error(manifest)
         if reason:
             loaded.error = reason

@@ -24,7 +24,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 from hermes_cli.plugin_validate_desktop import check_desktop_surface
-from hermes_cli.plugins_manifest import _CONFIG_SCHEMA_TYPES
+from plugin_runtime.manifest import _CONFIG_SCHEMA_TYPES
 
 _UPPER_SNAKE_RE = re.compile(r"^[A-Z][A-Z0-9_]*$")
 # Admission accepts exactly the ``config_schema`` types the loader type-checks at load time (and the
@@ -76,11 +76,11 @@ class ValidationReport:
 def _requires_hermes_spec_valid(spec: str) -> bool:
     """Strictly validate a ``requires_hermes`` spec.
 
-    Unlike :func:`hermes_cli.plugins_manifest.version_satisfies` (permissive at load
+    Unlike :func:`plugin_runtime.manifest.version_satisfies` (permissive at load
     time), validation REJECTS clauses whose version segment doesn't parse —
     a typo'd spec should fail admission, not silently gate nothing.
     """
-    from hermes_cli.plugins_manifest import _VERSION_COMPARATOR_RE, _version_tuple
+    from plugin_runtime.manifest import _VERSION_COMPARATOR_RE, _version_tuple
 
     for clause in spec.split(","):
         clause = clause.strip()

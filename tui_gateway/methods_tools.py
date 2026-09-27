@@ -1477,7 +1477,7 @@ def _plugin_server_rows(
     declared = namespace.get("servers", {})
     if not isinstance(declared, dict):
         return []
-    server_name_for = _tools_mod("hermes_cli.plugins_manifest").portable_mcp_server_name
+    server_name_for = _tools_mod("plugin_runtime.manifest").portable_mcp_server_name
     liveness = _tools_mod("tools.mcp_liveness")
     core = _tools_mod("tools.mcp_tool_common")._core
     resolve_key = _tools_mod("tools.mcp_tool_scope")._resolve_server_key

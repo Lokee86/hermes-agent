@@ -672,7 +672,7 @@ def cmd_update_catalog(name: str, target: Path, sidecar: dict, console, *, inter
         new_target = target.parent / result.installed_name
         declared = _declared_capabilities_from_manifest(_read_manifest(new_target), result.installed_name)
         if declared:
-            from hermes_cli.plugin_capabilities import declared_set_changed, pending_capabilities
+            from plugin_runtime.capabilities import declared_set_changed, pending_capabilities
             if pending_capabilities(result.installed_name, declared) or declared_set_changed(result.installed_name, declared):
                 if interactive:
                     _run_capability_consent(console, result.installed_name, declared, context="update")
