@@ -1636,7 +1636,8 @@ def _sibling_profile_homes(invoking_home: Path) -> list[tuple[str, Path]]:
     Never raises."""
     homes: list[tuple[str, Path]] = []
     try:
-        from hermes_cli.profiles import _get_default_hermes_home, _get_profiles_root, _PROFILE_ID_RE
+        from profiles.names import _PROFILE_ID_RE
+        from profiles.paths import _get_default_hermes_home, _get_profiles_root
         invoking = invoking_home.resolve()
         default_home = _get_default_hermes_home()
         if default_home.is_dir() and default_home.resolve() != invoking:
