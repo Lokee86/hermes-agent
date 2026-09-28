@@ -172,7 +172,8 @@ def _known_provider_ids(cfg: dict) -> tuple[set, list, object, object, object]:
         known = set(PROVIDER_REGISTRY.keys()) | {"openrouter", "custom", "auto", "moa"}
     with warn_on_error(""):
         from hermes_cli.config import get_compatible_custom_providers
-        from hermes_cli.providers import custom_provider_aliases as aliases, normalize_provider as normalize, resolve_provider_full as resolve_full
+        from providers import custom_provider_aliases as aliases, normalize_provider as normalize
+        from hermes_cli.providers import resolve_provider_full as resolve_full
         with warn_on_error(""):
             custom_providers = get_compatible_custom_providers(cfg)
     user_providers = cfg.get("providers")

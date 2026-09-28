@@ -13,9 +13,12 @@ from contextlib import suppress
 from dataclasses import dataclass, field
 from typing import Any, NamedTuple, Optional
 
+from providers import (
+    ResolvedProvider, custom_provider_aliases, get_provider_label, is_aggregator, normalize_provider,
+)
 from hermes_cli.providers import (
-    LLAMACPP_ALIASES, ProviderDef, custom_provider_aliases, determine_api_mode, get_label,
-    host_mandated_api_mode, is_aggregator, normalize_provider, resolve_provider_full)
+    LLAMACPP_ALIASES, determine_api_mode, host_mandated_api_mode, resolve_provider_full,
+)
 from hermes_cli.model_normalize import normalize_model_for_provider
 from agent.models_dev import (
     ModelCapabilities, ModelInfo, get_model_capabilities, get_model_info, list_provider_models)
@@ -85,13 +88,13 @@ def _models_config_is_allowlist(value: Any, discovered: bool = False) -> bool:
     return False  # None, dict (per-model metadata), or anything else
 
 
-def _bare_custom_provider_def(current_base_url: str) -> Optional[ProviderDef]:
-    """ProviderDef for a direct ``model.provider: custom`` endpoint."""
+def _bare_custom_provider_def(current_base_url: str) -> Optional[ResolvedProvider]:
+    """Resolved provider for a direct ``model.provider: custom`` endpoint."""
     base_url = _clean(current_base_url)
     if not base_url:
         return None
-    return ProviderDef(
-        id="custom", name="Custom endpoint", transport="openai_chat", api_key_env_vars=(),
+    return ResolvedProvider(
+        id="custom", display_name="Custom endpoint", api_mode="chat_completions", env_vars=(),
         base_url=base_url, is_aggregator=False, auth_type="api_key", source="model-config")
 
 
@@ -393,7 +396,7 @@ def resolve_startup_model_route(
     # the model name and the whole prompt goes to its endpoint before it 404s (#73943). The
     # configured ids come from the caller's config, the same source the ``/`` branch below uses.
     from hermes_cli.models import parse_model_input
-    from hermes_cli.providers import custom_provider_slug
+    from providers import custom_provider_slug
     custom_ids = {custom_provider_slug(str(entry.get("name") or key), str(key))
                   for key, entry in (user_providers or {}).items() if isinstance(entry, dict)}
     custom_ids.update(custom_provider_slug(str(entry.get("name") or ""))
@@ -409,7 +412,7 @@ def resolve_startup_model_route(
 
     if current_provider:
         try:
-            from hermes_cli.providers import is_routing_aggregator, normalize_provider as _norm_prov
+            from providers import is_routing_aggregator, normalize_provider as _norm_prov
             if is_routing_aggregator(_norm_prov(current_provider)):
                 from hermes_cli.models import _find_openrouter_slug
                 if _find_openrouter_slug(raw):
@@ -1068,9 +1071,8 @@ def _aggregator_alias_error(
     aggregator ("openrouter"); if that aggregator has no credentials, refuse instead of switching
     the user onto an unauthed endpoint (HTTP 401) and point at the real direct provider."""
     from hermes_cli.models import _AGGREGATOR_PROVIDERS
-    from hermes_cli.providers import ALIASES
     explicit_norm = explicit_provider.strip().lower()
-    alias_target = ALIASES.get(explicit_norm)
+    alias_target = normalize_provider(explicit_norm)
     if not (
         alias_target and alias_target == target_provider and target_provider != explicit_norm
         and target_provider in _AGGREGATOR_PROVIDERS):
@@ -1083,7 +1085,7 @@ def _aggregator_alias_error(
     hint = f" Did you mean: {', '.join(suggestions)}?" if suggestions else ""
     return (
         f"Provider '{explicit_norm}' is an alias that routes "
-        f"through {get_label(target_provider)}, which "
+        f"through {get_provider_label(target_provider)}, which "
         f"has no credentials configured.{hint}")
 
 
@@ -1227,7 +1229,7 @@ def _route_explicit_provider(st: _Switch) -> Optional[ModelSwitchResult]:
     if pdef is None:
         return st.fail(_unknown_provider_message(st.explicit_provider))
 
-    st.target_provider, st.provider_label = pdef.id, pdef.name  # label is re-derived in the credential step
+    st.target_provider, st.provider_label = pdef.id, pdef.display_name  # label is re-derived in the credential step
     if st.target_provider == "moa" and not st.new_model:
         st.new_model = _moa_default_preset()
 
@@ -1239,13 +1241,13 @@ def _route_explicit_provider(st: _Switch) -> Optional[ModelSwitchResult]:
     if not st.new_model:
         if not pdef.base_url:
             return st.fail_on_target(
-                f"Provider '{pdef.name}' has no base URL configured. "
+                f"Provider '{pdef.display_name}' has no base URL configured. "
                 f"Specify a model: /model <model-name> --provider {st.explicit_provider}")
         from hermes_cli.runtime_provider import _auto_detect_local_model
         st.new_model = _auto_detect_local_model(pdef.base_url)
         if not st.new_model:
             return st.fail_on_target(
-                f"No model detected on {pdef.name} ({pdef.base_url}). "
+                f"No model detected on {pdef.display_name} ({pdef.base_url}). "
                 f"Specify the model explicitly: /model <model-name> --provider {st.explicit_provider}")
 
     try:
@@ -1410,13 +1412,13 @@ def _route_from_model_input(st: _Switch) -> Optional[ModelSwitchResult]:
 
 
 def _switch_provider_label(st: _Switch) -> str:
-    label = get_label(st.target_provider)
+    label = get_provider_label(st.target_provider)
     if st.target_provider == "custom" and st.current_base_url:
         label = "Custom endpoint"
     if st.target_provider.startswith("custom:"):
         custom_pdef = resolve_provider_full(st.target_provider, st.user_providers, st.custom_providers)
         if custom_pdef is not None:
-            label = custom_pdef.name
+            label = custom_pdef.display_name
     return label
 
 
@@ -1883,7 +1885,6 @@ import time  # noqa: F401,E402
 
 _PLUGIN_COMPAT_LAZY = {
     'base_url_host_matches': ('utils', 'base_url_host_matches'),
-    'custom_provider_slug': ('hermes_cli.providers', 'custom_provider_slug'),
     'list_picker_providers': ('hermes_cli.model_switch_providers', 'list_picker_providers'),
     'prewarm_picker_cache_async': ('hermes_cli.model_switch_providers', 'prewarm_picker_cache_async'),
 }

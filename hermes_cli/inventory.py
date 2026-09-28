@@ -171,7 +171,7 @@ def _strip_aggregator_overlaps(rows: list[dict]) -> None:
     custom:* slug, so without it the dedup would empty a user's own custom row. Flat-namespace
     resellers (opencode-go/zen) serve every model first-party and keep shared names."""
     try:
-        from hermes_cli.providers import is_routing_aggregator
+        from providers import is_routing_aggregator
     except Exception:
         return
 
@@ -410,9 +410,9 @@ def _apply_custom_aliases(rows: list[dict]) -> None:
 
     GUI pickers compare the two to decide which row is active; exact equality never matches for custom
     providers (#87035). Exposing ``aliases`` — every current and legacy spelling from
-    :func:`hermes_cli.providers.custom_provider_aliases` — lets the frontend do a membership check instead.
+    :func:`providers.custom_provider_aliases` — lets the frontend do a membership check instead.
     """
-    from hermes_cli.providers import custom_provider_aliases
+    from providers import custom_provider_aliases
 
     for row in rows:
         if not row.get("is_user_defined"):

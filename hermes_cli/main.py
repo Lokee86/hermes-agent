@@ -2028,7 +2028,8 @@ def _resolve_active_provider(config, model_cfg, effective_provider, custom_provi
     """
     from hermes_cli.auth import AuthError, format_auth_error, resolve_provider
     from hermes_cli.config import get_compatible_custom_providers, get_env_value
-    from hermes_cli.providers import custom_provider_aliases, resolve_provider_full
+    from providers import custom_provider_aliases
+    from hermes_cli.providers import resolve_provider_full
 
     active = ""
     if effective_provider == "custom" and isinstance(model_cfg, dict):

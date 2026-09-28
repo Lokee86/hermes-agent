@@ -266,7 +266,7 @@ def _show_model_picker(cli, ctx, force_refresh: bool) -> None:
     """``/model`` with no args: open the picker, or print usage when nothing is authed."""
     from cli import _cprint
     from hermes_cli.inventory import build_models_payload
-    from hermes_cli.providers import get_label
+    from providers import get_provider_label
     try:
         if ctx is None:
             raise RuntimeError("inventory context unavailable")
@@ -290,7 +290,7 @@ def _show_model_picker(cli, ctx, force_refresh: bool) -> None:
         _cprint("  /model --refresh                     re-fetch live model lists")
         return
     cli._open_model_picker(
-        providers, cli.model or "unknown", get_label(cli.provider) if cli.provider else "unknown",
+        providers, cli.model or "unknown", get_provider_label(cli.provider) if cli.provider else "unknown",
         user_provs=ctx.user_providers if ctx is not None else None,
         custom_provs=ctx.custom_providers if ctx is not None else None)
 

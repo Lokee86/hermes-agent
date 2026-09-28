@@ -719,7 +719,7 @@ def _configured_custom_provider_ids() -> set[str]:
     ids = {"custom"}
     try:
         from hermes_cli.config import load_config
-        from hermes_cli.providers import custom_provider_slug
+        from providers import custom_provider_slug
 
         config = load_config()
         providers = config.get("providers", {})

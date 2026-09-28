@@ -11,7 +11,7 @@ import logging
 import os
 from typing import Any, Callable, Dict, Optional, Tuple
 
-from hermes_cli.providers import custom_provider_aliases, custom_provider_slug
+from providers import custom_provider_aliases, custom_provider_slug
 from agent.secret_scope import get_secret_str
 from utils import base_url_hostname
 

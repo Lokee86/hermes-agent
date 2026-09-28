@@ -941,7 +941,7 @@ def _model_flow_api_key_provider(config, provider_id, current_model=""):
     effective_base = current_base or pconfig.inference_base_url
 
     if provider_id == "actual":
-        from hermes_cli.providers import normalize_provider
+        from providers import normalize_provider
         model_cfg = config.get("model") or {}
         if isinstance(model_cfg, dict) and normalize_provider(str(model_cfg.get("provider") or "")) == provider_id:
             effective_base = str(model_cfg.get("base_url") or "").strip() or effective_base
@@ -1195,7 +1195,6 @@ _PLUGIN_COMPAT_LAZY = {
     'BEDROCK_GEO_PREFIXES': ('hermes_cli.model_setup_flows_bedrock', 'BEDROCK_GEO_PREFIXES'),
     'bedrock_model_routable_from_region': ('hermes_cli.model_setup_flows_bedrock', 'bedrock_model_routable_from_region'),
     'bedrock_region_geo_prefix': ('hermes_cli.model_setup_flows_bedrock', 'bedrock_region_geo_prefix'),
-    'custom_provider_slug': ('hermes_cli.providers', 'custom_provider_slug'),
     'line_input': ('hermes_cli.cli_output', 'line_input'),
 }
 

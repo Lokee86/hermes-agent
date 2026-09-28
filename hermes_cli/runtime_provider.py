@@ -1098,8 +1098,6 @@ import os  # noqa: F401,E402
 
 
 _PLUGIN_COMPAT_LAZY = {
-    'custom_provider_aliases': ('hermes_cli.providers', 'custom_provider_aliases'),
-    'custom_provider_slug': ('hermes_cli.providers', 'custom_provider_slug'),
 }
 
 

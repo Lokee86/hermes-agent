@@ -49,6 +49,8 @@ from pathlib import Path
 from providers.base import ProviderProfile
 from providers.identity import (
     ResolvedProvider,
+    custom_provider_aliases,
+    custom_provider_slug,
     get_provider_label,
     is_aggregator,
     is_routing_aggregator,
@@ -212,7 +214,6 @@ def routed_model_rejects_vision_tool_messages(provider: str, model: str) -> bool
     # Routing aggregators accept a ``vendor/model`` identifier while the request is sent
     # to the aggregator; the target provider can have stricter message-shape support than
     # the aggregator's generic OpenAI-compatible transport profile.
-    from hermes_cli.providers import is_routing_aggregator
     if not is_routing_aggregator(provider_name):
         return False
 

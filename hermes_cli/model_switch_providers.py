@@ -14,7 +14,14 @@ import threading as _threading
 from dataclasses import dataclass, field
 from typing import Any, List, Optional
 from agent.command_token_source import build_command_token_provider, materialize_probe_api_key
-from hermes_cli.providers import custom_provider_aliases, custom_provider_slug, get_label
+from providers import (
+    custom_provider_aliases,
+    custom_provider_slug,
+    get_provider_label,
+    is_aggregator,
+    list_providers,
+    normalize_provider,
+)
 from utils import base_url_host_matches
 
 # Log-record parity with the origin module.
@@ -276,11 +283,9 @@ def _iter_builtin_candidates(models_dev_data: dict, excluded: set, seen: set):
     unroutable providers. PROVIDER_REGISTRY env var names win over models.dev's."""
     from agent.models_dev import PROVIDER_TO_MODELS_DEV
     from hermes_cli.auth import PROVIDER_REGISTRY, is_runtime_provider_routable
-    from hermes_cli.models import _AGGREGATOR_PROVIDERS
-    from hermes_cli.providers import ALIASES
     for hermes_id, mdev_id in PROVIDER_TO_MODELS_DEV.items():
-        alias_target = ALIASES.get(hermes_id)
-        if alias_target and alias_target != hermes_id and alias_target in _AGGREGATOR_PROVIDERS:
+        canonical = normalize_provider(hermes_id)
+        if canonical != hermes_id and is_aggregator(canonical):
             continue
         try:
             from providers import get_provider_profile
@@ -336,22 +341,19 @@ def _pool_usable(slug: str) -> bool:
         return False
 
 
-def _overlay_has_env_creds(pid: str, hermes_slug: str, overlay, read_env) -> bool:
-    """Section-2 env/SDK credential check shared by the picker and the prefetch scan.
-
-    Vertex authenticates via OAuth2 (service-account JSON / ADC), not an API key, so it gets its
-    own probe; otherwise the provider is hidden from the picker even when fully configured."""
+def _profile_has_env_creds(pid: str, hermes_slug: str, profile, read_env) -> bool:
+    """Provider-profile env/SDK credential check shared by picker and prefetch scan."""
     from hermes_cli.auth import PROVIDER_REGISTRY
     has_creds = False
-    if overlay.auth_type == "vertex":
+    if profile.auth_type == "vertex":
         try:
             from agent.vertex_adapter import has_vertex_credentials
             has_creds = has_vertex_credentials()
         except Exception as exc:
             logger.debug("Vertex credential check failed: %s", exc)
-    elif overlay.extra_env_vars:
-        has_creds = _any_env(overlay.extra_env_vars, read_env)
-    if not has_creds and overlay.auth_type == "api_key":
+    elif profile.env_vars:
+        has_creds = _any_env(profile.env_vars, read_env)
+    if not has_creds and profile.auth_type == "api_key":
         for key in (pid, hermes_slug):
             pcfg = PROVIDER_REGISTRY.get(key)
             if pcfg and pcfg.api_key_env_vars and _any_env(pcfg.api_key_env_vars, read_env):
@@ -639,9 +641,7 @@ def _collect_authed_provider_slugs(
     Env vars are read through the per-profile secret scope. AWS SDK providers are skipped
     (heavier detection)."""
     from hermes_cli.model_switch import _scoped_key_env
-    from agent.models_dev import PROVIDER_TO_MODELS_DEV
     from hermes_cli.auth import PROVIDER_REGISTRY
-    from hermes_cli.providers import HERMES_OVERLAYS
     from hermes_cli.models import CANONICAL_PROVIDERS
     excluded_set = {str(p).strip().lower() for p in excluded if p}
     slugs: list[str] = []
@@ -655,15 +655,14 @@ def _collect_authed_provider_slugs(
         if _any_env(env_vars, _scoped_key_env) or _raw_pool_usable(hermes_id):
             _emit(hermes_id, hermes_id)
 
-    mdev_to_hermes = {v: k for k, v in PROVIDER_TO_MODELS_DEV.items()}
-    for pid, overlay in HERMES_OVERLAYS.items():
-        hermes_slug = mdev_to_hermes.get(pid, pid)
-        if _skip(seen, excluded_set, pid, hermes_slug) or overlay.auth_type == "aws_sdk":
+    for profile in list_providers():
+        pid = hermes_slug = profile.name
+        if _skip(seen, excluded_set, pid) or profile.auth_type == "aws_sdk":
             continue
         if (
-            _overlay_has_env_creds(pid, hermes_slug, overlay, _scoped_key_env)
-            or _auth_store_has_provider(pid, hermes_slug) or _pool_usable(hermes_slug)):
-            _emit(hermes_slug, pid, hermes_slug)
+            _profile_has_env_creds(pid, hermes_slug, profile, _scoped_key_env)
+            or _auth_store_has_provider(pid) or _pool_usable(hermes_slug)):
+            _emit(hermes_slug, pid)
 
     for cp in CANONICAL_PROVIDERS:
         if _skip(seen, excluded_set, cp.slug):
@@ -810,7 +809,7 @@ def _lap_lmstudio_row(b: _PickerBuild, user_providers: dict) -> None:
     from hermes_cli.model_switch import _declared_model_ids
     configured_models = _declared_model_ids(configured.get("models")) if isinstance(configured, dict) else []
     model_ids = list(dict.fromkeys([*configured_models, *b.curated.get("lmstudio", [])]))
-    b.add_builtin_row("lmstudio", get_label("lmstudio"), is_current, model_ids, "hermes")
+    b.add_builtin_row("lmstudio", get_provider_label("lmstudio"), is_current, model_ids, "hermes")
 
 
 def _lap_builtin_rows(b: _PickerBuild, data: dict, user_providers: dict) -> None:
@@ -834,20 +833,20 @@ def _lap_builtin_rows(b: _PickerBuild, data: dict, user_providers: dict) -> None
             hermes_id, display_name, b.current_provider in (hermes_id, mdev_id), model_ids, "built-in")
 
 
-def _overlay_has_creds(b: _PickerBuild, pid: str, hermes_slug: str, overlay) -> bool:
-    """Section-2 credential ladder: env/SDK, external-process executable, auth store, pool,
+def _profile_has_creds(b: _PickerBuild, pid: str, hermes_slug: str, profile) -> bool:
+    """Profile credential ladder: env/SDK, external-process executable, auth store, pool,
     anthropic's external credential files."""
-    if overlay.auth_type == "aws_sdk":
+    if profile.auth_type == "aws_sdk":
         has_creds = _has_aws_sdk_creds_for_listing(hermes_slug, b.current_provider)
     else:
         from hermes_cli.model_switch import _scoped_key_env
-        has_creds = _overlay_has_env_creds(pid, hermes_slug, overlay, _scoped_key_env)
+        has_creds = _profile_has_env_creds(pid, hermes_slug, profile, _scoped_key_env)
     # External-process providers (copilot-acp) hold no key/token/pool entry by design — the
     # spawned ACP subprocess brings its own auth. "Configured" means the executable resolves.
     # "Configured" means the executable resolves, which is exactly what get_auth_status() reports for them;
     # without this branch the has_creds filter below unconditionally hides the provider from every picker
     # (#63662).
-    if not has_creds and overlay.auth_type == "external_process":
+    if not has_creds and profile.auth_type == "external_process":
         try:
             from hermes_cli.auth import get_auth_status
             _ext_status = get_auth_status(hermes_slug) or {}
@@ -887,33 +886,28 @@ def _overlay_has_creds(b: _PickerBuild, pid: str, hermes_slug: str, overlay) -> 
     return has_creds
 
 
-def _lap_overlay_rows(b: _PickerBuild, data: dict, user_providers: dict) -> None:
-    """Section 2: Hermes-only providers (nous, openai-codex, copilot, opencode-go, ...)."""
-    from agent.models_dev import PROVIDER_TO_MODELS_DEV
+def _lap_profile_rows(b: _PickerBuild, data: dict, user_providers: dict) -> None:
+    """Section 2: registered provider profiles not already emitted by models.dev-backed rows."""
     from hermes_cli.model_switch import _declared_model_ids
-    from hermes_cli.providers import HERMES_OVERLAYS
 
-    # HERMES_OVERLAYS keys may be models.dev IDs ("github-copilot") while config.yaml uses
-    # Hermes IDs ("copilot").
-    mdev_to_hermes = {v: k for k, v in PROVIDER_TO_MODELS_DEV.items()}
-    for pid, overlay in HERMES_OVERLAYS.items():
-        hermes_slug = mdev_to_hermes.get(pid, pid)
-        if _skip(b.seen_slugs, b.excluded, pid, hermes_slug):
+    for profile in list_providers():
+        pid = hermes_slug = profile.name
+        if _skip(b.seen_slugs, b.excluded, pid):
             continue
-        if not _overlay_has_creds(b, pid, hermes_slug, overlay):
+        if not _profile_has_creds(b, pid, hermes_slug, profile):
             continue
         if hermes_slug in {"openai-codex", "copilot", "copilot-acp"}:
             # Live OAuth-backed discovery so Pro-only Codex slugs not in the static catalog
             # appear; falls back to curated when unreachable (or not yet cached on the read path).
             model_ids = _live_or_curated_ids(hermes_slug, b.curated, merge_models_dev=False,
                                              non_blocking=b.non_blocking_catalogs)
-        elif overlay.auth_type == "aws_sdk":
+        elif profile.auth_type == "aws_sdk":
             model_ids = _aws_live_or_curated_ids(hermes_slug, b.curated, hermes_slug, pid,
                                                  non_blocking=b.non_blocking_catalogs)
         elif hermes_slug == "nous":
             # A guest identity never needs the Portal catalog: add_builtin_row pins nous/welcome
             # (or drops the row when nous.guest is off), so only a real account fetches.
-            tier_row = _free_tier_nous_row({"name": get_label(hermes_slug), "models": []})
+            tier_row = _free_tier_nous_row({"name": get_provider_label(hermes_slug), "models": []})
             real_account = tier_row is not None and not tier_row["models"]
             model_ids = _nous_picker_model_ids(b.curated, b.force_fresh_nous_tier) if real_account else []
         else:
@@ -925,7 +919,7 @@ def _lap_overlay_rows(b: _PickerBuild, data: dict, user_providers: dict) -> None
         if isinstance(configured, dict):
             model_ids = list(dict.fromkeys([*_declared_model_ids(configured.get("models")), *model_ids]))
         b.add_builtin_row(
-            hermes_slug, get_label(hermes_slug), b.current_provider in (hermes_slug, pid), model_ids, "hermes")
+            hermes_slug, get_provider_label(hermes_slug), b.current_provider in (hermes_slug, pid), model_ids, "hermes")
         b.seen_slugs.add(pid.lower())
 
 
@@ -1250,7 +1244,7 @@ def list_authenticated_providers(
 
     _lap_lmstudio_row(b, user_providers if isinstance(user_providers, dict) else {})
     _lap_builtin_rows(b, data, user_providers)
-    _lap_overlay_rows(b, data, user_providers)
+    _lap_profile_rows(b, data, user_providers)
     _lap_canonical_rows(b)
     if user_providers and isinstance(user_providers, dict):
         _lap_user_provider_rows(b, user_providers)

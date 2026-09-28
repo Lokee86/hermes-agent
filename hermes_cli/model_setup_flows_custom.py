@@ -12,7 +12,7 @@ import os
 import urllib.parse
 
 from hermes_cli.cli_output import line_input
-from hermes_cli.providers import custom_provider_slug
+from providers import custom_provider_slug
 from hermes_cli.model_setup_flows_common import (
     _HTTP, _ask, _commit_model_config, _load_config_model_section,
     _prune_replaced_custom_model_config_credentials, _radiolist, _say)

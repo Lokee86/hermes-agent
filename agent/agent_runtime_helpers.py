@@ -1605,7 +1605,7 @@ def _route_may_be_custom(agent, eff_provider: str, provider_lower: str, eff_base
     if custom_providers:
         # Same semantics as the capability helper (normalize_route_base_url +
         # custom_provider_aliases) so spelling differences don't drop declarations.
-        from hermes_cli.providers import custom_provider_aliases
+        from providers import custom_provider_aliases
         from hermes_cli.route_identity import normalize_route_base_url
         provider_ids = {provider_lower, provider_lower.removeprefix("custom:")}
         eff_url_normalized = normalize_route_base_url(eff_base_url)

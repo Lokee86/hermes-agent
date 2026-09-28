@@ -79,3 +79,26 @@ def is_routing_aggregator(provider: str) -> bool:
     if profile.is_routing_aggregator is not None:
         return profile.is_routing_aggregator
     return profile.is_aggregator
+
+
+def custom_provider_slug(display_name: str, provider_key: str = "") -> str:
+    """Return the stable ``custom:`` identity for a configured provider."""
+    identity = str(provider_key or "").strip() or str(display_name or "").strip()
+    normalized = identity.lower().replace(" ", "-")
+    return normalized if normalized.startswith("custom:") else f"custom:{normalized}"
+
+
+def custom_provider_aliases(display_name: str, provider_key: str = "") -> frozenset[str]:
+    """Return every accepted spelling for one configured custom-provider identity."""
+    aliases: set[str] = set()
+    for value in (display_name, provider_key):
+        raw = str(value or "").strip().lower()
+        if not raw:
+            continue
+        normalized = raw.replace(" ", "-")
+        aliases.update({raw, normalized, custom_provider_slug(normalized)})
+        if normalized.startswith("custom:"):
+            suffix = normalized.split(":", 1)[1]
+            if suffix:
+                aliases.update({suffix, f"custom:{normalized}"})
+    return frozenset(aliases)

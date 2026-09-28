@@ -1987,7 +1987,7 @@ def get_xai_oauth_auth_status() -> Dict[str, Any]:
 
 def _provider_env_base_url(pconfig: ProviderConfig) -> str:
     if pconfig.id == "actual":
-        from hermes_cli.providers import normalize_provider
+        from providers import normalize_provider
 
         model = read_raw_config().get("model")
         if isinstance(model, dict) and normalize_provider(str(model.get("provider") or "")) == "actual":

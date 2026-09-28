@@ -30,7 +30,7 @@ def _named_custom_provider_catalogs() -> list[tuple[str, str, list[tuple[str, st
         from hermes_cli.model_switch_providers import _NativePickerModelList, _fetch_picker_live_models
         from hermes_cli.model_switch_providers import _discover_flag
         from hermes_cli.models_local import should_use_ollama_native_catalog
-        from hermes_cli.providers import custom_provider_slug
+        from providers import custom_provider_slug
     except ImportError:
         return []
 
