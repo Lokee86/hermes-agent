@@ -94,7 +94,7 @@ class CustomProfile(ProviderProfile):
 
 custom = CustomProfile(
     name="custom", aliases=("ollama", "local", "vllm", "llamacpp", "llama.cpp", "llama-cpp"),
-    env_vars=(),  # No fixed key — custom endpoint
+    display_name="custom", description="custom (direct API)", env_vars=(),  # No fixed key — custom endpoint
     base_url="",  # User-configured
     # An arbitrary client ceiling can exceed a local server's actual output limit.
     # The endpoint owns its generation default.

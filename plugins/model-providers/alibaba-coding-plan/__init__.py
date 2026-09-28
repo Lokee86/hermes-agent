@@ -14,7 +14,7 @@ alibaba_coding_plan = ProviderProfile(
     display_name="Alibaba Cloud (Coding Plan)",
     description="Alibaba Cloud Coding Plan (Dedicated coding tier)",
     signup_url="https://help.aliyun.com/zh/model-studio/",
-    env_vars=("ALIBABA_CODING_PLAN_API_KEY", "DASHSCOPE_API_KEY", "ALIBABA_CODING_PLAN_BASE_URL"),
+    env_vars=("ALIBABA_CODING_PLAN_API_KEY", "DASHSCOPE_API_KEY"),
     base_url="https://coding-intl.dashscope.aliyuncs.com/v1",
     base_url_env_var="ALIBABA_CODING_PLAN_BASE_URL", auth_type="api_key",
 )
@@ -24,7 +24,7 @@ alibaba_coding_plan_cn = ProviderProfile(
     display_name="Alibaba Cloud (Coding Plan, China)",
     description="Alibaba Cloud Coding Plan, mainland-China endpoint",
     signup_url="https://help.aliyun.com/zh/model-studio/",
-    env_vars=("ALIBABA_CODING_PLAN_CN_API_KEY", "ALIBABA_CODING_PLAN_API_KEY", "DASHSCOPE_API_KEY", "ALIBABA_CODING_PLAN_CN_BASE_URL"),
+    env_vars=("ALIBABA_CODING_PLAN_CN_API_KEY", "ALIBABA_CODING_PLAN_API_KEY", "DASHSCOPE_API_KEY"),
     base_url="https://coding.dashscope.aliyuncs.com/v1",
     base_url_env_var="ALIBABA_CODING_PLAN_CN_BASE_URL", auth_type="api_key",
 )

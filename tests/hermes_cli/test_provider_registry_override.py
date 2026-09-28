@@ -48,7 +48,7 @@ def test_user_plugin_endpoint_and_env_vars_reach_the_runtime(tmp_path):
         "from providers import register_provider\n"
         "from providers.base import ProviderProfile\n"
         "register_provider(ProviderProfile(name='stepfun', aliases=('step',), auth_type='api_key',\n"
-        "    env_vars=('STEPFUN_API_KEY', 'STEPFUN_REGIONAL_BASE_URL'),\n"
+        "    env_vars=('STEPFUN_API_KEY',), base_url_env_var='STEPFUN_REGIONAL_BASE_URL',\n"
         "    base_url='https://api.stepfun.com/step_plan/v1'))\n"))
     assert result["runtime_base_url"] == "https://api.stepfun.com/step_plan/v1"
     assert result["base_url_env_var"] == "STEPFUN_REGIONAL_BASE_URL"

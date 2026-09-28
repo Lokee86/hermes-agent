@@ -56,16 +56,10 @@ def _profile_resolved_provider(name: str, mdev_info=None, *, source: str = "plug
 
     profile_env = tuple(profile.env_vars or ())
     base_url_env_var = str(profile.base_url_env_var or "").strip()
-    url_vars = tuple(
-        value for value in profile_env
-        if value == base_url_env_var or value.endswith(("_BASE_URL", "_URL"))
-    )
-    if not base_url_env_var:
-        base_url_env_var = next(iter(url_vars), "")
 
     env_vars = list(tuple(getattr(mdev_info, "env", ()) or ()))
     for value in profile_env:
-        if value not in url_vars and value not in env_vars:
+        if value not in env_vars:
             env_vars.append(value)
 
     routing_aggregator = (

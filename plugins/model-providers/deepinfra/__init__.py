@@ -53,8 +53,8 @@ class _DeepInfraProfile(ProviderProfile):
 deepinfra = _DeepInfraProfile(
     name="deepinfra", aliases=("deep-infra", "deepinfra-ai"), display_name="DeepInfra",
     description="DeepInfra — 100+ open models, pay-per-use", signup_url="https://deepinfra.com/dash/api_keys",
-    env_vars=("DEEPINFRA_API_KEY", "DEEPINFRA_BASE_URL"), base_url="https://api.deepinfra.com/v1/openai",
-    auth_type="api_key",
+    env_vars=("DEEPINFRA_API_KEY",), base_url="https://api.deepinfra.com/v1/openai",
+    base_url_env_var="DEEPINFRA_BASE_URL", auth_type="api_key",
     default_max_tokens=None,  # DeepInfra applies its documented per-model limit
     # The only hardcoded DeepInfra model: aux resolution is synchronous, so it
     # can't wait on a catalog round-trip. Everything else is discovered live.

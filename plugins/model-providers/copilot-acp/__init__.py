@@ -49,7 +49,7 @@ class CopilotACPProfile(ProviderProfile):
 
 copilot_acp = CopilotACPProfile(
     name="copilot-acp", aliases=("github-copilot-acp", "copilot-acp-agent"),
-    display_name="GitHub Copilot ACP",
+    display_name="GitHub Copilot ACP", description="GitHub Copilot ACP (Spawns copilot --acp --stdio)",
     api_mode="chat_completions",  # ACP subprocess uses chat_completions routing
     env_vars=(),  # Managed by ACP subprocess
     base_url="acp://copilot",  # ACP internal scheme

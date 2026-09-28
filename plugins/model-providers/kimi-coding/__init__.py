@@ -59,18 +59,29 @@ class KimiProfile(ProviderProfile):
         return thinking_toggle_extras(reasoning_config, KIMI_K3_EFFORTS, KIMI_K3_OVERRIDES)
 
 
-def _kimi(name: str, aliases: tuple, env_vars: tuple, base_url: str) -> KimiProfile:
+def _kimi(
+    name: str, aliases: tuple, env_vars: tuple, base_url: str,
+    display_name: str, description: str, signup_url: str,
+) -> KimiProfile:
     return KimiProfile(
-        name=name, aliases=aliases, env_vars=env_vars, base_url=base_url,
+        name=name, aliases=aliases, display_name=display_name, description=description,
+        signup_url=signup_url, env_vars=env_vars, base_url=base_url,
         base_url_env_var="KIMI_BASE_URL" if name == "kimi-coding" else "",
         fixed_temperature=OMIT_TEMPERATURE, default_max_tokens=32000,
         default_headers=dict(_HEADERS), default_aux_model="kimi-k2-turbo-preview",
     )
 
 
-kimi = _kimi("kimi-coding", ("kimi", "moonshot", "kimi-for-coding"), ("KIMI_API_KEY", "KIMI_CODING_API_KEY"),
-             "https://api.moonshot.ai/v1")
-kimi_cn = _kimi("kimi-coding-cn", ("kimi-cn", "moonshot-cn"), ("KIMI_CN_API_KEY",), "https://api.moonshot.cn/v1")
+kimi = _kimi(
+    "kimi-coding", ("kimi", "moonshot", "kimi-for-coding"), ("KIMI_API_KEY", "KIMI_CODING_API_KEY"),
+    "https://api.moonshot.ai/v1", "Kimi / Kimi Coding Plan",
+    "Kimi Coding Plan (api.kimi.com & Moonshot API)", "https://platform.moonshot.cn/",
+)
+kimi_cn = _kimi(
+    "kimi-coding-cn", ("kimi-cn", "moonshot-cn"), ("KIMI_CN_API_KEY",),
+    "https://api.moonshot.cn/v1", "Kimi / Moonshot (China)",
+    "Kimi / Moonshot China (Domestic direct API)", "https://platform.moonshot.cn/",
+)
 
 register_provider(kimi)
 register_provider(kimi_cn)

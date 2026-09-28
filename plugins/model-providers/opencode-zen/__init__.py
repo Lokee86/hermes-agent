@@ -117,6 +117,7 @@ class OpenCodeZenProfile(ProviderProfile):
 
 opencode_zen = OpenCodeZenProfile(
     name="opencode-zen", aliases=("opencode", "opencode_zen", "zen"), display_name="OpenCode Zen",
+    description="OpenCode Zen (Curated models, pay-as-you-go)", signup_url="https://opencode.ai/auth",
     env_vars=("OPENCODE_ZEN_API_KEY",), base_url="https://opencode.ai/zen/v1",
     base_url_env_var="OPENCODE_ZEN_BASE_URL", is_aggregator=True, is_routing_aggregator=False,
     default_headers=dict(_ATTRIBUTION_HEADERS),
@@ -125,6 +126,7 @@ opencode_zen = OpenCodeZenProfile(
 
 opencode_go = OpenCodeGoProfile(
     name="opencode-go", aliases=("opencode_go", "go", "opencode-go-sub"), display_name="OpenCode Go",
+    description="OpenCode Go (Open models subscription)", signup_url="https://opencode.ai/auth",
     env_vars=("OPENCODE_GO_API_KEY",), base_url="https://opencode.ai/zen/go/v1",
     base_url_env_var="OPENCODE_GO_BASE_URL", is_aggregator=True, is_routing_aggregator=False,
     default_headers=dict(_ATTRIBUTION_HEADERS),

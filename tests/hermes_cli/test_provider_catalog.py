@@ -11,18 +11,22 @@ from hermes_cli.provider_catalog import (
     provider_catalog_by_slug,
 )
 
-def test_profileless_providers_still_present():
-    """Providers without a ProviderProfile must still resolve via fallbacks.
 
-    lmstudio / openai-api / tencent-tokenhub / xai-oauth have no profile on
-    main; they exist only as registry + canonical entries. The catalog must
-    not require a profile to include a provider.
-    """
+
+
+
+
+def test_catalogued_builtins_have_authoritative_profiles():
+    """Former catalogue-only rows now carry their own complete ProviderProfile metadata."""
+    from providers import get_provider_profile
+
     by = provider_catalog_by_slug()
     for slug in ("lmstudio", "openai-api", "tencent-tokenhub", "xai-oauth"):
-        assert slug in by, f"{slug} dropped from catalog (profile-less provider)"
-        assert by[slug].label, f"{slug} has empty label despite canonical fallback"
-        assert by[slug].description, f"{slug} has empty description despite fallback"
+        profile = get_provider_profile(slug)
+        assert profile is not None, f"{slug} has no ProviderProfile"
+        assert profile.display_name and profile.description
+        assert by[slug].label == profile.display_name
+        assert by[slug].description == profile.description
 
 def test_copilot_surfaces_as_a_provider_with_its_own_token_var():
     """Regression for the reported bug: a GitHub Copilot login showed up under

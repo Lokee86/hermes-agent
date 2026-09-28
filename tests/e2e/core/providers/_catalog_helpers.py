@@ -157,7 +157,7 @@ import json, providers
 from hermes_cli.providers import host_mandated_api_mode
 out = []
 for p in providers.list_providers():
-    key = next((e for e in p.env_vars if not e.endswith("_BASE_URL")), None)
+    key = next(iter(p.env_vars), None)
     out.append(dict(name=p.name, api_mode=p.api_mode, auth_type=p.auth_type, key_env=key,
                     base_url=p.base_url, aliases=list(p.aliases),
                     supports_model_listing=bool(p.supports_model_listing),

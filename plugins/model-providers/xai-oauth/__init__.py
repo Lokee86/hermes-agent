@@ -7,6 +7,7 @@ xai_oauth = ProviderProfile(
     name="xai-oauth",
     aliases=("grok-oauth", "x-ai-oauth", "xai-grok-oauth"),
     display_name="xAI Grok OAuth (SuperGrok / Premium+)",
+    description="xAI Grok OAuth (SuperGrok / Premium+ subscription)",
     api_mode="codex_responses",
     auth_type="oauth_external",
     base_url="https://api.x.ai/v1",

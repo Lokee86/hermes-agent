@@ -5,7 +5,7 @@ from providers.base import ProviderProfile
 
 openai_api = ProviderProfile(
     name="openai-api",
-    display_name="OpenAI API",
+    display_name="OpenAI API", description="OpenAI API (api.openai.com, API key)",
     api_mode="codex_responses",
     env_vars=("OPENAI_API_KEY",),
     base_url="https://api.openai.com/v1",

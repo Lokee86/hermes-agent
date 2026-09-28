@@ -10,7 +10,8 @@ class BedrockProfile(ProviderProfile):
 
 bedrock = BedrockProfile(
     name="bedrock", aliases=("aws", "aws-bedrock", "amazon-bedrock", "amazon"),
-    display_name="AWS Bedrock", api_mode="bedrock_converse",
+    display_name="AWS Bedrock", description="AWS Bedrock (Claude, Nova, Llama, DeepSeek; IAM or API key)",
+    api_mode="bedrock_converse",
     env_vars=(),  # AWS SDK credentials — not env vars
     base_url="https://bedrock-runtime.us-east-1.amazonaws.com", base_url_env_var="BEDROCK_BASE_URL",
     auth_type="aws_sdk",

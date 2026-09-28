@@ -58,6 +58,8 @@ class ProviderProfile:
     signup_url: str = ""         # e.g. "https://www.gmicloud.ai/" — shown during setup
 
     # ── Auth & endpoints ─────────────────────────────────────
+    # Credential variables only. Endpoint overrides belong exclusively in
+    # base_url_env_var; consumers must never infer their role from a suffix.
     env_vars: tuple = ()
     base_url: str = ""
     base_url_env_var: str = ""
@@ -150,6 +152,12 @@ class ProviderProfile:
     model_capabilities: dict[str, dict[str, Any]] = field(default_factory=dict)
 
     # ── Hooks (override in subclass for complex providers) ───
+
+    def __post_init__(self) -> None:
+        if self.base_url_env_var and self.base_url_env_var in self.env_vars:
+            raise ValueError(
+                f"{self.name}: base_url_env_var must not also appear in credential env_vars"
+            )
 
     def fetch_account_usage(
         self, *, base_url: str | None = None, api_key: str | None = None

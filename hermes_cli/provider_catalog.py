@@ -6,8 +6,8 @@ silently went missing from the GUI. ``auth_type`` / ``api_key_env_vars`` / ``bas
 come from :data:`hermes_cli.auth.PROVIDER_REGISTRY` (credential truth); ``display_name`` /
 ``description`` / ``signup_url`` from the provider's :class:`providers.base.ProviderProfile`, falling
 back to the ``CANONICAL_PROVIDERS`` entry's ``label`` / ``tui_desc`` and the ``OPTIONAL_ENV_VARS``
-signup URL (many profiles leave these blank, and lmstudio, openai-api, tencent-tokenhub, xai-oauth
-have no profile at all — the fallbacks are load-bearing).
+signup URL only for legacy/profile-less fallback rows. Bundled profiles now carry complete
+metadata and explicit credential/endpoint environment declarations.
 """
 
 from __future__ import annotations
@@ -44,15 +44,6 @@ def tab_for_auth_type(auth_type: str) -> str:
     return "accounts" if auth_type in _ACCOUNTS_AUTH_TYPES else "keys"
 
 
-def _is_url_var(name: str) -> bool:
-    return name.endswith("_BASE_URL") or name.endswith("_URL")
-
-
-def _split_env_vars(env_vars: tuple[str, ...]) -> tuple[tuple[str, ...], str]:
-    """Split a profile's ``env_vars`` into (api_key_vars, base_url_var)."""
-    return tuple(v for v in env_vars if not _is_url_var(v)), next((v for v in env_vars if _is_url_var(v)), "")
-
-
 def _safe_import(module: str, attr: str, default):
     """Import ``attr`` from ``module``; ``default`` on ANY failure — this module is on the import
     path of the web server and the CLI, and a provider-plugin import error must never blank the
@@ -65,8 +56,8 @@ def _safe_import(module: str, attr: str, default):
 
 def provider_catalog() -> list[ProviderDescriptor]:
     """One descriptor per provider in the ``hermes model`` universe (:data:`CANONICAL_PROVIDERS`,
-    auto-extended by provider plugins). Auth/env from ``PROVIDER_REGISTRY``; display metadata from
-    ``ProviderProfile`` with canonical/env fallbacks so profile-less providers still resolve."""
+    auto-extended by provider plugins). Bundled ProviderProfile declarations are complete; the
+    legacy registry/catalog remains only as a transition projection/fallback for later Phase 5.2 steps."""
     from hermes_cli.models import CANONICAL_PROVIDERS
     PROVIDER_REGISTRY = _safe_import("hermes_cli.auth", "PROVIDER_REGISTRY", {})
     OPTIONAL_ENV_VARS = _safe_import("hermes_cli.config", "OPTIONAL_ENV_VARS", {})
@@ -80,22 +71,23 @@ def provider_catalog() -> list[ProviderDescriptor]:
         slug = entry.slug
         cfg = PROVIDER_REGISTRY.get(slug)
         prof = profiles.get(slug)
-        # auth_type: registry is authoritative; provider profile owns the declaration fallback.
         auth_type = ((cfg.auth_type if cfg else "") or (prof.auth_type if prof else "") or "api_key")
-        # Credential env vars: registry first (already normalized), else derived from the profile.
         if cfg and cfg.api_key_env_vars:
-            api_key_vars, base_url_var = tuple(cfg.api_key_env_vars), cfg.base_url_env_var or ""
-        elif prof and prof.env_vars:
-            api_key_vars, base_url_var = _split_env_vars(tuple(prof.env_vars))
+            api_key_vars = tuple(cfg.api_key_env_vars)
+            base_url_var = cfg.base_url_env_var or ""
+        elif prof is not None:
+            api_key_vars = tuple(prof.env_vars or ())
+            base_url_var = prof.base_url_env_var or ""
         else:
             api_key_vars, base_url_var = (), ""
         label = (prof.display_name if prof else "") or entry.label or slug
+        description = (prof.description if prof else "") or entry.tui_desc or label
         signup_url = (prof.signup_url if prof else "") or ""
         if not signup_url and api_key_vars:
             signup_url = (OPTIONAL_ENV_VARS.get(api_key_vars[0]) or {}).get("url") or ""
         out.append(
             ProviderDescriptor(
-                slug=slug, label=label, description=(prof.description if prof else "") or entry.tui_desc or label,
+                slug=slug, label=label, description=description,
                 auth_type=auth_type, tab=tab_for_auth_type(auth_type), api_key_env_vars=api_key_vars,
                 base_url_env_var=base_url_var, signup_url=signup_url, order=order,
             )

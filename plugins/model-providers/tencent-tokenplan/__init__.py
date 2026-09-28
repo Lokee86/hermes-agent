@@ -7,6 +7,7 @@ tencent_tokenplan = ProviderProfile(
     name="tencent-tokenplan",
     aliases=("tokenplan", "tencent-lkeap"),
     display_name="Tencent TokenPlan",
+    description="Tencent TokenPlan (Hy4 preview via api.lkeap.cloud.tencent.com, Anthropic Messages)",
     api_mode="anthropic_messages",
     env_vars=("TOKENPLAN_API_KEY",),
     base_url="https://api.lkeap.cloud.tencent.com/plan/anthropic",

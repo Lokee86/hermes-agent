@@ -25,7 +25,9 @@ class VertexProfile(ProviderProfile):
 
 vertex = VertexProfile(
     name="vertex", aliases=("google-vertex", "vertex-ai", "gcp-vertex", "vertexai"),
-    display_name="Google Vertex AI", api_mode="chat_completions",
+    display_name="Google Vertex AI",
+    description="Google Vertex AI (Gemini via GCP; OAuth2 service account or ADC, GCP billing/quotas)",
+    api_mode="chat_completions",
     env_vars=(),  # OAuth2 via service account / ADC — not a static key env var
     base_url="https://aiplatform.googleapis.com",  # real base_url computed at runtime
     auth_type="vertex", default_aux_model="google/gemini-3.6-flash",
