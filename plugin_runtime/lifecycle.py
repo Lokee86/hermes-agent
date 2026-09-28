@@ -29,7 +29,7 @@ _plugin_managers_by_home: dict[Path, PluginManager] = {}
 _plugin_managers_lock = threading.RLock()
 
 # Process-wide Ink TUI / desktop host, stamped onto every profile manager.
-_published_tui_message_injector: tuple[object, Callable] | None = None
+_published_tui_message_injector: tuple[object, Callable, Optional[Callable]] | None = None
 _published_tui_host_lock = threading.Lock()
 
 # One process-wide warm-start discovery worker.
@@ -67,13 +67,27 @@ def _known_plugin_managers() -> list[PluginManager]:
     return managers
 
 
-def publish_tui_message_host(owner: object, injector: Callable[..., bool]) -> None:
+def publish_tui_message_host(
+    owner: object,
+    injector: Callable[..., bool],
+    refresher: Optional[Callable[[Path, str], None]] = None,
+) -> None:
     """Publish the process TUI/desktop host and stamp managers that already exist."""
     global _published_tui_message_injector
     with _published_tui_host_lock:
-        _published_tui_message_injector = (owner, injector)
+        _published_tui_message_injector = (owner, injector, refresher)
     for manager in _known_plugin_managers():
         manager.set_tui_message_injector(owner, injector)
+
+
+def refresh_tui_plugin_sessions(note: str) -> bool:
+    """Refresh open TUI/desktop sessions after a plugin goes live in the active profile."""
+    with _published_tui_host_lock:
+        host = _published_tui_message_injector
+    if host is None or host[2] is None:
+        return False
+    host[2](Path(get_hermes_home()), note)
+    return True
 
 
 def clear_published_tui_message_host(owner: object) -> None:
@@ -93,7 +107,7 @@ def _attach_published_tui_host(manager: PluginManager) -> None:
     with _published_tui_host_lock:
         host = _published_tui_message_injector
     if host is not None and manager._tui_message_injector is None:
-        manager._tui_message_injector = host
+        manager._tui_message_injector = (host[0], host[1])
 
 
 def get_plugin_manager() -> PluginManager:

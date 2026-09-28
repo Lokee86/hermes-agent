@@ -325,7 +325,7 @@ def _refresh_live_sessions(home=None, *, preserve_prefix: bool = False, note: st
 def refresh_plugin_sessions(home, note: str) -> None:
     """A plugin just went live in ``home``: append its MCP tools to that profile's open chats (deferred
     behind tool_search, so the model-facing tool array is unchanged) and queue ``note`` for their next
-    turn. Called by ``hermes_cli.plugins_activation_live``."""
+    turn. Called through ``plugin_runtime.lifecycle.refresh_tui_plugin_sessions``."""
     _refresh_live_sessions(home, preserve_prefix=True, note=note)
 
 
@@ -1553,7 +1553,7 @@ _plugin_activation_subscribed: set = set()
 
 
 def _ensure_plugin_activation_listener() -> None:
-    from hermes_cli.plugins import get_plugin_manager
+    from plugin_runtime.lifecycle import get_plugin_manager
     manager = get_plugin_manager()
     if manager.scope_key in _plugin_activation_subscribed:
         return
@@ -1645,6 +1645,7 @@ def _plugins_update(rid, params):
                "warnings": list(result.warnings)}
     if result.changed:
         _ensure_plugin_activation_listener()
+        # plugins.manage is a process-boundary surface: use the edge orchestrator, not runtime-only go-live.
         activate = _tools_mod("hermes_cli.plugins_activation").activate_plugin_now
         payload = _with_activation({**payload, **activate(result.installed_name)}, result.installed_name)
     return _ok(rid, payload)

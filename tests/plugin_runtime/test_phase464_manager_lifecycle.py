@@ -90,9 +90,12 @@ def test_cli_private_consumers_use_runtime_lifecycle_owner() -> None:
     root = Path(__file__).resolve().parents[2]
 
     middleware = (root / "hermes_cli" / "middleware.py").read_text(encoding="utf-8")
-    activation = (root / "hermes_cli" / "plugins_activation.py").read_text(encoding="utf-8")
+    activation = (root / "plugin_runtime" / "activation.py").read_text(encoding="utf-8")
 
     assert "from plugin_runtime.lifecycle import delivery_manager" in middleware
     assert "from hermes_cli.plugins import _delivery_manager" not in middleware
-    assert "from plugin_runtime.lifecycle import get_plugin_manager, join_background_discovery" in activation
+    assert "from plugin_runtime.lifecycle import (" in activation
+    assert "get_plugin_manager," in activation
+    assert "join_background_discovery," in activation
+    assert "refresh_tui_plugin_sessions," in activation
     assert "_join_background_discovery" not in activation

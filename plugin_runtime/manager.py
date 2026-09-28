@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any, Callable, Dict, List, Mapping, Optional, Set, Tuple
 
 from hermes_constants import get_hermes_home, hermes_home_key
+from plugin_runtime.activation import activation_summaries
 from plugin_runtime.context import PluginContext
 from plugin_runtime.discovery import (
     _get_disabled_plugins,
@@ -149,8 +150,6 @@ class PluginManager(PluginLoaderMixin, PluginDispatchMixin, PluginOwnershipMixin
         """Notify process-owned listeners about plugins newly loaded by this discovery sweep."""
         if not self._plugin_loaded_listeners:
             return
-        from hermes_cli.plugins_activation import activation_summaries
-
         summaries = [s for s in activation_summaries(self) if s["key"] not in loaded_before]
         if not summaries:
             return

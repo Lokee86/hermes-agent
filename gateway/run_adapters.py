@@ -980,7 +980,7 @@ class GatewayAdapterLifecycleMixin:
         await asyncio.to_thread(hydrate_profile_secret_sources, profile_home)
         with _profile_runtime_scope(profile_home, hydrate_secrets=False):
             profile_runtime_cfg = _load_gateway_config()
-            from hermes_cli.plugins import discover_plugins, get_plugin_manager
+            from plugin_runtime.lifecycle import discover_plugins, get_plugin_manager
             discover_plugins()
             self._subscribe_plugin_rewire(get_plugin_manager(), profile_name, profile_home)
             # This profile's `hooks:` block: start() registered before any profile scope existed.
