@@ -4729,8 +4729,12 @@ def _normalize_resolved_model(model_name: Optional[str], provider: str) -> Optio
     if not model_name:
         return model_name
     try:
-        from hermes_cli.model_normalize import normalize_model_for_provider
-        return normalize_model_for_provider(model_name, provider)
+        from hermes_cli.models_catalog_static import static_provider_model_ids
+        from models import normalize_model_id
+
+        return normalize_model_id(
+            provider, model_name, known_ids=static_provider_model_ids(provider)
+        )
     except Exception:
         return model_name
 

@@ -214,8 +214,8 @@ class TestFallbackChainAdvancement:
                 ),
             ),
             patch(
-                "hermes_cli.model_normalize.normalize_model_for_provider",
-                side_effect=lambda m, p: m,
+                "models.normalize_model_id",
+                side_effect=lambda p, m, **kwargs: m,
             ),
             patch(
                 "agent.anthropic_adapter.build_anthropic_client",
@@ -250,8 +250,8 @@ class TestFallbackChainAdvancement:
                 ),
             ),
             patch(
-                "hermes_cli.model_normalize.normalize_model_for_provider",
-                side_effect=lambda m, p: m,
+                "models.normalize_model_id",
+                side_effect=lambda p, m, **kwargs: m,
             ),
             patch(
                 "agent.anthropic_adapter.build_anthropic_client",
@@ -312,7 +312,7 @@ class TestFallbackChainDedup:
             called.append((provider, model))
             return _mock_client(), model
         with patch("agent.auxiliary_client.resolve_provider_client", side_effect=_resolve):
-            with patch("hermes_cli.model_normalize.normalize_model_for_provider", side_effect=lambda m, p: m):
+            with patch("models.normalize_model_id", side_effect=lambda p, m, **kwargs: m):
                 ok = agent._try_activate_fallback()
 
         assert ok is True
@@ -365,8 +365,8 @@ class TestFallbackChainDedup:
 
         with patch("agent.auxiliary_client.resolve_provider_client", side_effect=_resolve):
             with patch(
-                "hermes_cli.model_normalize.normalize_model_for_provider",
-                side_effect=lambda m, p: m,
+                "models.normalize_model_id",
+                side_effect=lambda p, m, **kwargs: m,
             ):
                 ok = agent._try_activate_fallback()
 

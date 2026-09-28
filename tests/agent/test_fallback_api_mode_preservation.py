@@ -63,8 +63,8 @@ def _activate(agent, resolved_base_url, resolved_model, build_anthropic=None):
             ),
         ),
         patch(
-            "hermes_cli.model_normalize.normalize_model_for_provider",
-            side_effect=lambda m, p: m,
+            "models.normalize_model_id",
+            side_effect=lambda p, m, **kwargs: m,
         ),
         patch(
             "agent.anthropic_adapter.build_anthropic_client",

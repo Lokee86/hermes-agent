@@ -22,7 +22,7 @@ if "dotenv" not in sys.modules:
     sys.modules["dotenv"] = fake_dotenv
 
 from hermes_cli.auth import resolve_api_key_provider_credentials
-from hermes_cli.models import normalize_provider
+from providers import normalize_provider
 
 
 @pytest.fixture(autouse=True)

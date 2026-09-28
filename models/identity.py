@@ -29,6 +29,7 @@ __all__ = [
     "parse_model_ref",
     "resolve_declared_model_id",
     "resolve_model_alias",
+    "suggest_prefixed_model_id",
 ]
 
 
@@ -139,6 +140,21 @@ def normalize_model_id(
     if profile is None:
         return value
     return profile.normalize_model_id(value, known_ids=tuple(known_ids))
+
+
+def suggest_prefixed_model_id(
+    provider: str,
+    model: str,
+    *,
+    known_ids: Iterable[str] = (),
+) -> str | None:
+    """Return an unambiguous provider-qualified repair from caller-owned candidates."""
+
+    value = str(model or "").strip()
+    if not value or "/" in value:
+        return None
+    normalized = normalize_model_id(provider, value, known_ids=known_ids)
+    return normalized if normalized != value and "/" in normalized else None
 
 
 def normalize_model_ref(

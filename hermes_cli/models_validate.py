@@ -17,6 +17,7 @@ from typing import Any, Callable, Optional
 
 from utils import base_url_host_matches
 from hermes_constants import openrouter_variant_base
+from providers import normalize_provider
 
 
 # ── Verdicts ─────────────────────────────────────────────────────────────
@@ -147,7 +148,7 @@ def _is_self_hosted_provider(provider: Optional[str]) -> bool:
         return True
     from hermes_cli import models as _m
 
-    normalized = _m.normalize_provider(raw)
+    normalized = normalize_provider(raw)
     if normalized == "custom" or normalized.startswith("custom:"):
         return True
     return raw in _SELF_HOSTED_PROVIDERS or normalized in _SELF_HOSTED_PROVIDERS
@@ -217,7 +218,7 @@ def provider_allows_model_whitespace(provider: Optional[str], base_url: Optional
     raw = _provider_token(provider)
     from hermes_cli import models as _m
 
-    normalized = _m.normalize_provider(raw) if raw else ""
+    normalized = normalize_provider(raw) if raw else ""
     stock = _stock_host(normalized or raw)
     return bool(stock) and host != stock
 
@@ -430,7 +431,7 @@ def static_model_provider_conflict(model_name: str, provider: Optional[str], *, 
     from hermes_cli import models as _m
 
     requested = (model_name or "").strip()
-    normalized = _m.normalize_provider(provider)
+    normalized = normalize_provider(provider)
     catalog = list(_m._PROVIDER_MODELS.get(normalized, ()))
     if not requested or not catalog or normalized == "moa" or normalized in _m._AGGREGATOR_PROVIDERS:
         return None
@@ -793,7 +794,7 @@ def validate_requested_model(
     from hermes_cli import models as _m
 
     requested = (model_name or "").strip()
-    normalized = _m.normalize_provider(provider)
+    normalized = normalize_provider(provider)
     if normalized == "openrouter" and base_url and not base_url_host_matches(base_url, "openrouter.ai"):
         normalized = "custom"
     lookup = requested

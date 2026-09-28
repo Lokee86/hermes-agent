@@ -435,6 +435,13 @@ _PROVIDER_RETIRED_ALIASES: dict[str, tuple[str, ...]] = {
 _AGGREGATOR_PROVIDERS = frozenset({"nous", "openrouter", "ai-gateway", "copilot", "kilocode"})
 
 
+def static_provider_model_ids(provider: str) -> tuple[str, ...]:
+    """Curated candidate IDs for provider-owned normalization; no discovery or network I/O."""
+    from providers import normalize_provider
+
+    return tuple(_PROVIDER_MODELS.get(normalize_provider(provider), ()))
+
+
 # Subscription/OAuth providers whose catalogs RE-EXPOSE other vendors' models; tried only as a last
 # resort for bare short-alias resolution (after every native-vendor catalog) so they never hijack
 # an alias from the model's native vendor. None currently defined.

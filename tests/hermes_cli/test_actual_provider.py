@@ -20,7 +20,7 @@ from hermes_cli.auth import (
     resolve_api_key_provider_credentials,
     resolve_provider,
 )
-from hermes_cli.models import normalize_provider as normalize_model_provider
+from providers import normalize_provider as normalize_model_provider
 from hermes_cli.models import provider_model_ids
 from hermes_cli.providers import determine_api_mode
 from providers import normalize_provider as normalize_overlay_provider

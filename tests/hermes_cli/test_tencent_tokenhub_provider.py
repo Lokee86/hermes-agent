@@ -41,7 +41,7 @@ class TestTencentTokenhubAliases:
         assert resolve_provider(alias) == "tencent-tokenhub"
 
     def test_normalize_provider_models_py(self):
-        from hermes_cli.models import normalize_provider
+        from providers import normalize_provider
         assert normalize_provider("tencent") == "tencent-tokenhub"
         assert normalize_provider("tokenhub") == "tencent-tokenhub"
         assert normalize_provider("tencent-cloud") == "tencent-tokenhub"
@@ -103,8 +103,8 @@ class TestTencentTokenhubNormalization:
     @pytest.mark.parametrize("empty_input", ["", None, "   "])
     def test_normalize_empty_and_none(self, empty_input):
         """None, empty, and whitespace-only inputs return empty string."""
-        from hermes_cli.model_normalize import normalize_model_for_provider
-        result = normalize_model_for_provider(empty_input, "tencent-tokenhub")
+        from models import normalize_model_id
+        result = normalize_model_id("tencent-tokenhub", empty_input)
         assert result == "" or result.strip() == ""
 
 # =============================================================================

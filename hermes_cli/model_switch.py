@@ -21,6 +21,7 @@ from models import (
     AmbiguousModelAliasError,
     MODEL_ALIASES,
     ModelRef,
+    normalize_model_id,
     parse_configured_provider_ref,
     parse_model_ref,
     resolve_declared_model_id,
@@ -29,7 +30,7 @@ from models import (
 from hermes_cli.providers import (
     LLAMACPP_ALIASES, determine_api_mode, host_mandated_api_mode, resolve_provider_full,
 )
-from hermes_cli.model_normalize import normalize_model_for_provider
+from hermes_cli.models_catalog_static import static_provider_model_ids
 from agent.models_dev import (
     ModelCapabilities, ModelInfo, get_model_capabilities, get_model_info, list_provider_models)
 from utils import base_url_host_matches, base_url_hostname, base_url_origin, file_signature
@@ -1546,7 +1547,11 @@ def _validate_switch(st: _Switch) -> Optional[ModelSwitchResult]:
     from hermes_cli.models_local import _get_ollama_request_headers
     from hermes_cli.models_validate import validate_requested_model
     st.new_model = _resolve_named_custom_model_id(st.new_model, st.target_provider, st.custom_providers)
-    st.new_model = normalize_model_for_provider(st.new_model, st.target_provider)
+    st.new_model = normalize_model_id(
+        st.target_provider,
+        st.new_model,
+        known_ids=static_provider_model_ids(st.target_provider),
+    )
 
     from hermes_cli.chat_catalog import is_known_non_chat_model
     if is_known_non_chat_model(st.new_model):

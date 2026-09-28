@@ -330,11 +330,17 @@ class CLIModelSwitchMixin:
             return changed
 
         try:
-            from hermes_cli.model_normalize import (
-                _AGGREGATOR_PROVIDERS, normalize_model_for_provider)
-            if resolved_provider not in _AGGREGATOR_PROVIDERS:
+            from hermes_cli.models_catalog_static import static_provider_model_ids
+            from models import normalize_model_id
+            from providers import is_aggregator
+
+            if not is_aggregator(resolved_provider):
                 _adopt(
-                    normalize_model_for_provider(current_model, resolved_provider),
+                    normalize_model_id(
+                        resolved_provider,
+                        current_model,
+                        known_ids=static_provider_model_ids(resolved_provider),
+                    ),
                     lambda new: (
                         f"Normalized model '{current_model}' to '{new}' for {resolved_provider}."))
         except Exception:

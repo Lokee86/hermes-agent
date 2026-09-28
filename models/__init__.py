@@ -13,6 +13,7 @@ from models.identity import (
     parse_model_ref,
     resolve_declared_model_id,
     resolve_model_alias,
+    suggest_prefixed_model_id,
 )
 
 __all__ = [
@@ -28,4 +29,5 @@ __all__ = [
     "parse_model_ref",
     "resolve_declared_model_id",
     "resolve_model_alias",
+    "suggest_prefixed_model_id",
 ]

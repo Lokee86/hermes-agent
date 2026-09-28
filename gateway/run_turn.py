@@ -1693,10 +1693,17 @@ class GatewayTurnMixin(GatewayTurnPrepareMixin, GatewayTurnHygieneMixin, Gateway
         # Normalize as AIAgent.__init__ does (vendor prefix stripped on native providers), else the
         # cached agent is evicted every turn, destroying prompt caching.
         with suppress(Exception):
-            from hermes_cli.model_normalize import _AGGREGATOR_PROVIDERS, normalize_model_for_provider
+            from hermes_cli.models_catalog_static import static_provider_model_ids
+            from models import normalize_model_id
+            from providers import is_aggregator
+
             _agent_provider = getattr(_agent, 'provider', '') or ''
-            if _agent_provider and _agent_provider not in _AGGREGATOR_PROVIDERS:
-                _cfg_model = normalize_model_for_provider(_cfg_model, _agent_provider)
+            if _agent_provider and not is_aggregator(_agent_provider):
+                _cfg_model = normalize_model_id(
+                    _agent_provider,
+                    _cfg_model,
+                    known_ids=static_provider_model_ids(_agent_provider),
+                )
         if _agent.model != _cfg_model and not self._is_intentional_model_switch(session_key, _agent, _cfg_model):
             self._evict_cached_agent(session_key)
 

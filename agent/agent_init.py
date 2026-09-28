@@ -93,11 +93,10 @@ def _provider_default_routes(provider: str) -> set[str]:
 
     with suppress(Exception):
         from hermes_cli.provider_auth import iter_provider_configs
-        from hermes_cli.models import normalize_provider as normalize_model_provider
-        from providers import normalize_provider as normalize_registry_provider
+        from providers import normalize_provider
         for config in iter_provider_configs():
             provider_id = config.id
-            if normalize_registry_provider(normalize_model_provider(provider_id)) == provider:
+            if normalize_provider(provider_id) == provider:
                 add(getattr(config, "inference_base_url", ""))
 
     if provider == "gemini":
@@ -120,16 +119,12 @@ def _context_route_mismatch(
     if not configured_provider:
         return False
     try:
-        from hermes_cli.models import normalize_provider as normalize_model_provider
-        configured_provider = normalize_model_provider(configured_provider)
-        active_provider = normalize_model_provider(active_provider)
+        from providers import normalize_provider
+        configured_provider = normalize_provider(configured_provider)
+        active_provider = normalize_provider(active_provider)
     except Exception:
         configured_provider = configured_provider.lower()
         active_provider = active_provider.lower()
-    with suppress(Exception):
-        from providers import normalize_provider as normalize_registry_provider
-        configured_provider = normalize_registry_provider(configured_provider)
-        active_provider = normalize_registry_provider(active_provider)
 
     if active_route:
         configured_routes = _provider_default_routes(configured_provider)
@@ -453,12 +448,16 @@ def _finalize_routing(agent, api_mode, credential_pool):
             start_nous_auth_keepalive()
 
     with suppress(Exception):
-        from hermes_cli.model_normalize import (
-            _AGGREGATOR_PROVIDERS, normalize_model_for_provider
-        )
+        from hermes_cli.models_catalog_static import static_provider_model_ids
+        from models import normalize_model_id
+        from providers import is_aggregator
 
-        if agent.provider not in _AGGREGATOR_PROVIDERS:
-            agent.model = normalize_model_for_provider(agent.model, agent.provider)
+        if not is_aggregator(agent.provider):
+            agent.model = normalize_model_id(
+                agent.provider,
+                agent.model,
+                known_ids=static_provider_model_ids(agent.provider),
+            )
 
     # Nous model policy follows the ROUTE (the welcome host serves one model); a credential-pool
     # swap can change the route later, so ``_swap_credential`` applies the same helper again.
@@ -1728,11 +1727,16 @@ def _scope_context_length_to_default_runtime(
     _active_runtime_model = agent.model
     if _configured_default_model:
         with suppress(Exception):
-            from hermes_cli.model_normalize import normalize_model_for_provider
-            _configured_default_runtime_model = normalize_model_for_provider(
-                _configured_default_model, agent.provider
+            from hermes_cli.models_catalog_static import static_provider_model_ids
+            from models import normalize_model_id
+
+            _known_model_ids = static_provider_model_ids(agent.provider)
+            _configured_default_runtime_model = normalize_model_id(
+                agent.provider, _configured_default_model, known_ids=_known_model_ids
             )
-            _active_runtime_model = normalize_model_for_provider(agent.model, agent.provider)
+            _active_runtime_model = normalize_model_id(
+                agent.provider, agent.model, known_ids=_known_model_ids
+            )
     _configured_base_url = _configured_default_base_url(_agent_cfg, _model_cfg, _custom_providers)
     _active_base_url = _active_route_url(agent, base_url)
     _route_mismatch = _context_route_mismatch(

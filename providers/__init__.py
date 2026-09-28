@@ -19,6 +19,7 @@ from providers.registry import (
     register_provider,
     routed_model_rejects_vision_tool_messages,
 )
+from providers.model_normalizers import vendor_for_model
 from providers.identity import (
     ResolvedProvider,
     custom_provider_aliases,
@@ -48,6 +49,7 @@ __all__ = [
     "is_routing_aggregator",
     "custom_provider_slug",
     "custom_provider_aliases",
+    "vendor_for_model",
 ]
 
 

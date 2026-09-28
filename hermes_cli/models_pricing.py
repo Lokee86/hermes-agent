@@ -460,7 +460,9 @@ def pricing_cache_scope(provider: str, *, current_provider: str = "", current_ba
     """The current endpoint identity a provider's pricing cache is keyed on. Resolves local configuration
     only, never fetches: picker prewarm single-flight uses it so an endpoint rotation can start a new
     worker while the previous endpoint is still slow or unreachable."""
-    from hermes_cli.models import _deepinfra_catalog_url, _pricing_profile_key, normalize_provider
+    from hermes_cli.models import _deepinfra_catalog_url, _pricing_profile_key
+    from providers import normalize_provider
+
     normalized = normalize_provider(provider)
     static = _STATIC_PRICING_SCOPES.get(normalized)
     if static:
@@ -504,7 +506,8 @@ def get_pricing_for_provider(
     deepinfra, fireworks); ``{}`` for everything else. ``cached_only`` never starts provider I/O:
     normal picker opens use it so cold endpoints cannot hold the response path, while a background
     prewarm fills the same caches for later opens."""
-    from hermes_cli.models import normalize_provider
+    from providers import normalize_provider
+
     normalized = normalize_provider(provider)
     if cached_only:
         return _cached_only_pricing(normalized)

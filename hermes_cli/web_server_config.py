@@ -415,13 +415,15 @@ def _normalize_main_model_assignment(provider: str, model: str) -> tuple[str, st
        Matching only that syntax (not ``startswith("custom")``) avoids swallowing
        unconfigured vendors like ``customproxy``.
     2. Model-format normalization for the resolved provider via
-       ``normalize_model_for_provider`` (custom/user providers keep the model verbatim).
+       ``models.normalize_model_id`` (custom/user providers keep the model verbatim).
     """
     from hermes_cli.config import load_config
     from hermes_cli.config import get_compatible_custom_providers
-    from hermes_cli.models import _AGGREGATOR_PROVIDERS, _known_provider_names, normalize_provider
-    from hermes_cli.model_normalize import normalize_model_for_provider
+    from hermes_cli.models import _known_provider_names
+    from hermes_cli.models_catalog_static import static_provider_model_ids
     from hermes_cli.providers import resolve_custom_provider, resolve_user_provider
+    from models import normalize_model_id
+    from providers import is_aggregator, normalize_provider
 
     prov_in = (provider or "").strip()
     model_in = (model or "").strip()
@@ -450,7 +452,7 @@ def _normalize_main_model_assignment(provider: str, model: str) -> tuple[str, st
             )
         except Exception:
             cur_provider = ""
-        if cur_provider and normalize_provider(cur_provider) in _AGGREGATOR_PROVIDERS:
+        if cur_provider and is_aggregator(cur_provider):
             canonical = normalize_provider(cur_provider)
             prov_in = cur_provider
         else:
@@ -463,7 +465,11 @@ def _normalize_main_model_assignment(provider: str, model: str) -> tuple[str, st
 
     if canonical in known_provider_names and not canonical.startswith("custom"):
         try:
-            model_in = normalize_model_for_provider(model_in, canonical) or model_in
+            model_in = normalize_model_id(
+                canonical,
+                model_in,
+                known_ids=static_provider_model_ids(canonical),
+            ) or model_in
         except Exception:
             _log.debug("model normalization failed for %s/%s", prov_in, model_in, exc_info=True)
 
@@ -836,7 +842,8 @@ def _infer_provider_on_model_change(model_val: str, prev_provider: str) -> tuple
     if not name:
         return "", name
     try:
-        from hermes_cli.models import _AGGREGATOR_PROVIDERS, detect_provider_for_model, normalize_provider
+        from hermes_cli.models import detect_provider_for_model
+        from providers import is_aggregator
     except Exception:
         return "", name
 
@@ -851,7 +858,7 @@ def _infer_provider_on_model_change(model_val: str, prev_provider: str) -> tuple
         try:
             from hermes_cli.models_detect import provider_has_credentials
 
-            cur_is_aggregator = normalize_provider(prev_provider) in _AGGREGATOR_PROVIDERS
+            cur_is_aggregator = is_aggregator(prev_provider)
             # A vendor slug on a native provider is a guess at an aggregator; never guess one the
             # user has no key for — that silently writes a metered provider into config.yaml.
             if not cur_is_aggregator and provider_has_credentials("openrouter"):

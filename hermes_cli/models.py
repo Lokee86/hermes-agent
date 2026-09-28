@@ -28,6 +28,7 @@ if TYPE_CHECKING:
     from typing import TypeGuard
 
 from models import AmbiguousModelAliasError, MODEL_ALIASES, resolve_model_alias
+from providers import normalize_provider as _normalize_provider
 from hermes_cli.route_identity import normalize_route_base_url
 from hermes_cli.urllib_security import open_credentialed_url
 from hermes_cli.version_info import get_version_info
@@ -854,7 +855,7 @@ def curated_models_for_provider(
     falling back to the static ``_PROVIDER_MODELS`` catalog if the API
     is unreachable.
     """
-    normalized = normalize_provider(provider)
+    normalized = _normalize_provider(provider or "openrouter")
     if normalized == "openrouter":
         return fetch_openrouter_models(force_refresh=force_refresh)
 
@@ -870,7 +871,7 @@ def curated_models_for_provider(
 
 def _provider_keys(provider: str) -> set[str]:
     key = (provider or "").strip().lower()
-    normalized = normalize_provider(provider)
+    normalized = _normalize_provider(provider or "openrouter")
     return {k for k in (key, normalized) if k}
 
 
@@ -1096,13 +1097,6 @@ def _find_openrouter_slug(model_name: str) -> Optional[str]:
     )
 
 
-def normalize_provider(provider: Optional[str]) -> str:
-    """Normalize provider aliases to canonical ids. ``"auto"`` passes through — use
-    ``hermes_cli.auth.resolve_provider()`` to resolve it from credentials."""
-    normalized = (provider or "openrouter").strip().lower()
-    return _PROVIDER_ALIASES.get(normalized, normalized)
-
-
 def provider_label(provider: Optional[str]) -> str:
     """Return the effective provider declaration's display label."""
     original = (provider or "openrouter").strip()
@@ -1159,7 +1153,7 @@ def _fast_mode_route_supported(
         allowed = {"xai": "api.x.ai"}
     else:
         allowed = {"openai": "api.openai.com", "openai-codex": "chatgpt.com"}
-    if provider and normalize_provider(provider) not in allowed:
+    if provider and _normalize_provider(provider) not in allowed:
         return False
     host = (urlparse(str(base_url or "")).hostname or "").lower()
     return not host or host in allowed.values()
@@ -1271,7 +1265,7 @@ def _openai_discovery_base_url(provider: str) -> str:
     try:
         model_cfg = _get_model_config_dict()
         cfg_provider = str(model_cfg.get("provider") or "").strip().lower()
-        same_provider = normalize_provider(provider) == normalize_provider(cfg_provider)
+        same_provider = _normalize_provider(provider) == _normalize_provider(cfg_provider)
         if cfg_provider in ("openai", "openai-api") and same_provider:
             cfg_url = str(model_cfg.get("base_url") or "").strip().rstrip("/")
             if cfg_url:
@@ -1389,7 +1383,7 @@ def _api_key_provider_live(normalized: str, force_refresh: bool) -> Optional[lis
 def _anthropic_catalog(normalized: str, force_refresh: bool) -> list[str]:
     model_cfg = _get_model_config_dict()
     cfg_base_url = cfg_api_key = ""
-    if normalize_provider(str(model_cfg.get("provider", "") or "")) == "anthropic":
+    if _normalize_provider(str(model_cfg.get("provider", "") or "")) == "anthropic":
         cfg_base_url = str(model_cfg.get("base_url", "") or "").strip()
         cfg_api_key = str(model_cfg.get("api_key", "") or "").strip()
     live = _fetch_anthropic_models(base_url=cfg_base_url or None, api_key=cfg_api_key or None)
@@ -1611,8 +1605,8 @@ def _configured_relay_base_url(provider: str) -> str:
     if not cfg_provider or not provider:
         return ""
     try:
-        normalized = normalize_provider(provider)
-        if normalized != normalize_provider(cfg_provider):
+        normalized = _normalize_provider(provider)
+        if normalized != _normalize_provider(cfg_provider):
             return ""
     except Exception:
         return ""
@@ -1696,7 +1690,7 @@ def provider_model_ids(provider: Optional[str], *, force_refresh: bool = False) 
     if requested == "ollama":
         return _ollama_local_catalog(force_refresh)
 
-    normalized = normalize_provider(provider)
+    normalized = _normalize_provider(provider)
     # A configured `model.base_url` relay is TERMINAL for live catalog egress: the picker must
     # list what the configured endpoint serves and must never touch the vendor host (#121387).
     # A failed or empty probe degrades to the local curated list — falling through to the
@@ -1947,7 +1941,7 @@ def update_provider_cache_entry(provider: str, models: list[str]) -> None:
     """Thread-safe single-entry update for parallel prefetch workers: load-modify-save under a lock
     so concurrent fetches don't clobber each other's rows. Best-effort, silent on any error."""
     try:
-        normalized = normalize_provider(provider) or (provider or "")
+        normalized = _normalize_provider(provider) or (provider or "")
         if not normalized or not models:
             return
         fp = _credential_fingerprint(normalized)
@@ -1960,7 +1954,7 @@ def update_provider_cache_entry(provider: str, models: list[str]) -> None:
 def _normalized_cache_slug(provider: Optional[str]) -> str:
     """``ollama`` stays a raw slug (its alias would canonicalize to ``custom``); everything else normalizes."""
     requested = str(provider or "").strip().lower()
-    return requested if requested == "ollama" else (normalize_provider(provider) or (provider or ""))
+    return requested if requested == "ollama" else (_normalize_provider(provider or "openrouter") or (provider or ""))
 
 
 def _model_requires_account_discovery(provider: Optional[str], model: str) -> bool:
@@ -2394,7 +2388,7 @@ def opencode_provider_family(provider_id: Optional[str]) -> Optional[str]:
     raw = str(provider_id or "").strip().lower()
     if not raw:
         return None
-    canonical = normalize_provider(provider_id)
+    canonical = _normalize_provider(provider_id)
     if canonical in _OPENCODE_FAMILIES:
         return canonical
     return next((f for f in _OPENCODE_FAMILIES if raw.startswith(f)), None)
@@ -2459,7 +2453,7 @@ def normalize_opencode_base_url(
     host = (parsed.hostname or "").lower()
     official = host == "opencode.ai" or host.endswith(".opencode.ai")
     path = parsed.path.rstrip("/")
-    if official and normalize_provider(provider_id) in _OPENCODE_FAMILIES and re.fullmatch(r"/zen(/go)?(/v1)?", path):
+    if official and _normalize_provider(provider_id) in _OPENCODE_FAMILIES and re.fullmatch(r"/zen(/go)?(/v1)?", path):
         path = _OPENCODE_FAMILY_PATHS[family] + ("/v1" if path.endswith("/v1") else "")
     if api_mode == "anthropic_messages":
         path = re.sub(r"/v1$", "", path)

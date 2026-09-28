@@ -41,7 +41,7 @@ class TestArceeAliases:
         assert resolve_provider(alias) == "arcee"
 
     def test_normalize_provider_models_py(self):
-        from hermes_cli.models import normalize_provider
+        from providers import normalize_provider
         assert normalize_provider("arcee-ai") == "arcee"
         assert normalize_provider("arceeai") == "arcee"
 
@@ -87,8 +87,8 @@ class TestArceeNormalization:
 
 
     def test_bare_name_unchanged(self):
-        from hermes_cli.model_normalize import normalize_model_for_provider
-        assert normalize_model_for_provider("trinity-mini", "arcee") == "trinity-mini"
+        from models import normalize_model_id
+        assert normalize_model_id("arcee", "trinity-mini") == "trinity-mini"
 
 
 # =============================================================================

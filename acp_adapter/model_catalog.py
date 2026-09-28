@@ -218,7 +218,8 @@ def build_model_state(model: str, provider: str, base_url: str) -> SessionModelS
     """Picker state from the shared inventory + named endpoints; ``None`` when nothing is listable
     (caller falls back to a single current-model row). Raises on inventory failure."""
     from hermes_cli.inventory import build_models_payload, load_picker_context
-    from hermes_cli.models import normalize_provider, provider_label
+    from hermes_cli.models import provider_label
+    from providers import normalize_provider
 
     normalized_provider = normalize_provider(provider)
     context = load_picker_context().with_overrides(

@@ -192,9 +192,9 @@ class TestDeepSeekAuxModel:
 
 
     def test_fallback_models_are_current_ids(self, deepseek_profile):
-        from hermes_cli.model_normalize import _normalize_for_deepseek
+        from models import normalize_model_id
         # Every advertised id must survive normalization unchanged (no retired alias in the picker).
-        assert all(_normalize_for_deepseek(m) == m for m in deepseek_profile.fallback_models)
+        assert all(normalize_model_id("deepseek", m) == m for m in deepseek_profile.fallback_models)
 
     def test_consumer_api_matches_profile_aux_model(self, deepseek_profile):
         from agent.auxiliary_client import _get_aux_model_for_provider

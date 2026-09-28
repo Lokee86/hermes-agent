@@ -2124,8 +2124,14 @@ def try_activate_fallback(agent, reason: "FailoverReason | None" = None, reset_a
                 fb_base_url, fb_api_mode = "moa://local", "chat_completions"
             else:
                 try:
-                    from hermes_cli.model_normalize import normalize_model_for_provider
-                    fb_model = normalize_model_for_provider(fb_model, fb_provider)
+                    from hermes_cli.models_catalog_static import static_provider_model_ids
+                    from models import normalize_model_id
+
+                    fb_model = normalize_model_id(
+                        fb_provider,
+                        fb_model,
+                        known_ids=static_provider_model_ids(fb_provider),
+                    )
                 except Exception as _norm_err:
                     logger.warning("Could not normalize fallback model %r for provider %r: %s", fb_model, fb_provider, _norm_err)
 
