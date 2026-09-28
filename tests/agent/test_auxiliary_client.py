@@ -481,11 +481,13 @@ class TestNormalizeAuxProvider:
         assert str(alias_client.base_url) == str(canon_client.base_url)
         assert alias_model == canon_model
 
-    def test_covers_every_alias_the_main_path_resolves(self):
-        """Every alias hermes_cli.auth resolves also resolves in aux — drift becomes a red test (#115006)."""
-        from hermes_cli.auth import _PROVIDER_ALIASES as auth_table
-        for alias, canonical in auth_table.items():
-            assert _normalize_aux_provider(alias) == canonical, alias
+    def test_covers_every_registered_provider_alias(self):
+        """Every canonical provider alias resolves identically in aux."""
+        from providers import list_providers
+
+        for profile in list_providers():
+            for alias in profile.aliases:
+                assert _normalize_aux_provider(alias) == profile.name, alias
 
 
 class TestResolveCodexCredentialToken:

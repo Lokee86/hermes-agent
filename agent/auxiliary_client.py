@@ -529,33 +529,14 @@ def _extract_url_query_params(url: str):
 _stale_base_url_warned = False
 
 # Local OpenAI-compatible servers (Ollama, vLLM, llama.cpp) route through the generic custom
-# provider — mirrors hermes_cli.auth._PROVIDER_ALIASES. Without this group an explicit
+# provider. This set remains local because it also controls custom-route URL/key policy.
+# Without this group an explicit
 # ``provider: ollama`` aux lane matches no registry entry and raises a misleading
 # ``OLLAMA_API_KEY`` error instead of using the lane's base_url (#106010).
 _LOCAL_SERVER_ALIASES = {
     "ollama": "custom", "vllm": "custom", "llamacpp": "custom",
     "llama.cpp": "custom", "llama-cpp": "custom",
 }
-
-_ALIAS_TABLE: Optional[Dict[str, str]] = None
-
-
-def _provider_alias_table() -> Dict[str, str]:
-    """The same alias table the main provider path resolves against (hermes_cli.auth).
-
-    A hand-copied mirror here rots silently every time auth grows a family — the local
-    servers (#106010) and the OpenCode entries were both missed that way. Local-server
-    names stay pinned on top: that set doubles as the guard for the /v1 tail and the
-    no-key-borrow rule in the custom branch below.
-    """
-    global _ALIAS_TABLE
-    if _ALIAS_TABLE is None:
-        merged: Dict[str, str] = dict(_LOCAL_SERVER_ALIASES)
-        with contextlib.suppress(Exception):
-            from hermes_cli.auth import _PROVIDER_ALIASES as _auth_table
-            merged.update(_auth_table)
-        _ALIAS_TABLE = merged
-    return _ALIAS_TABLE
 
 def _normalize_aux_provider(provider: Optional[str]) -> str:
     normalized = (provider or "auto").strip().lower()
@@ -564,15 +545,14 @@ def _normalize_aux_provider(provider: Optional[str]) -> str:
         if not suffix:
             return "custom"
         normalized = suffix
-    if normalized == "codex":
-        return "openai-codex"
     if normalized == "main":
         # Resolve to the actual main provider so named custom providers work.
         main_prov = (_read_main_provider() or "").strip().lower()
         if not main_prov or main_prov in {"auto", "main"}:
             return "custom"
         normalized = main_prov
-    return _provider_alias_table().get(normalized, normalized)
+    from providers import normalize_provider
+    return normalize_provider(normalized)
 
 
 # Sentinel from _fixed_temperature_for_model(): callers strip ``temperature`` entirely.

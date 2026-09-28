@@ -13,7 +13,7 @@ import argparse
 import os
 
 from hermes_cli.config import clear_model_endpoint_credentials
-from hermes_cli.provider_auth import ProviderConfig, get_provider_config
+from hermes_cli.provider_auth import get_provider_config
 from hermes_cli.model_setup_flows_common import (
     _HTTP, _activate_provider_model, _ask, _commit_model_config, _curses_choice,
     _ensure_dict_section, _ensure_flow_api_key, _finish_model,
@@ -57,8 +57,9 @@ def _model_flow_openrouter(config, current_model=""):
     from hermes_constants import OPENROUTER_BASE_URL
     from hermes_cli.auth import _prompt_model_selection
 
-    # OpenRouter uses a dedicated setup flow, so synthesize its minimal config here.
-    pconfig = ProviderConfig(id="openrouter", name="OpenRouter", auth_type="api_key", api_key_env_vars=("OPENROUTER_API_KEY",))
+    pconfig = get_provider_config("openrouter")
+    if pconfig is None:
+        raise RuntimeError("OpenRouter provider profile is unavailable")
     existing_key, _resolved, abort = _ensure_flow_api_key(
         "openrouter", pconfig, missing_hint=("Get one at: https://openrouter.ai/keys", ""))
     if abort:

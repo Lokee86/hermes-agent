@@ -80,15 +80,13 @@ def _resolve_custom_provider_input(raw: str) -> str | None:
     return None
 
 
-_PROVIDER_ALIASES = {
-    "or": "openrouter", "open-router": "openrouter", "grok-oauth": "xai-oauth",
-    "xai-oauth": "xai-oauth", "x-ai-oauth": "xai-oauth", "xai-grok-oauth": "xai-oauth"}
-
-
 def _normalize_provider(provider: str) -> str:
     normalized = (provider or "").strip().lower()
-    return (_PROVIDER_ALIASES.get(normalized) or _resolve_custom_provider_input(normalized)
-            or auth_mod._plugin_aliases().get(normalized) or normalized)
+    custom = _resolve_custom_provider_input(normalized)
+    if custom:
+        return custom
+    from providers import normalize_provider
+    return normalize_provider(normalized)
 
 
 def _migrate_legacy_custom_pool_key(provider: str, legacy_key: str) -> None:
