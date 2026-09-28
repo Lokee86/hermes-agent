@@ -375,46 +375,38 @@ def test_systemd_install_checks_linger_status(monkeypatch, tmp_path):
 
 
 
-def test_gateway_install_noninteractive_skips_legacy_unit_prompt(monkeypatch, tmp_path):
-    """In non-TTY, the legacy-unit removal prompt in systemd_install is skipped.
-
-    Covers the second hidden prompt that --start-now/--start-on-login do not
-    guard. Originally contributed via PR #42124 (kyssta-exe).
-    """
-    monkeypatch.setattr(systemd_legacy, "has_units", lambda: True)
-
+def test_gateway_install_noninteractive_removes_legacy_without_prompt(monkeypatch):
+    """Headless CLI install removes detected legacy units without prompting."""
     calls = []
+    monkeypatch.setattr(systemd_legacy, "has_units", lambda: True)
+    monkeypatch.setattr(gateway.sys, "stdin", SimpleNamespace(isatty=lambda: False))
     monkeypatch.setattr(
         gateway,
         "prompt_yes_no",
         lambda question, default=True: calls.append(("prompt", question)) or True,
     )
-    monkeypatch.setattr(gateway, "remove_legacy_hermes_units", lambda interactive=False: calls.append(("remove_legacy",)))
+    monkeypatch.setattr(
+        gateway,
+        "remove_legacy_hermes_units",
+        lambda interactive=False: calls.append(("remove_legacy", interactive)) or (1, []),
+    )
     monkeypatch.setattr(gateway, "print_legacy_unit_warning", lambda: None)
+    monkeypatch.setattr(
+        systemd_lifecycle,
+        "install",
+        lambda **kwargs: calls.append(("install", kwargs)),
+    )
 
-    fake_path = tmp_path / "hermes-gateway.service"
-    monkeypatch.setattr(systemd_identity, "unit_path", lambda system=False: fake_path)
-    monkeypatch.setattr(systemd_unit_render, "generate_systemd_unit", lambda system=False, run_as_user=None: "[Service]")
-    monkeypatch.setattr(systemd_runtime, "run_systemctl", lambda *a, **kw: None)
-    monkeypatch.setattr(systemd_linger, "ensure_linger_enabled", lambda: None)
-    monkeypatch.setattr(gateway, "print_systemd_scope_conflict_warning", lambda: None)
-    monkeypatch.setattr(systemd_runtime, "scope_label", lambda system=False: "user")
+    gateway._install_systemd_from_cli(
+        SimpleNamespace(start_now=False, start_on_login=False),
+        force=False,
+        system=False,
+        run_as_user=None,
+    )
 
-    systemd_lifecycle.install(non_interactive=True)
-
-    # Legacy units removed without prompting.
-    assert ("remove_legacy",) in calls
-    assert all(c[0] != "prompt" for c in calls)
-
-
-
-
-
-
-
-
-
-
+    assert ("remove_legacy", False) in calls
+    assert all(call[0] != "prompt" for call in calls)
+    assert any(call[0] == "install" for call in calls)
 
 
 # ---------------------------------------------------------------------------

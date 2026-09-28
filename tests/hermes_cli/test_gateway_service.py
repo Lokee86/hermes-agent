@@ -2136,129 +2136,62 @@ class TestMigrateLegacyCommand:
 
 
 class TestSystemdInstallOffersLegacyRemoval:
-    """Verify that systemd_install prompts to remove legacy units first."""
+    """Legacy-unit prompting belongs to CLI orchestration, not systemd lifecycle."""
 
-    def test_install_offers_removal_when_legacy_detected(
-        self, tmp_path, monkeypatch, capsys
-    ):
-        """When legacy units exist, install flow should call the removal
-        helper before writing the new unit."""
-        remove_called = {}
-
-        def fake_remove(interactive=True, dry_run=False):
-            remove_called["invoked"] = True
-            remove_called["interactive"] = interactive
-            return 1, []
-
-        # has_legacy_hermes_units must return True
-        monkeypatch.setattr(systemd_legacy, "has_units", lambda: True)
-        monkeypatch.setattr(gateway_cli, "remove_legacy_hermes_units", fake_remove)
+    @staticmethod
+    def _run(monkeypatch, *, has_legacy: bool, tty: bool, answer: bool = True):
+        calls = []
+        monkeypatch.setattr(systemd_legacy, "has_units", lambda: has_legacy)
+        monkeypatch.setattr(
+            gateway_cli.sys,
+            "stdin",
+            SimpleNamespace(isatty=lambda: tty),
+        )
         monkeypatch.setattr(gateway_cli, "print_legacy_unit_warning", lambda: None)
-        # Answer "yes" to the legacy-removal prompt
-        monkeypatch.setattr(gateway_cli, "prompt_yes_no", lambda *a, **k: True)
-
-        # Mock the rest of the install flow
-        unit_path = tmp_path / "hermes-gateway.service"
         monkeypatch.setattr(
-            systemd_identity, "unit_path", lambda system=False: unit_path
+            gateway_cli,
+            "prompt_yes_no",
+            lambda question, default=True: calls.append(("prompt", question)) or answer,
         )
         monkeypatch.setattr(
-            systemd_unit_render,
-            "generate_systemd_unit",
-            lambda system=False, run_as_user=None: "unit text\n",
+            gateway_cli,
+            "remove_legacy_hermes_units",
+            lambda interactive=False: calls.append(("remove", interactive)) or (1, []),
         )
         monkeypatch.setattr(
-            gateway_cli.subprocess,
-            "run",
-            lambda cmd, **kw: SimpleNamespace(returncode=0, stdout="", stderr=""),
+            systemd_lifecycle,
+            "install",
+            lambda **kwargs: calls.append(("install", kwargs)),
         )
-        monkeypatch.setattr(systemd_linger, "ensure_linger_enabled", lambda: None)
 
-        systemd_lifecycle.install()
-
-        assert remove_called.get("invoked") is True
-        assert remove_called.get("interactive") is False  # prompted elsewhere
-
-    def test_install_declines_legacy_removal_when_user_says_no(
-        self, tmp_path, monkeypatch
-    ):
-        """When legacy units exist and user declines, install still proceeds
-        but doesn't touch them."""
-        remove_called = {"invoked": False}
-
-        def fake_remove(interactive=True, dry_run=False):
-            remove_called["invoked"] = True
-            return 0, []
-
-        monkeypatch.setattr(systemd_legacy, "has_units", lambda: True)
-        monkeypatch.setattr(gateway_cli, "remove_legacy_hermes_units", fake_remove)
-        monkeypatch.setattr(gateway_cli, "print_legacy_unit_warning", lambda: None)
-        monkeypatch.setattr(gateway_cli, "prompt_yes_no", lambda *a, **k: False)
-
-        unit_path = tmp_path / "hermes-gateway.service"
-        monkeypatch.setattr(
-            systemd_identity, "unit_path", lambda system=False: unit_path
+        gateway_cli._install_systemd_from_cli(
+            SimpleNamespace(start_now=False, start_on_login=False),
+            force=False,
+            system=False,
+            run_as_user=None,
         )
-        monkeypatch.setattr(
-            systemd_unit_render,
-            "generate_systemd_unit",
-            lambda system=False, run_as_user=None: "unit text\n",
-        )
-        monkeypatch.setattr(
-            gateway_cli.subprocess,
-            "run",
-            lambda cmd, **kw: SimpleNamespace(returncode=0, stdout="", stderr=""),
-        )
-        monkeypatch.setattr(systemd_linger, "ensure_linger_enabled", lambda: None)
+        return calls
 
-        systemd_lifecycle.install()
+    def test_install_offers_removal_when_legacy_detected(self, monkeypatch):
+        calls = self._run(monkeypatch, has_legacy=True, tty=True, answer=True)
 
-        # Helper must NOT have been called
-        assert remove_called["invoked"] is False
-        # New unit should still have been written
-        assert unit_path.exists()
-        assert unit_path.read_text() == "unit text\n"
+        assert any(call[0] == "prompt" for call in calls)
+        assert ("remove", False) in calls
+        assert any(call[0] == "install" for call in calls)
 
-    def test_install_skips_legacy_check_when_none_present(
-        self, tmp_path, monkeypatch
-    ):
-        """No legacy → no prompt, no helper call."""
-        prompt_called = {"count": 0}
+    def test_install_declines_legacy_removal_when_user_says_no(self, monkeypatch):
+        calls = self._run(monkeypatch, has_legacy=True, tty=True, answer=False)
 
-        def counting_prompt(*a, **k):
-            prompt_called["count"] += 1
-            return True
+        assert any(call[0] == "prompt" for call in calls)
+        assert all(call[0] != "remove" for call in calls)
+        assert any(call[0] == "install" for call in calls)
 
-        remove_called = {"invoked": False}
+    def test_install_skips_legacy_check_when_none_present(self, monkeypatch):
+        calls = self._run(monkeypatch, has_legacy=False, tty=True)
 
-        def fake_remove(interactive=True, dry_run=False):
-            remove_called["invoked"] = True
-            return 0, []
-
-        monkeypatch.setattr(systemd_legacy, "has_units", lambda: False)
-        monkeypatch.setattr(gateway_cli, "remove_legacy_hermes_units", fake_remove)
-        monkeypatch.setattr(gateway_cli, "prompt_yes_no", counting_prompt)
-
-        unit_path = tmp_path / "hermes-gateway.service"
-        monkeypatch.setattr(
-            systemd_identity, "unit_path", lambda system=False: unit_path
-        )
-        monkeypatch.setattr(
-            systemd_unit_render,
-            "generate_systemd_unit",
-            lambda system=False, run_as_user=None: "unit text\n",
-        )
-        monkeypatch.setattr(
-            gateway_cli.subprocess,
-            "run",
-            lambda cmd, **kw: SimpleNamespace(returncode=0, stdout="", stderr=""),
-        )
-        monkeypatch.setattr(systemd_linger, "ensure_linger_enabled", lambda: None)
-
-        systemd_lifecycle.install()
-
-        assert prompt_called["count"] == 0
-        assert remove_called["invoked"] is False
+        assert all(call[0] != "prompt" for call in calls)
+        assert all(call[0] != "remove" for call in calls)
+        assert any(call[0] == "install" for call in calls)
 
 
 class TestSystemScopeRequiresRootError:
