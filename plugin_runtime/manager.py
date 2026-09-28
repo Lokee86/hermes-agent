@@ -12,6 +12,7 @@ from typing import Any, Callable, Dict, List, Mapping, Optional, Set, Tuple
 
 from hermes_constants import get_hermes_home, hermes_home_key
 from plugin_runtime.activation import activation_summaries
+from plugin_runtime import compat as plugin_compat
 from plugin_runtime.context import PluginContext
 from plugin_runtime.discovery import (
     _get_disabled_plugins,
@@ -126,10 +127,8 @@ class PluginManager(PluginLoaderMixin, PluginDispatchMixin, PluginOwnershipMixin
 
     @staticmethod
     def _plugin_load_disable_reason(manifest: PluginManifest) -> Optional[str]:
-        """Apply CLI-owned compatibility policy without coupling runtime loading to it."""
-        from hermes_cli.plugin_compat import disable_reason
-
-        return disable_reason(manifest)
+        """Apply runtime-owned plugin compatibility policy."""
+        return plugin_compat.disable_reason(manifest)
 
     def on_plugin_loaded(self, callback: Callable[[List[Dict[str, Any]]], Any]) -> Callable[[], None]:
         """Subscribe to discovery sweeps that load plugins this process did not already have."""
@@ -334,15 +333,14 @@ class PluginManager(PluginLoaderMixin, PluginDispatchMixin, PluginOwnershipMixin
         self._refresh_plugin_compat_report(list(to_load.values()))
 
     def _refresh_plugin_compat_report(self, manifests: List[PluginManifest]) -> None:
-        """Refresh HERMES_HOME/.plugin-compat-report.json from this discovery pass (hermes_cli.plugin_compat).
+        """Refresh HERMES_HOME/.plugin-compat-report.json from this discovery pass.
 
         The Desktop boot modal has no Python runtime of its own and reads that file after the ``serve``
         backend is up, so the scan must run wherever plugins are discovered — not only under the CLI
         banner / doctor / update, which never run inside the Desktop's backend. Fail-open: never raises.
         """
         try:
-            from hermes_cli.plugin_compat import compat_report
-            compat_report(manifests, force=True)
+            plugin_compat.compat_report(manifests, force=True)
         except Exception as exc:
             logger.debug("plugin compat report refresh skipped: %s", exc)
 

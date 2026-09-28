@@ -1,7 +1,4 @@
-"""hermes_cli.plugin_compat: detect plugins on old import paths, tell the user, disable after the date.
-
-Kept with the compat layer (tests/hermes_cli/test_compat_manifest_targets.py); deleted with it.
-"""
+"""plugin_runtime.compat: detect plugins on old import paths, warn, and disable after the date."""
 from __future__ import annotations
 
 import datetime as dt
@@ -12,7 +9,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from hermes_cli import plugin_compat as pc
+from plugin_runtime import compat as pc
 
 ROOT = Path(__file__).resolve().parent.parent.parent
 pytestmark = pytest.mark.skipif(not (ROOT / "compat_manifest.json").exists(), reason="compat layer removed")

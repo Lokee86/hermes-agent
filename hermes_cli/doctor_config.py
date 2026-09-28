@@ -518,7 +518,7 @@ def _check_xai_retirement(should_fix: bool, f: Finding) -> None:
 
 @doctor_check("Plugin compat check skipped", "({e})")
 def _check_plugin_compat(should_fix: bool, f: Finding) -> None:
-    from hermes_cli.plugin_compat import ALLOW_KEY, COMPAT_REMOVAL, compat_report, removal_in_effect
+    from plugin_runtime.compat import ALLOW_KEY, COMPAT_REMOVAL, compat_report, removal_in_effect
     report = compat_report()
     if not report:
         check_ok(f"No enabled plugin imports paths removed on {COMPAT_REMOVAL}")
