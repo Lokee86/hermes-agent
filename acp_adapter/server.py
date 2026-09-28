@@ -330,18 +330,17 @@ class HermesACPAgent(SlashCommandsMixin, acp.Agent):
         over when the provider is unchanged."""
         from hermes_cli.config import get_compatible_custom_providers, load_config
         from hermes_cli.model_switch import switch_model
-        from hermes_cli.models import parse_model_input
 
         current_provider = getattr(state.agent, "provider", None)
-        explicit_provider, model_input = parse_model_input(raw_model, "")
         cfg = load_config()
+        user_providers = cfg.get("providers") if isinstance(cfg.get("providers"), dict) else {}
+        custom_providers = get_compatible_custom_providers(cfg)
         result = switch_model(
-            raw_input=model_input, explicit_provider=explicit_provider,
+            raw_input=raw_model, explicit_provider="",
             current_provider=current_provider or "openrouter", current_model=str(state.model or ""),
             current_base_url=str(getattr(state.agent, "base_url", "") or ""),
             current_api_key=str(getattr(state.agent, "api_key", "") or ""),
-            user_providers=cfg.get("providers") if isinstance(cfg.get("providers"), dict) else {},
-            custom_providers=get_compatible_custom_providers(cfg))
+            user_providers=user_providers, custom_providers=custom_providers)
         if not result.success:
             raise ModelRejected(result.error_message or f"Cannot switch to {raw_model}")
         target_provider, new_model = result.target_provider, result.new_model

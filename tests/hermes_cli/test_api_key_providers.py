@@ -94,16 +94,20 @@ class TestResolveProvider:
         assert resolve_provider("chatgpt-codex") == "openai-codex"
 
     def test_alias_chatgpt_every_alias_table(self):
-        """Issue #95794: the runtime (providers.py), the /model parser (models_catalog_static via
-        parse_model_input) and ``hermes auth login`` all resolve the ChatGPT alias, not just auth."""
-        from providers import normalize_provider
-        from hermes_cli.models import parse_model_input
+        """Runtime, model identity, and auth all resolve the ChatGPT alias."""
         from hermes_cli.auth_commands import _normalize_provider
+        from models import ModelRef, parse_model_ref
+        from providers import list_providers, normalize_provider
 
+        known = {profile.name for profile in list_providers()}
         assert normalize_provider("chatgpt") == "openai-codex"
         assert normalize_provider("chatgpt-codex") == "openai-codex"
-        assert parse_model_input("chatgpt:gpt-5.5", "openrouter") == ("openai-codex", "gpt-5.5")
-        assert parse_model_input("chatgpt-codex:gpt-5.5", "openrouter") == ("openai-codex", "gpt-5.5")
+        assert parse_model_ref(
+            "chatgpt:gpt-5.5", "openrouter", known_provider_ids=known
+        ) == ModelRef("openai-codex", "gpt-5.5")
+        assert parse_model_ref(
+            "chatgpt-codex:gpt-5.5", "openrouter", known_provider_ids=known
+        ) == ModelRef("openai-codex", "gpt-5.5")
         assert _normalize_provider("chatgpt") == "openai-codex"
 
     def test_alias_github_copilot(self):

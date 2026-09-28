@@ -3,7 +3,7 @@
 import pytest
 from unittest.mock import MagicMock, patch
 
-from hermes_cli.models import azure_foundry_model_api_mode, copilot_model_api_mode, curated_models_for_provider, fetch_api_models, normalize_provider, opencode_model_api_mode, parse_model_input, probe_api_models, provider_model_ids
+from hermes_cli.models import azure_foundry_model_api_mode, copilot_model_api_mode, curated_models_for_provider, fetch_api_models, normalize_provider, opencode_model_api_mode, probe_api_models, provider_model_ids
 from hermes_cli.models_local import fetch_lmstudio_models
 from hermes_cli.models_validate import validate_requested_model
 
@@ -31,15 +31,6 @@ def _validate(model, provider="openrouter", api_models=FAKE_API_MODELS, **kw):
     with patch("hermes_cli.models.fetch_api_models", return_value=api_models), \
          patch("hermes_cli.models.probe_api_models", return_value=probe_payload):
         return validate_requested_model(model, provider, **kw)
-
-
-# -- parse_model_input -------------------------------------------------------
-
-class TestParseModelInput:
-    def test_plain_model_keeps_current_provider(self):
-        provider, model = parse_model_input("anthropic/claude-sonnet-4.5", "openrouter")
-        assert provider == "openrouter"
-        assert model == "anthropic/claude-sonnet-4.5"
 
 
 # -- curated_models_for_provider ---------------------------------------------

@@ -1,8 +1,8 @@
 """Shared model-switching logic for the CLI and gateway /model commands.
 
-Pipeline: parse flags -> alias resolution -> provider resolution -> credential resolution ->
-normalize model name -> metadata lookup -> build result. Provider switching uses ``--provider``
-exclusively; colons are reserved for OpenRouter variant suffixes (``:free``, ``:extended``)."""
+Pipeline: parse flags -> model identity -> alias/provider resolution -> credentials ->
+normalize model name -> metadata lookup -> build result. Known ``provider:model`` prefixes
+are canonical model references; provider-native colons remain part of the model ID."""
 
 from __future__ import annotations
 
@@ -14,8 +14,10 @@ from dataclasses import dataclass, field
 from typing import Any, NamedTuple, Optional
 
 from providers import (
-    ResolvedProvider, custom_provider_aliases, get_provider_label, is_aggregator, normalize_provider,
+    ResolvedProvider, custom_provider_aliases, custom_provider_slug, get_provider_label,
+    is_aggregator, list_providers, normalize_provider,
 )
+from models import parse_configured_provider_ref, parse_model_ref
 from hermes_cli.providers import (
     LLAMACPP_ALIASES, determine_api_mode, host_mandated_api_mode, resolve_provider_full,
 )
@@ -357,6 +359,50 @@ class StartupModelRoute(NamedTuple):
     api_key: str = ""
 
 
+def _model_ref_context(
+    user_providers: Optional[dict] = None,
+    custom_providers: Optional[list] = None,
+) -> tuple[set[str], set[str]]:
+    """Known provider IDs plus configured named-custom IDs for model parsing."""
+
+    known = {str(profile.name or "").strip().lower() for profile in list_providers()}
+    known.discard("")
+    named_custom: set[str] = set()
+    for key, entry in (user_providers or {}).items():
+        if not isinstance(entry, dict):
+            continue
+        raw_key = str(key or "").strip().lower()
+        if raw_key:
+            known.add(raw_key)
+        named_custom.add(
+            custom_provider_slug(str(entry.get("name") or key), str(key))
+        )
+    for entry in (custom_providers or []):
+        if not isinstance(entry, dict):
+            continue
+        name = _clean(entry.get("name"))
+        if name:
+            named_custom.add(custom_provider_slug(name))
+    return known, named_custom
+
+
+def _configured_provider_ids(
+    user_providers: Optional[dict] = None,
+    custom_providers: Optional[list] = None,
+) -> set[str]:
+    configured = {
+        str(name).strip().lower()
+        for name in (user_providers or {})
+        if str(name).strip()
+    }
+    configured.update(
+        custom_provider_slug(_clean(entry.get("name")))
+        for entry in (custom_providers or [])
+        if isinstance(entry, dict) and _clean(entry.get("name"))
+    )
+    return configured
+
+
 def resolve_startup_model_route(
     raw_model: str, *, explicit_provider: str = "", current_provider: str = "",
     user_providers: Optional[dict] = None,
@@ -391,53 +437,46 @@ def resolve_startup_model_route(
 
     if explicit_provider:
         return None
-    # ``custom:<name>:<model>`` / ``<provider>:<model>`` — the same qualified form ``/model``
-    # accepts. Left undecoded, the configured default provider receives the unsplit string as
-    # the model name and the whole prompt goes to its endpoint before it 404s (#73943). The
-    # configured ids come from the caller's config, the same source the ``/`` branch below uses.
-    from hermes_cli.models import parse_model_input
-    from providers import custom_provider_slug
-    custom_ids = {custom_provider_slug(str(entry.get("name") or key), str(key))
-                  for key, entry in (user_providers or {}).items() if isinstance(entry, dict)}
-    custom_ids.update(custom_provider_slug(str(entry.get("name") or ""))
-                      for entry in (custom_providers or []) if isinstance(entry, dict) and _clean(entry.get("name")))
-    qualified_provider, qualified_model = parse_model_input(raw, "", custom_ids=custom_ids)
-    if qualified_provider:
-        return StartupModelRoute(model=qualified_model, provider=qualified_provider)
-    if "/" not in raw:
-        return None
-    prefix, model = (part.strip() for part in raw.split("/", 1))
-    if not prefix or not model:
-        return None
+    known_ids, named_custom_ids = _model_ref_context(user_providers, custom_providers)
+    qualified = parse_model_ref(
+        raw,
+        "",
+        known_provider_ids=known_ids,
+        named_custom_provider_ids=named_custom_ids,
+    )
+    if qualified.provider:
+        return StartupModelRoute(model=qualified.model, provider=qualified.provider)
 
     if current_provider:
         try:
-            from providers import is_routing_aggregator, normalize_provider as _norm_prov
-            if is_routing_aggregator(_norm_prov(current_provider)):
+            from providers import is_routing_aggregator
+
+            if is_routing_aggregator(current_provider):
                 from hermes_cli.models import _find_openrouter_slug
+
                 if _find_openrouter_slug(raw):
                     return None
         except Exception:
             pass
 
-    configured = {str(name).strip().lower() for name in (user_providers or {}) if str(name).strip()}
-    configured.update(
-        f"custom:{entry.get('name', '').strip().lower()}"
-        for entry in (custom_providers or [])
-        if isinstance(entry, dict) and _clean(entry.get("name")))
-    try:
-        from hermes_cli.models import normalize_provider
-        canonical = normalize_provider(prefix)
-    except Exception:
-        canonical = prefix.lower()
+    configured = _configured_provider_ids(user_providers, custom_providers)
+    configured_ref = parse_configured_provider_ref(raw, configured)
+    if configured_ref is None:
+        return None
 
+    # Parsing belongs to the model domain; route-key precedence remains here.
+    prefix = raw.split("/", 1)[0].strip()
+    canonical = normalize_provider(prefix)
     if prefix.lower() in configured:
         provider = prefix
-    elif canonical.lower() in configured:
+    elif canonical in configured:
         provider = canonical
     else:
         return None
-    return None if is_aggregator(canonical) else StartupModelRoute(model=model, provider=provider)
+    return None if is_aggregator(canonical) else StartupModelRoute(
+        model=configured_ref.model,
+        provider=provider,
+    )
 
 
 # --- Result dataclasses
@@ -1286,39 +1325,6 @@ def _route_alias_fallback(st: _Switch, key: str) -> Optional[ModelSwitchResult]:
     return None
 
 
-def _convert_vendor_colon_slug(st: _Switch) -> None:
-    """Step c: ``vendor:model`` -> ``vendor/model``. Only without a slash: with one, the colon is
-    a variant tag (:free, :extended, :fast) that must be preserved.
-
-    On an aggregator every ``left:right`` is a slug. Elsewhere the colon is converted only when
-    ``left`` names a provider Hermes knows, so ``/model alibaba:qwen3.6-plus`` routes like
-    ``alibaba/qwen3.6-plus`` (#9748) while Ollama-style tags (``qwen3.5:4b``) stay intact."""
-    raw_input = st.raw_input
-    colon_pos = raw_input.find(":")
-    cur_norm = str(st.current_provider).strip().lower()
-    if colon_pos <= 0 or "/" in raw_input or cur_norm.startswith("custom") or cur_norm == "ollama":
-        return
-    left = raw_input[:colon_pos].strip().lower()
-    right = raw_input[colon_pos + 1:].strip()
-    if not left or not right:
-        return
-    if not is_aggregator(st.current_provider) and not _names_known_provider(left, st):
-        return
-    st.new_model = f"{left}/{right}"
-    logger.debug("Converted vendor:model '%s' to slug '%s'", raw_input, st.new_model)
-
-
-def _names_known_provider(name: str, st: _Switch) -> bool:
-    """Whether ``name`` is a built-in provider id/alias or a provider the user configured."""
-    from hermes_cli.providers import get_provider
-    if resolve_provider_full(name, st.user_providers, st.custom_providers) is not None:
-        return True
-    try:
-        return get_provider(name, allow_network=False) is not None
-    except Exception:
-        return False
-
-
 def _route_configured_provider(st: _Switch) -> Optional[ModelSwitchResult] | bool:
     """Step d.5: a model declared in user/custom provider config routes there BEFORE
     detect_provider_for_model() guesses from static catalogs and before a soft-accepting current
@@ -1348,20 +1354,36 @@ def _route_configured_provider(st: _Switch) -> Optional[ModelSwitchResult] | boo
 
 
 def _route_from_model_input(st: _Switch) -> Optional[ModelSwitchResult]:
-    """PATH B (no ``--provider``): MoA preset / alias on the current provider (a) -> alias
-    fallback (b) or ``vendor:model`` conversion (c) -> aggregator catalog search (d) ->
-    configured-provider match (d.5) -> detect_provider_for_model() as last resort (e)."""
+    """PATH B: MoA preset -> qualified model ref -> alias/catalog/config detection."""
+
     from hermes_cli.models import detect_provider_for_model
+
     raw_input, current_provider = st.raw_input, st.current_provider
     try:
         from hermes_cli.config import load_config
         from hermes_cli.moa_config import exact_moa_preset_name, normalize_moa_config
-        moa_match = exact_moa_preset_name(normalize_moa_config(load_config().get("moa") or {}), raw_input)
+        moa_match = exact_moa_preset_name(
+            normalize_moa_config(load_config().get("moa") or {}), raw_input
+        )
     except Exception:
-        moa_match = None  # MoA config unreadable: fall through to plain alias resolution
+        moa_match = None
     if moa_match:
         st.target_provider, st.new_model, st.resolved_alias = "moa", moa_match, ""
     else:
+        known_ids, named_custom_ids = _model_ref_context(
+            st.user_providers, st.custom_providers
+        )
+        qualified = parse_model_ref(
+            raw_input,
+            "",
+            known_provider_ids=known_ids,
+            named_custom_provider_ids=named_custom_ids,
+        )
+        if qualified.provider:
+            st.raw_input = qualified.model
+            st.new_model = qualified.model
+            st.explicit_provider = qualified.provider
+            return _route_explicit_provider(st)
         try:
             alias_result = resolve_alias(raw_input, current_provider, st.user_providers, st.custom_providers)
         except AmbiguousAliasError as err:
@@ -1373,8 +1395,6 @@ def _route_from_model_input(st: _Switch) -> Optional[ModelSwitchResult]:
             fail = _route_alias_fallback(st, raw_input.strip().lower())
             if fail is not None:
                 return fail
-        else:
-            _convert_vendor_colon_slug(st)
 
     # Step d: if the CURRENT provider's live catalog resolved the model, step e must not
     # second-guess and switch providers — flat-namespace resellers (opencode-go/zen) return bare

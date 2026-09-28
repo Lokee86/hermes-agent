@@ -774,37 +774,6 @@ def list_available_providers() -> list[dict[str, str]]:
     ]
 
 
-def parse_model_input(
-        raw: str, current_provider: str, *, custom_ids: Optional[set[str]] = None) -> tuple[str, str]:
-    """Parse ``/model`` input into ``(provider, model)``. The colon is a provider delimiter only when
-    the left side is a known provider/alias, so ``anthropic/claude-3.5-sonnet:beta`` stays a model.
-    ``custom_ids`` is the caller's already-loaded set of configured ``custom:<name>`` ids (default:
-    read from config) so one decision never consults two config sources."""
-    stripped = raw.strip()
-    colon = stripped.find(":")
-    if colon > 0:
-        provider_part = stripped[:colon].strip().lower()
-        model_part = stripped[colon + 1:].strip()
-        if provider_part and model_part and provider_part in _known_provider_names():
-            if provider_part == "custom":
-                configured = _configured_custom_provider_ids() if custom_ids is None else custom_ids
-                # Longest configured ``custom:<name>`` id that prefixes the input wins.
-                lowered = stripped.lower()
-                for custom_id in sorted(configured - {"custom"}, key=len, reverse=True):
-                    if lowered.startswith(f"{custom_id.lower()}:"):
-                        return custom_id, stripped[len(custom_id) + 1 :].strip()
-                # ``custom:local:qwen`` → ("custom:local", "qwen") for a configured named provider;
-                # single-colon ``custom:qwen`` → ("custom", "qwen") as before.
-                if ":" in model_part:
-                    custom_name, actual_model = (part.strip() for part in model_part.split(":", 1))
-                    if custom_name and actual_model:
-                        if f"custom:{custom_name.lower()}" in configured:
-                            return (f"custom:{custom_name.lower()}", actual_model)
-                        return ("custom", model_part)
-            return (normalize_provider(provider_part), model_part)
-    return (current_provider, stripped)
-
-
 def _get_custom_base_url() -> str:
     """The custom endpoint ``model.base_url`` from config.yaml."""
     return str(_get_model_config_dict().get("base_url", "")).strip()

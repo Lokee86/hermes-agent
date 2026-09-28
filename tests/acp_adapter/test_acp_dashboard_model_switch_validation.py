@@ -1,12 +1,11 @@
 """ACP ``session/set_model`` and the dashboard main slot validate through ``switch_model``.
 
-Both surfaces used to accept any string (``parse_model_input`` + ``detect_provider_for_model``
+Both surfaces used to accept any string (qualified parsing + ``detect_provider_for_model``
 for ACP; bare provider/model normalization for ``POST /api/model/set``), so a model no catalog
 knew — or a provider with no credentials — was handed to the session / written to config.yaml
-and only failed at inference time. They now share the CLI/gateway/TUI ``/model`` pipeline: a
-rejection from ``switch_model`` is a rejection on these surfaces too, and an acceptance carries
-the resolved (provider, model) — an explicit ``provider:model`` prefix is honoured as
-``--provider`` (#59089), never re-detected.
+and only failed at inference time. They now share the CLI/gateway/TUI ``/model`` pipeline:
+ACP forwards the canonical choice ID unchanged, and ``switch_model`` owns qualified model
+parsing, validation, and the resolved provider/model result.
 """
 
 from __future__ import annotations
@@ -59,17 +58,26 @@ def test_acp_and_dashboard_reject_what_switch_model_rejects(monkeypatch):
     assert exc.value.status_code == 400 and "Unknown provider" in exc.value.detail
 
 
-def test_acp_explicit_provider_prefix_becomes_explicit_provider(monkeypatch):
+def test_acp_forwards_qualified_choice_to_shared_switch_parser(monkeypatch):
     seen: dict = {}
 
     def _switch(**kw):
         seen.update(kw)
-        return ModelSwitchResult(success=True, new_model=kw["raw_input"], target_provider=kw["explicit_provider"])
+        return ModelSwitchResult(
+            success=True,
+            new_model="claude-sonnet-5",
+            target_provider="anthropic",
+        )
 
     monkeypatch.setattr("hermes_cli.model_switch.switch_model", _switch)
     agent, made = _acp_agent()
-    old, new_provider, model = agent._switch_model(_state(), "anthropic:claude-sonnet-5", keep_endpoint=True)
-    assert (seen["explicit_provider"], seen["raw_input"]) == ("anthropic", "claude-sonnet-5")
+    old, new_provider, model = agent._switch_model(
+        _state(), "anthropic:claude-sonnet-5", keep_endpoint=True
+    )
+    assert (seen["explicit_provider"], seen["raw_input"]) == (
+        "",
+        "anthropic:claude-sonnet-5",
+    )
     assert (old, new_provider, model) == ("anthropic", "anthropic", "claude-sonnet-5")
     assert made["requested_provider"] == "anthropic" and made["base_url"] == "https://api.anthropic.com"
 
@@ -84,7 +92,9 @@ def test_acp_set_session_model_runs_switch_model_off_the_event_loop(monkeypatch)
 
     def _switch(**kw):
         seen["thread"] = threading.current_thread()
-        return ModelSwitchResult(success=True, new_model=kw["raw_input"], target_provider="anthropic")
+        return ModelSwitchResult(
+            success=True, new_model="claude-sonnet-5", target_provider="anthropic"
+        )
 
     monkeypatch.setattr("hermes_cli.model_switch.switch_model", _switch)
     agent, _made = _acp_agent()
