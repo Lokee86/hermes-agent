@@ -595,7 +595,8 @@ class TestStopProfileGateway:
         monkeypatch.setattr(status, "_pid_exists", lambda target: alive["value"])
         # The original gateway (start time 100) exits during the drain and its PID is recycled (999).
         monkeypatch.setattr(
-            status, "get_process_start_time", lambda target: 100 if clock["now"] < 7.0 else 999
+            "runtime.process_identity.get_process_start_time",
+            lambda target: 100 if clock["now"] < 7.0 else 999,
         )
 
         def _terminate(target, force=False, expected_start_time=None):
