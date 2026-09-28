@@ -22,7 +22,7 @@ import time
 import webbrowser  # noqa: F401  (tests patch auth_mod.webbrowser.open; same module object)
 
 from contextlib import ExitStack, contextmanager
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from functools import partial
 from datetime import datetime, timezone
 from pathlib import Path
@@ -30,6 +30,7 @@ from typing import Any, Callable, Dict, FrozenSet, Iterable, List, Optional, Tup
 from urllib.parse import urlparse
 
 from hermes_constants import OPENROUTER_BASE_URL, hermes_home_key, secure_parent_dir
+from hermes_cli.provider_auth import ProviderConfig
 from agent.credential_persistence import sanitize_borrowed_credential_payload
 from utils import atomic_json_write, env_float, file_signature, is_truthy_value  # noqa: F401  (env_float: agent.credential_pool reads auth_mod.env_float)
 from hermes_cli.auth_zai_kimi import (  # noqa: F401  re-exported
@@ -143,21 +144,6 @@ def normalize_actual_base_url(base_url: str) -> str:
 
 
 # ── Provider Registry ───────────────────────────────────────────────────────────────────────────────
-
-@dataclass
-class ProviderConfig:
-    """Describes a known inference provider."""
-    id: str
-    name: str
-    auth_type: str  # "oauth_device_code", "oauth_external", "oauth_minimax", "api_key", ...
-    portal_base_url: str = ""
-    inference_base_url: str = ""
-    client_id: str = ""
-    scope: str = ""
-    extra: Dict[str, Any] = field(default_factory=dict)
-    api_key_env_vars: tuple = ()  # API-key providers: env vars to check, in priority order
-    base_url_env_var: str = ""  # optional env var overriding the base URL
-
 
 def _api_key_provider(
     id: str, name: str, inference_base_url: str, api_key_env_vars: tuple,
