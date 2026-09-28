@@ -8,6 +8,7 @@ reinstalled deps + rebuilt the desktop app against the stale tree — no
 error, no warning. The gate compares the pre-pull and post-pull HEAD SHA
 and fails loudly when the update was a no-op.
 """
+from gateway import process_discovery
 from gateway import systemd_runtime
 
 from types import SimpleNamespace
@@ -102,7 +103,7 @@ def _patch_update_deps(monkeypatch, tmp_path, run_side_effect):
     # unsupported, so the phase is a clean no-op for both snapshots.
     import hermes_cli.gateway as hermes_gateway
 
-    monkeypatch.setattr(hermes_gateway, "_get_service_pids", lambda **kwargs: set())
+    monkeypatch.setattr(process_discovery, "_get_service_pids", lambda **kwargs: set())
     monkeypatch.setattr(
         hermes_gateway, "find_gateway_pids", lambda **kwargs: []
     )
@@ -110,7 +111,7 @@ def _patch_update_deps(monkeypatch, tmp_path, run_side_effect):
         systemd_runtime, "supports_services", lambda: False
     )
     monkeypatch.setattr(
-        hermes_gateway, "find_profile_gateway_processes", lambda *a, **k: []
+        process_discovery, "find_profile_gateway_processes", lambda *a, **k: []
     )
 
 

@@ -1,3 +1,4 @@
+from gateway import process_discovery
 from gateway import systemd_runtime
 from pathlib import Path
 from types import SimpleNamespace
@@ -57,9 +58,9 @@ def _patch_gateway_discovery():
     it ``ai.hermes.gateway`` and the verify step exits 1 (#111866, #110701).
     """
     with patch("hermes_cli.gateway.find_gateway_pids", return_value=[]), \
-         patch("hermes_cli.systemd_runtime.supports_services", return_value=False), \
+         patch.object(systemd_runtime, "supports_services", return_value=False), \
          patch("hermes_cli.update_cmd_fleet._restart_macos_launchd_gateways", lambda *a, **k: None), \
-         patch("hermes_cli.gateway.find_profile_gateway_processes", return_value=[]), \
+         patch.object(process_discovery, "find_profile_gateway_processes", return_value=[]), \
          patch("hermes_cli.update_inventory.collect_runtime_inventory", return_value=None), \
          patch("hermes_cli.update_inventory.report_unaccounted_runtimes", return_value=False), \
          patch.object(hermes_main, "_fleet_probe_expected_runtimes", lambda *a, **kw: False), \
