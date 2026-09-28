@@ -211,14 +211,14 @@ def token_fingerprint(token: str) -> str:
 
 def process_create_time(pid: Optional[int] = None) -> Optional[float]:
     """Creation time of ``pid`` (default: this process); ``None`` when unknowable."""
-    from hermes_cli.process_identity import _process_create_time
+    from runtime.process_identity import _process_create_time
 
     return _process_create_time(pid)
 
 
 def _pid_incarnation_matches(pid: int, create_time: Optional[float]) -> Optional[bool]:
     """Reuse the spawn ledger's proof: True/False when provable, ``None`` when it cannot say."""
-    from hermes_cli.process_identity import _pid_alive_matches
+    from runtime.process_identity import _pid_alive_matches
 
     return _pid_alive_matches(pid, create_time)
 
