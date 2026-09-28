@@ -562,10 +562,10 @@ class TestCmdUpdateBranchFallback:
             "hermes_cli.gateway.find_gateway_pids",
             return_value=[],
         ), patch(
-            "hermes_cli.gateway.find_profile_gateway_processes",
+            "gateway.process_discovery.find_profile_gateway_processes",
             return_value=[],
         ), patch(
-            "hermes_cli.gateway._get_service_pids",
+            "gateway.process_discovery._get_service_pids",
             return_value=set(),
         ), patch.object(
             hm, "_sync_with_upstream_if_needed"

@@ -12,6 +12,8 @@ import os
 
 import pytest
 
+from gateway import restart as gateway_restart
+
 import hermes_cli.update_cmd_fleet as fleet_mod
 import hermes_cli.update_receipt as ur
 
@@ -69,8 +71,8 @@ def test_restart_phase_records_accepted_self_restart_and_verify_exits_clean(monk
     import hermes_cli.update_cmd as update_cmd
 
     ancestor = os.getpid()
-    monkeypatch.setattr(gateway, "_is_pid_ancestor_of_current_process", lambda pid: pid == ancestor)
-    monkeypatch.setattr(gateway, "_request_gateway_self_restart", lambda pid: True)
+    monkeypatch.setattr(gateway_restart, "_is_pid_ancestor_of_current_process", lambda pid: pid == ancestor)
+    monkeypatch.setattr(gateway_restart, "_request_gateway_self_restart", lambda pid: True)
     pending: set = set()
     with contextlib.redirect_stdout(io.StringIO()):
         assert fleet_mod._drain_or_signal_gateway_for_update(ancestor, 5.0, "default", self_restart_pending=pending)

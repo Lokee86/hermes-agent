@@ -20,6 +20,9 @@ from unittest.mock import patch
 
 import pytest
 
+from gateway import process_discovery
+from gateway import restart
+
 from hermes_cli import dashboard_procs
 from hermes_cli import main as cli_main
 from hermes_cli import main_install_repair
@@ -190,12 +193,12 @@ def test_pause_windows_gateways_for_update_stops_profile_and_unmapped_pids(
     profile_home.mkdir(parents=True)
     profile_proc = SimpleNamespace(profile="work", path=profile_home, pid=101)
 
-    monkeypatch.setattr(gateway_mod, "find_gateway_pids", lambda **_k: [101, 202])
+    monkeypatch.setattr(process_discovery, "find_gateway_pids", lambda **_k: [101, 202])
     monkeypatch.setattr(
-        gateway_mod, "find_windows_gateway_services", lambda **_k: []
+        process_discovery, "find_windows_gateway_services", lambda **_k: []
     )
     monkeypatch.setattr(
-        gateway_mod,
+        process_discovery,
         "find_profile_gateway_processes",
         lambda **_k: [profile_proc],
     )
@@ -275,12 +278,12 @@ def test_pause_and_resume_windows_gateway_service(
         descendant_pids=frozenset({11, 22, 101}),
         descendant_identities=((22, 22.0), (101, 101.0)),
     )
-    monkeypatch.setattr(gateway_mod, "find_gateway_pids", lambda **_k: [])
+    monkeypatch.setattr(process_discovery, "find_gateway_pids", lambda **_k: [])
     monkeypatch.setattr(
-        gateway_mod, "find_profile_gateway_processes", lambda **_k: [profile_proc]
+        process_discovery, "find_profile_gateway_processes", lambda **_k: [profile_proc]
     )
     monkeypatch.setattr(
-        gateway_mod, "find_windows_gateway_services", lambda **_k: [service]
+        process_discovery, "find_windows_gateway_services", lambda **_k: [service]
     )
     monkeypatch.setattr("gateway.restart.get_restart_drain_timeout", lambda: 0.1)
 
@@ -336,10 +339,10 @@ def _two_services():
 def _patch_service_discovery(monkeypatch, services):
     import hermes_cli.gateway as gateway_mod
 
-    monkeypatch.setattr(gateway_mod, "find_gateway_pids", lambda **_k: [])
-    monkeypatch.setattr(gateway_mod, "find_profile_gateway_processes", lambda **_k: [])
+    monkeypatch.setattr(process_discovery, "find_gateway_pids", lambda **_k: [])
+    monkeypatch.setattr(process_discovery, "find_profile_gateway_processes", lambda **_k: [])
     monkeypatch.setattr(
-        gateway_mod, "find_windows_gateway_services", lambda **_k: services
+        process_discovery, "find_windows_gateway_services", lambda **_k: services
     )
 
 
@@ -399,14 +402,14 @@ def test_pause_windows_gateways_aborts_when_service_discovery_is_indeterminate(
     """An indeterminate SCM scan aborts before any gateway is torn down."""
     import hermes_cli.gateway as gateway_mod
 
-    monkeypatch.setattr(gateway_mod, "find_profile_gateway_processes", lambda **_k: [])
+    monkeypatch.setattr(process_discovery, "find_profile_gateway_processes", lambda **_k: [])
     monkeypatch.setattr(
-        gateway_mod,
+        process_discovery,
         "find_windows_gateway_services",
         lambda **_k: (_ for _ in ()).throw(RuntimeError("SCM scan indeterminate")),
     )
     monkeypatch.setattr(
-        gateway_mod,
+        process_discovery,
         "find_gateway_pids",
         lambda **_k: (_ for _ in ()).throw(
             AssertionError("ordinary gateway teardown must not begin")
@@ -424,10 +427,10 @@ def test_pause_windows_gateways_aborts_when_gateway_pid_discovery_is_indetermina
     """Failed PID discovery aborts instead of reading as "no gateways running"."""
     import hermes_cli.gateway as gateway_mod
 
-    monkeypatch.setattr(gateway_mod, "find_profile_gateway_processes", lambda **_k: [])
-    monkeypatch.setattr(gateway_mod, "find_windows_gateway_services", lambda **_k: [])
+    monkeypatch.setattr(process_discovery, "find_profile_gateway_processes", lambda **_k: [])
+    monkeypatch.setattr(process_discovery, "find_windows_gateway_services", lambda **_k: [])
     monkeypatch.setattr(
-        gateway_mod,
+        process_discovery,
         "find_gateway_pids",
         lambda **_k: (_ for _ in ()).throw(RuntimeError("PID discovery failed")),
     )
@@ -615,12 +618,12 @@ def test_pause_kill_set_covers_venv_guard_abort_set(
         profile="default", path=profile_home, pid=worker_pid
     )
 
-    monkeypatch.setattr(gateway_mod, "find_gateway_pids", lambda **_k: [worker_pid])
+    monkeypatch.setattr(process_discovery, "find_gateway_pids", lambda **_k: [worker_pid])
     monkeypatch.setattr(
-        gateway_mod, "find_windows_gateway_services", lambda **_k: []
+        process_discovery, "find_windows_gateway_services", lambda **_k: []
     )
     monkeypatch.setattr(
-        gateway_mod, "find_profile_gateway_processes", lambda **_k: [profile_proc]
+        process_discovery, "find_profile_gateway_processes", lambda **_k: [profile_proc]
     )
     monkeypatch.setattr("gateway.restart.get_restart_drain_timeout", lambda: 0.1)
     drained_dead: set[int] = set()
@@ -719,7 +722,7 @@ def test_plain_update_refuses_to_tree_kill_its_gateway_ancestor(
     import hermes_cli.update_cmd as update_cmd
 
     monkeypatch.setattr(
-        gateway_cli,
+        restart,
         "_is_pid_ancestor_of_current_process",
         lambda pid: pid == 300,
     )
@@ -742,7 +745,7 @@ def test_gateway_handoff_keeps_leftover_gateway_recovery(monkeypatch, capsys):
 
     ancestry_checks = []
     monkeypatch.setattr(
-        gateway_cli,
+        restart,
         "_is_pid_ancestor_of_current_process",
         lambda pid: ancestry_checks.append(pid) or True,
     )
@@ -1027,7 +1030,7 @@ def test_update_impl_refuses_before_terminating_gateway_ancestor(
         r"C:\x\venv\Scripts\python.exe -m hermes_cli.main gateway run",
     )
     monkeypatch.setattr(
-        gateway_cli,
+        restart,
         "_is_pid_ancestor_of_current_process",
         lambda pid: pid == 300,
     )

@@ -409,10 +409,10 @@ def test_runtime_inventory_dedupes_same_pid_across_homes(tmp_path: Path, monkeyp
         "profiles.paths._get_profiles_root", lambda: profiles_root
     )
     monkeypatch.setattr(
-        "hermes_cli.gateway._get_service_pids", lambda all_profiles=False: set()
+        "gateway.process_discovery._get_service_pids", lambda all_profiles=False: set()
     )
     monkeypatch.setattr(
-        "hermes_cli.gateway.find_profile_gateway_processes", lambda: []
+        "gateway.process_discovery.find_profile_gateway_processes", lambda: []
     )
     monkeypatch.setattr(
         "gateway.control_socket.identify_gateway",
@@ -438,10 +438,10 @@ def test_runtime_inventory_prefers_socket_supervisor(tmp_path: Path, monkeypatch
         "profiles.paths._get_profiles_root", lambda: tmp_path / "no-profiles"
     )
     monkeypatch.setattr(
-        "hermes_cli.gateway._get_service_pids", lambda all_profiles=False: set()
+        "gateway.process_discovery._get_service_pids", lambda all_profiles=False: set()
     )
     monkeypatch.setattr(
-        "hermes_cli.gateway.find_profile_gateway_processes", lambda: []
+        "gateway.process_discovery.find_profile_gateway_processes", lambda: []
     )
     monkeypatch.setattr(
         "gateway.control_socket.identify_gateway",

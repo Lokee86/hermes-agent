@@ -112,6 +112,7 @@ def _discharge_host_update_obligation():
 @pytest.fixture
 def isolated_update_runtime(monkeypatch, tmp_path, request):
     """Keep mocked updater flows off the host checkout and runtime fleet."""
+    from gateway import process_discovery
     from hermes_cli import gateway, main, update_cmd, update_cmd_fleet
     from hermes_cli import update_inventory, update_receipt
 
@@ -125,6 +126,8 @@ def isolated_update_runtime(monkeypatch, tmp_path, request):
     monkeypatch.setattr(gateway, "find_gateway_pids", lambda *a, **k: [])
     monkeypatch.setattr(gateway, "find_profile_gateway_processes", lambda *a, **k: [])
     monkeypatch.setattr(gateway, "_get_service_pids", lambda *a, **k: set())
+    monkeypatch.setattr(process_discovery, "find_profile_gateway_processes", lambda *a, **k: [])
+    monkeypatch.setattr(process_discovery, "_get_service_pids", lambda *a, **k: set())
     monkeypatch.setattr(systemd_runtime, "supports_services", lambda: False)
     monkeypatch.setattr(main, "_pause_windows_gateways_for_update", lambda: None)
     monkeypatch.setattr(main, "_resume_windows_gateways_after_update", lambda *a, **k: None)

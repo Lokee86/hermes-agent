@@ -22,7 +22,7 @@ def test_pending_marker_requires_complete_systemd_recovery(monkeypatch, tmp_path
     stopped = []
     monkeypatch.setattr(gateway, "find_gateway_pids", lambda **kw: [123] if failure == "running" and not stopped else [])
     monkeypatch.setattr(gateway, "kill_gateway_processes", lambda **kw: stopped.append(True))
-    monkeypatch.setattr(gateway, "_wait_for_gateway_exit", lambda **kw: None)
+    monkeypatch.setattr("gateway.restart._wait_for_gateway_exit", lambda **kw: None)
     monkeypatch.setattr(systemd_runtime, "supports_services", lambda: True)
     monkeypatch.setattr(fleet, "_SYSTEMD_SCOPES", (("user", ["systemctl", "--user"]),))
     monkeypatch.setattr(fleet._time, "sleep", lambda _: None)
