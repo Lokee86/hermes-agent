@@ -811,7 +811,7 @@ class TestProfileCatalogAuthoritative:
             models_url="https://relay.example.invalid/catalog",
             fallback_models=("plan/model-1",),
         )
-        monkeypatch.setitem(providers._REGISTRY, profile.name, profile)
+        monkeypatch.setitem(providers.registry._REGISTRY, profile.name, profile)
         return profile
 
     def test_model_only_in_generic_listing_is_rejected(self, relay_profile):

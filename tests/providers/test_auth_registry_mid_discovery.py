@@ -3,7 +3,7 @@ first imported must still reach ``PROVIDER_REGISTRY``.
 
 ``hermes_cli.auth`` mirrors provider-plugin profiles into ``PROVIDER_REGISTRY``
 when it is imported.  If a plugin's own imports pull ``hermes_cli.auth`` in
-while ``providers._discover_providers()`` is still iterating the plugin
+while ``providers.discovery.ensure_process_discovered()`` is still iterating the plugin
 directories, that mirror runs against a partial profile list (the discovery
 guard is already set, so ``list_providers()`` returns whatever has been
 registered so far).  Every plugin discovered afterwards was invisible to
@@ -123,18 +123,18 @@ LATE_ALIAS = "probe-102123-late-alias"
 @pytest.fixture()
 def _isolated_registries():
     """Snapshot both registries; restore on teardown so nothing leaks."""
-    saved_registry = dict(providers._REGISTRY)
-    saved_aliases = dict(providers._ALIASES)
-    saved_discovered = providers._discovered
+    saved_registry = dict(providers.registry._REGISTRY)
+    saved_aliases = dict(providers.registry._ALIASES)
+    saved_discovered = providers.discovery._discovered
     saved_auth_keys = set(auth_mod.PROVIDER_REGISTRY)
     saved_plugin_modules = {
         m for m in sys.modules if m.startswith("plugins.model_providers")
     }
-    providers._REGISTRY.clear()
-    providers._ALIASES.clear()
-    providers._PROVIDER_LIST_CACHE = None
-    providers._discovered = False
-    providers._discovering = False
+    providers.registry._REGISTRY.clear()
+    providers.registry._ALIASES.clear()
+    providers.registry._PROVIDER_LIST_CACHE = None
+    providers.discovery._discovered = False
+    providers.discovery._discovering = False
     yield
     for key in set(auth_mod.PROVIDER_REGISTRY) - saved_auth_keys:
         del auth_mod.PROVIDER_REGISTRY[key]
@@ -145,22 +145,22 @@ def _isolated_registries():
         and m not in saved_plugin_modules
     ]:
         del sys.modules[mod]
-    providers._REGISTRY.clear()
-    providers._REGISTRY.update(saved_registry)
-    providers._ALIASES.clear()
-    providers._ALIASES.update(saved_aliases)
-    providers._PROVIDER_LIST_CACHE = None
-    providers._discovered = saved_discovered
-    providers._discovering = False
+    providers.registry._REGISTRY.clear()
+    providers.registry._REGISTRY.update(saved_registry)
+    providers.registry._ALIASES.clear()
+    providers.registry._ALIASES.update(saved_aliases)
+    providers.registry._PROVIDER_LIST_CACHE = None
+    providers.discovery._discovered = saved_discovered
+    providers.discovery._discovering = False
 
 
 def test_post_discovery_registration_is_mirrored(_isolated_registries, monkeypatch, tmp_path):
     """A register_provider() call after discovery finished reaches the auth registry at once."""
-    monkeypatch.setattr(providers, "_discover_entry_point_providers", lambda: None)
-    monkeypatch.setattr(providers, "_BUNDLED_PLUGINS_DIR", tmp_path)
-    monkeypatch.setattr(providers, "_user_plugins_dir", lambda: None)
-    monkeypatch.setattr(providers, "_installed_plugins_dir", lambda: None)
-    providers._discover_providers()
+    monkeypatch.setattr(providers.discovery, "_discover_entry_point_providers", lambda: None)
+    monkeypatch.setattr(providers.discovery, "_BUNDLED_PLUGINS_DIR", tmp_path)
+    monkeypatch.setattr(providers.discovery, "_user_plugins_dir", lambda: None)
+    monkeypatch.setattr(providers.discovery, "_installed_plugins_dir", lambda: None)
+    providers.discovery.ensure_process_discovered()
 
     providers.register_provider(
         ProviderProfile(
@@ -182,14 +182,14 @@ def test_user_plugin_alias_repoints_and_display_name_follows(_isolated_registrie
     profile for the alias, while the auth registry kept the alias on whichever row got there first
     and kept the bundled display name on a same-name replacement.
     """
-    monkeypatch.setattr(providers, "_discover_entry_point_providers", lambda: None)
-    monkeypatch.setattr(providers, "_BUNDLED_PLUGINS_DIR", tmp_path)
-    monkeypatch.setattr(providers, "_user_plugins_dir", lambda: None)
-    monkeypatch.setattr(providers, "_installed_plugins_dir", lambda: None)
-    providers._discover_providers()
+    monkeypatch.setattr(providers.discovery, "_discover_entry_point_providers", lambda: None)
+    monkeypatch.setattr(providers.discovery, "_BUNDLED_PLUGINS_DIR", tmp_path)
+    monkeypatch.setattr(providers.discovery, "_user_plugins_dir", lambda: None)
+    monkeypatch.setattr(providers.discovery, "_installed_plugins_dir", lambda: None)
+    providers.discovery.ensure_process_discovered()
 
     taken_alias = "probe-116668-alias"
-    monkeypatch.setattr(providers, "_current_source", "bundled")
+    monkeypatch.setattr(providers.discovery, "_current_source", "bundled")
     providers.register_provider(ProviderProfile(
         name="probe-116668-bundled", display_name="Bundled", base_url="https://bundled.example/v1",
         env_vars=("PROBE_116668_BUNDLED_KEY",), aliases=(taken_alias,)))
@@ -203,7 +203,7 @@ def test_user_plugin_alias_repoints_and_display_name_follows(_isolated_registrie
     assert auth_mod.PROVIDER_REGISTRY[taken_alias] is bundled_row
 
     # The user's plugin does, and its same-name replacement rewrites the display name in place.
-    monkeypatch.setattr(providers, "_current_source", "user")
+    monkeypatch.setattr(providers.discovery, "_current_source", "user")
     providers.register_provider(ProviderProfile(
         name="probe-116668-user", display_name="Mine", base_url="https://mine.example/v1",
         env_vars=("PROBE_116668_USER_KEY",), aliases=(taken_alias,)))

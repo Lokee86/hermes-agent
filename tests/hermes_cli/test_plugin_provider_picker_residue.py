@@ -21,9 +21,9 @@ def plugin(monkeypatch):
     from hermes_cli import auth
     from hermes_cli.auth_plugin_providers import PLUGIN_MIRRORED_PROVIDERS, register_plugin_provider
 
-    monkeypatch.setattr(providers, "_REGISTRY", dict(providers._REGISTRY))
-    monkeypatch.setattr(providers, "_ALIASES", dict(providers._ALIASES))
-    monkeypatch.setattr(providers, "_PROVIDER_LIST_CACHE", None, raising=False)
+    monkeypatch.setattr(providers.registry, "_REGISTRY", dict(providers.registry._REGISTRY))
+    monkeypatch.setattr(providers.registry, "_ALIASES", dict(providers.registry._ALIASES))
+    monkeypatch.setattr(providers.registry, "_PROVIDER_LIST_CACHE", None, raising=False)
     monkeypatch.setattr(auth, "PROVIDER_REGISTRY", dict(auth.PROVIDER_REGISTRY))
     mirrored = set(PLUGIN_MIRRORED_PROVIDERS)
     monkeypatch.setattr("hermes_cli.auth_plugin_providers.PLUGIN_MIRRORED_PROVIDERS", mirrored)

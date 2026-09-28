@@ -24,16 +24,16 @@ def install_profile(monkeypatch):
     """Write one model-provider plugin, rediscover, and mirror it into the auth registry."""
     import providers as profiles
 
-    monkeypatch.setattr(profiles, "_REGISTRY", dict(profiles._REGISTRY))
-    monkeypatch.setattr(profiles, "_ALIASES", dict(profiles._ALIASES))
-    monkeypatch.setattr(profiles, "_PROVIDER_LIST_CACHE", None)
+    monkeypatch.setattr(profiles.registry, "_REGISTRY", dict(profiles.registry._REGISTRY))
+    monkeypatch.setattr(profiles.registry, "_ALIASES", dict(profiles.registry._ALIASES))
+    monkeypatch.setattr(profiles.registry, "_PROVIDER_LIST_CACHE", None)
     monkeypatch.setattr("agent.models_dev.fetch_models_dev", lambda *a, **kw: {})
     monkeypatch.setattr("hermes_cli.models_validate.validate_requested_model", lambda *a, **kw: ACCEPT)
     auth_before = dict(auth_mod.PROVIDER_REGISTRY)
 
     def _install(name: str, *, aliases=(), base_url: str, env_var: str, api_mode: str = "chat_completions"):
         monkeypatch.setenv(env_var, KEY)
-        monkeypatch.setattr(profiles, "_discovered", False)
+        monkeypatch.setattr(profiles.discovery, "_discovered", False)
         monkeypatch.delitem(sys.modules, f"_hermes_user_provider_{name}", raising=False)
         plugin_dir = get_hermes_home() / "plugins" / "model-providers" / name
         plugin_dir.mkdir(parents=True, exist_ok=True)

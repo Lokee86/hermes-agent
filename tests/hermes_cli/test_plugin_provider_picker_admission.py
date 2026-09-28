@@ -17,7 +17,7 @@ def _register(monkeypatch, profile):
     import providers
     from hermes_cli import auth
 
-    monkeypatch.setitem(providers._REGISTRY, profile.name, profile)
+    monkeypatch.setitem(providers.registry._REGISTRY, profile.name, profile)
     monkeypatch.delitem(auth.PROVIDER_REGISTRY, profile.name, raising=False)
     # Mirror into the auth registry the way plugin discovery does; built from public types so the
     # helper is independent of the auth module's private mirroring function.

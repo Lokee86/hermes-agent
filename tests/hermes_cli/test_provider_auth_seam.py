@@ -60,7 +60,7 @@ def _rediscover() -> None:
     """
     import providers as _pkg
 
-    _pkg._discovered = False
+    _pkg.discovery._discovered = False
     for mod in [m for m in sys.modules if m.startswith("_hermes_user_provider")]:
         del sys.modules[mod]
 
@@ -94,11 +94,11 @@ def install_provider(tmp_path, monkeypatch):
     import providers as _pkg
 
     for name in installed:
-        _pkg._REGISTRY.pop(name, None)
-        for alias, canonical in list(_pkg._ALIASES.items()):
+        _pkg.registry._REGISTRY.pop(name, None)
+        for alias, canonical in list(_pkg.registry._ALIASES.items()):
             if canonical == name:
-                _pkg._ALIASES.pop(alias, None)
-    _pkg._PROVIDER_LIST_CACHE = None
+                _pkg.registry._ALIASES.pop(alias, None)
+    _pkg.registry._PROVIDER_LIST_CACHE = None
 
 
 def _parse_auth_args(argv: list[str]) -> argparse.Namespace:

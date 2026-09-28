@@ -9,9 +9,9 @@ from agent import models_dev
 
 
 def _isolated_registry(monkeypatch, catalog=None):
-    monkeypatch.setattr(providers, "_REGISTRY", {})
-    monkeypatch.setattr(providers, "_ALIASES", {})
-    monkeypatch.setattr(providers, "_discovered", True)
+    monkeypatch.setattr(providers.registry, "_REGISTRY", {})
+    monkeypatch.setattr(providers.registry, "_ALIASES", {})
+    monkeypatch.setattr(providers.discovery, "_discovered", True)
     monkeypatch.setattr(models_dev, "_registry_models", lambda *a, **k: catalog)
 
 

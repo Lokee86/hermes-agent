@@ -3,7 +3,7 @@
 ``CANONICAL_PROVIDERS`` admitted plugin providers once, at import. A plugin whose imports pull
 ``hermes_cli.models`` in mid-discovery, or a profile registered at runtime, never reached
 ``list_available_providers`` / ``_PROVIDER_LABELS`` until restart: the picker twin of the auth
-registry window (#102123). ``providers._sync_auth_registry`` now re-admits into both snapshots.
+registry window (#102123). The provider registry sync hook re-admits into both snapshots.
 """
 
 from providers import register_provider
@@ -29,7 +29,7 @@ def test_late_registered_provider_reaches_picker_catalog(monkeypatch):
 
     import providers as registry
     registry.list_providers()  # discovery done: a registration now is a post-discovery one
-    monkeypatch.setitem(registry._REGISTRY, slug, _profile(slug))  # keeps the registry scoped
+    monkeypatch.setitem(registry.registry._REGISTRY, slug, _profile(slug))  # keeps the registry scoped
     register_provider(_profile(slug))
 
     assert slug in {r["id"] for r in list_available_providers()}

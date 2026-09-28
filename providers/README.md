@@ -12,15 +12,18 @@ these profiles instead of maintaining its own parallel data.
 
 ```
 providers/
+├── __init__.py     Intentional package API
 ├── base.py         ProviderProfile dataclass + OMIT_TEMPERATURE sentinel
-├── __init__.py     Registry: register_provider(), get_provider_profile(), list_providers()
+├── identity.py     Canonical provider identity helpers
+├── registry.py     Registry state, aliases, home layers, lookup, precedence
+├── discovery.py    Bundled/user/pip/legacy provider loading mechanics
 └── README.md       This file
 ```
 
 The **profiles themselves** live as plugins under
 `plugins/model-providers/<name>/` (bundled in this repo) and
 `$HERMES_HOME/plugins/model-providers/<name>/` (per-user overrides). The
-registry in `providers/__init__.py` lazily discovers them the first time any
+registry lazily asks `providers/discovery.py` to discover them the first time any
 consumer calls `get_provider_profile()` or `list_providers()`. See
 `plugins/model-providers/README.md` for the plugin contract and examples.
 

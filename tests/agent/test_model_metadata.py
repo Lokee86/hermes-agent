@@ -1324,10 +1324,10 @@ class TestStripProviderPrefix:
         import providers
         from providers.base import ProviderProfile
 
-        monkeypatch.setattr(providers, "_REGISTRY", {})
-        monkeypatch.setattr(providers, "_ALIASES", {})
-        monkeypatch.setattr(providers, "_PROVIDER_LIST_CACHE", None)
-        monkeypatch.setattr(providers, "_discovered", True)
+        monkeypatch.setattr(providers.registry, "_REGISTRY", {})
+        monkeypatch.setattr(providers.registry, "_ALIASES", {})
+        monkeypatch.setattr(providers.registry, "_PROVIDER_LIST_CACHE", None)
+        monkeypatch.setattr(providers.discovery, "_discovered", True)
         providers.register_provider(
             ProviderProfile(name="fake-provider", aliases=("fake-alias",))
         )
