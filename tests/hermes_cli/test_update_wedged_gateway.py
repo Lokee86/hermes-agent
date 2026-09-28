@@ -8,6 +8,7 @@ only when the loop is provably dead, escalates SIGTERM → SIGKILL bounded to
 seconds. A busy-but-alive gateway (fresh heartbeat) must keep the full drain
 path — including the in-flight cron drain floor from #86684.
 """
+from gateway import launchd_service
 from gateway import process_liveness
 from gateway import signal_restart
 from gateway import systemd_restart
@@ -194,8 +195,8 @@ def _launchd_harness(monkeypatch, tmp_path, pid):
     patched ``_process_hermes_home``).
     """
     events = []
-    monkeypatch.setattr(gateway_cli, "get_launchd_label", lambda: "ai.hermes.gateway")
-    monkeypatch.setattr(gateway_cli, "_launchd_domain", lambda: "gui/501")
+    monkeypatch.setattr(launchd_service, "get_launchd_label", lambda: "ai.hermes.gateway")
+    monkeypatch.setattr(launchd_service, "_launchd_domain", lambda: "gui/501")
     monkeypatch.setattr("gateway.restart.get_restart_drain_timeout", lambda: 180.0)
     monkeypatch.setattr("gateway.status.get_running_pid", lambda *a, **k: pid)
     monkeypatch.setattr(
@@ -232,7 +233,7 @@ def _launchd_harness(monkeypatch, tmp_path, pid):
         lambda timeout, force_after=None: events.append(("drain", timeout)) or True,
     )
     monkeypatch.setattr(
-        gateway_cli,
+        launchd_service,
         "_wait_for_launchd_service_pid",
         lambda label, old_pid, timeout=10.0, *, domain: events.append("observe")
         or True,
@@ -243,7 +244,7 @@ def _launchd_harness(monkeypatch, tmp_path, pid):
         lambda *a, **k: events.append("kickstart")
         or __import__("types").SimpleNamespace(returncode=0, stdout="", stderr=""),
     )
-    monkeypatch.setattr(gateway_cli, "_clear_launchd_unsupported_marker", lambda: None)
+    monkeypatch.setattr(launchd_service, "_clear_launchd_unsupported_marker", lambda: None)
     monkeypatch.setattr(
         "gateway.shutdown_watchdog._process_hermes_home", lambda: tmp_path
     )
@@ -399,8 +400,8 @@ class TestLaunchdRestartWedgedIntegration:
 
     def _setup(self, monkeypatch, liveness):
         events = []
-        monkeypatch.setattr(gateway_cli, "get_launchd_label", lambda: "ai.hermes.gateway")
-        monkeypatch.setattr(gateway_cli, "_launchd_domain", lambda: "gui/501")
+        monkeypatch.setattr(launchd_service, "get_launchd_label", lambda: "ai.hermes.gateway")
+        monkeypatch.setattr(launchd_service, "_launchd_domain", lambda: "gui/501")
         monkeypatch.setattr("gateway.restart.get_restart_drain_timeout", lambda: 180.0)
         # Wait budget covers after-turn deferral + drain + headroom (#77184).
         monkeypatch.setattr("gateway.restart.get_restart_exit_wait_budget", lambda: 195.0)
@@ -433,7 +434,7 @@ class TestLaunchdRestartWedgedIntegration:
         # (mocked subprocess.run returns empty stdout, so the PID probe
         # would otherwise burn the full observation timeout in time.sleep).
         monkeypatch.setattr(
-            gateway_cli,
+            launchd_service,
             "_wait_for_launchd_service_pid",
             lambda label, old_pid, timeout=10.0, *, domain: events.append("observe")
             or True,
@@ -445,7 +446,7 @@ class TestLaunchdRestartWedgedIntegration:
             or __import__("types").SimpleNamespace(returncode=0, stdout="", stderr=""),
         )
         monkeypatch.setattr(
-            gateway_cli, "_clear_launchd_unsupported_marker", lambda: None
+            launchd_service, "_clear_launchd_unsupported_marker", lambda: None
         )
         return events
 

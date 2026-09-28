@@ -194,9 +194,9 @@ class TestGetServicePidsScoping:
         # The all_profiles branch also runs a real ``launchctl list`` prefix scan; a developer
         # box with a live ai.hermes.gateway* fleet would leak its PIDs into the assertion.
         monkeypatch.setattr(gw.subprocess, "run", lambda *a, **k: _completed(0, ""))
-        monkeypatch.setattr(gw, "get_launchd_label", lambda: "ai.hermes.gateway")
+        monkeypatch.setattr(launchd_service, "get_launchd_label", lambda: "ai.hermes.gateway")
         monkeypatch.setattr(
-            gw,
+            launchd_service,
             "launchd_gateway_labels_for_install",
             lambda: ["ai.hermes.gateway", "ai.hermes.gateway-a", "ai.hermes.gateway-b"],
         )
@@ -206,7 +206,7 @@ class TestGetServicePidsScoping:
             "ai.hermes.gateway-b": (None, None),  # not bootstrapped
         }
         monkeypatch.setattr(
-            gw, "_locate_launchd_gateway_service", lambda label: located[label]
+            launchd_service, "_locate_launchd_gateway_service", lambda label: located[label]
         )
 
     def test_all_profiles_returns_every_gateway_service_pid(self, monkeypatch):

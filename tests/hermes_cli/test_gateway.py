@@ -1,4 +1,5 @@
 """Tests for hermes_cli.gateway."""
+from gateway import launchd_service
 from gateway import service_identity
 from gateway import service_process
 from gateway import systemd_identity
@@ -311,9 +312,9 @@ def test_spawn_detached_gateway_timestamps_stderr(monkeypatch, tmp_path):
         calls.append((cmd, kwargs))
         return SimpleNamespace()
 
-    monkeypatch.setattr(gateway, "get_hermes_home", lambda: tmp_path)
+    monkeypatch.setattr(launchd_service, "get_hermes_home", lambda: tmp_path)
     monkeypatch.setattr(service_process, "python_path", lambda: "/usr/bin/python3")
-    monkeypatch.setattr(gateway, "_gateway_run_command", lambda: child_cmd)
+    monkeypatch.setattr(launchd_service, "_gateway_run_command", lambda: child_cmd)
     monkeypatch.setattr(gateway.subprocess, "Popen", fake_popen)
 
     assert gateway._spawn_detached_gateway() is True

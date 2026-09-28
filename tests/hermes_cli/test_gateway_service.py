@@ -508,7 +508,7 @@ class TestLaunchdServiceRecovery:
         monkeypatch.setattr(launchd_service, "get_launchd_plist_path", lambda: plist_path)
         monkeypatch.setattr(launchd_service, "launchd_plist_is_current", lambda: False)
         monkeypatch.setattr(
-            gateway_cli,
+            launchd_service,
             "generate_launchd_plist",
             lambda: (
                 "<plist>--replace\n<key>HERMES_HOME</key>"
@@ -583,7 +583,7 @@ class TestLaunchdServiceRecovery:
         monkeypatch.setattr(launchd_service, "get_launchd_plist_path", lambda: plist_path)
         monkeypatch.setattr(launchd_service, "launchd_plist_is_current", lambda: False)
         monkeypatch.setattr(
-            gateway_cli,
+            launchd_service,
             "generate_launchd_plist",
             lambda: (
                 "<plist>--replace\n<key>HERMES_HOME</key>"
@@ -634,7 +634,7 @@ class TestLaunchdServiceRecovery:
         monkeypatch.setattr(launchd_service, "get_launchd_plist_path", lambda: plist_path)
         monkeypatch.setattr(launchd_service, "launchd_plist_is_current", lambda: False)
         monkeypatch.setattr(
-            gateway_cli,
+            launchd_service,
             "generate_launchd_plist",
             lambda: (
                 "<plist>--replace\n<key>HERMES_HOME</key>"
@@ -686,7 +686,7 @@ class TestLaunchdServiceRecovery:
         monkeypatch.setattr(launchd_service, "get_launchd_plist_path", lambda: plist_path)
         monkeypatch.setattr(launchd_service, "launchd_plist_is_current", lambda: False)
         monkeypatch.setattr(
-            gateway_cli,
+            launchd_service,
             "generate_launchd_plist",
             lambda: (
                 "<plist>--replace\n<key>HERMES_HOME</key>"
@@ -842,10 +842,10 @@ class TestLaunchdUnsupportedFallbackPolicy:
         """Record the two side effects of degrading; return the lists."""
         marker_writes, spawned = [], []
         monkeypatch.setattr(
-            gateway_cli, "_write_launchd_unsupported_marker", lambda: marker_writes.append("marker")
+            launchd_service, "_write_launchd_unsupported_marker", lambda: marker_writes.append("marker")
         )
         monkeypatch.setattr(
-            gateway_cli, "_spawn_detached_gateway", lambda: spawned.append("detached") or True
+            launchd_service, "_spawn_detached_gateway", lambda: spawned.append("detached") or True
         )
         return marker_writes, spawned
 
@@ -855,7 +855,7 @@ class TestLaunchdUnsupportedFallbackPolicy:
         )
         monkeypatch.setattr(launchd_service, "get_launchd_label", lambda: "ai.hermes.gateway")
         monkeypatch.setattr(
-            gateway_cli, "_launchctl_label_supervising_process", lambda label: True
+            launchd_service, "_launchctl_label_supervising_process", lambda label: True
         )
         marker_writes, spawned = self._spy_fallback(monkeypatch)
 
@@ -870,7 +870,7 @@ class TestLaunchdUnsupportedFallbackPolicy:
         exc = subprocess.CalledProcessError(125, ["launchctl", "kickstart"])
         monkeypatch.setattr(launchd_service, "get_launchd_label", lambda: "ai.hermes.gateway")
         monkeypatch.setattr(
-            gateway_cli, "_launchctl_label_supervising_process", lambda label: False
+            launchd_service, "_launchctl_label_supervising_process", lambda label: False
         )
         marker_writes, spawned = self._spy_fallback(monkeypatch)
 
@@ -1190,7 +1190,7 @@ class TestGatewaySystemServiceRouting:
         monkeypatch.setattr(launchd_service, "_clear_launchd_unsupported_marker", lambda: None)
         # KeepAlive revives the label on a fresh PID — replacement observed.
         monkeypatch.setattr(
-            gateway_cli,
+            launchd_service,
             "_wait_for_launchd_service_pid",
             lambda label, old_pid, timeout=10.0, *, domain: calls.append(
                 ("observe", label, old_pid, domain)
@@ -1238,7 +1238,7 @@ class TestGatewaySystemServiceRouting:
             signal_restart, "_graceful_restart_via_sigusr1", lambda pid, timeout, **_: True
         )
         monkeypatch.setattr(
-            gateway_cli,
+            launchd_service,
             "_wait_for_launchd_service_pid",
             lambda label, old_pid, timeout=10.0, *, domain: False,
         )
@@ -1270,7 +1270,7 @@ class TestGatewaySystemServiceRouting:
         plist_path = tmp_path / "ai.hermes.gateway.plist"
         plist_path.write_text("plist\n", encoding="utf-8")
 
-        monkeypatch.setattr(gateway_cli, "get_launchd_plist_path", lambda: plist_path)
+        monkeypatch.setattr(launchd_service, "get_launchd_plist_path", lambda: plist_path)
         monkeypatch.setattr(
             gateway_cli,
             "launchd_restart",
