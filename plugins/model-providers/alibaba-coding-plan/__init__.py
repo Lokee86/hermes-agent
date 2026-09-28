@@ -25,7 +25,8 @@ alibaba_coding_plan_cn = ProviderProfile(
     description="Alibaba Cloud Coding Plan, mainland-China endpoint",
     signup_url="https://help.aliyun.com/zh/model-studio/",
     env_vars=("ALIBABA_CODING_PLAN_CN_API_KEY", "ALIBABA_CODING_PLAN_API_KEY", "DASHSCOPE_API_KEY", "ALIBABA_CODING_PLAN_CN_BASE_URL"),
-    base_url="https://coding.dashscope.aliyuncs.com/v1", auth_type="api_key",
+    base_url="https://coding.dashscope.aliyuncs.com/v1",
+    base_url_env_var="ALIBABA_CODING_PLAN_CN_BASE_URL", auth_type="api_key",
 )
 
 register_provider(alibaba_coding_plan)

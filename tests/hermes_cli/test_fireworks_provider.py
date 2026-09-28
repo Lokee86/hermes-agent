@@ -41,7 +41,7 @@ class TestFireworksAliases:
 
     @pytest.mark.parametrize("alias", ["fireworks", "fireworks-ai", "fw"])
     def test_providers_normalize_provider(self, alias):
-        from hermes_cli.providers import normalize_provider as normalize_in_providers
+        from providers import normalize_provider as normalize_in_providers
 
         assert normalize_in_providers(alias) == "fireworks"
 

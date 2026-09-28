@@ -49,7 +49,7 @@ class TestGmiAliases:
 
 
     def test_providers_normalize_provider(self):
-        from hermes_cli.providers import normalize_provider as normalize_provider_in_providers
+        from providers import normalize_provider as normalize_provider_in_providers
 
         assert normalize_provider_in_providers("gmi-cloud") == "gmi"
         assert normalize_provider_in_providers("gmicloud") == "gmi"

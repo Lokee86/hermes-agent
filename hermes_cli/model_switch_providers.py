@@ -659,6 +659,10 @@ def _collect_authed_provider_slugs(
         pid = hermes_slug = profile.name
         if _skip(seen, excluded_set, pid) or profile.auth_type == "aws_sdk":
             continue
+        if not _regional_profile_is_distinctly_configured(
+            profile, "", _scoped_key_env
+        ):
+            continue
         if (
             _profile_has_env_creds(pid, hermes_slug, profile, _scoped_key_env)
             or _auth_store_has_provider(pid) or _pool_usable(hermes_slug)):
@@ -833,6 +837,38 @@ def _lap_builtin_rows(b: _PickerBuild, data: dict, user_providers: dict) -> None
             hermes_id, display_name, b.current_provider in (hermes_id, mdev_id), model_ids, "built-in")
 
 
+def _profile_auth_env_vars(profile) -> set[str]:
+    """Credential env vars declared by a profile, excluding endpoint configuration."""
+    endpoint_var = str(profile.base_url_env_var or "").strip()
+    return {
+        str(env_var).strip()
+        for env_var in (profile.env_vars or ())
+        if str(env_var).strip() and str(env_var).strip() != endpoint_var
+    }
+
+
+def _regional_profile_is_distinctly_configured(
+    profile, current_provider: str, read_env,
+) -> bool:
+    """Hide a regional -cn twin lit only by credentials shared with its sibling.
+
+    Regional profiles may deliberately accept the non-regional credential as a fallback.
+    That fallback must not make both picker rows appear; a dedicated regional credential,
+    explicit selection, or a profile without a sibling keeps the row visible.
+    """
+    if not profile.name.endswith("-cn") or profile.name == current_provider:
+        return True
+    from providers import get_provider_profile
+
+    sibling = get_provider_profile(profile.name[:-3])
+    if sibling is None:
+        return True
+    profile_vars = _profile_auth_env_vars(profile)
+    sibling_vars = _profile_auth_env_vars(sibling)
+    lit = {env_var for env_var in profile_vars if read_env(env_var)}
+    return not (lit and lit <= sibling_vars < profile_vars)
+
+
 def _profile_has_creds(b: _PickerBuild, pid: str, hermes_slug: str, profile) -> bool:
     """Profile credential ladder: env/SDK, external-process executable, auth store, pool,
     anthropic's external credential files."""
@@ -888,11 +924,15 @@ def _profile_has_creds(b: _PickerBuild, pid: str, hermes_slug: str, profile) -> 
 
 def _lap_profile_rows(b: _PickerBuild, data: dict, user_providers: dict) -> None:
     """Section 2: registered provider profiles not already emitted by models.dev-backed rows."""
-    from hermes_cli.model_switch import _declared_model_ids
+    from hermes_cli.model_switch import _declared_model_ids, _scoped_key_env
 
     for profile in list_providers():
         pid = hermes_slug = profile.name
         if _skip(b.seen_slugs, b.excluded, pid):
+            continue
+        if not _regional_profile_is_distinctly_configured(
+            profile, b.current_provider, _scoped_key_env
+        ):
             continue
         if not _profile_has_creds(b, pid, hermes_slug, profile):
             continue
@@ -913,7 +953,7 @@ def _lap_profile_rows(b: _PickerBuild, data: dict, user_providers: dict) -> None
         else:
             model_ids = _live_or_curated_ids(hermes_slug, b.curated, hermes_slug, pid,
                                              non_blocking=b.non_blocking_catalogs)
-        # A providers.<overlay>.models block extends the row exactly as it does for built-in rows
+        # A providers.<profile>.models block extends the row exactly as it does for built-in rows
         # (section 1); section 3 never emits it because this row owns the slug (#27989).
         configured = user_providers.get(hermes_slug) or user_providers.get(pid) if isinstance(user_providers, dict) else None
         if isinstance(configured, dict):

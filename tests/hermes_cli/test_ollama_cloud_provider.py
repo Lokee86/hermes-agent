@@ -228,7 +228,7 @@ class TestOllamaCloudModelsDev:
 class TestOllamaCloudProvidersNew:
 
     def test_alias_resolves(self):
-        from hermes_cli.providers import normalize_provider as np
+        from providers import normalize_provider as np
         assert np("ollama") == "custom"  # bare "ollama" = local
         assert np("ollama-cloud") == "ollama-cloud"
 

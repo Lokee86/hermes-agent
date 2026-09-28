@@ -6,11 +6,11 @@ import logging
 from typing import Any, Dict, List, Optional, Tuple
 
 from providers import (
-    ResolvedProvider,
+    ResolvedProvider as _ResolvedProvider,
     custom_provider_aliases as _custom_provider_aliases,
     custom_provider_slug as _custom_provider_slug,
-    get_provider_profile,
-    normalize_provider,
+    get_provider_profile as _get_provider_profile,
+    normalize_provider as _normalize_provider,
 )
 from utils import base_url_host_matches, base_url_hostname
 
@@ -30,7 +30,7 @@ TRANSPORT_TO_API_MODE: Dict[str, str] = {
 def is_actual_route(provider: str = "", base_url: str = "") -> bool:
     """Identify Actual by provider/alias or its hosted endpoint, including custom routes."""
     return (
-        normalize_provider(provider or "") == "actual"
+        _normalize_provider(provider or "") == "actual"
         or base_url_hostname(base_url) == "api.actual.inc"
     )
 
@@ -45,10 +45,10 @@ def _models_dev_info(canonical: str, allow_network: bool = True):
         return None
 
 
-def _profile_resolved_provider(name: str, mdev_info=None, *, source: str = "plugin-profile") -> Optional[ResolvedProvider]:
+def _profile_resolved_provider(name: str, mdev_info=None, *, source: str = "plugin-profile") -> Optional[_ResolvedProvider]:
     """Project a registered ProviderProfile into the canonical resolved-provider value."""
     try:
-        profile = get_provider_profile(name)
+        profile = _get_provider_profile(name)
     except Exception:
         return None
     if profile is None:
@@ -73,7 +73,7 @@ def _profile_resolved_provider(name: str, mdev_info=None, *, source: str = "plug
         if profile.is_routing_aggregator is not None
         else profile.is_aggregator
     )
-    return ResolvedProvider(
+    return _ResolvedProvider(
         id=profile.name,
         display_name=profile.display_name or getattr(mdev_info, "name", "") or profile.name or name,
         api_mode=(profile.api_mode or "chat_completions").strip(),
@@ -87,9 +87,9 @@ def _profile_resolved_provider(name: str, mdev_info=None, *, source: str = "plug
     )
 
 
-def _models_dev_resolved_provider(canonical: str, mdev_info) -> ResolvedProvider:
+def _models_dev_resolved_provider(canonical: str, mdev_info) -> _ResolvedProvider:
     """Project a models.dev-only provider into the canonical resolved-provider value."""
-    return ResolvedProvider(
+    return _ResolvedProvider(
         id=canonical,
         display_name=mdev_info.name or canonical,
         api_mode="chat_completions",
@@ -100,9 +100,9 @@ def _models_dev_resolved_provider(canonical: str, mdev_info) -> ResolvedProvider
     )
 
 
-def get_provider(name: str, *, allow_network: bool = True) -> Optional[ResolvedProvider]:
+def get_provider(name: str, *, allow_network: bool = True) -> Optional[_ResolvedProvider]:
     """Resolve a built-in/profile provider without owning provider identity declarations."""
-    canonical = normalize_provider(name)
+    canonical = _normalize_provider(name)
     mdev_info = _models_dev_info(canonical, allow_network)
     resolved = _profile_resolved_provider(
         canonical,
@@ -128,7 +128,7 @@ def get_provider(name: str, *, allow_network: bool = True) -> Optional[ResolvedP
     return None
 
 
-def _plugin_profile_pdef(name: str) -> Optional[ResolvedProvider]:
+def _plugin_profile_pdef(name: str) -> Optional[_ResolvedProvider]:
     """Resolve a registered profile directly for the final full-resolution rung."""
     return _profile_resolved_provider(name)
 
@@ -240,10 +240,10 @@ def determine_api_mode(provider: str, base_url: str = "", model: str = "") -> st
 
 # -- Provider from user config ------------------------------------------------
 
-def _user_pdef(pid: str, name: str, base_url: str, key_env: str, transport: str = "openai_chat") -> ResolvedProvider:
+def _user_pdef(pid: str, name: str, base_url: str, key_env: str, transport: str = "openai_chat") -> _ResolvedProvider:
     """Canonical resolved-provider value shared by configured provider entry shapes."""
     api_mode = TRANSPORT_TO_API_MODE.get(transport, transport or "chat_completions")
-    return ResolvedProvider(
+    return _ResolvedProvider(
         id=pid,
         display_name=name,
         api_mode=api_mode,
@@ -256,7 +256,7 @@ def _user_pdef(pid: str, name: str, base_url: str, key_env: str, transport: str 
     )
 
 
-def resolve_user_provider(name: str, user_config: Dict[str, Any]) -> Optional[ResolvedProvider]:
+def resolve_user_provider(name: str, user_config: Dict[str, Any]) -> Optional[_ResolvedProvider]:
     """Resolve a provider from the user's config.yaml ``providers:`` section."""
     entry = user_config.get(name) if isinstance(user_config, dict) and user_config else None
     if not isinstance(entry, dict):
@@ -267,14 +267,14 @@ def resolve_user_provider(name: str, user_config: Dict[str, Any]) -> Optional[Re
                       entry.get("transport", "openai_chat") or "openai_chat")
 
 
-def resolve_custom_provider(name: str, custom_providers: Optional[List[Dict[str, Any]]]) -> Optional[ResolvedProvider]:
+def resolve_custom_provider(name: str, custom_providers: Optional[List[Dict[str, Any]]]) -> Optional[_ResolvedProvider]:
     """Resolve a provider from the user's config.yaml ``custom_providers`` list. A stored bare
     ``"custom"`` (corrupt state from a prior model-switch bug) falls back to the first valid entry
     so existing configs self-heal."""
     requested = (name or "").strip().lower()
     if not requested or not custom_providers or not isinstance(custom_providers, list):
         return None
-    first_valid: Optional[ResolvedProvider] = None
+    first_valid: Optional[_ResolvedProvider] = None
     # If the stored provider is the bare string "custom" (corrupt state from a prior model-switch bug), fall
     # back to the first custom provider entry so existing configs self-heal. (GH #17478)
     for entry in custom_providers:
@@ -313,7 +313,7 @@ def _has_staged_local_models() -> bool:
         return False
 
 
-def _llamacpp_pdef() -> Optional[ResolvedProvider]:
+def _llamacpp_pdef() -> Optional[_ResolvedProvider]:
     """The llamacpp aliases are a real provider whenever the managed server (or a detected external
     one) resolves — reachability is the credential — OR a model is staged for the runtime to serve.
     The picker's Local row is built from staged GGUFs and is deliberately offline-first (selection
@@ -328,7 +328,7 @@ def _llamacpp_pdef() -> Optional[ResolvedProvider]:
         endpoint = None
     if not endpoint and not _has_staged_local_models():
         return None
-    return ResolvedProvider(
+    return _ResolvedProvider(
         id=LLAMACPP_PROVIDER_ID,
         display_name="Local",
         api_mode="chat_completions",
@@ -339,13 +339,13 @@ def _llamacpp_pdef() -> Optional[ResolvedProvider]:
 
 
 def resolve_provider_full(name: str, user_providers: Optional[Dict[str, Any]] = None,
-                          custom_providers: Optional[List[Dict[str, Any]]] = None) -> Optional[ResolvedProvider]:
+                          custom_providers: Optional[List[Dict[str, Any]]] = None) -> Optional[_ResolvedProvider]:
     """Full resolution chain: user ``providers.<raw name>`` -> canonical provider profile/models.dev
     -> user providers (canonical, then raw) -> ``custom_providers`` ->
     managed llamacpp -> models.dev directly. User-defined ``providers.<name>`` is tried FIRST on
     the raw (pre-alias) name: a configured ``providers.openai`` pointing at api.openai.com must not
     be hijacked by the legacy "openai" -> "openrouter" alias."""
-    canonical = normalize_provider(name)
+    canonical = _normalize_provider(name)
     raw = name.strip().lower()
     if user_providers:
         user_pdef = resolve_user_provider(raw, user_providers)

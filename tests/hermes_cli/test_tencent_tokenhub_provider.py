@@ -48,7 +48,7 @@ class TestTencentTokenhubAliases:
         assert normalize_provider("tencentmaas") == "tencent-tokenhub"
 
     def test_normalize_provider_providers_py(self):
-        from hermes_cli.providers import normalize_provider
+        from providers import normalize_provider
         assert normalize_provider("tencent") == "tencent-tokenhub"
         assert normalize_provider("tokenhub") == "tencent-tokenhub"
         assert normalize_provider("tencent-cloud") == "tencent-tokenhub"
