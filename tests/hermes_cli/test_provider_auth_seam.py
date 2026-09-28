@@ -140,7 +140,10 @@ def test_oauth_plugin_owns_every_auth_action(tmp_path, install_provider, capsys,
     from hermes_cli.auth_commands import auth_command
 
     assert auth_mod.resolve_provider("fake-auth") == "fake-auth"
-    assert auth_mod.PROVIDER_REGISTRY["fake-auth"].auth_type == "oauth_external"
+    from hermes_cli.provider_auth import get_provider_config
+    assert get_provider_config("fake-auth").auth_type == "oauth_external"
+    assert auth_mod.get_auth_status("fake-auth")["configured"] is True
+    assert auth_mod.get_auth_status("fake-auth")["logged_in"] is False
 
     auth_command(_parse_auth_args(argv))
 

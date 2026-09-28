@@ -124,8 +124,12 @@ AUTH_AUTO_DETECT_ORDER: tuple[str, ...] = (
     "azure-foundry",
 )
 
-_GENERIC_AUTO_DETECT_EXCLUDED = frozenset({"lmstudio", "openrouter"})
-
+_GENERIC_AUTO_DETECT_EXCLUDED = frozenset({"copilot", "lmstudio", "openrouter"})
+AUTH_COMMAND_EXCLUDED_PROVIDER_IDS = frozenset({"custom", "moa"})
+CORE_MANAGED_AUTH_PROVIDER_IDS = frozenset({
+    "nous", "openai-codex", "xai-oauth", "qwen-oauth", "minimax-oauth",
+    "copilot", "copilot-acp", "bedrock", "vertex", "moa",
+})
 
 def _policy_extra(profile: ProviderProfile, policy: _AuthPolicy) -> dict[str, Any]:
     extra = dict(policy.extra)

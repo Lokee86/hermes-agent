@@ -21,10 +21,10 @@ def test_bundled_profiles_have_complete_declarations():
 
 
 def test_api_key_profile_env_contract_matches_auth_projection():
-    from hermes_cli.auth import PROVIDER_REGISTRY
+    from hermes_cli.provider_auth import get_provider_config
 
     for profile in providers.list_providers():
-        config = PROVIDER_REGISTRY.get(profile.name)
+        config = get_provider_config(profile.name)
         if config is None or profile.auth_type != "api_key" or config.auth_type != "api_key":
             continue
         assert tuple(profile.env_vars) == tuple(config.api_key_env_vars or ()), profile.name
@@ -32,8 +32,8 @@ def test_api_key_profile_env_contract_matches_auth_projection():
 
 
 def test_url_suffix_does_not_define_env_var_role(monkeypatch):
+    import hermes_cli.provider_auth as provider_auth
     import hermes_cli.providers as cli_providers
-    from hermes_cli.auth_plugin_providers import _api_key_env_fields
 
     profile = ProviderProfile(
         name="declaration-probe",
@@ -44,7 +44,11 @@ def test_url_suffix_does_not_define_env_var_role(monkeypatch):
         base_url_env_var="ENDPOINT_OVERRIDE",
     )
 
-    assert _api_key_env_fields(profile) == (("CREDENTIAL_URL",), "ENDPOINT_OVERRIDE")
+    monkeypatch.setattr(provider_auth, "get_provider_profile", lambda _name: profile)
+    config = provider_auth.get_provider_config("declaration-probe")
+    assert config is not None
+    assert config.api_key_env_vars == ("CREDENTIAL_URL",)
+    assert config.base_url_env_var == "ENDPOINT_OVERRIDE"
 
     monkeypatch.setattr(cli_providers, "_get_provider_profile", lambda _name: profile)
     resolved = cli_providers._profile_resolved_provider("declaration-probe")

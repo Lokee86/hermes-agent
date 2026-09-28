@@ -984,7 +984,8 @@ class TestDeepInfraProviderProfile:
         # Alias resolves to the same profile.
         assert get_provider_profile("deep-infra") is profile
         assert resolve_provider("deep-infra") == "deepinfra"
-        assert PROVIDER_REGISTRY["deepinfra"].inference_base_url == profile.base_url
+        from hermes_cli.provider_auth import get_provider_config
+        assert get_provider_config("deepinfra").inference_base_url == profile.base_url
         assert any(entry.slug == "deepinfra" for entry in CANONICAL_PROVIDERS)
         assert OPTIONAL_ENV_VARS["DEEPINFRA_API_KEY"]["password"] is True
         assert OPTIONAL_ENV_VARS["DEEPINFRA_BASE_URL"]["password"] is False

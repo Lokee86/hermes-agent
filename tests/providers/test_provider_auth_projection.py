@@ -107,7 +107,7 @@ def test_auto_detect_order_is_policy_not_provider_declaration():
         and config.api_key_env_vars
     ]
     assert [provider_id for provider_id in detected if provider_id in AUTH_AUTO_DETECT_ORDER] == legacy_detectable
-    assert "openrouter" not in detected
+    assert {"copilot", "lmstudio", "openrouter"}.isdisjoint(detected)
 
 
 def _run_with_home(tmp_path: Path, plugin_dir_name: str, source: str, probe: str) -> dict:

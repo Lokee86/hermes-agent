@@ -1,6 +1,6 @@
 """Multi-provider authentication system for Hermes Agent.
 
-- ``ProviderConfig`` / ``PROVIDER_REGISTRY`` describe every known inference provider.
+- Provider auth configuration is projected live from canonical provider profiles.
 - The auth store (``~/.hermes/auth.json``) holds per-provider state, the credential pool and
   suppression markers; ``_auth_store_lock`` / ``_load_auth_store`` / ``_save_auth_store`` are the
   only I/O primitives (cross-process flock, atomic 0o600 writes).
@@ -30,7 +30,12 @@ from typing import Any, Callable, Dict, FrozenSet, Iterable, List, Optional, Tup
 from urllib.parse import urlparse
 
 from hermes_constants import OPENROUTER_BASE_URL, hermes_home_key, secure_parent_dir
-from hermes_cli.provider_auth import ProviderConfig
+from hermes_cli.provider_auth import (
+    AUTH_COMMAND_EXCLUDED_PROVIDER_IDS,
+    ProviderConfig,
+    get_provider_config,
+    iter_auto_detect_provider_configs,
+)
 from agent.credential_persistence import sanitize_borrowed_credential_payload
 from utils import atomic_json_write, env_float, file_signature, is_truthy_value  # noqa: F401  (env_float: agent.credential_pool reads auth_mod.env_float)
 from hermes_cli.auth_zai_kimi import (  # noqa: F401  re-exported
@@ -143,7 +148,7 @@ def normalize_actual_base_url(base_url: str) -> str:
     return url
 
 
-# ── Provider Registry ───────────────────────────────────────────────────────────────────────────────
+# ── Legacy registry surface (deleted after Step 6 consumer migration) ─────────────────────────────
 
 def _api_key_provider(
     id: str, name: str, inference_base_url: str, api_key_env_vars: tuple,
@@ -154,9 +159,8 @@ def _api_key_provider(
         api_key_env_vars=api_key_env_vars, base_url_env_var=base_url_env_var)
 
 
-# Registry rows in priority order (resolve_provider() scans api_key rows in this order). A tuple
-# row is ``_api_key_provider(id, name, inference_base_url, api_key_env_vars[, base_url_env_var
-# [, auth_type]])``; OAuth / bespoke rows are full ``ProviderConfig`` objects.
+# Legacy rows retained only for not-yet-migrated consumers outside the auth subsystem.
+# Auth resolution below must use the live projection in hermes_cli.provider_auth.
 _REGISTRY_ROWS: Tuple[Any, ...] = (
     ProviderConfig(
         "nous", "Nous Portal", "oauth_device_code", portal_base_url=DEFAULT_NOUS_PORTAL_URL,
@@ -235,34 +239,24 @@ _REGISTRY_ROWS: Tuple[Any, ...] = (
 PROVIDER_REGISTRY: Dict[str, ProviderConfig] = {
     p.id: p for p in (r if isinstance(r, ProviderConfig) else _api_key_provider(*r) for r in _REGISTRY_ROWS)
 }
-# The rows above, before any plugin touches the dict (a user plugin may override these; #48450).
 BUILTIN_PROVIDER_IDS = frozenset(PROVIDER_REGISTRY)
 
-# ``hermes_cli.config`` discovers model-provider plugins while importing, and a plugin may read this
-# module's registry during that discovery. Keep the import below ProviderConfig / PROVIDER_REGISTRY so
-# a plugin never observes a partially initialized auth module (CONTRACT: during discovery a plugin may
-# rely only on ``ProviderConfig`` and ``PROVIDER_REGISTRY`` from here — nothing defined below).
+# Import order remains below the legacy declarations until Step 6 migrates their external consumers.
 from hermes_cli.config import (  # noqa: E402
     atomic_config_write, get_hermes_home, get_config_path, read_raw_config, require_readable_config_before_write)
 
-# Plugin profiles (plugins/model-providers/<name>/) are mirrored into PROVIDER_REGISTRY with the
-# auth_type they declare; the mirror lives in the sibling so it can be re-run after discovery.
-from hermes_cli.auth_plugin_providers import (  # noqa: E402
-    get_plugin_oauth_auth_status, registry_lookup as _registry_lookup, sync_plugin_provider_registry)
-
-sync_plugin_provider_registry()
+from hermes_cli.auth_plugin_providers import get_plugin_oauth_auth_status  # noqa: E402
 
 
 def get_anthropic_key() -> str:
     """First usable Anthropic credential (``.env`` preferred over a stale shell export), or ``""``.
 
-    Order mirrors ``PROVIDER_REGISTRY["anthropic"].api_key_env_vars``.
-
-    Checks both the ``.env`` file and the process environment, preferring ``~/.hermes/.env`` so a deliberate
-    key rotation isn't shadowed by a stale shell export (matches the api-key resolution path — see #20591).
+    Checks both the ``.env`` file and the process environment, preferring ``~/.hermes/.env``.
     """
     from hermes_cli.config import get_env_value_prefer_dotenv
-    env_vars = PROVIDER_REGISTRY["anthropic"].api_key_env_vars
+
+    config = get_provider_config("anthropic")
+    env_vars = config.api_key_env_vars if config is not None else ()
     return next((v for v in (get_env_value_prefer_dotenv(var) or "" for var in env_vars) if v), "")
 
 
@@ -842,13 +836,18 @@ def mark_provider_active_if_unset(provider_id: str) -> None:
 
 def is_known_auth_provider(provider_id: str) -> bool:
     normalized = (provider_id or "").strip().lower()
-    return _registry_lookup(normalized) is not None or normalized in SERVICE_PROVIDER_NAMES
+    config = get_provider_config(normalized)
+    return (
+        (config is not None and config.id not in AUTH_COMMAND_EXCLUDED_PROVIDER_IDS)
+        or normalized in SERVICE_PROVIDER_NAMES
+    )
 
 
 def get_auth_provider_display_name(provider_id: str) -> str:
     normalized = (provider_id or "").strip().lower()
-    if normalized in PROVIDER_REGISTRY:
-        return PROVIDER_REGISTRY[normalized].name
+    config = get_provider_config(normalized)
+    if config is not None:
+        return config.name
     return SERVICE_PROVIDER_NAMES.get(normalized, provider_id)
 
 
@@ -1208,15 +1207,11 @@ def _env_secret(name: str) -> bool:
 def _explicit_env_credentials_present(normalized: str) -> bool:
     """True when the user has pasted an explicit credential env var for *normalized*.
 
-    Falls back to the models.dev provider metadata for non-registry providers such as
-    openrouter. AWS SDK providers are checked via explicit env vars only — NOT boto3's chain, so
-    ambient EC2 IMDS / SSO profiles never auto-surface."""
-    pconfig = PROVIDER_REGISTRY.get(normalized)
+    Uses the live provider projection. AWS SDK providers are checked via explicit env vars only —
+    NOT boto3's chain, so ambient EC2 IMDS / SSO profiles never auto-surface."""
+    pconfig = get_provider_config(normalized)
     if pconfig is None:
-        from hermes_cli.providers import get_provider
-        pconfig = get_provider(normalized)
-        if not pconfig:
-            return False
+        return False
     if pconfig.auth_type == "api_key":
         return any(_env_secret(v) for v in pconfig.api_key_env_vars if v not in _IMPLICIT_ENV_VARS)
     if pconfig.auth_type == "aws_sdk":
@@ -1469,7 +1464,7 @@ def _logged_in_oauth_active_provider(*, skip_free_tier: bool = False) -> Optiona
             from hermes_cli.anon_auth import guest_enabled, has_guest
             if has_guest() and (skip_free_tier or not guest_enabled()):
                 return None  # the free tier is off (or being discounted), so a guest is not a login
-        if _maybe and _maybe in PROVIDER_REGISTRY and get_auth_status(_maybe).get("logged_in"):
+        if _maybe and get_provider_config(_maybe) is not None and get_auth_status(_maybe).get("logged_in"):
             return _maybe
     except Exception as e:
         logger.debug("Could not pre-read active auth provider: %s", e)
@@ -1495,9 +1490,7 @@ def _config_model_provider() -> Tuple[Any, Optional[str]]:
         provider = _plugin_aliases().get(provider, provider)
         if provider == "custom" or provider.startswith("custom:"):
             return model_cfg, "custom"
-        # openrouter is absent from PROVIDER_REGISTRY on purpose, so it needs its own rung (#109397);
-        # a non-openrouter base_url under it is a deliberate mirror (#10622), not a contradiction.
-        if provider == "openrouter" or provider in PROVIDER_REGISTRY:
+        if get_provider_config(provider) is not None:
             return model_cfg, provider
         # Bare ``providers:`` name (the ``custom:<name>`` intent spelled without the prefix); reuse the
         # runtime's own lookup so disabled / endpoint-less entries stay excluded.
@@ -1518,33 +1511,19 @@ def _config_model_provider() -> Tuple[Any, Optional[str]]:
         return None, None
 
 
-# API-key providers never auto-selected from env: GitHub tokens are commonly present for repo/tool
-# access and must not hijack inference; LM Studio is a local server whose availability isn't
-# implied by LM_API_KEY (may be offline; no-auth setup uses a placeholder). Both need an explicit
-# choice.
-_NO_AUTO_DETECT_PROVIDERS = frozenset({"copilot", "lmstudio"})
-
-
 def _env_key_auto_detected(
     scoped_key_env: Callable[[str], str], oauth_active: Optional[str]) -> Optional[str]:
-    """First registry api_key provider (registry order) with a usable env key, warning when it
-    preempts a logged-in OAuth provider so a stale key in ~/.hermes/.env never switches silently."""
-    for pid, pconfig in PROVIDER_REGISTRY.items():
-        if pconfig.auth_type != "api_key" or pid in _NO_AUTO_DETECT_PROVIDERS:
-            continue
+    """First policy-ordered API-key provider with a usable env key."""
+    for pconfig in iter_auto_detect_provider_configs():
         for env_var in pconfig.api_key_env_vars:
             if has_usable_secret(scoped_key_env(env_var)):
-                if oauth_active and oauth_active != pid:
+                if oauth_active and oauth_active != pconfig.id:
                     logger.warning(
-                        # An exported API key now wins over a logged-in OAuth provider (the #29285 fix).
-                        # Surface that so a user who deliberately uses OAuth but has a stale key in
-                        # ~/.hermes/.env isn't silently switched without knowing why.
                         "Provider resolved to %r via %s, preempting your "
                         "logged-in OAuth provider %r. If you meant to use the "
-                        "OAuth login, unset %s or set `model.provider` "
-                        "explicitly.",
-                        pid, env_var, oauth_active, env_var)
-                return pid
+                        "OAuth login, unset %s or set `model.provider` explicitly.",
+                        pconfig.id, env_var, oauth_active, env_var)
+                return pconfig.id
     return None
 
 
@@ -1572,7 +1551,7 @@ def resolve_provider(
     normalized = (requested or "auto").strip().lower()
     normalized = _plugin_aliases().get(normalized, normalized)
 
-    if normalized in ("openrouter", "custom") or _registry_lookup(normalized) is not None:
+    if normalized == "custom" or get_provider_config(normalized) is not None:
         return normalized
     if normalized != "auto":
         hint = _get_config_hint_for_unknown_provider(normalized)
@@ -1985,7 +1964,7 @@ def _provider_env_base_url(pconfig: ProviderConfig) -> str:
 
 def get_api_key_provider_status(provider_id: str) -> Dict[str, Any]:
     """Status snapshot for API-key providers (z.ai, Kimi, MiniMax)."""
-    pconfig = _registry_lookup(provider_id)
+    pconfig = get_provider_config(provider_id)
     if not pconfig or pconfig.auth_type != "api_key":
         return {"configured": False}
     api_key, key_source = _resolve_api_key_provider_secret(provider_id, pconfig)
@@ -2080,7 +2059,7 @@ def get_external_process_provider_status(provider_id: str) -> Dict[str, Any]:
 
     ``configured``/``logged_in`` are structural (executable resolves or TCP endpoint set): the
     subprocess owns real auth. ``auth_verified``/``auth_source`` carry positive evidence only."""
-    pconfig = _registry_lookup(provider_id)
+    pconfig = get_provider_config(provider_id)
     if not pconfig or pconfig.auth_type != "external_process":
         return {"configured": False}
     command, args, base_url, resolved_command, _ = _external_process_spec(pconfig)
@@ -2112,7 +2091,7 @@ def get_auth_status(provider_id: Optional[str] = None) -> Dict[str, Any]:
     status_fn_name = _BESPOKE_STATUS_FUNCTIONS.get(target)
     if status_fn_name:
         return globals()[status_fn_name]()
-    pconfig = _registry_lookup(target)
+    pconfig = get_provider_config(target)
     if pconfig and pconfig.auth_type in _STATUS_BY_AUTH_TYPE:
         return globals()[_STATUS_BY_AUTH_TYPE[pconfig.auth_type]](target)
     return {"logged_in": False}
@@ -2215,7 +2194,7 @@ _API_KEY_BASE_URL_RESOLVERS: Dict[str, Callable[[str, str, str], str]] = {
 
 def resolve_api_key_provider_credentials(provider_id: str) -> Dict[str, Any]:
     """Resolve API key and base URL for an API-key provider."""
-    pconfig = _registry_lookup(provider_id)
+    pconfig = get_provider_config(provider_id)
     if not pconfig or pconfig.auth_type != "api_key":
         raise AuthError(
             f"Provider '{provider_id}' is not an API-key provider.",
@@ -2246,7 +2225,7 @@ def resolve_api_key_provider_credentials(provider_id: str) -> Dict[str, Any]:
 
 def resolve_external_process_provider_credentials(provider_id: str) -> Dict[str, Any]:
     """Resolve runtime details for local subprocess-backed providers."""
-    pconfig = _registry_lookup(provider_id)
+    pconfig = get_provider_config(provider_id)
     if not pconfig or pconfig.auth_type != "external_process":
         raise AuthError(
             f"Provider '{provider_id}' is not an external-process provider.",
@@ -2330,9 +2309,13 @@ def _get_config_provider() -> Optional[str]:
 
 
 def _should_reset_config_provider_on_logout(provider_id: Optional[str]) -> bool:
-    """True when logout should reset model.provider (a registry provider config.yaml selects)."""
+    """True when logout should reset model.provider for an auth-capable provider."""
     normalized = (provider_id or "").strip().lower()
-    return normalized in PROVIDER_REGISTRY and _get_config_provider() == normalized
+    return (
+        get_provider_config(normalized) is not None
+        and normalized not in AUTH_COMMAND_EXCLUDED_PROVIDER_IDS
+        and _get_config_provider() == normalized
+    )
 
 
 def _logout_default_provider_from_config() -> Optional[str]:
