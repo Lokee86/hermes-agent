@@ -612,6 +612,9 @@ class TestStopProfileGateway:
     def test_stop_profile_gateway_keeps_pid_file_when_process_still_running(self, monkeypatch):
         calls = {"kill": 0, "alive_probes": 0, "remove": 0, "reap_calls": 0}
 
+        # This regression covers the POSIX SIGTERM/poll path. Windows uses the
+        # marker-drain/force-stop path exercised by the dedicated tests above.
+        monkeypatch.setattr(gateway, "is_windows", lambda: False)
         monkeypatch.setattr("gateway.status.get_running_pid", lambda: 12345)
         # Post-#21561: the stop loop sends one SIGTERM via ``os.kill`` then
         # polls liveness via ``gateway.status._pid_exists`` (safe on
