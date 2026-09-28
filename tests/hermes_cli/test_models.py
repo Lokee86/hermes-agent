@@ -1,5 +1,7 @@
 """Tests for the hermes_cli models module."""
 
+from models import ModelRef
+
 import json
 import pytest
 import time
@@ -1369,8 +1371,7 @@ class TestLocalOllamaModelDiscovery:
         base_url = "https://ollama.internal/v1"
         original_aliases = dict(model_switch.DIRECT_ALIASES)
         model_switch.DIRECT_ALIASES.clear()
-        model_switch.DIRECT_ALIASES["remote-qwen"] = model_switch.DirectAlias(
-            model="qwen3:1.7b", provider="ollama", base_url=base_url
+        model_switch.DIRECT_ALIASES["remote-qwen"] = model_switch.DirectAlias(ModelRef(provider="custom:ollama", model="qwen3:1.7b"), base_url=base_url
         )
         try:
             with patch.object(model_switch, "get_model_info", return_value=None), patch(
@@ -1402,8 +1403,7 @@ class TestLocalOllamaModelDiscovery:
 
         original_aliases = dict(model_switch.DIRECT_ALIASES)
         model_switch.DIRECT_ALIASES.clear()
-        model_switch.DIRECT_ALIASES["other-qwen"] = model_switch.DirectAlias(
-            model="qwen3:1.7b", provider="ollama", base_url="https://other.internal/v1"
+        model_switch.DIRECT_ALIASES["other-qwen"] = model_switch.DirectAlias(ModelRef(provider="custom:ollama", model="qwen3:1.7b"), base_url="https://other.internal/v1"
         )
         try:
             with patch.object(model_switch, "get_model_info", return_value=None), patch(

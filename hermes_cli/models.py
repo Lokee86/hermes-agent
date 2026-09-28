@@ -893,14 +893,14 @@ def _resolve_static_model_alias(
         return None
 
     def _match(provider: str) -> Optional[str]:
+        catalog = _PROVIDER_MODELS.get(provider, ())
         try:
-            return resolve_model_alias(
-                name_lower,
-                provider,
-                _PROVIDER_MODELS.get(provider, ()),
-            )
-        except AmbiguousModelAliasError:
-            return None
+            return resolve_model_alias(name_lower, provider, catalog)
+        except AmbiguousModelAliasError as exc:
+            # Alias matching belongs to the model domain; provider auto-selection still owns
+            # its historical deterministic choice among static candidates.
+            matched = {candidate.lower() for candidate in exc.candidates}
+            return next((model for model in catalog if model.lower() in matched), None)
 
     # Current provider first, then native vendors, then aggregators / borrow-list providers the user
     # is already on — so `sonnet` resolves to anthropic before any re-exposing provider.

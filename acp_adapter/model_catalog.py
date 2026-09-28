@@ -9,6 +9,9 @@ from typing import Callable
 
 from acp.schema import ModelInfo, SessionModelState
 
+from models import ModelRef, format_model_ref, parse_model_ref
+from providers import list_providers
+
 logger = logging.getLogger("acp_adapter.server")
 
 # Per-provider row cap (clients render all `availableModels` in one dropdown; mirrors the
@@ -127,30 +130,6 @@ def _empty_catalog_applies(
     )
 
 
-def _choice_provider(model_id: str) -> str:
-    """Provider prefix of an encoded choice id; longest configured ``custom:`` slug wins."""
-    parts = model_id.split(":")
-    if parts[:1] == ["custom"] and len(parts) > 1:
-        from hermes_cli.models import _configured_custom_provider_ids
-
-        lowered = model_id.lower()
-        for candidate in sorted(
-            (p for p in _configured_custom_provider_ids() if p.startswith("custom:")), key=len, reverse=True,
-        ):
-            if lowered.startswith(candidate + ":"):
-                return candidate
-        return "custom"
-    return parts[0]
-
-
-def encode_model_choice(provider: str | None, model: str | None) -> str:
-    """``provider:model`` so ACP clients keep provider context."""
-    raw_model = str(model or "").strip()
-    if not raw_model:
-        return ""
-    raw_provider = str(provider or "").strip().lower()
-    return f"{raw_provider}:{raw_model}" if raw_provider else raw_model
-
 
 @dataclass
 class _ModelCatalog:
@@ -178,8 +157,8 @@ class _ModelCatalog:
         return _semantic_provider(provider_id, self.normalize_provider)
 
     def add(self, provider_id: str, model_id: str, name: str, description: str) -> None:
-        choice_id = encode_model_choice(provider_id, model_id)
-        semantic_id = f"{self.semantic(provider_id)}:{model_id}"
+        choice_id = format_model_ref(ModelRef(provider_id, model_id))
+        semantic_id = format_model_ref(ModelRef(self.semantic(provider_id), model_id))
         if not choice_id or choice_id in self.seen_ids or semantic_id in self.seen_semantic_ids:
             return
         self.models.append(ModelInfo(model_id=choice_id, name=name, description=description))
@@ -285,16 +264,43 @@ def build_model_state(model: str, provider: str, base_url: str) -> SessionModelS
     cat.add_named_catalogs(named_catalogs, current_choice_provider)
     available_models = cat.models
 
+    known_choice_providers = {
+        str(profile.name or "").strip().lower()
+        for profile in list_providers()
+        if str(profile.name or "").strip()
+    }
+    known_choice_providers.update({
+        "custom",
+        "custom:ollama",
+        str(current_choice_provider or "").strip().lower(),
+        str(cat.current_choice_provider or "").strip().lower(),
+        *(str(slug or "").strip().lower() for slug, _label, _models in named_catalogs),
+    })
+    known_choice_providers.discard("")
+    named_custom_choice_providers = {
+        provider_id
+        for provider_id in known_choice_providers
+        if provider_id.startswith("custom:")
+    }
+
+    def choice_ref(choice_id: str) -> ModelRef:
+        return parse_model_ref(
+            choice_id,
+            "",
+            known_provider_ids=known_choice_providers,
+            named_custom_provider_ids=named_custom_choice_providers,
+        )
+
     def empty_applies(provider_id: str) -> bool:
         return _empty_catalog_applies(provider_id, cat.empty_authoritative, normalize_provider)
 
     if cat.empty_authoritative:
-        available_models = [m for m in available_models if not empty_applies(_choice_provider(m.model_id))]
+        available_models = [m for m in available_models if not empty_applies(choice_ref(m.model_id).provider)]
 
     current_is_empty = empty_applies(cat.current_choice_provider)
     if current_is_empty:
         available_models = [m for m in available_models if " • current" not in str(m.description or "")]
-    current_model_id = "" if current_is_empty else encode_model_choice(cat.current_choice_provider, model)
+    current_model_id = "" if current_is_empty else format_model_ref(ModelRef(cat.current_choice_provider, model))
     if current_model_id and current_model_id not in {item.model_id for item in available_models}:
         provider_name = provider_label(normalized_provider)
         available_models.insert(0, ModelInfo(

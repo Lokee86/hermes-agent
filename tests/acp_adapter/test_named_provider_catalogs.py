@@ -274,7 +274,7 @@ class TestModelStateIncludesNamedProviders:
         """The encoded choice id must resolve back to the named provider."""
         from models import parse_model_ref
 
-        choice_id = "custom:bedrock-mantle:openai.gpt-5.5"
+        choice_id = "custom:bedrock-mantle:openai/gpt-5.5:beta"
         cfg = {
             "providers": {
                 "bedrock-mantle": {
@@ -291,7 +291,7 @@ class TestModelStateIncludesNamedProviders:
                 named_custom_provider_ids={"custom:bedrock-mantle"},
             )
         assert ref.provider == "custom:bedrock-mantle"
-        assert ref.model == "openai.gpt-5.5"
+        assert ref.model == "openai/gpt-5.5:beta"
 
     def test_selector_choice_id_round_trips_colon_bearing_custom_identity(self):
         """Configured provider and model IDs may both contain colons."""

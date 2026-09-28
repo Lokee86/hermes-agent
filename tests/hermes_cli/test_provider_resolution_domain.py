@@ -59,6 +59,24 @@ def test_user_provider_resolution_uses_canonical_fields() -> None:
     assert resolved.source == "user-config"
 
 
+def test_user_provider_resolves_canonical_named_custom_identity() -> None:
+    resolved = resolve_user_provider(
+        "custom:ollama",
+        {
+            "ollama": {
+                "name": "Ollama",
+                "base_url": "https://ollama.internal/v1",
+                "key_env": "OLLAMA_API_KEY",
+            }
+        },
+    )
+
+    assert isinstance(resolved, ResolvedProvider)
+    assert resolved.id == "ollama"
+    assert resolved.display_name == "Ollama"
+    assert resolved.source == "user-config"
+
+
 def test_custom_provider_resolution_uses_canonical_fields() -> None:
     resolved = resolve_custom_provider(
         "custom:lab",

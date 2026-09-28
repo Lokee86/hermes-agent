@@ -20,6 +20,7 @@ from providers import (
 from models import (
     AmbiguousModelAliasError,
     MODEL_ALIASES,
+    ModelRef,
     parse_configured_provider_ref,
     parse_model_ref,
     resolve_declared_model_id,
@@ -150,18 +151,11 @@ def _check_hermes_model_warning(model_name: str) -> str:
 # models.dev catalog (Ollama Cloud, local servers). Checked BEFORE catalog
 # resolution; loaded from config.yaml ``model_aliases:`` / ``model.aliases``.
 
-class DirectAlias(NamedTuple):
-    """Exact model mapping that bypasses catalog resolution.
+@dataclass(frozen=True, slots=True)
+class DirectAlias:
+    """Exact model identity plus route/credential state for a configured alias."""
 
-    ``api_key`` / ``key_env`` carry the alias endpoint's OWN credential. Without them the switch
-    would keep the *default* provider's key, which 401s against the alias host and sends that
-    provider's secret to an unrelated third party. Both default so positional
-    ``DirectAlias(model, provider, base_url)`` keeps working.
-
-    See #83612.
-    """
-    model: str
-    provider: str
+    ref: ModelRef
     base_url: str
     api_key: str = ""
     key_env: str = ""
@@ -195,13 +189,33 @@ def _load_direct_aliases() -> dict[str, DirectAlias]:
         from hermes_cli.config import load_config
         cfg = load_config()
 
+        user_providers = cfg.get("providers") if isinstance(cfg.get("providers"), dict) else {}
+        custom_providers = cfg.get("custom_providers") if isinstance(cfg.get("custom_providers"), list) else []
+        known_ids, named_custom_ids = _model_ref_context(user_providers, custom_providers)
+        alias_provider_ids = known_ids | named_custom_ids
+
+        configured_provider_ids: dict[str, str] = {}
+        for provider_key, entry in user_providers.items():
+            if not isinstance(entry, dict):
+                continue
+            display_name = str(entry.get("name") or provider_key)
+            slug = custom_provider_slug(display_name, str(provider_key))
+            for alias in custom_provider_aliases(display_name, str(provider_key)):
+                configured_provider_ids[alias] = slug
+
+        def alias_ref(provider: Any, model: Any) -> ModelRef:
+            raw_provider = _clean(provider)
+            provider_id = configured_provider_ids.get(raw_provider.lower(), raw_provider)
+            return ModelRef(provider_id, model)
+
         user_aliases = cfg.get("model_aliases")
         if isinstance(user_aliases, dict):
             for name, entry in user_aliases.items():
                 if isinstance(entry, dict) and entry.get("model", ""):
                     merged[name.strip().lower()] = DirectAlias(
-                        model=entry.get("model", ""), provider=entry.get("provider", "custom"),
-                        base_url=entry.get("base_url", ""), api_key=_clean(entry.get("api_key", "")),
+                        ref=alias_ref(entry.get("provider", "custom"), entry.get("model", "")),
+                        base_url=entry.get("base_url", ""),
+                        api_key=_clean(entry.get("api_key", "")),
                         key_env=_clean(entry.get("key_env", "")))
 
         model_section = cfg.get("model", {})
@@ -216,15 +230,25 @@ def _load_direct_aliases() -> dict[str, DirectAlias]:
                     model = _clean(value.get("model"))
                     if model:
                         merged[key] = DirectAlias(
-                            model=model, provider=_clean(value.get("provider")) or current_provider or "custom",
+                            ref=alias_ref(
+                                _clean(value.get("provider")) or current_provider or "custom",
+                                model,
+                            ),
                             base_url=_clean(value.get("base_url", "")),
                             api_key=_clean(value.get("api_key", "")),
                             key_env=_clean(value.get("key_env", "")))
                 elif isinstance(value, str) and value.strip():
                     val = value.strip()
-                    provider, model = val.split("/", 1) if "/" in val else (current_provider, val)
+                    ref = parse_configured_provider_ref(val, alias_provider_ids)
+                    if ref is not None:
+                        raw_prefix = val.split("/", 1)[0].strip().lower()
+                        configured_id = configured_provider_ids.get(raw_prefix)
+                        if configured_id:
+                            ref = ModelRef(configured_id, ref.model)
                     merged[key] = DirectAlias(
-                        model=model.strip(), provider=provider.strip() or current_provider, base_url="")
+                        ref=ref or alias_ref(current_provider, val),
+                        base_url="",
+                    )
     except Exception:
         pass
     return merged
@@ -304,7 +328,7 @@ def direct_alias_runtime_request(alias: DirectAlias) -> tuple[str, Optional[str]
 
     See #28660.
     """
-    return ("custom" if alias.base_url else (alias.provider or "custom")), direct_alias_api_key(alias) or None
+    return ("custom" if alias.base_url else (alias.ref.provider or "custom")), direct_alias_api_key(alias) or None
 
 
 # Hosts where plaintext HTTP is not a downgrade — no network hop to intercept.
@@ -399,7 +423,7 @@ def resolve_startup_model_route(
         if explicit_provider:
             # An explicit --provider wins over the alias's own label; the alias contributes
             # model/base_url only.
-            return StartupModelRoute(model=direct.model, provider=explicit_provider, base_url=direct.base_url)
+            return StartupModelRoute(model=direct.ref.model, provider=explicit_provider, base_url=direct.base_url)
         # Same owner as the interactive /model and oneshot paths: credential for the alias HOST.
         # Resolve through the SAME owner the interactive /model and oneshot paths use: a URL-bearing alias
         # must resolve its credential for the alias HOST, never for its provider label — a label like
@@ -407,7 +431,7 @@ def resolve_startup_model_route(
         # put the live vendor token on the foreign wire (#28660).
         alias_provider, alias_key = direct_alias_runtime_request(direct)
         return StartupModelRoute(
-            model=direct.model, provider=alias_provider, base_url=direct.base_url, api_key=alias_key or "")
+            model=direct.ref.model, provider=alias_provider, base_url=direct.base_url, api_key=alias_key or "")
 
     if explicit_provider:
         return None
@@ -699,7 +723,10 @@ def resolve_alias(raw_input: str, current_provider: str, user_providers: Optiona
     _ensure_direct_aliases()
     direct = DIRECT_ALIASES.get(key)
     if direct is not None:
-        return (direct.provider, direct.model, key)
+        route_provider = _provider_identity(
+            direct.ref.provider, user_providers, custom_providers
+        )
+        return (route_provider, direct.ref.model, key)
 
     # Reverse lookup so full names ("kimi-k2.5") route through direct aliases instead of
     # falling through to the catalog/OpenRouter. Several aliases may expose one model id on
@@ -708,12 +735,15 @@ def resolve_alias(raw_input: str, current_provider: str, user_providers: Optiona
     reverse_fallback: Optional[tuple[str, str, str]] = None
     current_id = _provider_identity(current_provider, user_providers, custom_providers)
     for alias_name, da in DIRECT_ALIASES.items():
-        if da.model.lower() != key:
+        if da.ref.model.lower() != key:
             continue
-        if _provider_identity(da.provider, user_providers, custom_providers) == current_id:
-            return (da.provider, da.model, alias_name)
+        route_provider = _provider_identity(
+            da.ref.provider, user_providers, custom_providers
+        )
+        if route_provider == current_id:
+            return (route_provider, da.ref.model, alias_name)
         if reverse_fallback is None:
-            reverse_fallback = (da.provider, da.model, alias_name)
+            reverse_fallback = (route_provider, da.ref.model, alias_name)
     if reverse_fallback is not None:
         return reverse_fallback
 

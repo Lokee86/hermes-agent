@@ -251,11 +251,31 @@ def _user_pdef(pid: str, name: str, base_url: str, key_env: str, transport: str 
 
 
 def resolve_user_provider(name: str, user_config: Dict[str, Any]) -> Optional[_ResolvedProvider]:
-    """Resolve a provider from the user's config.yaml ``providers:`` section."""
-    entry = user_config.get(name) if isinstance(user_config, dict) and user_config else None
+    """Resolve a configured provider by stored key or canonical custom identity."""
+    if not isinstance(user_config, dict) or not user_config:
+        return None
+    requested = (name or "").strip().lower()
+    if not requested:
+        return None
+
+    entry = user_config.get(name)
+    provider_key = name
+    if not isinstance(entry, dict):
+        entry = user_config.get(requested)
+        provider_key = requested
+    if not isinstance(entry, dict):
+        entry = None
+        for stored_key, candidate in user_config.items():
+            if not isinstance(candidate, dict):
+                continue
+            key = str(stored_key or "").strip()
+            display_name = str(candidate.get("name") or key).strip()
+            if requested in _custom_provider_aliases(display_name, key):
+                provider_key, entry = key, candidate
+                break
     if not isinstance(entry, dict):
         return None
-    return _user_pdef(name, entry.get("name", "") or name,
+    return _user_pdef(provider_key, entry.get("name", "") or provider_key,
                       entry.get("api", "") or entry.get("url", "") or entry.get("base_url", "") or "",
                       entry.get("key_env") or entry.get("api_key_env") or "",
                       entry.get("transport", "openai_chat") or "openai_chat")

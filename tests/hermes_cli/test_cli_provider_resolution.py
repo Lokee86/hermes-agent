@@ -1,3 +1,5 @@
+
+from models import ModelRef
 import importlib
 import sys
 import types
@@ -213,9 +215,7 @@ def test_startup_alias_base_url_reaches_runtime_resolution(
         model_switch,
         "DIRECT_ALIASES",
         {
-            "myalias": model_switch.DirectAlias(
-                "my-model-id",
-                "custom",
+            "myalias": model_switch.DirectAlias(ModelRef("custom", "my-model-id"),
                 "http://alias.example:8000/v1",
                 api_key="not-needed",
             ),

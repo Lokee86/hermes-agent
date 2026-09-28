@@ -9,6 +9,7 @@ Covers:
 - /model tab completion for model aliases
 """
 
+from models import ModelRef
 from models import AmbiguousModelAliasError
 
 
@@ -73,8 +74,8 @@ class TestDirectAliases:
         aliases = _load_direct_aliases()
 
         assert "mymodel" in aliases
-        assert aliases["mymodel"].model == "custom-model:latest"
-        assert aliases["mymodel"].provider == "custom"
+        assert aliases["mymodel"].ref.model == "custom-model:latest"
+        assert aliases["mymodel"].ref.provider == "custom"
         assert aliases["mymodel"].base_url == "https://example.com/v1"
 
     def test_direct_alias_resolved_before_catalog(self, monkeypatch):
@@ -83,7 +84,7 @@ class TestDirectAliases:
         import hermes_cli.model_switch as ms
 
         test_aliases = {
-            "glm": DirectAlias("glm-4.7", "custom", "https://ollama.com/v1"),
+            "glm": DirectAlias(ModelRef("custom", "glm-4.7"), "https://ollama.com/v1"),
         }
         monkeypatch.setattr(ms, "DIRECT_ALIASES", test_aliases)
 
@@ -136,7 +137,7 @@ class TestResolveAliasEdgeCases:
         import hermes_cli.model_switch as ms
 
         test_aliases = {
-            "myalias": DirectAlias("my-model", "custom", "https://example.com"),
+            "myalias": DirectAlias(ModelRef("custom", "my-model"), "https://example.com"),
         }
         monkeypatch.setattr(ms, "DIRECT_ALIASES", test_aliases)
 
@@ -240,7 +241,7 @@ class TestSwitchModelDirectAliasOverride:
         import hermes_cli.model_switch as ms
 
         test_aliases = {
-            "qwen": DirectAlias("qwen3.5:397b", "custom", "https://ollama.com/v1"),
+            "qwen": DirectAlias(ModelRef("custom", "qwen3.5:397b"), "https://ollama.com/v1"),
         }
         monkeypatch.setattr(ms, "DIRECT_ALIASES", test_aliases)
 
@@ -268,7 +269,7 @@ class TestSwitchModelDirectAliasOverride:
         import hermes_cli.model_switch as ms
 
         test_aliases = {
-            "local": DirectAlias("local-model", "custom", "http://localhost:11434/v1"),
+            "local": DirectAlias(ModelRef("custom", "local-model"), "http://localhost:11434/v1"),
         }
         monkeypatch.setattr(ms, "DIRECT_ALIASES", test_aliases)
         monkeypatch.setattr(ms, "resolve_alias",
@@ -320,7 +321,7 @@ class TestSwitchModelDirectAliasOverride:
         from hermes_cli.model_switch import DirectAlias
 
         result = self._explicit_switch_to_provider_b(monkeypatch, {
-            "a-alias": DirectAlias("shared-model", "custom", "https://alias-host.example.com/v1",
+            "a-alias": DirectAlias(ModelRef("custom", "shared-model"), "https://alias-host.example.com/v1",
                                    api_key="sk-alias-host"),
         })
 
@@ -336,9 +337,9 @@ class TestSwitchModelDirectAliasOverride:
         from hermes_cli.model_switch import DirectAlias
 
         result = self._explicit_switch_to_provider_b(monkeypatch, {
-            "a-alias": DirectAlias("shared-model", "custom", "https://alias-host.example.com/v1",
+            "a-alias": DirectAlias(ModelRef("custom", "shared-model"), "https://alias-host.example.com/v1",
                                    api_key="sk-alias-host"),
-            "b-alias": DirectAlias("shared-model", "Provider-B", "https://api-b.example.com/v2"),
+            "b-alias": DirectAlias(ModelRef("Provider-B", "shared-model"), "https://api-b.example.com/v2"),
         })
 
         assert result.success, result.error_message
@@ -352,9 +353,9 @@ class TestSwitchModelDirectAliasOverride:
         from hermes_cli.model_switch import DirectAlias
 
         result = self._explicit_switch_to_provider_b(monkeypatch, {
-            "a-alias": DirectAlias("shared-model", "provider-a", "https://alias-host.example.com/v1",
+            "a-alias": DirectAlias(ModelRef("provider-a", "shared-model"), "https://alias-host.example.com/v1",
                                    api_key="sk-alias-host"),
-            "corp-alias": DirectAlias("shared-model", "corp-llm", "https://corp.example.com/v2",
+            "corp-alias": DirectAlias(ModelRef("corp-llm", "shared-model"), "https://corp.example.com/v2",
                                       api_key="sk-corp-alias"),
         }, explicit="corp-llm", extra_cfg=(
             "custom_providers:\n  - name: corp-llm\n"
@@ -382,9 +383,9 @@ class TestSwitchModelDirectAliasOverride:
             "custom_providers:\n  - name: corp-llm\n"
             "    base_url: https://corp.example.com/v1\n    api_key: sk-corp\n")
         monkeypatch.setattr(ms, "DIRECT_ALIASES", {
-            "a-alias": DirectAlias("shared-model", "provider-a", "https://alias-host.example.com/v1",
+            "a-alias": DirectAlias(ModelRef("provider-a", "shared-model"), "https://alias-host.example.com/v1",
                                    api_key="sk-alias-host"),
-            "corp-alias": DirectAlias("shared-model", "corp-llm", "https://corp.example.com/v2",
+            "corp-alias": DirectAlias(ModelRef("corp-llm", "shared-model"), "https://corp.example.com/v2",
                                       api_key="sk-corp-alias"),
         })
         monkeypatch.setattr("hermes_cli.models_validate.validate_requested_model",
