@@ -31,7 +31,6 @@ from hermes_cli.route_identity import normalize_route_base_url
 from hermes_cli.urllib_security import open_credentialed_url
 from hermes_cli.version_info import get_version_info
 from hermes_cli.models_catalog_static import (
-    CANONICAL_PROVIDERS,
     OPENROUTER_MODELS,
     PREFERRED_SILENT_DEFAULT_MODEL,
     VERCEL_AI_GATEWAY_MODELS,
@@ -752,17 +751,21 @@ def _provider_has_credentials(pid: str) -> bool:
 
 def list_available_providers() -> list[dict[str, str]]:
     """``{id, label, aliases, authenticated}`` for every provider usable with ``provider:model``,
-    derived from :data:`CANONICAL_PROVIDERS` (shared with ``hermes model`` and ``/model``)."""
+    derived from the live provider catalog shared with ``hermes model`` and ``/model``."""
     aliases_for: dict[str, list[str]] = {}
     for alias, canonical in _PROVIDER_ALIASES.items():
         aliases_for.setdefault(canonical, []).append(alias)
+    from hermes_cli.provider_catalog import provider_catalog
+
     return [
         {
-            "id": pid,
-            "label": _PROVIDER_LABELS.get(pid, pid),
-            "aliases": aliases_for.get(pid, []),
-            "authenticated": _provider_has_credentials(pid)}
-        for pid in [p.slug for p in CANONICAL_PROVIDERS] + ["custom"]]
+            "id": descriptor.slug,
+            "label": descriptor.label,
+            "aliases": aliases_for.get(descriptor.slug, []),
+            "authenticated": _provider_has_credentials(descriptor.slug),
+        }
+        for descriptor in provider_catalog()
+    ]
 
 
 def parse_model_input(
@@ -2932,7 +2935,7 @@ def is_nous_free_tier(account_info: dict[str, Any]) -> bool:
 _PLUGIN_COMPAT_LAZY = {
     'LMStudioLoadResult': ('hermes_cli.models_local', 'LMStudioLoadResult'),
     'PROVIDER_GROUPS': ('hermes_cli.models_catalog_static', 'PROVIDER_GROUPS'),
-    'ProviderEntry': ('hermes_cli.models_catalog_static', 'ProviderEntry'),
+    'ProviderEntry': ('hermes_cli.provider_catalog', 'ProviderEntry'),
     'atomic_json_write': ('utils', 'atomic_json_write'),
     'base_url_host_matches': ('utils', 'base_url_host_matches'),
     'compute_sale_discount': ('hermes_cli.models_pricing', 'compute_sale_discount'),

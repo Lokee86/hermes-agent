@@ -119,7 +119,7 @@ def _nous_row(model: str = "openai/gpt-5.5") -> dict:
 
 
 def test_include_unconfigured_appends_canonical_skeletons():
-    """include_unconfigured=True adds CANONICAL_PROVIDERS rows that
+    """include_unconfigured=True adds live provider-catalog rows that
     list_authenticated_providers didn't emit. Skeleton rows have empty
     models and source='canonical'."""
     rows = [
@@ -132,11 +132,11 @@ def test_include_unconfigured_appends_canonical_skeletons():
         payload = build_models_payload(ctx, include_unconfigured=True)
     # All canonical providers other than openrouter should appear as
     # skeleton rows.
-    from hermes_cli.models import CANONICAL_PROVIDERS
+    from hermes_cli.provider_catalog import provider_slugs
 
     seen_slugs = {r["slug"] for r in payload["providers"]}
-    for entry in CANONICAL_PROVIDERS:
-        assert entry.slug in seen_slugs, f"missing {entry.slug}"
+    for slug in provider_slugs():
+        assert slug in seen_slugs, f"missing {slug}"
     # Skeletons have empty models and source='canonical'.
     skeletons = [r for r in payload["providers"]
                  if r.get("source") == "canonical"]
@@ -339,9 +339,9 @@ def test_canonical_order_uses_slug_not_is_user_defined_flag():
     canonical providers configured via the keyed schema get demoted to
     the tail.
     """
-    from hermes_cli.models import CANONICAL_PROVIDERS
+    from hermes_cli.provider_catalog import provider_slugs
 
-    canonical_slug = CANONICAL_PROVIDERS[2].slug  # any canonical
+    canonical_slug = provider_slugs()[2]  # any canonical
     rows = [
         # A truly-custom row (correct: is_user_defined=True)
         {"slug": "custom:Ollama", "name": "Ollama", "models": [],

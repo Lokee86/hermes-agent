@@ -2,7 +2,7 @@
 interactive ``hermes model`` CLI picker.
 
 The CLI picker (``hermes_cli.main.select_provider_and_model``) builds its
-provider menu from ``CANONICAL_PROVIDERS`` via ``group_providers`` — a
+provider menu from the live provider catalog via ``group_providers`` — a
 separate code path from ``list_authenticated_providers``. These tests
 verify the exclusion config is honored there too, matching the
 gateway/TUI picker behavior.
@@ -79,23 +79,24 @@ def test_cli_picker_hides_excluded_provider_by_alias(config_home):
     # 'openai' is an alias-style hermes id; ensure excluding it hides the
     # canonical openai provider row if present. Use the canonical slug's
     # alias from _PROVIDER_ALIASES to stay robust to renames.
-    from hermes_cli.models import _PROVIDER_ALIASES, CANONICAL_PROVIDERS
+    from hermes_cli.models import _PROVIDER_ALIASES
+    from hermes_cli.provider_catalog import provider_catalog_by_slug
 
     # Find a canonical provider that has at least one alias and is a leaf
     # row (not folded into a multi-member group) so its label appears
     # directly. Pick the first such provider.
     target_slug = None
     target_alias = None
+    catalog = provider_catalog_by_slug()
     for alias, canon in _PROVIDER_ALIASES.items():
-        if canon and any(p.slug == canon for p in CANONICAL_PROVIDERS):
+        if canon and canon in catalog:
             target_slug = canon
             target_alias = alias
             break
     if target_slug is None:
         pytest.skip("no aliased canonical provider available to test")
 
-    from hermes_cli.models import _PROVIDER_LABELS
-    target_label_fragment = _PROVIDER_LABELS.get(target_slug, target_slug)
+    target_label_fragment = catalog[target_slug].description
 
     # Baseline: the provider appears without exclusion.
     _write_config(config_home)

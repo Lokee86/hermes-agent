@@ -442,9 +442,7 @@ def _row(slug: str, name: str, is_current: bool, **extra: Any) -> dict:
 
 
 def _canonical_row(entry, cur: str, **extra: Any) -> dict:
-    from hermes_cli.models import _PROVIDER_LABELS
-
-    return _row(entry.slug, _PROVIDER_LABELS.get(entry.slug, entry.label), entry.slug.lower() == cur, **extra)
+    return _row(entry.slug, entry.label, entry.slug.lower() == cur, **extra)
 
 
 def _append_unconfigured_rows(
@@ -453,13 +451,14 @@ def _append_unconfigured_rows(
     """Empty setup skeletons for canonical providers missing from ``rows`` — except the *current* one:
     if config.yaml still points at it but credentials are gone, keep a row carrying the saved model so
     GUI pickers don't silently snap to another provider."""
-    from hermes_cli.models import CANONICAL_PROVIDERS, _model_requires_account_discovery
+    from hermes_cli.models import _model_requires_account_discovery
+    from hermes_cli.provider_catalog import provider_entries
 
     seen = {r["slug"].lower() for r in rows}
     cur = (ctx.current_provider or "").lower()
     cur_model = str(ctx.current_model or "").strip()
     extras: list[dict] = []
-    for entry in CANONICAL_PROVIDERS:
+    for entry in provider_entries():
         if entry.slug.lower() in seen:
             continue
         if current_only and entry.slug.lower() != cur:
@@ -599,11 +598,11 @@ def _apply_picker_hints(rows: list[dict]) -> None:
 
 
 def _reorder_canonical(rows: list[dict]) -> list[dict]:
-    """Canonical slugs in ``CANONICAL_PROVIDERS`` order, truly-custom rows last. Keys on slug membership,
+    """Live provider slugs in presentation order, truly-custom rows last. Keys on slug membership,
     NOT ``is_user_defined`` — ``providers:`` config rows carry that flag even for canonical slugs."""
-    from hermes_cli.models import CANONICAL_PROVIDERS
+    from hermes_cli.provider_catalog import provider_slugs
 
-    order = {e.slug: i for i, e in enumerate(CANONICAL_PROVIDERS)}
+    order = {slug: i for i, slug in enumerate(provider_slugs())}
     canon = sorted((r for r in rows if r["slug"] in order), key=lambda r: order[r["slug"]])
     extras = [r for r in rows if r["slug"] not in order]
     return canon + extras

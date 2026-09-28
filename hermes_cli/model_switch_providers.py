@@ -641,7 +641,7 @@ def _collect_authed_provider_slugs(
     Env vars are read through the per-profile secret scope. AWS SDK providers are skipped
     (heavier detection)."""
     from hermes_cli.model_switch import _scoped_key_env
-    from hermes_cli.models import CANONICAL_PROVIDERS
+    from hermes_cli.provider_catalog import provider_slugs
     excluded_set = {str(p).strip().lower() for p in excluded if p}
     slugs: list[str] = []
     seen: set[str] = set()
@@ -667,14 +667,14 @@ def _collect_authed_provider_slugs(
             or _auth_store_has_provider(pid) or _pool_usable(hermes_slug)):
             _emit(hermes_slug, pid)
 
-    for cp in CANONICAL_PROVIDERS:
-        if _skip(seen, excluded_set, cp.slug):
+    for slug in provider_slugs():
+        if _skip(seen, excluded_set, slug):
             continue
-        cp_config = get_provider_config(cp.slug)
+        cp_config = get_provider_config(slug)
         has_creds = bool(
             cp_config and cp_config.api_key_env_vars and _any_env(cp_config.api_key_env_vars, _scoped_key_env))
-        if has_creds or _auth_store_has_provider(cp.slug) or _pool_usable(cp.slug):
-            _emit(cp.slug, cp.slug)
+        if has_creds or _auth_store_has_provider(slug) or _pool_usable(slug):
+            _emit(slug, slug)
 
     # Nous excluded: its picker branch builds from the curated list and never reads the
     # api_key-only cache entry a prefetch would write.
@@ -962,12 +962,12 @@ def _lap_profile_rows(b: _PickerBuild, data: dict, user_providers: dict) -> None
 
 
 def _lap_canonical_rows(b: _PickerBuild) -> None:
-    """Section 2b: CANONICAL_PROVIDERS missed by sections 1/2."""
-    from hermes_cli.models import CANONICAL_PROVIDERS
-    for cp in CANONICAL_PROVIDERS:
-        if _skip(b.seen_slugs, b.excluded, cp.slug):
+    """Section 2b: live provider catalog entries missed by sections 1/2."""
+    from hermes_cli.provider_catalog import provider_slugs
+    for slug in provider_slugs():
+        if _skip(b.seen_slugs, b.excluded, slug):
             continue
-        cp_config = get_provider_config(cp.slug)
+        cp_config = get_provider_config(slug)
         has_creds = False
         if cp_config and cp_config.api_key_env_vars:
             lit = {ev for ev in cp_config.api_key_env_vars if os.environ.get(ev)}
@@ -975,29 +975,29 @@ def _lap_canonical_rows(b: _PickerBuild) -> None:
             # A regional "-cn" twin lit only by key vars shared with its non-CN sibling is a
             # phantom row: hide it unless it is the current provider, and only when it has a
             # dedicated var of its own the user could set.
-            sib = get_provider_config(cp.slug[:-3]) if cp.slug.endswith("-cn") else None
+            sib = get_provider_config(slug[:-3]) if slug.endswith("-cn") else None
             sib_vars = set(sib.api_key_env_vars) if sib else set()
-            if lit and lit <= sib_vars < set(cp_config.api_key_env_vars) and cp.slug != b.current_provider:
+            if lit and lit <= sib_vars < set(cp_config.api_key_env_vars) and slug != b.current_provider:
                 continue
-        has_creds = has_creds or _auth_store_has_provider(cp.slug) or _pool_usable(cp.slug) or (
-            _is_aws_sdk(cp_config) and _has_aws_sdk_creds_for_listing(cp.slug, b.current_provider))
+        has_creds = has_creds or _auth_store_has_provider(slug) or _pool_usable(slug) or (
+            _is_aws_sdk(cp_config) and _has_aws_sdk_creds_for_listing(slug, b.current_provider))
         if not has_creds and cp_config is not None and cp_config.auth_type == "external_process":
             # Subprocess-backed providers own their auth; the binary resolving is the credential
             # evidence for listing (same gate as the copilot-acp profile row and hermes auth status).
             try:
                 from hermes_cli.auth import get_external_process_provider_status
-                has_creds = bool(get_external_process_provider_status(cp.slug).get("configured"))
+                has_creds = bool(get_external_process_provider_status(slug).get("configured"))
             except Exception as exc:
-                logger.debug("External-process check failed for %s: %s", cp.slug, exc)
+                logger.debug("External-process check failed for %s: %s", slug, exc)
         if not has_creds:
             continue
         if _is_aws_sdk(cp_config):
-            model_ids = _aws_live_or_curated_ids(cp.slug, b.curated, non_blocking=b.non_blocking_catalogs)
+            model_ids = _aws_live_or_curated_ids(slug, b.curated, non_blocking=b.non_blocking_catalogs)
         else:
-            model_ids = _live_or_curated_ids(cp.slug, b.curated, merge_models_dev=False,
+            model_ids = _live_or_curated_ids(slug, b.curated, merge_models_dev=False,
                                              non_blocking=b.non_blocking_catalogs)
         b.add_builtin_row(
-            cp.slug, cp.label, cp.slug == b.current_provider, model_ids, "canonical", uncapped_ok=False)
+            slug, get_provider_label(slug), slug == b.current_provider, model_ids, "canonical", uncapped_ok=False)
 
 
 def _lap_user_provider_rows(b: _PickerBuild, user_providers: dict) -> None:

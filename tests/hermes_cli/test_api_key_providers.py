@@ -973,7 +973,7 @@ class TestDeepInfraProviderProfile:
         from agent.auxiliary_client import _get_aux_model_for_provider
         from hermes_cli.auth import resolve_provider
         from hermes_cli.config import OPTIONAL_ENV_VARS
-        from hermes_cli.models import CANONICAL_PROVIDERS
+        from hermes_cli.provider_catalog import provider_catalog_by_slug
 
         profile = get_provider_profile("deepinfra")
         assert profile is not None
@@ -984,7 +984,7 @@ class TestDeepInfraProviderProfile:
         assert resolve_provider("deep-infra") == "deepinfra"
         from hermes_cli.provider_auth import get_provider_config
         assert get_provider_config("deepinfra").inference_base_url == profile.base_url
-        assert any(entry.slug == "deepinfra" for entry in CANONICAL_PROVIDERS)
+        assert "deepinfra" in provider_catalog_by_slug()
         assert OPTIONAL_ENV_VARS["DEEPINFRA_API_KEY"]["password"] is True
         assert OPTIONAL_ENV_VARS["DEEPINFRA_BASE_URL"]["password"] is False
         # Aux model is resolved via the profile (not via the legacy

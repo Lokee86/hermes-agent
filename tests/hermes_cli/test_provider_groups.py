@@ -2,11 +2,10 @@
 
 These are invariant tests, not catalog snapshots: they assert how
 ``group_providers`` folds a flat slug list and how member slugs relate to
-``PROVIDER_GROUPS`` / ``CANONICAL_PROVIDERS`` — not the specific set of
+``PROVIDER_GROUPS`` / the live provider catalog — not the specific set of
 vendors, which is expected to change over time.
 """
 
-from hermes_cli.models import CANONICAL_PROVIDERS
 from hermes_cli.models_catalog_static import PROVIDER_GROUPS, group_providers, provider_group_for_slug
 
 
