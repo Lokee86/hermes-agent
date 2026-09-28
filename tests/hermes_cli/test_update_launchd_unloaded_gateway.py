@@ -149,8 +149,8 @@ class TestServicePidSweepExclusion:
         state = {"list_rc": 1, "print_rc": 0, "print_out": _PRINT_OUTPUT_RUNNING}
 
         monkeypatch.setattr(systemd_runtime, "supports_services", lambda: False)
-        monkeypatch.setattr(gateway_mod, "get_launchd_label", lambda: "ai.hermes.gateway")
-        monkeypatch.setattr(gateway_mod, "_launchd_domain", lambda: "gui/501")
+        monkeypatch.setattr(launchd_service, "get_launchd_label", lambda: "ai.hermes.gateway")
+        monkeypatch.setattr(launchd_service, "_launchd_domain", lambda: "gui/501")
 
         def fake_run(argv, **kwargs):
             if argv[:2] == ["launchctl", "list"]:
