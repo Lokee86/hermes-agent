@@ -3,7 +3,7 @@
 The provider list shown by ``hermes model`` (CLI/TUI) and the desktop Settings → Providers tabs
 (Accounts + API keys) **must be the same set**; providers added after those lists were written
 silently went missing from the GUI. ``auth_type`` / ``api_key_env_vars`` / ``base_url_env_var``
-come from :data:`hermes_cli.auth.PROVIDER_REGISTRY` (credential truth); ``display_name`` /
+come from the live auth projection in :mod:`hermes_cli.provider_auth`; ``display_name`` /
 ``description`` / ``signup_url`` from the provider's :class:`providers.base.ProviderProfile`, falling
 back to the ``CANONICAL_PROVIDERS`` entry's ``label`` / ``tui_desc`` and the ``OPTIONAL_ENV_VARS``
 signup URL only for legacy/profile-less fallback rows. Bundled profiles now carry complete
@@ -16,7 +16,7 @@ from dataclasses import dataclass
 
 # Auth types that authenticate via an account / sign-in flow rather than a pasted API key; these
 # route to the desktop "Accounts" tab, everything else (api_key, and aws_sdk configured via
-# AWS_REGION/AWS_PROFILE) to "API keys". Mirrors the auth_type strings in PROVIDER_REGISTRY and
+# AWS_REGION/AWS_PROFILE) to "API keys". Mirrors the auth_type strings in ProviderConfig and
 # ProviderProfile: external_process = copilot-acp (spawns `copilot --acp --stdio`), copilot = GitHub
 # Copilot token / gh auth.
 _ACCOUNTS_AUTH_TYPES: frozenset[str] = frozenset(
@@ -59,7 +59,7 @@ def provider_catalog() -> list[ProviderDescriptor]:
     auto-extended by provider plugins). Bundled ProviderProfile declarations are complete; the
     legacy registry/catalog remains only as a transition projection/fallback for later Phase 5.2 steps."""
     from hermes_cli.models import CANONICAL_PROVIDERS
-    PROVIDER_REGISTRY = _safe_import("hermes_cli.auth", "PROVIDER_REGISTRY", {})
+    get_provider_config = _safe_import("hermes_cli.provider_auth", "get_provider_config", lambda _slug: None)
     OPTIONAL_ENV_VARS = _safe_import("hermes_cli.config", "OPTIONAL_ENV_VARS", {})
     try:
         from providers import list_providers
@@ -69,7 +69,7 @@ def provider_catalog() -> list[ProviderDescriptor]:
     out: list[ProviderDescriptor] = []
     for order, entry in enumerate(CANONICAL_PROVIDERS):
         slug = entry.slug
-        cfg = PROVIDER_REGISTRY.get(slug)
+        cfg = get_provider_config(slug)
         prof = profiles.get(slug)
         auth_type = ((cfg.auth_type if cfg else "") or (prof.auth_type if prof else "") or "api_key")
         if cfg and cfg.api_key_env_vars:

@@ -177,7 +177,7 @@ class TestResolveTaskProviderModel:
         reached via the config path instead of an explicit call-time arg.
         Before the fix this returned ("moa", ...) verbatim, and
         resolve_provider_client() would then look up "moa" in
-        PROVIDER_REGISTRY (which has no such entry, it's not a real HTTP
+        canonical provider projection (which has no such entry, it's not a real HTTP
         provider), fail, and surface a "MOA_API_KEY environment variable"
         error for a provider that was never meant to be reached over the wire."""
         preset = {
@@ -2018,7 +2018,7 @@ def test_resolve_api_key_provider_skips_unconfigured_anthropic(monkeypatch):
         return None, None
 
     monkeypatch.setattr("agent.auxiliary_client._try_anthropic", mock_try_anthropic)
-    monkeypatch.setattr("hermes_cli.auth.PROVIDER_REGISTRY", fake_registry)
+    monkeypatch.setattr("agent.auxiliary_client.iter_provider_configs", lambda: fake_registry.values())
     monkeypatch.setattr(
         "hermes_cli.auth.is_provider_explicitly_configured",
         lambda pid: False,
@@ -2053,7 +2053,7 @@ def test_resolve_api_key_provider_skips_unconfigured_copilot(monkeypatch):
         return False, None
 
     monkeypatch.setattr("agent.auxiliary_client._select_pool_entry", mock_select_pool_entry)
-    monkeypatch.setattr("hermes_cli.auth.PROVIDER_REGISTRY", fake_registry)
+    monkeypatch.setattr("agent.auxiliary_client.iter_provider_configs", lambda: fake_registry.values())
     monkeypatch.setattr(
         "hermes_cli.auth.is_provider_explicitly_configured",
         lambda pid: False,

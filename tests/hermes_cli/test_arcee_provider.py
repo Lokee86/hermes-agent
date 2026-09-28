@@ -1,11 +1,11 @@
 """Tests for Arcee AI provider support — standard direct API provider."""
+from hermes_cli.provider_auth import get_provider_config, iter_provider_configs
 
 import types
 
 import pytest
 
 from hermes_cli.auth import (
-    PROVIDER_REGISTRY,
     resolve_provider,
     get_api_key_provider_status,
     resolve_api_key_provider_credentials,
@@ -70,7 +70,7 @@ class TestArceeCredentials:
         monkeypatch.delenv("ARCEE_BASE_URL", raising=False)
         creds = resolve_api_key_provider_credentials("arcee")
         assert creds["api_key"] == "arc-direct-key"
-        assert creds["base_url"] == PROVIDER_REGISTRY["arcee"].inference_base_url
+        assert creds["base_url"] == get_provider_config("arcee").inference_base_url
 
 
 # =============================================================================

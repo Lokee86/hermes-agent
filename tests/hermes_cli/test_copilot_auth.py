@@ -1,4 +1,5 @@
 """Tests for hermes_cli.copilot_auth — Copilot token validation and resolution."""
+from hermes_cli.provider_auth import get_provider_config, iter_provider_configs
 
 import pytest
 from unittest.mock import patch
@@ -149,11 +150,11 @@ class TestCopilotDefaultHeaders:
 
 
 class TestEnvVarOrder:
-    """PROVIDER_REGISTRY has correct env var order."""
+    """live provider projection has correct env var order."""
 
     def test_copilot_env_vars_include_copilot_github_token(self):
-        from hermes_cli.auth import PROVIDER_REGISTRY
-        copilot = PROVIDER_REGISTRY["copilot"]
+
+        copilot = get_provider_config("copilot")
         assert "COPILOT_GITHUB_TOKEN" in copilot.api_key_env_vars
         # COPILOT_GITHUB_TOKEN should be first
         assert copilot.api_key_env_vars[0] == "COPILOT_GITHUB_TOKEN"

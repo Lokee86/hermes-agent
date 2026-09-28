@@ -15,17 +15,11 @@ import pytest
 
 def _register(monkeypatch, profile):
     import providers
-    from hermes_cli import auth
 
-    monkeypatch.setitem(providers.registry._REGISTRY, profile.name, profile)
-    monkeypatch.delitem(auth.PROVIDER_REGISTRY, profile.name, raising=False)
-    # Mirror into the auth registry the way plugin discovery does; built from public types so the
-    # helper is independent of the auth module's private mirroring function.
-    pconfig = auth.ProviderConfig(
-        profile.name, profile.display_name or profile.name, profile.auth_type, inference_base_url=profile.base_url)
-    if profile.auth_type == "api_key" and profile.env_vars:
-        pconfig = auth._api_key_provider(profile.name, profile.display_name or profile.name, profile.base_url, tuple(profile.env_vars), "")
-    monkeypatch.setitem(auth.PROVIDER_REGISTRY, profile.name, pconfig)
+    monkeypatch.setattr(providers.registry, "_REGISTRY", dict(providers.registry._REGISTRY))
+    monkeypatch.setattr(providers.registry, "_ALIASES", dict(providers.registry._ALIASES))
+    monkeypatch.setattr(providers.registry, "_PROVIDER_LIST_CACHE", None)
+    providers.register_provider(profile)
 
 
 @pytest.mark.parametrize("auth_type", ["external_process", "oauth_external", "oauth_device_code", "api_key"])

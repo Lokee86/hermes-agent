@@ -48,13 +48,8 @@ _REGISTRATION_TARGET: ContextVar[_HomeLayer | None] = ContextVar(
 
 
 def _sync_auth_registry() -> None:
-    """Keep the pre-5.2 auth/catalogue mirrors converged during Step 2.
-
-    These callbacks are deliberately temporary. Steps 4-8 remove the downstream
-    mirrors and this upward synchronization entirely.
-    """
+    """Keep the remaining pre-5.2 catalogue mirror converged until Step 8."""
     for module, attr in (
-        ("hermes_cli.auth", "sync_plugin_provider_registry"),
         ("hermes_cli.models_catalog_static", "sync_plugin_provider_catalog"),
     ):
         sync = getattr(sys.modules.get(module), attr, None)

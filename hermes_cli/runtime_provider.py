@@ -22,7 +22,7 @@ from agent.credential_pool import (  # custom_provider_pool_key_candidates is re
 from agent.secret_scope import get_secret_str
 from hermes_cli.auth import (  # resolve_external_process_provider_credentials is read via origin by runtime_provider_backends
     ACTUAL_LOCAL_NOAUTH_PLACEHOLDER, AuthError, DEFAULT_CODEX_BASE_URL, DEFAULT_QWEN_BASE_URL, DEFAULT_XAI_OAUTH_BASE_URL,
-    PROVIDER_REGISTRY, _agent_key_is_usable, _nous_inference_env_override, format_auth_error, resolve_provider,
+    _agent_key_is_usable, _nous_inference_env_override, format_auth_error, resolve_provider,
     resolve_nous_runtime_credentials, resolve_codex_runtime_credentials, resolve_xai_oauth_runtime_credentials,
     resolve_qwen_runtime_credentials, resolve_api_key_provider_credentials,
     resolve_external_process_provider_credentials,  # noqa: F401
@@ -197,8 +197,8 @@ def _same_registered_provider(provider: str, configured_provider: str) -> bool:
     """Profile aliases share an auth registry ID; unrelated routes must stay distinct."""
     if provider == configured_provider:
         return True
-    pconfig = PROVIDER_REGISTRY.get(provider)
-    configured = PROVIDER_REGISTRY.get(configured_provider)
+    pconfig = get_provider_config(provider)
+    configured = get_provider_config(configured_provider)
     return bool(pconfig and configured and pconfig.id == configured.id)
 
 
@@ -324,11 +324,11 @@ def is_foreign_provider_endpoint(provider: Optional[str], base_url: Optional[str
     switch that kept the old URL (openai-codex + the Nous Portal URL sent the Codex slug to the Portal).
     Only registered providers are judged: a custom or proxy URL is never another provider's canonical one.
     """
-    pconfig = PROVIDER_REGISTRY.get(str(provider or "").strip().lower())
+    pconfig = get_provider_config(str(provider or "").strip().lower())
     url = str(base_url or "").strip().rstrip("/")
     if pconfig is None or not url or url == (pconfig.inference_base_url or "").rstrip("/"):
         return False
-    return any(url == (other.inference_base_url or "").rstrip("/") for other in PROVIDER_REGISTRY.values())
+    return any(url == (other.inference_base_url or "").rstrip("/") for other in iter_provider_configs())
 
 
 def _anthropic_base_url_override_ok(base_url: str) -> bool:
@@ -489,6 +489,7 @@ def resolve_requested_provider(requested: Optional[str] = None) -> str:
 
 # ── extracted collaborators (re-exported; see module docstring) ────────────────────────────
 
+from hermes_cli.provider_auth import get_provider_config, iter_provider_configs
 from hermes_cli.runtime_provider_custom import (  # noqa: E402,F401
     _LLAMACPP_ALIASES, _apply_custom_provider_extras, _custom_provider_request_overrides, _filter_capabilities, _find_custom_identity,
     _get_named_custom_provider, _lift_common_custom_fields, _lift_extra_headers,
@@ -512,7 +513,7 @@ from hermes_cli.runtime_provider_backends import (  # noqa: E402,F401
 _POOL_ENTRY_SIMPLE_MODES: Dict[str, tuple] = {
     "openai-codex": ("codex_responses", DEFAULT_CODEX_BASE_URL), "xai-oauth": ("codex_responses", DEFAULT_XAI_OAUTH_BASE_URL),
     "qwen-oauth": ("chat_completions", DEFAULT_QWEN_BASE_URL), "openrouter": ("chat_completions", OPENROUTER_BASE_URL),
-    "minimax-oauth": ("anthropic_messages", lambda: getattr(PROVIDER_REGISTRY.get("minimax-oauth"), "inference_base_url", "")),
+    "minimax-oauth": ("anthropic_messages", lambda: getattr(get_provider_config("minimax-oauth"), "inference_base_url", "")),
     "xai": ("codex_responses", ""),
 }
 
@@ -548,7 +549,7 @@ def _pool_entry_mode_and_url(provider, entry, model_cfg, effective_model, base_u
         return nous_api_mode(effective_model), (_nous_inference_env_override() or "") or base_url
     if provider == "copilot":
         api_mode = _copilot_runtime_api_mode(model_cfg, getattr(entry, "runtime_api_key", ""), target_model=effective_model)
-        return api_mode, base_url or PROVIDER_REGISTRY["copilot"].inference_base_url
+        return api_mode, base_url or get_provider_config("copilot").inference_base_url
     if provider == "azure-foundry":
         api_mode = "chat_completions"
         if _cfg_provider(model_cfg) == "azure-foundry":
@@ -558,7 +559,7 @@ def _pool_entry_mode_and_url(provider, entry, model_cfg, effective_model, base_u
         return api_mode, (re.sub(r"/v1/?$", "", base_url) if api_mode == "anthropic_messages" else base_url)
     # Missing and registry-default endpoints may use this provider's configured URL.
     # An explicit per-credential endpoint remains authoritative.
-    pconfig = PROVIDER_REGISTRY.get(provider)
+    pconfig = get_provider_config(provider)
     if pconfig and (not base_url or base_url.rstrip("/") == pconfig.inference_base_url.rstrip("/")):
         base_url = _config_base_url_for_provider(model_cfg, provider) or base_url or pconfig.inference_base_url
     return _configured_or_fallback_api_mode(provider, model_cfg, base_url, effective_model, opencode_by_model=True), base_url
@@ -749,7 +750,7 @@ def _resolve_explicit_runtime(*, provider: str, requested_provider: str, model_c
     resolver = _EXPLICIT_RESOLVERS.get(provider)
     if resolver is not None:
         return resolver(requested_provider, model_cfg, explicit_api_key, explicit_base_url, target_model)
-    pconfig = PROVIDER_REGISTRY.get(provider)
+    pconfig = get_provider_config(provider)
     if not (pconfig and pconfig.auth_type == "api_key"):
         return None
     return _explicit_api_key_provider(provider, pconfig, requested_provider, model_cfg, explicit_api_key, explicit_base_url, target_model)
@@ -796,7 +797,7 @@ def _resolve_oauth_runtime(provider, requested_provider, model_cfg, target_model
 
 
 def _minimax_oauth_runtime(provider, requested_provider) -> Optional[Dict[str, Any]]:
-    pconfig = PROVIDER_REGISTRY.get(provider)
+    pconfig = get_provider_config(provider)
     if not (pconfig and pconfig.auth_type == "oauth_minimax"):
         return None
     creds = auth_mod.resolve_minimax_oauth_runtime_credentials()
@@ -1077,7 +1078,7 @@ def _ladder_rungs(requested_provider, explicit_api_key, explicit_base_url, targe
         yield _anthropic_env_runtime(requested_provider, model_cfg, target_model)
     if provider == "bedrock":
         yield _resolve_bedrock_runtime(requested_provider, model_cfg, target_model)
-    pconfig = PROVIDER_REGISTRY.get(provider)
+    pconfig = get_provider_config(provider)
     if pconfig and pconfig.auth_type == "api_key":
         yield _api_key_provider_runtime(provider, pconfig, requested_provider, model_cfg, target_model)
     fallback = _openrouter_fallback(requested_provider, explicit_api_key, explicit_base_url)

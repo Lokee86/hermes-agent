@@ -120,6 +120,7 @@ from agent.credential_pool import load_pool
 from agent.model_metadata import MINIMUM_CONTEXT_LENGTH, get_model_context_length
 from hermes_cli.config import get_hermes_home
 from hermes_cli.config_providers import _canonical_api_mode
+from hermes_cli.provider_auth import get_provider_config, iter_provider_configs
 from agent.auxiliary_health import (
     _custom_health_base_url, _unhealthy_cache_key, fallback_candidate_quarantine_ttl,
     fallback_candidate_unavailable_reason,
@@ -2151,13 +2152,14 @@ def _read_codex_singleton_token() -> Optional[str]:
 
 
 def _resolve_api_key_provider() -> Tuple[Optional[OpenAI], Optional[str]]:
-    """Try each API-key provider in PROVIDER_REGISTRY order; (client, model) or (None, None)."""
+    """Try each API-key provider in canonical provider projection order; (client, model) or (None, None)."""
     try:
-        from hermes_cli.auth import PROVIDER_REGISTRY, resolve_api_key_provider_credentials
+        from hermes_cli.auth import resolve_api_key_provider_credentials
     except ImportError:
-        logger.debug("Could not import PROVIDER_REGISTRY for API-key fallback")
+        logger.debug("Could not import provider auth projection for API-key fallback")
         return None, None
-    for provider_id, pconfig in PROVIDER_REGISTRY.items():
+    for pconfig in iter_provider_configs():
+        provider_id = pconfig.id
         if pconfig.auth_type != "api_key":
             continue
         if _is_provider_unhealthy(provider_id):
@@ -3686,8 +3688,8 @@ def _recoverable_pool_provider(
         rt_provider = runtime.get("provider", "")
         if rt_provider and rt_provider not in {"", "auto", "custom"}:
             with contextlib.suppress(Exception):
-                from hermes_cli.auth import PROVIDER_REGISTRY
-                pconfig = PROVIDER_REGISTRY.get(rt_provider)
+                from hermes_cli.provider_auth import get_provider_config
+                pconfig = get_provider_config(rt_provider)
                 if pconfig and getattr(pconfig, "auth_type", None) == "api_key":
                     # The pool's key was issued for the endpoint the main runtime actually uses; a
                     # rejection at any other host (registry default vs configured proxy) says nothing
@@ -5222,7 +5224,7 @@ def _resolve_named_custom_branch(req: _ResolveRequest) -> Optional[_ResolveResul
 
 
 def _resolve_azure_foundry_branch(req: _ResolveRequest) -> _ResolveResult:
-    """Azure Foundry via the runtime resolver: the generic PROVIDER_REGISTRY path only knows the static
+    """Azure Foundry via the runtime resolver: the generic canonical provider projection path only knows the static
     AZURE_FOUNDRY_API_KEY env var, missing ``auth_mode: entra_id`` (callable bearer) and config base_url overrides."""
     client, default_model = _try_azure_foundry(model=req.model, explicit_api_key=req.explicit_api_key,
                                                explicit_base_url=req.explicit_base_url, api_mode=req.api_mode)
@@ -5256,7 +5258,7 @@ def _api_key_profile_supplied_client(provider: str, **client_kwargs: Any) -> Any
 
 
 def _resolve_api_key_branch(req: _ResolveRequest, pconfig: Any, resolve_creds: Callable) -> _ResolveResult:
-    """PROVIDER_REGISTRY ``api_key`` providers (Anthropic via its own resolver), honouring explicit overrides."""
+    """canonical provider projection ``api_key`` providers (Anthropic via its own resolver), honouring explicit overrides."""
     provider = req.provider
     if provider == "anthropic":
         client, default_model = _try_anthropic(explicit_api_key=req.explicit_api_key,
@@ -5319,7 +5321,7 @@ def _resolve_api_key_branch(req: _ResolveRequest, pconfig: Any, resolve_creds: C
 
 
 def _resolve_external_process_branch(req: _ResolveRequest, creds: Dict[str, Any]) -> _ResolveResult:
-    """PROVIDER_REGISTRY ``external_process`` providers, served via their registered profile."""
+    """canonical provider projection ``external_process`` providers, served via their registered profile."""
     provider = req.provider
     final_model = _normalize_resolved_model(
         req.model or (req.main_runtime.get("model") if req.main_runtime else None) or _read_main_model_for_aux(),
@@ -5359,17 +5361,17 @@ def _resolve_external_process_branch(req: _ResolveRequest, creds: Dict[str, Any]
 
 
 def _resolve_registry_branch(req: _ResolveRequest) -> _ResolveResult:
-    """PROVIDER_REGISTRY providers, dispatched on ``auth_type``; unknown providers log once."""
+    """canonical provider projection providers, dispatched on ``auth_type``; unknown providers log once."""
     provider = req.provider
     try:
         from hermes_cli.auth import (
-            PROVIDER_REGISTRY, resolve_api_key_provider_credentials,
+            resolve_api_key_provider_credentials,
             resolve_external_process_provider_credentials,
         )
     except ImportError:
         logger.debug("hermes_cli.auth not available for provider %s", provider)
         return None, None
-    pconfig = PROVIDER_REGISTRY.get(provider)
+    pconfig = get_provider_config(provider)
     if pconfig is None:
         _log_once_debug(_LOGGED_UNKNOWN_PROVIDER_KEYS, provider,
                         "resolve_provider_client: unknown provider %r", provider)
@@ -5399,7 +5401,7 @@ def _resolve_registry_branch(req: _ResolveRequest) -> _ResolveResult:
 
 
 # Explicit providers with a dedicated branch; anything else falls through to named custom
-# providers → azure-foundry → PROVIDER_REGISTRY (order preserved from the original if-chain).
+# providers → azure-foundry → canonical provider projection (order preserved from the original if-chain).
 _EXPLICIT_PROVIDER_BRANCHES: Dict[str, Callable[[_ResolveRequest], _ResolveResult]] = {
     "auto": _resolve_auto_branch,
     "openrouter": _resolve_openrouter_branch,
@@ -6045,14 +6047,14 @@ def _get_cached_client(
 # MoA virtual provider: an *explicit* `provider: moa` override (either the caller-passed `provider` arg or
 # `auxiliary.<task>.provider` in config.yaml) reaches this function directly — it never goes through
 # _resolve_auto_route(), which only unwraps the *implicit* "main provider is moa" case (#53827). Left as-is, "moa"
-# is returned verbatim and resolve_provider_client() looks it up in PROVIDER_REGISTRY (which has no "moa"
+# is returned verbatim and resolve_provider_client() looks it up in canonical provider projection (which has no "moa"
 # entry — it's not a real HTTP provider), falls to the unknown-provider dead end, and call_llm surfaces a
 # nonsensical "MOA_API_KEY environment variable" error for a provider that was never meant to be reached
 # over the wire. Auxiliary tasks don't need the reference fan-out — resolve to the preset's aggregator slot
 # instead, exactly like the implicit path does (shared helper: _resolve_moa_aggregator).
 def _unwrap_moa_provider(prov: str, mdl: Optional[str]) -> Tuple[str, Optional[str]]:
     """Resolve an *explicit* ``provider: moa`` to its preset's aggregator slot (_resolve_auto_route()
-    only unwraps the implicit case; "moa" isn't in PROVIDER_REGISTRY and would dead-end)."""
+    only unwraps the implicit case; "moa" isn't in canonical provider projection and would dead-end)."""
     if prov.strip().lower() != "moa":
         return prov, mdl
     agg_provider, agg_model = _resolve_moa_aggregator(mdl)

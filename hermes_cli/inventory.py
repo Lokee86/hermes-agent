@@ -429,9 +429,9 @@ def _apply_custom_aliases(rows: list[dict]) -> None:
 
 def _provider_auth_hint(slug: str) -> tuple[str, str]:
     """``(auth_type, key_env)`` for a canonical provider (``("api_key", "")`` when unregistered)."""
-    from hermes_cli.auth import PROVIDER_REGISTRY
+    from hermes_cli.provider_auth import get_provider_config
 
-    cfg = PROVIDER_REGISTRY.get(slug)
+    cfg = get_provider_config(slug)
     auth_type = cfg.auth_type if cfg else "api_key"
     key_env = cfg.api_key_env_vars[0] if (cfg and cfg.api_key_env_vars) else ""
     return auth_type, key_env
@@ -546,8 +546,9 @@ def _filter_explicit_provider_rows(rows: list[dict], ctx: ConfigContext) -> list
 def _external_process_signed_in(slug: str) -> bool:
     """True when an external-process provider has verified CLI credentials."""
     try:
-        from hermes_cli.auth import PROVIDER_REGISTRY, get_external_process_provider_status
-        pconfig = PROVIDER_REGISTRY.get(slug)
+        from hermes_cli.auth import get_external_process_provider_status
+        from hermes_cli.provider_auth import get_provider_config
+        pconfig = get_provider_config(slug)
         return bool(pconfig and pconfig.auth_type == "external_process"
                     and get_external_process_provider_status(slug).get("auth_verified"))
     except Exception:

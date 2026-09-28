@@ -227,7 +227,7 @@ def named_custom_provider(monkeypatch):
 
 class TestNamedCustomProviders:
     """#67935: named custom providers resolve to provider="custom" with no
-    PROVIDER_REGISTRY entry — their `key_env` credential must refresh too."""
+    live provider projection entry — their `key_env` credential must refresh too."""
 
     def _make_custom_agent(self, *, api_key="no-key-required"):
         agent = _make_agent(provider="custom", base_url=CUSTOM_BASE, api_key=api_key)

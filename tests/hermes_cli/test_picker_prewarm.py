@@ -38,7 +38,7 @@ def test_prewarm_guard_is_once_per_process():
 def test_prewarm_warms_the_active_custom_endpoint_for_the_next_open(monkeypatch):
     """End-to-end regression for #72762: the active custom endpoint must be
     warm by the time the user opens ``/model``, not just first-class
-    ``PROVIDER_REGISTRY`` providers.
+    ``live provider projection`` providers.
 
     The cache is keyed purely on ``base_url`` (see ``cached_fetch_api_models``
     in ``hermes_cli/models.py``), so this is not specific to any named

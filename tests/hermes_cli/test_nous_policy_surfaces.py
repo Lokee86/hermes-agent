@@ -5,6 +5,7 @@ Portal's ``recommended-models`` endpoint; neither source is authenticated.
 """
 
 from __future__ import annotations
+from hermes_cli.provider_auth import get_provider_config, iter_provider_configs
 
 import argparse
 
@@ -80,7 +81,7 @@ class TestLoginNous:
             portal_url=None, inference_url=None, client_id=None, scope=None,
             no_browser=True, timeout=15.0, ca_bundle=None, insecure=False,
         )
-        auth_mod._login_nous(args, auth_mod.PROVIDER_REGISTRY["nous"])
+        auth_mod._login_nous(args, auth_mod.get_provider_config("nous"))
         return seen
 
     def test_hidden_model_is_not_offered(self, monkeypatch, tmp_path, policy):

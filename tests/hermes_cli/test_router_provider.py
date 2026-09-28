@@ -7,6 +7,7 @@ These tests pin the host mandate, the runtime URL detection that mirrors
 it, and the profile/auth registry wiring — same contract suite shape as
 tests/hermes_cli/test_meta_prompt_cache.py.
 """
+from hermes_cli.provider_auth import get_provider_config
 
 import pytest
 
@@ -84,9 +85,8 @@ class TestRouterProfileRegistration:
 
 
     def test_auth_registry_autowired(self):
-        from hermes_cli.auth import PROVIDER_REGISTRY
 
-        config = PROVIDER_REGISTRY.get("router")
+        config = get_provider_config("router")
         assert config is not None
         assert config.auth_type == "api_key"
         # Key vars must not contain the base-url override var, which is

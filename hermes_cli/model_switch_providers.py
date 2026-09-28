@@ -23,6 +23,7 @@ from providers import (
     normalize_provider,
 )
 from utils import base_url_host_matches
+from hermes_cli.provider_auth import get_provider_config
 
 # Log-record parity with the origin module.
 logger = logging.getLogger("hermes_cli.model_switch")
@@ -280,9 +281,9 @@ def _iter_builtin_candidates(models_dev_data: dict, excluded: set, seen: set):
     Skips vendor names that alias through an aggregator (bare "openai" -> "openrouter" would
     silently switch a user onto an endpoint they may have no key for), aliases of another canonical
     profile ("kimi" -> "kimi-coding"), non-api_key auth types (section 2 handles them) and
-    unroutable providers. PROVIDER_REGISTRY env var names win over models.dev's."""
+    unroutable providers. provider declarations win over models.dev's."""
     from agent.models_dev import PROVIDER_TO_MODELS_DEV
-    from hermes_cli.auth import PROVIDER_REGISTRY, is_runtime_provider_routable
+    from hermes_cli.auth import is_runtime_provider_routable
     for hermes_id, mdev_id in PROVIDER_TO_MODELS_DEV.items():
         canonical = normalize_provider(hermes_id)
         if canonical != hermes_id and is_aggregator(canonical):
@@ -301,7 +302,7 @@ def _iter_builtin_candidates(models_dev_data: dict, excluded: set, seen: set):
         pdata = models_dev_data.get(mdev_id)
         if not isinstance(pdata, dict):
             continue
-        pconfig = PROVIDER_REGISTRY.get(hermes_id)
+        pconfig = get_provider_config(hermes_id)
         if (pconfig and pconfig.auth_type != "api_key") or not is_runtime_provider_routable(hermes_id):
             continue
         env_vars = list(pconfig.api_key_env_vars) if pconfig and pconfig.api_key_env_vars else pdata.get("env", [])
@@ -343,7 +344,6 @@ def _pool_usable(slug: str) -> bool:
 
 def _profile_has_env_creds(pid: str, hermes_slug: str, profile, read_env) -> bool:
     """Provider-profile env/SDK credential check shared by picker and prefetch scan."""
-    from hermes_cli.auth import PROVIDER_REGISTRY
     has_creds = False
     if profile.auth_type == "vertex":
         try:
@@ -355,7 +355,7 @@ def _profile_has_env_creds(pid: str, hermes_slug: str, profile, read_env) -> boo
         has_creds = _any_env(profile.env_vars, read_env)
     if not has_creds and profile.auth_type == "api_key":
         for key in (pid, hermes_slug):
-            pcfg = PROVIDER_REGISTRY.get(key)
+            pcfg = get_provider_config(key)
             if pcfg and pcfg.api_key_env_vars and _any_env(pcfg.api_key_env_vars, read_env):
                 return True
     if not has_creds and hermes_slug == "azure-foundry":
@@ -641,7 +641,6 @@ def _collect_authed_provider_slugs(
     Env vars are read through the per-profile secret scope. AWS SDK providers are skipped
     (heavier detection)."""
     from hermes_cli.model_switch import _scoped_key_env
-    from hermes_cli.auth import PROVIDER_REGISTRY
     from hermes_cli.models import CANONICAL_PROVIDERS
     excluded_set = {str(p).strip().lower() for p in excluded if p}
     slugs: list[str] = []
@@ -671,7 +670,7 @@ def _collect_authed_provider_slugs(
     for cp in CANONICAL_PROVIDERS:
         if _skip(seen, excluded_set, cp.slug):
             continue
-        cp_config = PROVIDER_REGISTRY.get(cp.slug)
+        cp_config = get_provider_config(cp.slug)
         has_creds = bool(
             cp_config and cp_config.api_key_env_vars and _any_env(cp_config.api_key_env_vars, _scoped_key_env))
         if has_creds or _auth_store_has_provider(cp.slug) or _pool_usable(cp.slug):
@@ -722,8 +721,7 @@ class _PickerBuild:
     def record_builtin_endpoint(self, slug: str) -> None:
         """Prefer the live env override (e.g. DASHSCOPE_BASE_URL) over the static inference_base_url
         so dedup matches what a user typing that URL into custom_providers would actually hit."""
-        from hermes_cli.auth import PROVIDER_REGISTRY
-        pcfg = PROVIDER_REGISTRY.get(slug)
+        pcfg = get_provider_config(slug)
         if not pcfg:
             return
         url = os.environ.get(pcfg.base_url_env_var, "") if getattr(pcfg, "base_url_env_var", "") else ""
@@ -965,12 +963,11 @@ def _lap_profile_rows(b: _PickerBuild, data: dict, user_providers: dict) -> None
 
 def _lap_canonical_rows(b: _PickerBuild) -> None:
     """Section 2b: CANONICAL_PROVIDERS missed by sections 1/2."""
-    from hermes_cli.auth import PROVIDER_REGISTRY
     from hermes_cli.models import CANONICAL_PROVIDERS
     for cp in CANONICAL_PROVIDERS:
         if _skip(b.seen_slugs, b.excluded, cp.slug):
             continue
-        cp_config = PROVIDER_REGISTRY.get(cp.slug)
+        cp_config = get_provider_config(cp.slug)
         has_creds = False
         if cp_config and cp_config.api_key_env_vars:
             lit = {ev for ev in cp_config.api_key_env_vars if os.environ.get(ev)}
@@ -978,7 +975,7 @@ def _lap_canonical_rows(b: _PickerBuild) -> None:
             # A regional "-cn" twin lit only by key vars shared with its non-CN sibling is a
             # phantom row: hide it unless it is the current provider, and only when it has a
             # dedicated var of its own the user could set.
-            sib = PROVIDER_REGISTRY.get(cp.slug[:-3]) if cp.slug.endswith("-cn") else None
+            sib = get_provider_config(cp.slug[:-3]) if cp.slug.endswith("-cn") else None
             sib_vars = set(sib.api_key_env_vars) if sib else set()
             if lit and lit <= sib_vars < set(cp_config.api_key_env_vars) and cp.slug != b.current_provider:
                 continue

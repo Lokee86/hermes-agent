@@ -1,9 +1,9 @@
 """Tests for Tencent TokenHub provider support (Hy4 preview)."""
+from hermes_cli.provider_auth import get_provider_config, iter_provider_configs
 
 import pytest
 
 from hermes_cli.auth import (
-    PROVIDER_REGISTRY,
     resolve_provider,
     get_api_key_provider_status,
     resolve_api_key_provider_credentials,
@@ -70,7 +70,7 @@ class TestTencentTokenhubCredentials:
         monkeypatch.delenv("TOKENHUB_BASE_URL", raising=False)
         creds = resolve_api_key_provider_credentials("tencent-tokenhub")
         assert creds["api_key"] == "sk-test-12345678"
-        assert creds["base_url"] == PROVIDER_REGISTRY["tencent-tokenhub"].inference_base_url
+        assert creds["base_url"] == get_provider_config("tencent-tokenhub").inference_base_url
 
     def test_openrouter_key_does_not_make_tokenhub_configured(self, monkeypatch):
         """OpenRouter users should NOT see tencent-tokenhub as configured."""

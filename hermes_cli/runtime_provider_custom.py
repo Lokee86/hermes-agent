@@ -458,7 +458,7 @@ def _custom_runtime(rp, base_url: str, api_key: Any, api_mode: Optional[str], **
                        api_key or "no-key-required", **extra)
 
 
-# Aliases for direct REST APIs not modeled in PROVIDER_REGISTRY, so ``provider: openai`` (aux slots,
+# Aliases for direct REST APIs not modeled in canonical provider projection, so ``provider: openai`` (aux slots,
 # background review, curator, MoA slots, the main model) resolves to a working ``custom`` endpoint
 # instead of "Unknown provider" and a silent fall-back to the main model (#116055).
 _DIRECT_API_BASE_URLS: Dict[str, str] = {"openai": "https://api.openai.com/v1"}

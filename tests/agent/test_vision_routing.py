@@ -2,7 +2,7 @@
 
 Before the fix:
   - ``auxiliary.vision.provider: openai`` silently failed to resolve because
-    ``openai`` is not a first-class provider in PROVIDER_REGISTRY (only
+    ``openai`` is not a first-class provider in live provider projection (only
     ``openai-codex`` for OAuth and ``custom`` for OPENAI_BASE_URL).
   - The vision branch of ``call_llm`` then silently fell back to ``auto``
     which happily picked the user's main provider (e.g. DeepSeek), sending

@@ -5,7 +5,6 @@ import json
 import pytest
 
 from hermes_cli.auth import (
-    PROVIDER_REGISTRY,
     resolve_provider,
     get_api_key_provider_status,
     resolve_api_key_provider_credentials,
@@ -15,6 +14,7 @@ from hermes_cli.auth import (
     _resolve_kimi_base_url,
 )
 from hermes_cli.copilot_auth import _try_gh_cli_token
+from hermes_cli.provider_auth import iter_provider_configs
 
 
 # =============================================================================
@@ -26,12 +26,10 @@ from hermes_cli.copilot_auth import _try_gh_cli_token
 # Provider Resolution tests
 # =============================================================================
 
-# Derived from the live PROVIDER_REGISTRY so the list can never drift when a
+# Derived from the live provider projection so the list can never drift when a
 # new provider (and its env var) is added — a hand-maintained tuple here was
 # missing HF_TOKEN/DEEPINFRA_API_KEY, which made the auto-detection tests
 # env-dependent (they failed on any machine with HF_TOKEN exported).
-from hermes_cli.auth import PROVIDER_REGISTRY as _REGISTRY
-
 _EXTRA_ENV_VARS = (
     # Checked directly in resolve_provider("auto"), not via the registry.
     "OPENROUTER_API_KEY", "NOUS_API_KEY",
@@ -44,7 +42,7 @@ _EXTRA_ENV_VARS = (
 
 PROVIDER_ENV_VARS = tuple(
     dict.fromkeys(
-        [var for cfg in _REGISTRY.values() for var in cfg.api_key_env_vars]
+        [var for cfg in iter_provider_configs() for var in cfg.api_key_env_vars]
         + list(_EXTRA_ENV_VARS)
     )
 )
@@ -324,7 +322,7 @@ class TestHasAnyProviderConfigured:
         # Clear all provider env vars so earlier checks don't short-circuit
         _all_vars = {"OPENROUTER_API_KEY", "OPENAI_API_KEY", "ANTHROPIC_API_KEY",
                       "ANTHROPIC_TOKEN", "OPENAI_BASE_URL"}
-        for pconfig in PROVIDER_REGISTRY.values():
+        for pconfig in iter_provider_configs():
             if pconfig.auth_type == "api_key":
                 _all_vars.update(pconfig.api_key_env_vars)
         for var in _all_vars:
@@ -368,7 +366,7 @@ class TestHasAnyProviderConfigured:
         """Clear every provider env var so early checks can't short-circuit."""
         _all_vars = {"OPENROUTER_API_KEY", "OPENAI_API_KEY", "ANTHROPIC_API_KEY",
                      "ANTHROPIC_TOKEN", "OPENAI_BASE_URL"}
-        for pconfig in PROVIDER_REGISTRY.values():
+        for pconfig in iter_provider_configs():
             if pconfig.auth_type == "api_key":
                 _all_vars.update(pconfig.api_key_env_vars)
         for var in _all_vars:

@@ -92,10 +92,11 @@ def _provider_default_routes(provider: str) -> set[str]:
         add(getattr(get_provider_profile(provider), "base_url", ""))
 
     with suppress(Exception):
-        from hermes_cli.auth import PROVIDER_REGISTRY
+        from hermes_cli.provider_auth import iter_provider_configs
         from hermes_cli.models import normalize_provider as normalize_model_provider
         from providers import normalize_provider as normalize_registry_provider
-        for provider_id, config in PROVIDER_REGISTRY.items():
+        for config in iter_provider_configs():
+            provider_id = config.id
             if normalize_registry_provider(normalize_model_provider(provider_id)) == provider:
                 add(getattr(config, "inference_base_url", ""))
 

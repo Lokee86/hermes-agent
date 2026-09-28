@@ -1847,8 +1847,8 @@ def _credential_fingerprint(provider: str) -> str:
 
     parts: list[str] = []
     try:
-        from hermes_cli.auth import PROVIDER_REGISTRY
-        pcfg = PROVIDER_REGISTRY.get(provider)
+        from hermes_cli.provider_auth import get_provider_config
+        pcfg = get_provider_config(provider)
         if pcfg is not None:
             for ev in getattr(pcfg, "api_key_env_vars", ()) or ():
                 parts.append(f"{ev}={os.environ.get(ev, '')}")
@@ -2773,7 +2773,7 @@ def fetch_api_models(
 
 def _custom_endpoint_fingerprint(
     api_key: Any, api_mode: Optional[str], headers: Optional[dict[str, str]]) -> str:
-    """Custom endpoints have no ``PROVIDER_REGISTRY`` slug, so hash exactly what callers pass to
+    """Custom endpoints have no canonical provider-config slug, so hash exactly what callers pass to
     :func:`fetch_api_models`: a rotated ``api_key``, changed ``api_mode`` or edited ``extra_headers``
     each bust the cache entry. blake2b for the same CodeQL rationale as ``_credential_fingerprint``."""
     import hashlib

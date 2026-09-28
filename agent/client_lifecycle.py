@@ -686,10 +686,10 @@ class ClientLifecycleMixin:
         """
         try:
             from agent.credential_pool import get_env_prefer_dotenv
-            from hermes_cli.auth import PROVIDER_REGISTRY
+            from hermes_cli.provider_auth import get_provider_config
         except ImportError:
             return None
-        pconfig = PROVIDER_REGISTRY.get(self.provider)
+        pconfig = get_provider_config(self.provider)
         if pconfig and getattr(pconfig, "auth_type", "") == "api_key" and getattr(pconfig, "api_key_env_vars", ()):
             # First non-empty env var wins (lazy: later vars are not read).
             api_key = next((k for k in (get_env_prefer_dotenv(v).strip() for v in pconfig.api_key_env_vars) if k), "")

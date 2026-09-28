@@ -1,8 +1,7 @@
 """A `$HERMES_HOME` provider plugin re-registering a bundled name reaches the runtime (#48450).
 
 ``register_provider()`` is last-writer-wins for the profile, and the docs promise that dropping
-``plugins/model-providers/<bundled-name>/`` points that provider at another endpoint. The runtime
-reads ``hermes_cli.auth.PROVIDER_REGISTRY`` though, so the mirror has to carry the override across.
+``plugins/model-providers/<bundled-name>/`` points that provider at another endpoint. The runtime reads the live provider projection, so the canonical override must carry through directly.
 Each case runs in a fresh interpreter: real discovery, real auth import, no process-global leakage.
 """
 
@@ -19,14 +18,14 @@ REPO = Path(__file__).resolve().parents[2]
 _PROBE = """
 import json, os
 from providers import list_providers
-from hermes_cli.auth import PROVIDER_REGISTRY
+from hermes_cli.provider_auth import get_provider_config
 from hermes_cli.runtime_provider import resolve_runtime_provider
 list_providers()
-row = PROVIDER_REGISTRY["stepfun"]
+row = get_provider_config("stepfun")
 print(json.dumps({
     "runtime_base_url": resolve_runtime_provider(requested="stepfun")["base_url"],
     "api_key_env_vars": list(row.api_key_env_vars), "base_url_env_var": row.base_url_env_var,
-    "gmi_base_url": PROVIDER_REGISTRY["gmi"].inference_base_url}))
+    "gmi_base_url": get_provider_config("gmi").inference_base_url}))
 """
 
 
@@ -55,13 +54,13 @@ def test_user_plugin_endpoint_and_env_vars_reach_the_runtime(tmp_path):
     assert result["api_key_env_vars"] == ["STEPFUN_API_KEY"]
 
 
-def test_user_plugin_declaring_no_endpoint_keeps_the_builtin_row(tmp_path):
-    from hermes_cli.auth import PROVIDER_REGISTRY
+def test_user_plugin_declaring_no_endpoint_fully_shadows_the_builtin_row(tmp_path):
+    from hermes_cli.provider_auth import get_provider_config
 
     result = _run(tmp_path, (
         "from providers import register_provider\n"
         "from providers.base import ProviderProfile\n"
         "register_provider(ProviderProfile(name='stepfun', auth_type='api_key', env_vars=('STEPFUN_API_KEY',)))\n"))
-    assert result["runtime_base_url"] == PROVIDER_REGISTRY["stepfun"].inference_base_url
-    assert result["base_url_env_var"] == "STEPFUN_BASE_URL"
-    assert result["gmi_base_url"] == PROVIDER_REGISTRY["gmi"].inference_base_url
+    assert result["runtime_base_url"] == ""
+    assert result["base_url_env_var"] == ""
+    assert result["gmi_base_url"] == get_provider_config("gmi").inference_base_url

@@ -1,4 +1,5 @@
 """Regression tests for Nous OAuth refresh and inference JWT interactions."""
+from hermes_cli.provider_auth import get_provider_config
 
 import base64
 import json
@@ -476,7 +477,7 @@ class TestLoginNousSkipKeepsCurrent:
         """User picks Skip → config.yaml untouched, Nous creds still saved."""
         import argparse
         import hermes_yaml as yaml
-        from hermes_cli.auth import PROVIDER_REGISTRY, _login_nous
+        from hermes_cli.auth import _login_nous
 
         hermes_home, config_path, auth_path = self._setup_home_with_openrouter(
             tmp_path, monkeypatch,
@@ -487,7 +488,7 @@ class TestLoginNousSkipKeepsCurrent:
             portal_url=None, inference_url=None, client_id=None, scope=None,
             no_browser=True, timeout=15.0, ca_bundle=None, insecure=False,
         )
-        _login_nous(args, PROVIDER_REGISTRY["nous"])
+        _login_nous(args, get_provider_config("nous"))
 
         # config.yaml model section must be unchanged
         cfg_after = yaml.safe_load(config_path.read_text())
@@ -507,7 +508,7 @@ class TestLoginNousSkipKeepsCurrent:
         """User picks a Nous model → provider flips to nous with that model."""
         import argparse
         import hermes_yaml as yaml
-        from hermes_cli.auth import PROVIDER_REGISTRY, _login_nous
+        from hermes_cli.auth import _login_nous
 
         hermes_home, config_path, auth_path = self._setup_home_with_openrouter(
             tmp_path, monkeypatch,
@@ -520,7 +521,7 @@ class TestLoginNousSkipKeepsCurrent:
             portal_url=None, inference_url=None, client_id=None, scope=None,
             no_browser=True, timeout=15.0, ca_bundle=None, insecure=False,
         )
-        _login_nous(args, PROVIDER_REGISTRY["nous"])
+        _login_nous(args, get_provider_config("nous"))
 
         cfg_after = yaml.safe_load(config_path.read_text())
         assert cfg_after["model"]["provider"] == "nous"
@@ -534,7 +535,7 @@ class TestLoginNousSkipKeepsCurrent:
         instead of leaving it as nous."""
         import argparse
         import hermes_yaml as yaml
-        from hermes_cli.auth import PROVIDER_REGISTRY, _login_nous
+        from hermes_cli.auth import _login_nous
 
         hermes_home = tmp_path / "hermes"
         hermes_home.mkdir(parents=True, exist_ok=True)
@@ -550,7 +551,7 @@ class TestLoginNousSkipKeepsCurrent:
             portal_url=None, inference_url=None, client_id=None, scope=None,
             no_browser=True, timeout=15.0, ca_bundle=None, insecure=False,
         )
-        _login_nous(args, PROVIDER_REGISTRY["nous"])
+        _login_nous(args, get_provider_config("nous"))
 
         auth_path = hermes_home / "auth.json"
         auth_after = json.loads(auth_path.read_text())

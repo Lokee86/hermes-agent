@@ -247,7 +247,8 @@ def _is_external_process_provider(provider: str) -> bool:
     if not name:
         return False
     try:
-        pconfig = _rp().PROVIDER_REGISTRY.get(name)
+        from hermes_cli.provider_auth import get_provider_config
+        pconfig = get_provider_config(name)
         if pconfig is not None:
             return pconfig.auth_type == "external_process"
     except Exception:

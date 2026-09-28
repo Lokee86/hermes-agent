@@ -10,7 +10,6 @@ import sys
 import pytest
 import hermes_yaml as yaml
 
-from hermes_cli import auth as auth_mod
 from hermes_cli.model_switch import switch_model
 from hermes_cli.providers import resolve_provider_full
 from hermes_constants import get_hermes_home
@@ -21,7 +20,7 @@ ACCEPT = {"accepted": True, "persist": True, "recognized": True, "message": None
 
 @pytest.fixture
 def install_profile(monkeypatch):
-    """Write one model-provider plugin, rediscover, and mirror it into the auth registry."""
+    """Write one model-provider plugin and rediscover it canonically."""
     import providers as profiles
 
     monkeypatch.setattr(profiles.registry, "_REGISTRY", dict(profiles.registry._REGISTRY))
@@ -29,7 +28,6 @@ def install_profile(monkeypatch):
     monkeypatch.setattr(profiles.registry, "_PROVIDER_LIST_CACHE", None)
     monkeypatch.setattr("agent.models_dev.fetch_models_dev", lambda *a, **kw: {})
     monkeypatch.setattr("hermes_cli.models_validate.validate_requested_model", lambda *a, **kw: ACCEPT)
-    auth_before = dict(auth_mod.PROVIDER_REGISTRY)
 
     def _install(name: str, *, aliases=(), base_url: str, env_var: str, api_mode: str = "chat_completions"):
         monkeypatch.setenv(env_var, KEY)
@@ -43,12 +41,10 @@ def install_profile(monkeypatch):
             "from providers import register_provider\nfrom providers.base import ProviderProfile\n"
             f"register_provider(ProviderProfile(name={name!r}, aliases={tuple(aliases)!r}, auth_type='api_key',\n"
             f"    env_vars=({env_var!r},), base_url={base_url!r}, api_mode={api_mode!r}))\n", encoding="utf-8")
-        auth_mod.sync_plugin_provider_registry()
+        profiles.get_provider_profile(name)
         return profiles.get_provider_profile(name)
 
     yield _install
-    auth_mod.PROVIDER_REGISTRY.clear()
-    auth_mod.PROVIDER_REGISTRY.update(auth_before)
 
 
 def test_alias_switch_carries_the_profiles_canonical_identity(install_profile):

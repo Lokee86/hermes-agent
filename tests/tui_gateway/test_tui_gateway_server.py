@@ -16979,14 +16979,11 @@ def test_model_save_key_uses_credential_lifecycle_and_picker_context(monkeypatch
     }
     server._sessions["save-key-session"] = _session(agent=agent)
     monkeypatch.setattr(
-        "hermes_cli.auth.PROVIDER_REGISTRY",
-        {
-            "test-provider": types.SimpleNamespace(
-                name="Test Provider",
-                auth_type="api_key",
-                api_key_env_vars=(env_var,),
-            )
-        },
+        "hermes_cli.provider_auth.get_provider_config",
+        lambda slug: types.SimpleNamespace(
+            id="test-provider", name="Test Provider", auth_type="api_key",
+            api_key_env_vars=(env_var,),
+        ) if slug == "test-provider" else None,
     )
     monkeypatch.setattr("hermes_cli.config.is_managed", lambda: False)
     save_credential = Mock()
@@ -17024,8 +17021,13 @@ def test_model_save_key_reconciles_the_launch_profiles_stale_setup_record(monkey
     a key saved for another profile (``profile`` param) must leave the launch record alone."""
     from hermes_cli import free_tier_bootstrap as fb
 
-    monkeypatch.setattr("hermes_cli.auth.PROVIDER_REGISTRY", {"test-provider": types.SimpleNamespace(
-        name="Test Provider", auth_type="api_key", api_key_env_vars=("TEST_PROVIDER_API_KEY",))})
+    monkeypatch.setattr(
+        "hermes_cli.provider_auth.get_provider_config",
+        lambda slug: types.SimpleNamespace(
+            id="test-provider", name="Test Provider", auth_type="api_key",
+            api_key_env_vars=("TEST_PROVIDER_API_KEY",),
+        ) if slug == "test-provider" else None,
+    )
     monkeypatch.setattr("hermes_cli.config.is_managed", lambda: False)
     monkeypatch.setattr("hermes_cli.credential_lifecycle.save_provider_env_credential", Mock())
     monkeypatch.setattr("hermes_cli.inventory.build_models_payload", Mock(return_value={"providers": []}))
