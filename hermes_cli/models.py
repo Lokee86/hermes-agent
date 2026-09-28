@@ -27,6 +27,7 @@ from typing import Any, Optional, TYPE_CHECKING
 if TYPE_CHECKING:
     from typing import TypeGuard
 
+from models import AmbiguousModelAliasError, MODEL_ALIASES, resolve_model_alias
 from hermes_cli.route_identity import normalize_route_base_url
 from hermes_cli.urllib_security import open_credentialed_url
 from hermes_cli.version_info import get_version_info
@@ -888,19 +889,18 @@ def _model_in_provider_catalog(name_lower: str, providers: set[str]) -> bool:
 def _resolve_static_model_alias(
     name_lower: str, current_keys: set[str]) -> Optional[tuple[str, str]]:
     """Resolve short aliases (e.g. sonnet/opus) using static catalogs only."""
-    try:
-        from hermes_cli.model_switch import MODEL_ALIASES
-    except Exception:
-        return None
-
-    identity = MODEL_ALIASES.get(name_lower)
-    if identity is None:
+    if name_lower not in MODEL_ALIASES:
         return None
 
     def _match(provider: str) -> Optional[str]:
-        prefix = f"{identity.vendor}/{identity.family}" if provider in _AGGREGATOR_PROVIDERS else identity.family
-        prefix = prefix.lower()
-        return next((m for m in _PROVIDER_MODELS.get(provider, []) if m.lower().startswith(prefix)), None)
+        try:
+            return resolve_model_alias(
+                name_lower,
+                provider,
+                _PROVIDER_MODELS.get(provider, ()),
+            )
+        except AmbiguousModelAliasError:
+            return None
 
     # Current provider first, then native vendors, then aggregators / borrow-list providers the user
     # is already on — so `sonnet` resolves to anthropic before any re-exposing provider.

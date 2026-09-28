@@ -9,6 +9,8 @@ Covers:
 - /model tab completion for model aliases
 """
 
+from models import AmbiguousModelAliasError
+
 
 # ---------------------------------------------------------------------------
 # OLLAMA_API_KEY credential resolution
@@ -149,7 +151,7 @@ class TestResolveAliasEdgeCases:
 
 class TestResolveAliasSorting:
     """Aliases matching multiple catalog models must NOT silently pick one —
-    resolve_alias raises AmbiguousAliasError with candidates sorted
+    resolve_alias raises AmbiguousModelAliasError with candidates sorted
     best-guess-first (dated snapshots demoted below real point versions)."""
 
     def test_anthropic_opus_ambiguous_lists_candidates(self, monkeypatch):
@@ -166,7 +168,7 @@ class TestResolveAliasSorting:
                             lambda p: ["claude-opus-4-1", "claude-opus-4-7",
                                        "claude-opus-4-8",
                                        "claude-opus-4-20250514"])
-        with pytest.raises(ms.AmbiguousAliasError) as exc:
+        with pytest.raises(AmbiguousModelAliasError) as exc:
             ms.resolve_alias("opus", "anthropic")
         assert exc.value.candidates[0] == "claude-opus-4-8"
         assert set(exc.value.candidates) == {
@@ -188,7 +190,7 @@ class TestResolveAliasSorting:
                             lambda p: ["claude-opus-4-7", "claude-opus-4-8",
                                        "claude-opus-4-20250514",
                                        "claude-opus-4-9"])
-        with pytest.raises(ms.AmbiguousAliasError) as exc:
+        with pytest.raises(AmbiguousModelAliasError) as exc:
             ms.resolve_alias("opus", "anthropic")
         assert exc.value.candidates[0] == "claude-opus-4-9"
 

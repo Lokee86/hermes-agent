@@ -3,9 +3,33 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Iterable, Mapping
+from typing import Iterable
 
-from providers import get_provider_profile, is_aggregator, normalize_provider
+from models.aliases import (
+    AmbiguousModelAliasError,
+    MODEL_ALIASES,
+    ModelAliasPattern,
+    model_alias_sort_key,
+    resolve_declared_model_id,
+    resolve_model_alias,
+)
+from providers import get_provider_profile, normalize_provider
+
+
+__all__ = [
+    "AmbiguousModelAliasError",
+    "MODEL_ALIASES",
+    "ModelAliasPattern",
+    "ModelRef",
+    "format_model_ref",
+    "model_alias_sort_key",
+    "normalize_model_id",
+    "normalize_model_ref",
+    "parse_configured_provider_ref",
+    "parse_model_ref",
+    "resolve_declared_model_id",
+    "resolve_model_alias",
+]
 
 
 @dataclass(frozen=True, slots=True)
@@ -18,27 +42,6 @@ class ModelRef:
     def __post_init__(self) -> None:
         object.__setattr__(self, "provider", normalize_provider(self.provider))
         object.__setattr__(self, "model", str(self.model or "").strip())
-
-
-@dataclass(frozen=True, slots=True)
-class ModelAliasPattern:
-    """Vendor/family pattern used to resolve a short model alias."""
-
-    vendor: str
-    family: str
-
-
-class AmbiguousModelAliasError(ValueError):
-    """Raised when an alias has more than one valid candidate."""
-
-    def __init__(self, alias: str, provider: str, candidates: Iterable[str]) -> None:
-        self.alias = str(alias or "").strip().lower()
-        self.provider = normalize_provider(provider)
-        self.candidates = tuple(candidates)
-        super().__init__(
-            f"{self.alias!r} matches {len(self.candidates)} models on "
-            f"{self.provider}: {', '.join(self.candidates)}"
-        )
 
 
 def _canonical_provider_ids(values: Iterable[str]) -> set[str]:
@@ -65,12 +68,7 @@ def parse_model_ref(
     known_provider_ids: Iterable[str] = (),
     named_custom_provider_ids: Iterable[str] = (),
 ) -> ModelRef:
-    """Parse Hermes provider:model syntax without guessing from punctuation.
-
-    A colon is a provider delimiter only when its left side resolves to a known
-    provider. Named custom providers are matched longest-first so
-    provider-native colons in the model id remain intact.
-    """
+    """Parse Hermes provider:model syntax without guessing from punctuation."""
 
     value = str(raw or "").strip()
     if not value:
@@ -90,8 +88,7 @@ def parse_model_ref(
         model_part = value[colon + 1 :].strip()
         if provider_part and model_part:
             canonical = normalize_provider(provider_part)
-            known = _canonical_provider_ids(known_provider_ids)
-            if canonical in known:
+            if canonical in _canonical_provider_ids(known_provider_ids):
                 return ModelRef(canonical, model_part)
 
     return ModelRef(default_provider, value)
@@ -101,12 +98,7 @@ def parse_configured_provider_ref(
     raw: str,
     configured_provider_ids: Iterable[str],
 ) -> ModelRef | None:
-    """Parse an explicit configured provider/model reference.
-
-    This performs no catalogue lookup and makes no routing decision. Callers
-    decide whether configured-provider interpretation outranks an aggregator's
-    native slash-bearing model id.
-    """
+    """Parse an explicit configured provider/model reference."""
 
     value = str(raw or "").strip()
     if "/" not in value:
@@ -137,10 +129,7 @@ def normalize_model_id(
     *,
     known_ids: Iterable[str] = (),
 ) -> str:
-    """Normalize via provider-owned rules and caller-supplied candidates.
-
-    Catalogue acquisition remains outside this module.
-    """
+    """Normalize via provider-owned rules and caller-supplied candidates."""
 
     canonical = normalize_provider(provider)
     value = str(model or "").strip()
@@ -163,36 +152,3 @@ def normalize_model_ref(
         ref.provider,
         normalize_model_id(ref.provider, ref.model, known_ids=known_ids),
     )
-
-
-def resolve_model_alias(
-    alias: str,
-    provider: str,
-    candidates: Iterable[str],
-    aliases: Mapping[str, ModelAliasPattern],
-) -> str | None:
-    """Resolve one short alias against caller-supplied model candidates.
-
-    Catalogue acquisition and candidate ordering remain outside identity.
-    Multiple matches are explicit ambiguity rather than an implicit version
-    choice.
-    """
-
-    key = str(alias or "").strip().lower()
-    pattern = aliases.get(key)
-    if pattern is None:
-        return None
-
-    prefix = pattern.family
-    if is_aggregator(provider):
-        prefix = f"{pattern.vendor}/{pattern.family}"
-    wanted = prefix.lower()
-
-    matches = [
-        candidate
-        for candidate in (str(value or "").strip() for value in candidates)
-        if candidate and candidate.lower().startswith(wanted)
-    ]
-    if len(matches) > 1:
-        raise AmbiguousModelAliasError(key, provider, matches)
-    return matches[0] if matches else None

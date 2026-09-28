@@ -139,7 +139,7 @@ def test_model_alias_never_silently_selects_ambiguous_version():
             ["claude-sonnet-4.5", "claude-sonnet-4.6"],
             aliases,
         )
-    assert exc.value.candidates == ("claude-sonnet-4.5", "claude-sonnet-4.6")
+    assert exc.value.candidates == ("claude-sonnet-4.6", "claude-sonnet-4.5")
 
 
 def test_unknown_model_alias_returns_none():

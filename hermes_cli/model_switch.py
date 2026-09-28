@@ -17,7 +17,14 @@ from providers import (
     ResolvedProvider, custom_provider_aliases, custom_provider_slug, get_provider_label,
     is_aggregator, list_providers, normalize_provider,
 )
-from models import parse_configured_provider_ref, parse_model_ref
+from models import (
+    AmbiguousModelAliasError,
+    MODEL_ALIASES,
+    parse_configured_provider_ref,
+    parse_model_ref,
+    resolve_declared_model_id,
+    resolve_model_alias,
+)
 from hermes_cli.providers import (
     LLAMACPP_ALIASES, determine_api_mode, host_mandated_api_mode, resolve_provider_full,
 )
@@ -137,39 +144,6 @@ def is_nous_hermes_non_agentic(model_name: str) -> bool:
 def _check_hermes_model_warning(model_name: str) -> str:
     """Warning string if *model_name* is a Nous Hermes 3/4 chat model, else ""."""
     return _HERMES_MODEL_WARNING if is_nous_hermes_non_agentic(model_name) else ""
-
-
-# --- Model aliases -- short names -> (vendor, family) with NO version numbers,
-# resolved dynamically against the live models.dev catalog.
-
-class ModelIdentity(NamedTuple):
-    """Vendor slug and family prefix used for catalog resolution."""
-    vendor: str
-    family: str
-
-
-MODEL_ALIASES: dict[str, ModelIdentity] = {
-    "sonnet":    ModelIdentity("anthropic", "claude-sonnet"),
-    "opus":      ModelIdentity("anthropic", "claude-opus"),
-    "haiku":     ModelIdentity("anthropic", "claude-haiku"),
-    "claude":    ModelIdentity("anthropic", "claude"),
-    "gpt5":      ModelIdentity("openai", "gpt-5"),
-    "gpt":       ModelIdentity("openai", "gpt"),
-    "codex":     ModelIdentity("openai", "codex"),
-    "o3":        ModelIdentity("openai", "o3"),
-    "o4":        ModelIdentity("openai", "o4"),
-    "gemini":    ModelIdentity("google", "gemini"),
-    "deepseek":  ModelIdentity("deepseek", "deepseek-chat"),
-    "grok":      ModelIdentity("x-ai", "grok"),
-    "llama":     ModelIdentity("meta-llama", "llama"),
-    "qwen":      ModelIdentity("qwen", "qwen"),
-    "minimax":   ModelIdentity("minimax", "minimax"),
-    "nemotron":  ModelIdentity("nvidia", "nemotron"),
-    "kimi":      ModelIdentity("moonshotai", "kimi"),
-    "glm":       ModelIdentity("z-ai", "glm"),
-    "step":      ModelIdentity("stepfun", "step"),
-    "mimo":      ModelIdentity("xiaomi", "mimo"),
-    "trinity":   ModelIdentity("arcee-ai", "trinity")}
 
 
 # --- Direct aliases — exact model+provider+base_url for endpoints outside the
@@ -692,82 +666,7 @@ def resolve_effective_model(
 
 # --- Alias resolution
 
-def _model_sort_key(model_id: str, prefix: str) -> tuple:
-    """Sort key preferring higher versions after the family prefix, then ranked suffix tokens.
-
-    With prefix ``"mimo"``: ``mimo-v2.5-pro`` -> (-2.5, 0, 'pro'), ``mimo-v2.5`` -> (-2.5, 1, ''),
-    ``mimo-v2-omni`` -> (-2.0, 1, 'omni')."""
-    # Strip the prefix (and optional "/" separator for aggregator slugs)
-    rest = model_id[len(prefix):].removeprefix("/").lstrip("-").strip()
-    nums, suffix_buf = _split_version_suffix(rest)
-    suffix = suffix_buf.lower().strip("-_.").strip()
-
-    # YYYYMMDD date stamps (claude-opus-4-20250514) are snapshot markers, not version components,
-    # and would dwarf real point versions; keep them as a trailing tiebreaker so bare IDs sort
-    # before their dated snapshots and newer snapshots before older. The 19_000_101 threshold
-    # reclassifies only 8-digit stamps (mistral-large-2411, gpt-4-0613 keep sorting as versions).
-    version_key = tuple(-n for n in nums if n < 19_000_101)  # negate: higher sorts first
-    date_stamp = max((n for n in nums if n >= 19_000_101), default=0.0)
-    date_key = (0.0, 0.0) if date_stamp == 0.0 else (1.0, -date_stamp)
-
-    # Suffix quality: pro/max/plus/turbo (0) > no suffix / omni / flash / mini (1). "sol" is the
-    # flagship tier of the GPT-5.6 series (sol > terra > luna); without it `/model gpt` would
-    # tiebreak alphabetically onto luna, the cheapest. GPT-6 put "astra" above "sol": both rank 0 and
-    # the alphabetical tiebreak lands on astra, so `/model gpt` still resolves to the flagship.
-    suffix_rank = 0 if suffix in ("pro", "max", "plus", "turbo", "sol", "astra") else 1
-    return version_key + (suffix_rank, suffix) + date_key
-
-
-def _split_version_suffix(rest: str) -> tuple[list[float], str]:
-    """``"v2.5-pro"`` -> ``([2.5], "pro")``; ``"-omni"`` -> ``([], "omni")``.
-
-    Version tokens are ``v``-optional digit/dot runs separated by ``-``/``_``; a second dot inside
-    a run starts a new component; the first character that is neither starts the suffix."""
-    nums: list[float] = []
-    run, pos = "", 0
-
-    def _flush() -> None:
-        nonlocal run
-        try:
-            nums.append(float(run.rstrip(".")))
-        except ValueError:
-            pass
-        run = ""
-
-    while pos < len(rest):
-        ch = rest[pos]
-        if ch in "-_.":
-            pos += 1
-            continue
-        if not (ch in "vV" or ch.isdigit()):
-            break
-        if ch in "vV":
-            pos += 1
-        while pos < len(rest) and (rest[pos].isdigit() or rest[pos] == "."):
-            if rest[pos] == "." and "." in run:
-                _flush()
-            else:
-                run += rest[pos]
-            pos += 1
-        _flush()
-        if pos < len(rest) and rest[pos] not in "-_":
-            break
-    return nums, rest[pos:]
-
-
-class AmbiguousAliasError(Exception):
-    """Alias family-matches multiple catalog models; caller must disambiguate.
-
-    Raised by :func:`resolve_alias` instead of silently picking one via version-sort heuristics.
-    ``candidates`` is sorted best-guess-first (see :func:`_model_sort_key`) for display only."""
-    def __init__(self, alias: str, provider: str, candidates: list[str]):
-        self.alias = alias
-        self.provider = provider
-        self.candidates = candidates
-        super().__init__(f"alias {alias!r} matches {len(candidates)} models on {provider}")
-
-
-def _ambiguous_alias_message(err: "AmbiguousAliasError") -> str:
+def _ambiguous_alias_message(err: AmbiguousModelAliasError) -> str:
     """User-facing disambiguation list for an ambiguous alias."""
     shown = err.candidates[:10]
     lines = "\n".join(f"  {i}. {m}" for i, m in enumerate(shown, 1))
@@ -794,7 +693,7 @@ def resolve_alias(raw_input: str, current_provider: str, user_providers: Optiona
     Direct aliases (and reverse lookup by exact model id) win; then :data:`MODEL_ALIASES` is
     matched against the provider's models.dev catalog by ``vendor/family`` prefix (``family``
     for non-aggregators). Returns ``(provider, resolved_model_id, alias_name)`` or None; raises
-    :class:`AmbiguousAliasError` when several catalog models match."""
+    :class:`models.AmbiguousModelAliasError` when several catalog models match."""
     key = raw_input.strip().lower()
 
     _ensure_direct_aliases()
@@ -819,44 +718,45 @@ def resolve_alias(raw_input: str, current_provider: str, user_providers: Optiona
         return reverse_fallback
 
     process_catalog, process_aliases = _external_process_catalog(current_provider)
-    if process_catalog:
-        # Process providers own their model IDs and aliases (models.dev knows nothing about
-        # them); a typed id or family alias that they declare must not leave the provider.
-        declared = _external_process_match(process_catalog, process_aliases, key, provider=current_provider)
+    if process_catalog or process_aliases:
+        # External-process providers own their IDs and aliases; catalogue acquisition never
+        # escapes to models.dev for them.
+        declared = resolve_declared_model_id(
+            key,
+            current_provider,
+            process_catalog,
+            provider_aliases=process_aliases,
+        )
         if declared is not None:
             return (current_provider, declared, key)
+        resolved = resolve_model_alias(
+            key,
+            current_provider,
+            process_catalog,
+            provider_aliases=process_aliases,
+        )
+        return (current_provider, resolved, key) if resolved else None
 
-    identity = MODEL_ALIASES.get(key)
-    if identity is None:
+    if key not in MODEL_ALIASES:
         return None
 
-    vendor, family = identity
-
-    if process_catalog:
-        declared = _external_process_match(process_catalog, process_aliases, family, provider=current_provider)
-        return (current_provider, declared, key) if declared else None
-
-    # models.dev catalog merged with static _PROVIDER_MODELS entries it may be missing.
+    # Catalogue acquisition stays outside model identity. The canonical resolver receives only
+    # caller-supplied candidates.
     catalog = list_provider_models(current_provider)
     try:
         from hermes_cli.models import _PROVIDER_MODELS
-        seen = {m.lower() for m in catalog}
-        catalog.extend(m for m in _PROVIDER_MODELS.get(current_provider, []) if m.lower() not in seen)
+
+        seen = {model.lower() for model in catalog}
+        catalog.extend(
+            model
+            for model in _PROVIDER_MODELS.get(current_provider, [])
+            if model.lower() not in seen
+        )
     except Exception:
         pass
 
-    prefix = f"{vendor}/{family}" if is_aggregator(current_provider) else family
-    matches = [mid for mid in catalog if mid.lower().startswith(prefix.lower())]
-    if not matches:
-        return None
-
-    # Version-sort for display, but NEVER silently pick among multiple candidates: the
-    # heuristics have repeatedly guessed wrong (dated snapshots outranking point releases,
-    # suffix tiebreaks landing on the cheapest tier).
-    matches.sort(key=lambda m: _model_sort_key(m, prefix))
-    if len(matches) > 1:
-        raise AmbiguousAliasError(key, current_provider, matches)
-    return (current_provider, matches[0], key)
+    resolved = resolve_model_alias(key, current_provider, catalog)
+    return (current_provider, resolved, key) if resolved else None
 
 
 def _external_process_catalog(provider: str) -> tuple[list[str], dict[str, str]]:
@@ -867,20 +767,6 @@ def _external_process_catalog(provider: str) -> tuple[list[str], dict[str, str]]
         return [], {}
     return list(profile.fallback_models), {k.lower(): v for k, v in profile.model_aliases.items()}
 
-
-def _external_process_match(catalog: list[str], aliases: dict[str, str], typed: str, *, provider: str) -> str | None:
-    """Provider alias, exact id, else the single declared id that extends it (``claude-opus-5``
-    -> ``claude-opus-5[1m]``); several candidates raise so nothing is picked silently."""
-    wanted = typed.strip().lower()
-    if wanted in aliases:
-        return aliases[wanted]
-    exact = next((m for m in catalog if m.lower() == wanted), None)
-    if exact is not None:
-        return exact
-    matches = [m for m in catalog if m.lower().startswith(wanted)]
-    if len(matches) > 1:
-        raise AmbiguousAliasError(wanted, provider, matches)
-    return matches[0] if matches else None
 
 
 def get_authenticated_provider_slugs(
@@ -901,7 +787,7 @@ def _resolve_alias_fallback(
     custom_providers: Optional[list] = None) -> Optional[tuple[str, str, str]]:
     """Resolve an alias on the user's authenticated providers (``("openrouter", "nous")`` when none given).
 
-    AmbiguousAliasError propagates: the alias exists on this provider, the user just has to
+    AmbiguousModelAliasError propagates: the alias exists on this provider, the user just has to
     choose — trying the next provider would silently switch them somewhere they didn't ask for."""
     results = (resolve_alias(raw_input, p, user_providers, custom_providers)
                for p in authenticated_providers or ("openrouter", "nous"))
@@ -1291,7 +1177,7 @@ def _route_explicit_provider(st: _Switch) -> Optional[ModelSwitchResult]:
 
     try:
         alias_result = resolve_alias(st.new_model, st.target_provider, st.user_providers, st.custom_providers)
-    except AmbiguousAliasError as err:
+    except AmbiguousModelAliasError as err:
         return st.fail(_ambiguous_alias_message(err), target_provider=st.target_provider)
     if alias_result is not None:
         alias_provider, st.new_model, alias_name = alias_result
@@ -1311,7 +1197,7 @@ def _route_alias_fallback(st: _Switch, key: str) -> Optional[ModelSwitchResult]:
     )
     try:
         fallback_result = _resolve_alias_fallback(st.raw_input, authed, st.user_providers, st.custom_providers)
-    except AmbiguousAliasError as err:
+    except AmbiguousModelAliasError as err:
         return st.fail(_ambiguous_alias_message(err))
     if fallback_result is None:
         identity = MODEL_ALIASES[key]
@@ -1386,7 +1272,7 @@ def _route_from_model_input(st: _Switch) -> Optional[ModelSwitchResult]:
             return _route_explicit_provider(st)
         try:
             alias_result = resolve_alias(raw_input, current_provider, st.user_providers, st.custom_providers)
-        except AmbiguousAliasError as err:
+        except AmbiguousModelAliasError as err:
             return st.fail(_ambiguous_alias_message(err))
         if alias_result is not None:
             st.target_provider, st.new_model, st.resolved_alias = alias_result
