@@ -82,7 +82,7 @@ def test_manual_gateway_of_another_home_is_not_stopped(monkeypatch, own_home):
     monkeypatch.setattr("hermes_cli.gateway._get_service_pids", lambda **k: set())
     monkeypatch.setattr("hermes_cli.gateway.find_gateway_pids", lambda **k: [111, 222, 333])
     monkeypatch.setattr("hermes_cli.gateway.find_profile_gateway_processes", lambda **k: [])
-    monkeypatch.setattr("hermes_cli.gateway._wait_for_gateway_exit", lambda **k: None)
+    monkeypatch.setattr("gateway.restart._wait_for_gateway_exit", lambda **k: None)
     killed: list[tuple[int, int]] = []
     monkeypatch.setattr(os, "kill", lambda pid, sig: killed.append((pid, sig)))
 

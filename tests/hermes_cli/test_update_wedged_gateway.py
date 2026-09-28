@@ -200,7 +200,7 @@ def _launchd_harness(monkeypatch, tmp_path, pid):
     monkeypatch.setattr("gateway.restart.get_restart_drain_timeout", lambda: 180.0)
     monkeypatch.setattr("gateway.status.get_running_pid", lambda *a, **k: pid)
     monkeypatch.setattr(
-        gateway_cli, "_request_gateway_self_restart", lambda pid: False
+        launchd_service, "_request_gateway_self_restart", lambda pid: False
     )
     real_probe = process_liveness.probe_gateway_loop_liveness
 
@@ -214,11 +214,6 @@ def _launchd_harness(monkeypatch, tmp_path, pid):
         "_escalate_wedged_gateway",
         lambda pid, **kw: events.append("escalate") or True,
     )
-    monkeypatch.setattr(
-        gateway_cli,
-        "terminate_pid",
-        lambda pid, force=False, **kwargs: events.append(("kill" if force else "term", pid)),
-    )
     # Never let a real SIGUSR1 escape to the live test PID — the drain path
     # goes through _graceful_restart_via_sigusr1 (in-place restart) before
     # any exit-wait, and these tests feed launchd_restart os.getpid().
@@ -228,7 +223,7 @@ def _launchd_harness(monkeypatch, tmp_path, pid):
         lambda pid, timeout, **_: events.append(("drain", pid, timeout)) or True,
     )
     monkeypatch.setattr(
-        gateway_cli,
+        launchd_service,
         "_wait_for_gateway_exit",
         lambda timeout, force_after=None: events.append(("drain", timeout)) or True,
     )
@@ -407,7 +402,7 @@ class TestLaunchdRestartWedgedIntegration:
         monkeypatch.setattr("gateway.restart.get_restart_exit_wait_budget", lambda: 195.0)
         monkeypatch.setattr("gateway.status.get_running_pid", lambda *a, **k: 4242)
         monkeypatch.setattr(
-            gateway_cli, "_request_gateway_self_restart", lambda pid: False
+            launchd_service, "_request_gateway_self_restart", lambda pid: False
         )
         monkeypatch.setattr(
             process_liveness,
@@ -418,11 +413,6 @@ class TestLaunchdRestartWedgedIntegration:
             process_liveness,
             "_escalate_wedged_gateway",
             lambda pid, **kw: events.append("escalate") or True,
-        )
-        monkeypatch.setattr(
-        gateway_cli,
-        "terminate_pid",
-            lambda pid, force=False, **kwargs: events.append("sigterm"),
         )
         # Never let a real SIGUSR1 escape to PID 4242 during tests.
         monkeypatch.setattr(

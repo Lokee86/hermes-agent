@@ -267,10 +267,11 @@ def test_s6_runtime_snapshot_reports_supervised_service(monkeypatch, tmp_path):
 
 class TestSystemdLingerStatus:
     def test_reports_enabled(self, monkeypatch):
-        monkeypatch.setattr(gateway, "is_linux", lambda: True)
+        monkeypatch.setattr(systemd_runtime, "is_linux", lambda: True)
+        monkeypatch.setattr(systemd_runtime, "is_termux", lambda: False)
         monkeypatch.setenv("USER", "alice")
         monkeypatch.setattr(
-            gateway.subprocess,
+            systemd_runtime.subprocess,
             "run",
             lambda *args, **kwargs: SimpleNamespace(returncode=0, stdout="yes\n", stderr=""),
         )
@@ -280,7 +281,7 @@ class TestSystemdLingerStatus:
 
 
     def test_reports_termux_as_not_supported(self, monkeypatch):
-        monkeypatch.setattr(gateway, "is_termux", lambda: True)
+        monkeypatch.setattr(systemd_runtime, "is_termux", lambda: True)
 
         assert systemd_runtime.linger_status() == (None, "not supported in Termux")
 
@@ -449,7 +450,7 @@ class TestWaitForGatewayExit:
         monkeypatch.setattr("time.monotonic", fake_monotonic)
         monkeypatch.setattr("time.sleep", lambda _: None)
         monkeypatch.setattr("gateway.status.get_running_pid", mock_get_running_pid)
-        monkeypatch.setattr(gateway, "terminate_pid", mock_terminate)
+        monkeypatch.setattr("gateway.status.terminate_pid", mock_terminate)
 
         gateway._wait_for_gateway_exit(timeout=10.0, force_after=5.0)
         assert (42, True) in kills
@@ -524,7 +525,7 @@ class TestRestartWaitsForApiServerPort:
         port = listener.getsockname()[1]
         cfg = GatewayConfig()
         cfg.platforms[Platform.API_SERVER] = PlatformConfig(enabled=True, extra={"port": port})
-        monkeypatch.setattr(gateway, "load_gateway_config", lambda: cfg)
+        monkeypatch.setattr("gateway.config.load_gateway_config", lambda: cfg)
         monkeypatch.delenv("API_SERVER_PORT", raising=False)
         try:
             # config.yaml port wins over the env default: the busy configured port is what we wait on
