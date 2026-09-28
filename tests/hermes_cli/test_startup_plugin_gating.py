@@ -45,7 +45,9 @@ def test_deferred_platform_loader_registers_cli_command_before_parser_table():
     import argparse
 
     from gateway.platform_registry import PlatformRegistry
-    from hermes_cli.plugins import PluginContext, PluginManager, PluginManifest
+    from hermes_cli.plugins import PluginManifest
+    from plugin_runtime.manager import PluginManager
+    from plugin_runtime.context import PluginContext
 
     mgr = PluginManager()
     manifest = PluginManifest(name="fake-photon-platform")

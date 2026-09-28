@@ -11,20 +11,18 @@ from copy import deepcopy
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List
 
-from plugin_runtime.dispatch import OBSERVER_SCHEMA_VERSION
+from plugin_runtime.dispatch import (
+    LLM_EXECUTION_MIDDLEWARE,
+    LLM_REQUEST_MIDDLEWARE,
+    OBSERVER_SCHEMA_VERSION,
+    TOOL_EXECUTION_MIDDLEWARE,
+    TOOL_REQUEST_MIDDLEWARE,
+    VALID_MIDDLEWARE,
+)
 
 logger = logging.getLogger(__name__)
 
 MIDDLEWARE_SCHEMA_VERSION = "hermes.middleware.v1"
-
-TOOL_REQUEST_MIDDLEWARE = "tool_request"
-TOOL_EXECUTION_MIDDLEWARE = "tool_execution"
-LLM_REQUEST_MIDDLEWARE = "llm_request"
-LLM_EXECUTION_MIDDLEWARE = "llm_execution"
-
-VALID_MIDDLEWARE: set[str] = {
-    TOOL_REQUEST_MIDDLEWARE, TOOL_EXECUTION_MIDDLEWARE, LLM_REQUEST_MIDDLEWARE, LLM_EXECUTION_MIDDLEWARE,
-}
 
 
 @dataclass
@@ -160,10 +158,10 @@ class _DownstreamExecutionError(Exception):
 
 
 def _run_execution_chain(kind: str, terminal_call: Callable[[Any], Any], **kwargs: Any) -> Any:
-    from hermes_cli.plugins import _delivery_manager
+    from plugin_runtime.lifecycle import delivery_manager
 
     payload_key = "request" if "request" in kwargs else "args"
-    manager = _delivery_manager()
+    manager = delivery_manager()
     callbacks = list(manager._middleware.get(kind, []))
     if not callbacks:
         return terminal_call(kwargs[payload_key])

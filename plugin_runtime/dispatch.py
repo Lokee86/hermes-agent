@@ -25,7 +25,157 @@ from plugin_runtime.registration import PluginRegistration
 
 logger = logging.getLogger("hermes_cli.plugins")
 
+_PLUGIN_COMMAND_AWAIT_TIMEOUT_SECS = 30.0
+
+
+def resolve_plugin_command_result(result: Any) -> Any:
+    """Resolve a plugin command result, awaiting async handlers: ``asyncio.run`` when no loop is
+    running, else a helper thread with its own loop (30s bound so a hung handler cannot wedge the
+    terminal)."""
+    if not inspect.isawaitable(result):
+        return result
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return asyncio.run(result)
+    outcome: Dict[str, Any] = {}
+    failure: Dict[str, BaseException] = {}
+    done = threading.Event()
+
+    def _runner() -> None:
+        try:
+            outcome["value"] = asyncio.run(result)
+        except BaseException as exc:  # pragma: no cover - re-raised below
+            failure["exc"] = exc
+        finally:
+            done.set()
+
+    # copy_context: the helper thread must see the caller's profile/secret scope, else an
+    # async hook under a running loop reads the default HERMES_HOME and get_secret raises.
+    threading.Thread(target=contextvars.copy_context().run, args=(_runner,),
+                     name="hermes-plugin-command-await", daemon=True).start()
+    if not done.wait(timeout=_PLUGIN_COMMAND_AWAIT_TIMEOUT_SECS):
+        raise TimeoutError("Plugin command async handler did not complete within "
+                           f"{_PLUGIN_COMMAND_AWAIT_TIMEOUT_SECS:.0f}s")
+    if "exc" in failure:
+        raise failure["exc"]
+    return outcome.get("value")
+
 OBSERVER_SCHEMA_VERSION = "hermes.observer.v1"
+
+TOOL_REQUEST_MIDDLEWARE = "tool_request"
+TOOL_EXECUTION_MIDDLEWARE = "tool_execution"
+LLM_REQUEST_MIDDLEWARE = "llm_request"
+LLM_EXECUTION_MIDDLEWARE = "llm_execution"
+
+VALID_MIDDLEWARE: set[str] = {
+    TOOL_REQUEST_MIDDLEWARE,
+    TOOL_EXECUTION_MIDDLEWARE,
+    LLM_REQUEST_MIDDLEWARE,
+    LLM_EXECUTION_MIDDLEWARE,
+}
+
+VALID_HOOKS: Set[str] = {
+    "pre_tool_call", "post_tool_call", "transform_terminal_output", "transform_tool_result",
+    # transform_llm_output: return a replacement string (first non-None wins) or None.
+    "transform_llm_output", "pre_llm_call", "post_llm_call",
+    # Streaming observers (agent.plugin_stream_hooks), off the token path; payloads are immutable
+    # normalized text/lifecycle and cannot transform the stream.
+    "on_stream_start", "on_stream_delta", "on_stream_end", "on_interim_message",
+    # pre_verify: once per turn when the agent edited code and is about to verify/finish. Return
+    # {"action": "continue", "message"} (or Claude-Code Stop {"decision": "block", "reason"}) to keep
+    # going; anything else finishes. Bounded by agent.max_verify_nudges.
+    "pre_verify", "pre_api_request", "post_api_request", "api_request_error",
+    # pre/post_auxiliary_call: once per physical provider attempt of an auxiliary LLM call
+    # (agent/auxiliary_hooks.py — titling, compression, MoA, vision, approval, ...). Same payload
+    # shape as pre/post_api_request plus ``aux_task``; distinct events so turn-scoped
+    # ``*_api_request`` subscribers never receive auxiliary traffic (#79733). Observers; fail-open.
+    "pre_auxiliary_call", "post_auxiliary_call",
+    # transform_api_error_classification: once per failed API call BEFORE
+    # agent/error_classifier.classify_api_error(). Kwargs: provider, model, status_code, error_type,
+    # error_code, error_message, error_body, error, approx_tokens, context_length, num_messages.
+    # Return None or {"reason": <FailoverReason name> (required), "retryable"/"should_compress"/
+    # "should_rotate_credential"/"should_fallback": bool, "message": str, "error_context": dict}.
+    # Run-all-then-pick-first (see get_plugin_error_classification). Privacy: error_message/
+    # error_body may be unredacted.
+    "transform_api_error_classification", "on_session_start", "on_session_end",
+    "on_session_finalize", "on_session_reset",
+    # on_skill_lifecycle: successful skill lifecycle facts (local skill name visible to plugins).
+    "on_skill_lifecycle", "subagent_start", "subagent_stop",
+    # pre_gateway_dispatch: once per incoming MessageEvent, after the internal-event guard, BEFORE
+    # auth/pairing and dispatch. Kwargs: event, gateway, session_store. Return {"action": "skip",
+    # "reason"} -> drop; {"action": "rewrite", "text"} -> replace event.text; "allow"/None -> normal.
+    "pre_gateway_dispatch",
+    # agent_loop_stopped: an agent turn was interrupted mid-run (/stop, or the running-agent
+    # fast-path of /new; see gateway/run.py::_interrupt_and_clear_session). Kwargs: session_key,
+    # platform, reason, invalidation_reason. Return values are ignored.
+    "agent_loop_stopped",
+    # Approval observers (tools/approval.py); returns ignored — plugins cannot veto or pre-answer
+    # (use pre_tool_call). Kwargs: command, description, pattern_key, pattern_keys, session_key,
+    # surface: "cli"|"gateway"|"smart"; post_approval_response adds choice ("once"|"session"|
+    # "always"|"deny"|"timeout"|"smart_approve"|"smart_deny") and decided_by.
+    "pre_approval_request", "post_approval_response",
+    # on_room_member_activity: a hosted Group Chat member's live runtime events (tool.started/completed,
+    # request.opened, message.delta, reasoning.delta, turn.error, ...) stamped with room_id, thread_id,
+    # member_id, turn_id, task_id, execution_generation. Observer, queued per consumer off the token
+    # path (agent.plugin_stream_hooks); never written to the durable room log. Kwargs: those
+    # coordinates + kind, seq, payload (the client-safe session event payload, approvals redacted).
+    "on_room_member_activity",
+    # pre_transcription: after provider resolution, BEFORE any backend runs. Kwargs: file_path,
+    # provider, model, language, prompt, source. Return None or a dict mutating prompt/language/
+    # model (registration order, last-writer-wins; file_path is read-only).
+    "pre_transcription",
+    # Kanban task observers (hermes_cli.kanban_db), fired AFTER the DB commit so a slow plugin never
+    # holds the SQLite write lock; returns ignored. claimed fires in the DISPATCHER right before
+    # spawn; completed/blocked fire in the WORKER (or whichever process drove it). Kwargs: task_id,
+    # board, assignee, run_id, profile_name; completed adds summary, blocked adds reason.
+    "kanban_task_claimed", "kanban_task_completed", "kanban_task_blocked",
+    # Kanban worker/mutation/tick observers; returns ignored; fire sites short-circuit on
+    # has_hook(). Kwargs: task_id, profile_name, board, assignee, run_id plus, per hook:
+    # worker_spawned (DISPATCHER, after PID persisted, inside the dispatch lock — stay fast):
+    #   worker_pid, workspace_path (privacy: project layout/usernames).
+    # worker_exited (tick-derived on dead-PID reclaim): worker_pid, exit_kind ("clean_exit" |
+    #   "rate_limited" | "nonzero_exit" | "signaled" | "unknown"), exit_code, outcome, retry_status.
+    # worker_stale_claim (TTL-expired claim reclaimed; live-PID extensions do NOT fire):
+    #   worker_pid, heartbeat_stale, retry_status.
+    # task_updated (committed task-row write outside claim/complete/block, in whichever process
+    #   committed it): changed_fields — field NAMES only, never values.
+    # dispatch_tick (once per dispatch_once, strictly AFTER the dispatch lock is released): board,
+    #   profile_name, dry_run, outcome ("ok"|"skipped_locked"|"idle"), result: DispatchResult
+    #   (privacy: task ids, assignees, workspace paths).
+    "on_kanban_worker_spawned", "on_kanban_worker_exited", "on_kanban_worker_stale_claim",
+    "on_kanban_task_updated", "on_kanban_dispatch_tick",
+    # gateway_platform_event: normalized envelopes only, never raw SDK objects or adapter handles.
+    # Kwargs: platform, event_type, payload (event_type-local; see hooks.md). New event types land
+    # only together with real fire-sites.
+    # on_kanban_dispatch_tick fires once per dispatcher tick in dispatch_once, strictly AFTER the board's
+    # single-writer dispatch lock has been released (the #56066 original fired inside the lock — the #64231
+    # disposition mandates the post-lock re-port), so a slow subscriber can never extend the writer critical
+    # section. Kwargs: board: str | None, profile_name: str, dry_run: bool, outcome: "ok" | "skipped_locked"
+    # | "idle", result: hermes_cli.kanban_db.DispatchResult (spawned, reclaimed, promoted,
+    # reconciled_orphans, crashed, stale, timed_out, auto_blocked, rate_limited, auto_assigned_default,
+    # respawn_guarded, skipped_per_profile_capped, skipped_unassigned, skipped_nonspawnable,
+    # skipped_locked). Privacy: result carries task ids, assignees, and workspace paths.
+    # Gateway platform-boundary observer hooks (#64176). Observer-only; each callback isolated by
+    # invoke_hook. This surface grants no adapter handles or platform actions. Fired today: Telegram
+    # "reaction" + "message_edited"; Discord "message_edited", "message_deleted", "thread_created",
+    # "thread_renamed". Each event type carries its own event-local additive payload contract (see
+    # hooks.md). Other event types and hook names land here only together with real fire-sites and payload
+    # contracts; no inert VALID_HOOKS surface is registered ahead of implementation.
+    "gateway_platform_event",
+    # pre_command: BEFORE a recognized slash command's handler on CLI and gateway canonical dispatch;
+    # returns IGNORED in v1. Deliberately NOT fired for the gateway's running-agent intercept path
+    # (/stop, /approve, busy_policy) — a slow/hostile plugin must not touch the operator's escape
+    # hatches. Kwargs: surface, command (canonical), alias_used, args_raw, session_key, platform.
+    # Slash-command dispatch observer (#64204, observer-first per #64182 ground rule 3). Return values are
+    # IGNORED in v1 — a plugin returning a directive-shaped dict gets a debug log so future block/rewrite
+    # adopters are discoverable once the middleware variant ships against the #64231 taxonomy.
+    "pre_command",
+}
+
+# Hooks whose directive the shell-hook response parser has no channel for. VALID_HOOKS doubles as
+# the shell-hook allow-list, so these are refused loudly instead of having output silently ignored.
+SHELL_UNSUPPORTED_HOOKS: Set[str] = {"transform_api_error_classification"}
 
 # Allowlist of agent-turn hot-path hooks bounded by plugins.hook_callback_timeout (fail-open:
 # abandon without join — joining reintroduced a shutdown hang). Unlisted hooks run synchronously.

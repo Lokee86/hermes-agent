@@ -23,6 +23,8 @@ Mirrors the ``transform_tool_result`` hook test conventions from
 """
 
 from __future__ import annotations
+import plugin_runtime.lifecycle as plugin_lifecycle
+from plugin_runtime.manager import PluginManager
 
 import logging
 import sys
@@ -547,8 +549,8 @@ def test_real_fixture_plugins_thread_prompt_in_registration_order(
         encoding="utf-8",
     )
 
-    old_manager = plugins_mod._plugin_manager
-    plugins_mod._plugin_manager = plugins_mod.PluginManager()
+    old_manager = plugin_lifecycle._plugin_manager
+    plugin_lifecycle._plugin_manager = PluginManager()
     try:
         plugins_mod.discover_plugins()
 
@@ -569,7 +571,7 @@ def test_real_fixture_plugins_thread_prompt_in_registration_order(
              patch("tools.transcription_tools._local_model", None):
             result = transcription_tools.transcribe_audio(audio)
     finally:
-        plugins_mod._plugin_manager = old_manager
+        plugin_lifecycle._plugin_manager = old_manager
 
     assert result["success"] is True
     _, kwargs = mock_model.transcribe.call_args

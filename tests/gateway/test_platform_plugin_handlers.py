@@ -30,11 +30,11 @@ if _repo not in sys.path:
 from plugins.platforms.telegram.adapter import TelegramAdapter  # noqa: E402
 from gateway.config import PlatformConfig  # noqa: E402
 
-from hermes_cli.plugins import (  # noqa: E402
-    PluginContext,
-    PluginManager,
+from hermes_cli.plugins import (
     PluginManifest,
 )
+from plugin_runtime.manager import PluginManager
+from plugin_runtime.context import PluginContext  # noqa: E402
 
 def _make_ctx(name: str = "test_plugin") -> tuple[PluginManager, PluginContext]:
     mgr = PluginManager()

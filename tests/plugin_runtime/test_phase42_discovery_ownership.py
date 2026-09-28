@@ -156,7 +156,7 @@ def test_catalog_recall_lookup_runs_only_after_runtime_gates():
 
 def test_plugin_manager_supplies_cli_owned_catalog_lookup(monkeypatch):
     from hermes_cli import plugins_cmd_catalog
-    from hermes_cli.plugins import PluginManager
+    from plugin_runtime.manager import PluginManager
     from plugin_runtime.manifest import PluginManifest
 
     calls = []

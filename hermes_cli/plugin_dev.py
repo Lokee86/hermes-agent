@@ -59,7 +59,7 @@ def _doctor_runtime(plugin_path: Path):
         stack.close()
         raise
 
-    from hermes_cli.plugins import PluginManager
+    from plugin_runtime.manager import PluginManager
     from tools.registry import registry
     entries_before = {entry.name: entry for entry in registry._snapshot_entries()}
     policy_before = dict(registry._plugin_override_policy)
@@ -349,7 +349,7 @@ def doctor_plugin(target: str | os.PathLike[str] | None = None) -> DoctorReport:
             report.registered_hooks = host.registered_hooks
             report.registered_providers = host.registered_providers
 
-            from hermes_cli.plugins import VALID_HOOKS
+            from plugin_runtime.dispatch import VALID_HOOKS
 
             declared_hooks = host.manifest.provides_hooks
             declared_tools = host.manifest.provides_tools

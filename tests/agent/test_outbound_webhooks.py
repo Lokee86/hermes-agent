@@ -6,6 +6,8 @@ against a real local HTTP server (no mocks on the network path).
 """
 
 from __future__ import annotations
+import plugin_runtime.lifecycle as plugin_lifecycle
+from plugin_runtime.manager import PluginManager
 
 import hashlib
 import hmac
@@ -397,8 +399,8 @@ class TestForceReloadHomeScoping:
         monkeypatch.setattr("hermes_cli.config.load_config", lambda: cfg)
 
         monkeypatch.setenv("HERMES_HOME", "/tmp/profile-b-webhook")
-        mgr_b = plugins.PluginManager()
-        plugins._plugin_manager = mgr_b
+        mgr_b = PluginManager()
+        plugin_lifecycle._plugin_manager = mgr_b
         outbound_webhooks.register_from_config(cfg)
         assert len(mgr_b._hooks.get("on_session_end", [])) == 1
 

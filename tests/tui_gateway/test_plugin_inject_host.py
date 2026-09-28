@@ -12,7 +12,9 @@ from unittest.mock import MagicMock
 
 import hermes_yaml as yaml
 
-from hermes_cli.plugins import PluginContext, PluginManager, PluginManifest
+from hermes_cli.plugins import PluginManifest
+from plugin_runtime.manager import PluginManager
+from plugin_runtime.context import PluginContext
 from tui_gateway import server
 
 

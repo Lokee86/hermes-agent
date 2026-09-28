@@ -64,11 +64,11 @@ _slack_mod.SLACK_AVAILABLE = True
 from gateway.config import PlatformConfig  # noqa: E402
 from plugins.platforms.slack.adapter import SlackAdapter  # noqa: E402
 
-from hermes_cli.plugins import (  # noqa: E402
-    PluginContext,
-    PluginManager,
+from hermes_cli.plugins import (
     PluginManifest,
 )
+from plugin_runtime.manager import PluginManager
+from plugin_runtime.context import PluginContext  # noqa: E402
 
 
 # ---------------------------------------------------------------------------

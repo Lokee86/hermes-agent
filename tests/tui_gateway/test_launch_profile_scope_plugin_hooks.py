@@ -15,6 +15,7 @@ the worker ran callbacks in its own empty context, so even a routed turn's obser
 """
 
 from __future__ import annotations
+import plugin_runtime.lifecycle as plugin_lifecycle
 
 from pathlib import Path
 
@@ -43,7 +44,7 @@ def two_homes(tmp_path, monkeypatch):
     monkeypatch.setattr(server, "_hermes_home", launch)
     monkeypatch.setattr(server, "_served_profile_homes", set())
     monkeypatch.setattr(lpp, "_snapshot", None)
-    plugins_mod._reset_plugin_managers_for_tests()
+    plugin_lifecycle.reset_plugin_managers_for_tests()
     seen: list[dict] = []
 
     def stub_pre_tool_call(**_kw):
@@ -65,7 +66,7 @@ def two_homes(tmp_path, monkeypatch):
         manager._hooks.setdefault("pre_tool_call", []).append(stub_pre_tool_call)
     yield launch, routed, seen
     set_multiplex_active(False)
-    plugins_mod._reset_plugin_managers_for_tests()
+    plugin_lifecycle.reset_plugin_managers_for_tests()
 
 
 def _fire_from_tool_worker():

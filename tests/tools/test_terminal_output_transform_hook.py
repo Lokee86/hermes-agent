@@ -1,3 +1,5 @@
+import plugin_runtime.lifecycle as plugin_lifecycle
+from plugin_runtime.manager import PluginManager
 import json
 import os
 from pathlib import Path
@@ -194,7 +196,7 @@ def test_terminal_output_transform_integration_with_real_plugin(monkeypatch, tmp
     )
 
     # Force a fresh plugin manager so the new config is picked up.
-    plugins_mod._plugin_manager = plugins_mod.PluginManager()
+    plugin_lifecycle._plugin_manager = PluginManager()
     plugins_mod.discover_plugins()
 
     long_output = "X" * 60000

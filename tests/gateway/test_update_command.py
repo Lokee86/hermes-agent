@@ -224,7 +224,7 @@ class TestUpdateCommandPlatformGate:
         """
 
         # Make sure the plugin registry is populated so the fallback fires.
-        from hermes_cli.plugins import PluginManager
+        from plugin_runtime.manager import PluginManager
         PluginManager().discover_and_load(force=True)
         from gateway.platform_registry import platform_registry
         discord_entry = platform_registry.get("discord")

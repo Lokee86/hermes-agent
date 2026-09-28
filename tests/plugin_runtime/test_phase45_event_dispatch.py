@@ -75,7 +75,7 @@ def test_runtime_event_execution_has_no_cli_or_agent_back_edges():
 
 
 def test_event_result_resolution_uses_existing_runtime_host_seam(monkeypatch, tmp_path):
-    from hermes_cli.plugins import PluginManager
+    from plugin_runtime.manager import PluginManager
 
     manager = PluginManager(scope_key=str(tmp_path))
     observed = []

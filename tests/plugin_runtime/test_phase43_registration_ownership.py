@@ -52,12 +52,13 @@ def test_first_party_consumers_do_not_use_retired_registration_paths():
 
 
 def test_plugin_manager_binds_canonical_runtime_ownership():
+    from plugin_runtime.manager import PluginManager
     import hermes_cli.plugins as plugins
     import plugin_runtime.ownership as ownership
     import plugin_runtime.registration as registration
 
-    assert issubclass(plugins.PluginManager, ownership.PluginOwnershipMixin)
+    assert issubclass(PluginManager, ownership.PluginOwnershipMixin)
     assert plugins.PluginRegistration is registration.PluginRegistration
-    assert plugins.PluginManager._track_registration is ownership.PluginOwnershipMixin._track_registration
-    assert plugins.PluginManager._dispose_registrations is ownership.PluginOwnershipMixin._dispose_registrations
-    assert plugins.PluginManager.unload is ownership.PluginOwnershipMixin.unload
+    assert PluginManager._track_registration is ownership.PluginOwnershipMixin._track_registration
+    assert PluginManager._dispose_registrations is ownership.PluginOwnershipMixin._dispose_registrations
+    assert PluginManager.unload is ownership.PluginOwnershipMixin.unload

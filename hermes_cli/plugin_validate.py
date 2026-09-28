@@ -305,7 +305,7 @@ emit(recorded)
 
 
 def _probe_options(manifest: dict) -> dict:
-    from hermes_cli.plugins import PluginContext
+    from plugin_runtime.context import PluginContext
 
     return {
         "kind": str(manifest.get("kind") or ""),

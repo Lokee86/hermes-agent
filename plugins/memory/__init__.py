@@ -51,9 +51,9 @@ def _get_project_plugins_dir() -> Optional[Path]:
     """``./.hermes/plugins/`` or None. Gated on HERMES_ENABLE_PROJECT_PLUGINS like the
     PluginManager scan: a repo you merely ``cd`` into must not offer a memory backend."""
     try:
-        from hermes_cli.plugins import _env_enabled
+        from utils import env_var_enabled
 
-        if not _env_enabled("HERMES_ENABLE_PROJECT_PLUGINS"):
+        if not env_var_enabled("HERMES_ENABLE_PROJECT_PLUGINS"):
             return None
         d = Path.cwd() / ".hermes" / "plugins"
         return d if d.is_dir() else None
@@ -432,7 +432,8 @@ class _ProviderCollector:
         """A real ``PluginContext``, built once on demand: the common provider that only
         calls ``register_memory_provider`` must not pay for importing the plugin manager."""
         if self._context is None:
-            from hermes_cli.plugins import PluginContext, get_plugin_manager
+            from hermes_cli.plugins import get_plugin_manager
+            from plugin_runtime.context import PluginContext
             from plugin_runtime.manifest import PluginManifest
 
             manifest = PluginManifest(name=self.name, key=self.name)

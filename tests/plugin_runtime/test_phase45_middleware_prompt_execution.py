@@ -55,7 +55,9 @@ def test_runtime_dispatch_still_has_no_cli_or_agent_back_edges():
 
 
 def test_safe_worker_policy_uses_host_seam_for_remaining_surfaces(monkeypatch, tmp_path):
-    from hermes_cli.plugins import PluginContext, PluginManager, PluginManifest
+    from hermes_cli.plugins import PluginManifest
+    from plugin_runtime.manager import PluginManager
+    from plugin_runtime.context import PluginContext
 
     manager = PluginManager(scope_key=str(tmp_path))
     context = PluginContext(PluginManifest(name="example", key="example"), manager)
@@ -71,7 +73,9 @@ def test_prompt_execution_preserves_section_count_budget(caplog, tmp_path):
     import logging
 
     import plugin_runtime.dispatch as dispatch
-    from hermes_cli.plugins import PluginContext, PluginManager, PluginManifest
+    from hermes_cli.plugins import PluginManifest
+    from plugin_runtime.manager import PluginManager
+    from plugin_runtime.context import PluginContext
 
     manager = PluginManager(scope_key=str(tmp_path))
     context = PluginContext(PluginManifest(name="example", key="example"), manager)
@@ -89,7 +93,9 @@ def test_prompt_execution_rejects_reserved_persistence_markers(caplog, tmp_path)
     import logging
 
     import plugin_runtime.dispatch as dispatch
-    from hermes_cli.plugins import PluginContext, PluginManager, PluginManifest
+    from hermes_cli.plugins import PluginManifest
+    from plugin_runtime.manager import PluginManager
+    from plugin_runtime.context import PluginContext
 
     manager = PluginManager(scope_key=str(tmp_path))
     context = PluginContext(PluginManifest(name="example", key="example"), manager)

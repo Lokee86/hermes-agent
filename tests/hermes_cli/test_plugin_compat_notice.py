@@ -76,7 +76,7 @@ def test_disable_only_after_the_date_and_not_when_allowed(tmp_path, monkeypatch)
 
 def test_loader_skips_hitting_plugin_after_date(tmp_path, monkeypatch):
     """PluginManager records the reason and never imports the plugin."""
-    from hermes_cli.plugins import PluginManager
+    from plugin_runtime.manager import PluginManager
     monkeypatch.setattr(pc, "load_manifest", lambda: MANIFEST)
     monkeypatch.setattr(pc, "removal_in_effect", lambda today=None: True)
     monkeypatch.setattr(pc, "allow_deprecated_imports", lambda config=None: False)
@@ -100,7 +100,7 @@ def test_loader_skips_hitting_plugin_after_date(tmp_path, monkeypatch):
 def test_discovery_refreshes_report_file(tmp_path, monkeypatch):
     """The Desktop modal reads the report the `serve` backend's discovery wrote — discovery itself must
     write it (not only the CLI banner / doctor / update paths), and clear it once the plugin is fixed."""
-    from hermes_cli.plugins import PluginManager
+    from plugin_runtime.manager import PluginManager
     monkeypatch.setattr(pc, "load_manifest", lambda: MANIFEST)
     monkeypatch.setattr(pc, "removal_in_effect", lambda today=None: False)
     monkeypatch.setattr(pc, "report_file_path", lambda: tmp_path / "r.json")

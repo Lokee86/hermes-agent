@@ -7,6 +7,7 @@ throughout the new package.
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any, Mapping
 
 
@@ -89,3 +90,66 @@ def save_plugin_config(config: dict[str, Any]) -> None:
     from hermes_cli.config import save_config
 
     save_config(config)
+
+
+def plugin_setting_segments(key: str) -> tuple[str, ...]:
+    """Validate and split one plugin-relative settings key."""
+    from hermes_cli.plugins_state import _plugin_relative_segments
+
+    return _plugin_relative_segments(key)
+
+
+def read_plugin_setting(
+    plugin_id: str, segments: tuple[str, ...], default: Any = None,
+) -> Any:
+    """Read one plugin setting, preferring settings over the legacy config subtree."""
+    from hermes_cli.config import load_config_readonly
+    from hermes_cli.plugins_state import _nested_plugin_value, _plugin_settings_entry
+
+    entry = _plugin_settings_entry(load_config_readonly() or {}, plugin_id)
+    if entry is None:
+        return default
+    missing = object()
+    value = _nested_plugin_value(entry.get("settings"), segments, missing)
+    if value is not missing:
+        return value
+    return _nested_plugin_value(entry.get("config"), segments, default)
+
+
+def write_plugin_setting(plugin_id: str, segments: tuple[str, ...], value: Any) -> None:
+    """Persist one plugin setting through the canonical config-owned writer."""
+    from hermes_cli.plugins_state import save_plugin_setting
+
+    save_plugin_setting(plugin_id, segments, value)
+
+
+def read_plugin_mcp_allowlist(plugin_id: str) -> list[str]:
+    """Return the operator-granted MCP server allowlist; unreadable config denies all."""
+    try:
+        from hermes_cli.plugins_state import _plugin_settings_entry
+
+        entry = _plugin_settings_entry(load_plugin_config() or {}, plugin_id) or {}
+        raw = entry.get("mcp_allowlist")
+        return [str(item) for item in raw] if isinstance(raw, list) else []
+    except Exception:
+        return []
+
+
+def plugin_gateway_injection_allowed(plugin_id: str) -> bool:
+    """Return whether a plugin may inject gateway/TUI session messages; failures deny."""
+    try:
+        from hermes_cli.config import load_config_readonly
+        from hermes_cli.plugins_state import _plugin_settings_entry
+
+        entry = _plugin_settings_entry(load_config_readonly() or {}, plugin_id) or {}
+        return entry.get("allow_gateway_injection") is True
+    except Exception:
+        return False
+
+
+def load_plugin_config_for_home(home: Path) -> dict[str, Any]:
+    """Load merged plugin config while pinned to one manager-owned Hermes home."""
+    from plugin_runtime.scope import plugin_home_scope
+
+    with plugin_home_scope(home):
+        return load_plugin_config()

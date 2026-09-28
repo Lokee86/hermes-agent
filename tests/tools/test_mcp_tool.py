@@ -2,6 +2,7 @@
 
 All tests use mocks -- no real MCP servers or subprocesses are started.
 """
+import plugin_runtime.lifecycle as plugin_lifecycle
 
 import asyncio
 import json
@@ -184,7 +185,7 @@ class TestLoadMCPConfig:
         bundled.mkdir()
         monkeypatch.setenv("HERMES_HOME", str(home))
         monkeypatch.setenv("HERMES_BUNDLED_PLUGINS", str(bundled))
-        monkeypatch.setattr(plugins_mod, "_plugin_manager", None)
+        monkeypatch.setattr(plugin_lifecycle, "_plugin_manager", None)
 
         from tools.mcp_tool_config import _load_mcp_config
 

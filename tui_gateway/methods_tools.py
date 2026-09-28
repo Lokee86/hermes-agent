@@ -482,10 +482,10 @@ def _run_plugin_command(handler, arg: str, session=None) -> str:
     the socket/worker thread where nothing upstream binds it (only the turn path does), so a handler
     saw ``""`` or the launch process's inherited values. Same class as the messaging gateway's
     #108698; ``_set_session_context`` is the turn path's own seam."""
-    plugins = _tools_mod("hermes_cli.plugins")
+    resolve_plugin_command_result = _tools_mod("plugin_runtime.dispatch").resolve_plugin_command_result
     tokens = _set_session_context(session.get("session_key", "") or "", cwd=str(session.get("cwd") or "")) if session else []
     try:
-        return str(plugins.resolve_plugin_command_result(handler(arg)) or "")
+        return str(resolve_plugin_command_result(handler(arg)) or "")
     finally:
         _clear_session_context(tokens)
 

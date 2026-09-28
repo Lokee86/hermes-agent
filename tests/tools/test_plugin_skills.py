@@ -5,6 +5,7 @@ Covers:
 - hermes_cli/plugins register_skill API + registry
 - tools/skills_tool qualified name dispatch in skill_view
 """
+import plugin_runtime.lifecycle as plugin_lifecycle
 
 import json
 import logging
@@ -54,10 +55,10 @@ class TestPluginSkillRegistry:
     @pytest.fixture
     def pm(self, monkeypatch):
         from hermes_cli import plugins as plugins_mod
-        from hermes_cli.plugins import PluginManager
+        from plugin_runtime.manager import PluginManager
 
         fresh = PluginManager()
-        monkeypatch.setattr(plugins_mod, "_plugin_manager", fresh)
+        monkeypatch.setattr(plugin_lifecycle, "_plugin_manager", fresh)
         return fresh
 
     def test_list_plugin_skills(self, pm, tmp_path):
@@ -87,10 +88,12 @@ class TestPluginContextRegisterSkill:
     @pytest.fixture
     def ctx(self, tmp_path, monkeypatch):
         from hermes_cli import plugins as plugins_mod
-        from hermes_cli.plugins import PluginContext, PluginManager, PluginManifest
+        from hermes_cli.plugins import PluginManifest
+        from plugin_runtime.manager import PluginManager
+        from plugin_runtime.context import PluginContext
 
         pm = PluginManager()
-        monkeypatch.setattr(plugins_mod, "_plugin_manager", pm)
+        monkeypatch.setattr(plugin_lifecycle, "_plugin_manager", pm)
         manifest = PluginManifest(
             name="testplugin",
             version="1.0.0",
@@ -165,10 +168,10 @@ class TestSkillViewQualifiedName:
     def _isolate(self, tmp_path, monkeypatch):
         """Fresh plugin manager + empty SKILLS_DIR for each test."""
         from hermes_cli import plugins as plugins_mod
-        from hermes_cli.plugins import PluginManager
+        from plugin_runtime.manager import PluginManager
 
         self.pm = PluginManager()
-        monkeypatch.setattr(plugins_mod, "_plugin_manager", self.pm)
+        monkeypatch.setattr(plugin_lifecycle, "_plugin_manager", self.pm)
 
         empty = tmp_path / "empty-skills"
         empty.mkdir()
@@ -391,10 +394,10 @@ class TestSkillViewPluginGuards:
         import sys
 
         from hermes_cli import plugins as plugins_mod
-        from hermes_cli.plugins import PluginManager
+        from plugin_runtime.manager import PluginManager
 
         self.pm = PluginManager()
-        monkeypatch.setattr(plugins_mod, "_plugin_manager", self.pm)
+        monkeypatch.setattr(plugin_lifecycle, "_plugin_manager", self.pm)
         empty = tmp_path / "empty"
         empty.mkdir()
         monkeypatch.setattr("tools.skills_tool.SKILLS_DIR", empty)
@@ -446,10 +449,10 @@ class TestBundleContextBanner:
     @pytest.fixture(autouse=True)
     def _isolate(self, tmp_path, monkeypatch):
         from hermes_cli import plugins as plugins_mod
-        from hermes_cli.plugins import PluginManager
+        from plugin_runtime.manager import PluginManager
 
         self.pm = PluginManager()
-        monkeypatch.setattr(plugins_mod, "_plugin_manager", self.pm)
+        monkeypatch.setattr(plugin_lifecycle, "_plugin_manager", self.pm)
         empty = tmp_path / "empty"
         empty.mkdir()
         monkeypatch.setattr("tools.skills_tool.SKILLS_DIR", empty)

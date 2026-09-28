@@ -791,7 +791,7 @@ class GatewayInboundMixin:
         raw_args = event.get_command_args().strip()
         platform = source.platform.value if source.platform else ""
         try:
-            from hermes_cli.plugins import fire_pre_command_hook
+            from hermes_cli.plugin_policy import fire_pre_command_hook
             fire_pre_command_hook(
                 surface="gateway", command=str(canonical), alias_used=str(command),
                 args_raw=raw_args, session_key=_quick_key, platform=platform,

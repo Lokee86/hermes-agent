@@ -23,10 +23,10 @@ import pytest
 
 from hermes_cli.plugins import (
     _EVENT_EMIT_DEPTH_CAP,
-    PluginContext,
-    PluginManager,
     PluginManifest,
 )
+from plugin_runtime.manager import PluginManager
+from plugin_runtime.context import PluginContext
 
 
 # ── Fixtures ─────────────────────────────────────────────────────────────────

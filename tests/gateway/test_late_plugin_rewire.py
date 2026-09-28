@@ -22,7 +22,9 @@ import pytest
 
 from gateway.config import PlatformConfig, Platform
 from gateway.run_plugin_rewire import GatewayPluginRewireMixin
-from hermes_cli.plugins import PluginContext, PluginManager, PluginManifest, discover_plugins, get_plugin_manager
+from hermes_cli.plugins import PluginManifest, discover_plugins, get_plugin_manager
+from plugin_runtime.manager import PluginManager
+from plugin_runtime.context import PluginContext
 from plugins.platforms.telegram.adapter import TelegramAdapter
 
 

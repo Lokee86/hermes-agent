@@ -1,5 +1,6 @@
 """Tests for the bundled observability/langfuse plugin."""
 from __future__ import annotations
+from plugin_runtime.manager import PluginManager
 
 import importlib
 import logging
@@ -28,7 +29,7 @@ class TestDiscovery:
         monkeypatch.setenv("HERMES_HOME", str(home))
         monkeypatch.setattr(Path, "home", lambda: tmp_path)
 
-        manager = plugins_mod.PluginManager()
+        manager = PluginManager()
         manager.discover_and_load()
 
         # observability/langfuse appears in the plugin registry …

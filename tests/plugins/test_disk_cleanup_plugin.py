@@ -12,6 +12,7 @@ Covers the bundled plugin at ``plugins/disk-cleanup/``:
   * Bundled-plugin discovery via ``PluginManager.discover_and_load``.
 """
 
+from plugin_runtime.manager import PluginManager
 import importlib
 import json
 import sys
@@ -559,7 +560,7 @@ class TestBundledDiscovery:
     def test_disk_cleanup_discovered_but_not_loaded_by_default(self, _isolate_env):
         """Bundled plugins are discovered but NOT loaded without opt-in."""
         from hermes_cli import plugins as pmod
-        mgr = pmod.PluginManager()
+        mgr = PluginManager()
         mgr.discover_and_load()
         # Discovered — appears in the registry
         assert "disk-cleanup" in mgr._plugins
@@ -581,7 +582,7 @@ class TestBundledDiscovery:
             }
         }))
         from hermes_cli import plugins as pmod
-        mgr = pmod.PluginManager()
+        mgr = PluginManager()
         mgr.discover_and_load()
         loaded = mgr._plugins["disk-cleanup"]
         assert not loaded.enabled
@@ -594,7 +595,7 @@ class TestBundledDiscovery:
             _isolate_env, ["memory", "context_engine", "disk-cleanup"]
         )
         from hermes_cli import plugins as pmod
-        mgr = pmod.PluginManager()
+        mgr = PluginManager()
         mgr.discover_and_load()
         assert "memory" not in mgr._plugins
         assert "context_engine" not in mgr._plugins

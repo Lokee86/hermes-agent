@@ -434,20 +434,24 @@ class PluginLoaderMixin:
             )
 
     def _warn_python_dependencies(self, manifest: PluginManifest) -> None:
-        """Report missing dependencies without installing during discovery.
-
-        Plugin admission and PM repair own dependency changes.
-        """
+        """Bridge declared plugin pip deps onto the pm workspace union."""
         deps = manifest.python_dependencies
         if not deps:
             return
         key = manifest_key(manifest)
+        if manifest.path:
+            try:
+                from pm.workspace import materialize_legacy_pyproject
+
+                materialize_legacy_pyproject(Path(manifest.path))
+            except Exception:
+                logger.debug("Plugin %s: legacy pyproject bridge failed", key, exc_info=True)
         missing = [req for req in deps if _dist_installed(req) is False]
         if missing:
-            logger.warning(
-                "Plugin %s declares Python dependencies that are not "
-                "installed: %s. For an enabled plugin, run hermes pm repair, "
-                "then restart Hermes. Discovery does not install dependencies.",
+            logger.info(
+                "Plugin %s declares Python dependencies that are not installed yet: %s. "
+                "The pm venv sync installs them through the workspace union; "
+                "to install now, run: hermes pm install",
                 key, ", ".join(missing),
             )
         else:

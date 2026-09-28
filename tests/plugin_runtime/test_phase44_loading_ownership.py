@@ -64,18 +64,36 @@ def test_loaded_plugin_fields_and_defaults_are_preserved():
     assert loaded.commands_registered is not other.commands_registered
 
 
-def test_plugin_manager_supplies_cli_owned_context(tmp_path):
+def test_plugin_manager_supplies_runtime_owned_context(tmp_path):
+    from plugin_runtime.manager import PluginManager
     import hermes_cli.plugins as plugins
+    from plugin_runtime.context import PluginContext, PluginToolOverrideError
     from plugin_runtime.manifest import PluginManifest
 
-    manager = plugins.PluginManager(scope_key=str(tmp_path))
+    manager = PluginManager(scope_key=str(tmp_path))
     manifest = PluginManifest(name="fixture", key="fixture", source="user")
 
     context = manager.context_for(manifest)
 
-    assert isinstance(context, plugins.PluginContext)
+    assert type(context) is PluginContext
+    assert plugins.PluginContext is PluginContext
+    assert plugins.PluginToolOverrideError is PluginToolOverrideError
     assert context.manifest is manifest
     assert context._manager is manager
+
+
+def test_cli_module_does_not_define_context_contracts():
+    import hermes_cli.plugins as plugins
+
+    tree = ast.parse(Path(plugins.__file__).read_text(encoding="utf-8"))
+    class_names = {
+        node.name
+        for node in tree.body
+        if isinstance(node, ast.ClassDef)
+    }
+
+    assert "PluginContext" not in class_names
+    assert "PluginToolOverrideError" not in class_names
 
 
 def test_runtime_loading_uses_context_factory_without_cli_context_import():
@@ -128,27 +146,30 @@ def test_all_loading_paths_are_runtime_owned():
 
 
 def test_plugin_manager_inherits_canonical_runtime_loader_directly():
+    from plugin_runtime.manager import PluginManager
     import hermes_cli.plugins as plugins
     import plugin_runtime.loading as loading
 
-    assert plugins.PluginManager.__bases__[0] is loading.PluginLoaderMixin
+    assert PluginManager.__bases__[0] is loading.PluginLoaderMixin
     assert plugins.PluginLoaderMixin is loading.PluginLoaderMixin
 
 
 def test_cli_manager_supplies_compatibility_policy_seam():
+    from plugin_runtime.manager import PluginManager
     import hermes_cli.plugins as plugins
     import plugin_runtime.loading as loading
 
-    assert "_plugin_load_disable_reason" in plugins.PluginManager.__dict__
+    assert "_plugin_load_disable_reason" in PluginManager.__dict__
     assert "_plugin_load_disable_reason" not in loading.PluginLoaderMixin.__dict__
 
 
 def test_activation_notifications_remain_manager_owned():
+    from plugin_runtime.manager import PluginManager
     import hermes_cli.plugins as plugins
     import plugin_runtime.loading as loading
 
-    assert "on_plugin_loaded" in plugins.PluginManager.__dict__
-    assert "_notify_plugin_loaded" in plugins.PluginManager.__dict__
+    assert "on_plugin_loaded" in PluginManager.__dict__
+    assert "_notify_plugin_loaded" in PluginManager.__dict__
     assert "on_plugin_loaded" not in loading.PluginLoaderMixin.__dict__
     assert "_notify_plugin_loaded" not in loading.PluginLoaderMixin.__dict__
 

@@ -308,7 +308,9 @@ class TestMultiplexProfileRouting:
 
 class TestPluginContextWiring:
     def test_ctx_platform_actions_bound_to_plugin_id(self):
-        from hermes_cli.plugins import PluginContext, PluginManager, PluginManifest
+        from hermes_cli.plugins import PluginManifest
+        from plugin_runtime.manager import PluginManager
+        from plugin_runtime.context import PluginContext
 
         manager = PluginManager()
         ctx = PluginContext(

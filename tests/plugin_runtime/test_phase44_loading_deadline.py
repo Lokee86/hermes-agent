@@ -68,7 +68,7 @@ def test_deadline_worker_inherits_contextvars(monkeypatch):
 
 
 def test_reentrant_discovery_returns_from_loader_worker(monkeypatch, tmp_path):
-    from hermes_cli.plugins import PluginManager
+    from plugin_runtime.manager import PluginManager
     from plugin_runtime.manifest import PluginManifest
 
     manager = PluginManager(scope_key=str(tmp_path))

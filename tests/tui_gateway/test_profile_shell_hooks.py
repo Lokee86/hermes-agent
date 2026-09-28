@@ -1,4 +1,5 @@
 """Profile-bound agent construction must arm real shell policy."""
+import plugin_runtime.lifecycle as plugin_lifecycle
 import os
 import shlex
 import subprocess
@@ -25,7 +26,7 @@ def test_agent_build_arms_only_consented_profile_policy(tmp_path, monkeypatch):
     # consent, manager selection and public dispatch are the real implementation.
     monkeypatch.setattr(server, '_resolve_agent_model_runtime', lambda *_a: (
         'fixture-model', {'provider': 'openai-compat', 'base_url': 'http://127.0.0.1:18019/v1', 'api_key': 'fixture-key'}))
-    plugins._reset_plugin_managers_for_tests()
+    plugin_lifecycle.reset_plugin_managers_for_tests()
     shell_hooks.reset_for_tests()
     try:
         for label, consent in [('alpha', True), ('beta', True), ('unapproved', False)]:
@@ -49,5 +50,5 @@ def test_agent_build_arms_only_consented_profile_policy(tmp_path, monkeypatch):
             finally:
                 reset_hermes_home_override(token)
     finally:
-        plugins._reset_plugin_managers_for_tests()
+        plugin_lifecycle.reset_plugin_managers_for_tests()
         shell_hooks.reset_for_tests()

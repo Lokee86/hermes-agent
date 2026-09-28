@@ -376,14 +376,15 @@ class TestForwardsToCallLlm:
 
 class TestOwnershipIntegration:
     def _make_manager(self):
-        from hermes_cli.plugins import PluginManager
+        from plugin_runtime.manager import PluginManager
 
         manager = PluginManager()
         manager._discovered = True
         return manager
 
     def _register(self, manager, *, name: str, key: str, task_key: str):
-        from hermes_cli.plugins import PluginContext, PluginManifest
+        from hermes_cli.plugins import PluginManifest
+        from plugin_runtime.context import PluginContext
 
         manifest = PluginManifest(name=name, key=key)
         ctx = PluginContext(manifest, manager)

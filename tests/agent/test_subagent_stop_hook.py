@@ -10,6 +10,8 @@ Covers wire-up from tools.delegate_tool.delegate_task:
 """
 
 from __future__ import annotations
+import plugin_runtime.lifecycle as plugin_lifecycle
+from plugin_runtime.manager import PluginManager
 
 import json
 import threading
@@ -49,10 +51,10 @@ def _make_parent(depth: int = 0, session_id: str = "parent-1"):
 def _fresh_plugin_manager():
     """Each test gets a fresh PluginManager so hook callbacks don't
     leak between tests."""
-    original = plugins._plugin_manager
-    plugins._plugin_manager = plugins.PluginManager()
+    original = plugin_lifecycle._plugin_manager
+    plugin_lifecycle._plugin_manager = PluginManager()
     yield
-    plugins._plugin_manager = original
+    plugin_lifecycle._plugin_manager = original
 
 
 @pytest.fixture(autouse=True)

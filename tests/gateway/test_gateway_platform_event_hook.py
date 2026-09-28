@@ -39,11 +39,11 @@ if _repo not in sys.path:
 from plugins.platforms.telegram.adapter import TelegramAdapter  # noqa: E402
 from gateway.run import GatewayRunner  # noqa: E402
 from gateway.profile_routing import ProfileRoute  # noqa: E402
-from hermes_cli.plugins import (  # noqa: E402
-    PluginContext,
-    PluginManager,
+from hermes_cli.plugins import (
     PluginManifest,
 )
+from plugin_runtime.manager import PluginManager
+from plugin_runtime.context import PluginContext  # noqa: E402
 
 
 def _adapter(extra=None) -> TelegramAdapter:

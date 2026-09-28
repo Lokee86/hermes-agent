@@ -168,7 +168,7 @@ class TestA2AClientToolsInCliProcess:
 
 
     def test_a2a_toolset_resolves_without_materializing_the_platform(self):
-        from hermes_cli.plugins import PluginManager
+        from plugin_runtime.manager import PluginManager
         from toolsets import resolve_toolset
 
         mgr = PluginManager()
@@ -207,7 +207,7 @@ class TestA2AClientToolsInCliProcess:
         ``is_registered()`` check, so a deferred platform's own tools were
         dropped from its bundle as well.
         """
-        from hermes_cli.plugins import PluginManager
+        from plugin_runtime.manager import PluginManager
         from toolsets import resolve_toolset
 
         mgr = PluginManager()
@@ -223,7 +223,7 @@ class TestDeferredPlatformToolPreregistration:
     def test_tools_module_registers_without_importing_the_adapter(
         self, tmp_path, probe, clean_registry
     ):
-        from hermes_cli.plugins import PluginManager
+        from plugin_runtime.manager import PluginManager
         from toolsets import resolve_toolset
 
         manifest = _write_platform_plugin(tmp_path, "probeplat", with_tools_module=True)
@@ -241,7 +241,7 @@ class TestDeferredPlatformToolPreregistration:
         self, tmp_path, probe, clean_registry
     ):
         """No ``tools.py`` means no behaviour change at all — nothing imported."""
-        from hermes_cli.plugins import PluginManager
+        from plugin_runtime.manager import PluginManager
 
         manifest = _write_platform_plugin(tmp_path, "barefoot", with_tools_module=False)
 
@@ -263,7 +263,7 @@ class TestDeferredPlatformToolPreregistration:
         naming a file, and the contract is invisible to anyone reading the
         manifest.
         """
-        from hermes_cli.plugins import PluginManager
+        from plugin_runtime.manager import PluginManager
 
         manifest = _write_platform_plugin(
             tmp_path,
@@ -291,7 +291,7 @@ class TestDeferredPlatformToolPreregistration:
         that module instead of re-running its body.
         """
         from gateway.platform_registry import platform_registry
-        from hermes_cli.plugins import PluginManager
+        from plugin_runtime.manager import PluginManager
 
         manifest = _write_platform_plugin(tmp_path, "probeplat", with_tools_module=True)
 
@@ -315,7 +315,7 @@ class TestDeferredPlatformToolPreregistration:
         "before" snapshot, so the diff alone would report zero.
         """
         from gateway.platform_registry import platform_registry
-        from hermes_cli.plugins import PluginManager
+        from plugin_runtime.manager import PluginManager
 
         manifest = _write_platform_plugin(tmp_path, "probeplat", with_tools_module=True)
 
@@ -338,7 +338,7 @@ class TestDeferredPlatformToolPreregistration:
         symptom (declared tools absent from the session), so it has to be
         visible without enabling debug logging to find it.
         """
-        from hermes_cli.plugins import PluginManager
+        from plugin_runtime.manager import PluginManager
 
         manifest = _write_platform_plugin(tmp_path, "probeplat", with_tools_module=True)
         (Path(manifest.path) / "tools.py").write_text(
@@ -367,7 +367,7 @@ class TestDeferredPlatformToolPreregistration:
         `_load_plugin`'s own diff cannot recover them later because they are
         already inside its "before" snapshot.
         """
-        from hermes_cli.plugins import PluginManager
+        from plugin_runtime.manager import PluginManager
 
         manifest = _write_platform_plugin(tmp_path, "probeplat", with_tools_module=True)
         tools_py = (Path(manifest.path) / "tools.py").read_text(encoding="utf-8")
@@ -408,7 +408,7 @@ class TestDeferredPlatformToolPreregistration:
         ``enabled`` stays False on purpose: the adapter genuinely did not load.
         """
         from gateway.platform_registry import platform_registry
-        from hermes_cli.plugins import PluginManager
+        from plugin_runtime.manager import PluginManager
         from toolsets import resolve_toolset
 
         manifest = _write_platform_plugin(tmp_path, "probeplat", with_tools_module=True)
@@ -439,7 +439,7 @@ class TestDeferredPlatformToolPreregistration:
         Returning silently here leaves the operator with exactly the bug this
         path fixes and no thread to pull on.
         """
-        from hermes_cli.plugins import PluginManager
+        from plugin_runtime.manager import PluginManager
 
         manifest = _write_platform_plugin(
             tmp_path,

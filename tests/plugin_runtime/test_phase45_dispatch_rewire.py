@@ -29,13 +29,14 @@ def test_retired_cli_dispatch_module_is_absent():
 
 
 def test_plugin_manager_inherits_runtime_dispatch_directly():
+    from plugin_runtime.manager import PluginManager
     import hermes_cli.plugins as plugins
     import plugin_runtime.dispatch as dispatch
     from plugin_runtime.loading import PluginLoaderMixin
     from plugin_runtime.ownership import PluginOwnershipMixin
 
     assert plugins.PluginDispatchMixin is dispatch.PluginDispatchMixin
-    assert plugins.PluginManager.__bases__ == (
+    assert PluginManager.__bases__ == (
         PluginLoaderMixin,
         dispatch.PluginDispatchMixin,
         PluginOwnershipMixin,

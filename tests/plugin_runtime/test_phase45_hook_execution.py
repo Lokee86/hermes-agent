@@ -59,10 +59,10 @@ def test_runtime_hook_owner_declares_narrow_host_contract():
 
 
 def test_plugin_manager_supplies_hook_host_dependencies():
-    import hermes_cli.plugins as plugins
+    from plugin_runtime.manager import PluginManager
 
-    assert "_plugin_dispatch_safe_worker_enabled" in plugins.PluginManager.__dict__
-    assert "_plugin_dispatch_resolve_result" in plugins.PluginManager.__dict__
+    assert "_plugin_dispatch_safe_worker_enabled" in PluginManager.__dict__
+    assert "_plugin_dispatch_resolve_result" in PluginManager.__dict__
 
 
 def test_runtime_hook_execution_has_no_cli_or_agent_back_edges():
@@ -85,7 +85,7 @@ def test_hook_timeout_monkeypatches_follow_runtime_owner():
 
 
 def test_safe_worker_policy_is_host_injected(monkeypatch, tmp_path):
-    from hermes_cli.plugins import PluginManager
+    from plugin_runtime.manager import PluginManager
 
     manager = PluginManager(scope_key=str(tmp_path))
     manager._hooks["pre_tool_call"] = [lambda **_kwargs: {"action": "allow"}]
@@ -97,7 +97,7 @@ def test_safe_worker_policy_is_host_injected(monkeypatch, tmp_path):
 
 
 def test_hook_result_resolution_uses_host_seam(monkeypatch, tmp_path):
-    from hermes_cli.plugins import PluginManager
+    from plugin_runtime.manager import PluginManager
 
     manager = PluginManager(scope_key=str(tmp_path))
     seen = []

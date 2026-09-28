@@ -9,7 +9,7 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[2]
-PLUGINS = ROOT / "hermes_cli" / "plugins.py"
+MANAGER = ROOT / "plugin_runtime" / "manager.py"
 
 DISPATCH_STATE = {
     "_subscriptions",
@@ -36,7 +36,7 @@ def test_runtime_dispatch_initializer_owns_internal_state():
 
 
 def test_plugin_manager_composes_dispatch_state_without_redeclaring_it():
-    tree = ast.parse(PLUGINS.read_text(encoding="utf-8"), filename=str(PLUGINS))
+    tree = ast.parse(MANAGER.read_text(encoding="utf-8"), filename=str(MANAGER))
     manager = next(
         node for node in tree.body
         if isinstance(node, ast.ClassDef) and node.name == "PluginManager"
@@ -72,7 +72,7 @@ def test_plugin_manager_composes_dispatch_state_without_redeclaring_it():
 
 def test_runtime_initializer_preserves_dispatch_state_defaults(tmp_path):
     import plugin_runtime.dispatch as dispatch
-    from hermes_cli.plugins import PluginManager
+    from plugin_runtime.manager import PluginManager
 
     manager = PluginManager(scope_key=str(tmp_path))
 
@@ -97,7 +97,7 @@ def test_runtime_initializer_preserves_dispatch_state_defaults(tmp_path):
 
 
 def test_dispatch_runtime_state_is_manager_local(tmp_path):
-    from hermes_cli.plugins import PluginManager
+    from plugin_runtime.manager import PluginManager
 
     first = PluginManager(scope_key=str(tmp_path / "one"))
     second = PluginManager(scope_key=str(tmp_path / "two"))

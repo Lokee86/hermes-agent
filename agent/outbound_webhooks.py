@@ -160,7 +160,7 @@ def reset_for_tests() -> None:
 
 
 def _parse_single_target(index: int, raw: Any) -> Optional[WebhookTarget]:
-    from hermes_cli.plugins import VALID_HOOKS
+    from plugin_runtime.dispatch import VALID_HOOKS
 
     def warn(msg: str, *args: Any) -> None:
         logger.warning("hooks.outbound[%d]" + msg, index, *args)

@@ -13,12 +13,12 @@ import pytest
 import hermes_yaml as yaml
 
 from hermes_cli.plugins import (
-    PluginManager,
     PluginManifest,
     SUPPORTED_MANIFEST_VERSION,
     resolve_plugin_load_order,
     validate_config_schema,
 )
+from plugin_runtime.manager import PluginManager
 
 
 def _write_plugin(base, name, manifest_extra=None, register_body="pass"):
@@ -576,7 +576,7 @@ class TestDirectoryPluginKeepsIdentityOverEntryPoint:
                                  source="entrypoint", path="twin_pkg:register", key="twin")
         monkeypatch.setattr(PluginManager, "_scan_entry_points", lambda self: [twin_ep])
         monkeypatch.setattr("hermes_cli.plugins_cmd.discover_entrypoint_manifests", lambda: [twin_ep], raising=False)
-        monkeypatch.setattr("hermes_cli.plugins.discover_entrypoint_manifests", lambda: [twin_ep])
+        monkeypatch.setattr("plugin_runtime.manager.discover_entrypoint_manifests", lambda: [twin_ep])
 
         mgr = PluginManager()
         mgr.discover_and_load()
