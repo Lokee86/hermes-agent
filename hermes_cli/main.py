@@ -2133,9 +2133,9 @@ def select_provider_and_model(args=None):
     _custom_provider_map = _named_custom_provider_map(config)
     active = _resolve_active_provider(config, model_cfg, effective_provider, _custom_provider_map)
 
-    from hermes_cli.models import _PROVIDER_LABELS
+    from hermes_cli.provider_catalog import provider_catalog
 
-    provider_labels = dict(_PROVIDER_LABELS)  # derive from canonical list
+    provider_labels = {descriptor.slug: descriptor.label for descriptor in provider_catalog()}
     if active and active in _custom_provider_map:
         active_label = _custom_provider_map[active]["name"]
     else:

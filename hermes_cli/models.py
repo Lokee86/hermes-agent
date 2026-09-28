@@ -2,7 +2,7 @@
 
 Origin module; cohesive clusters live in siblings and are re-imported here so
 ``hermes_cli.models.<name>`` stays the stable import/monkeypatch surface:
-``models_catalog_static`` (curated tables, provider registry, aliases), ``models_reasoning_caps``,
+``models_catalog_static`` (curated model/presentation tables, aliases), ``models_reasoning_caps``,
 ``models_local`` (Ollama / LM Studio), ``models_pricing``, ``models_validate``.
 """
 
@@ -42,7 +42,6 @@ from hermes_cli.models_catalog_static import (
     _MODELS_DEV_PREFERRED,
     _OPENAI_FAST_MODE_PREFIXES,
     _PROVIDER_ALIASES,
-    _PROVIDER_LABELS,
     _PROVIDER_MODELS,
     _PROVIDER_RETIRED_ALIASES,
     _SILENT_DEFAULT_PROVIDERS,
@@ -706,8 +705,15 @@ def ai_gateway_model_ids(*, force_refresh: bool = False) -> list[str]:
 # Provider identity: ``provider:model`` parsing, auto-detection, labels
 # ---------------------------------------------------------------------------
 
-# All provider IDs and aliases valid on the left of the ``provider:model`` syntax.
-_KNOWN_PROVIDER_NAMES: set[str] = set(_PROVIDER_LABELS) | set(_PROVIDER_ALIASES) | {"openrouter", "custom"}
+def _known_provider_names() -> set[str]:
+    """Provider IDs and aliases currently valid left of ``provider:model``."""
+    from providers import list_providers
+
+    names = set(_PROVIDER_ALIASES) | set(_PROVIDER_ALIASES.values()) | {"openrouter", "custom"}
+    for profile in list_providers():
+        names.add(str(profile.name or "").strip().lower())
+    names.discard("")
+    return names
 
 
 _CONFIG_ERRORS = (ImportError, OSError, RuntimeError, TypeError, ValueError, AttributeError)
@@ -779,7 +785,7 @@ def parse_model_input(
     if colon > 0:
         provider_part = stripped[:colon].strip().lower()
         model_part = stripped[colon + 1:].strip()
-        if provider_part and model_part and provider_part in _KNOWN_PROVIDER_NAMES:
+        if provider_part and model_part and provider_part in _known_provider_names():
             if provider_part == "custom":
                 configured = _configured_custom_provider_ids() if custom_ids is None else custom_ids
                 # Longest configured ``custom:<name>`` id that prefixes the input wins.
@@ -960,7 +966,7 @@ def detect_static_provider_for_model(
     resolved_provider = _PROVIDER_ALIASES.get(name_lower, name_lower)
     if resolved_provider not in {"custom", "openrouter"}:
         default_models = _PROVIDER_MODELS.get(resolved_provider, [])
-        if resolved_provider in _PROVIDER_LABELS and default_models and resolved_provider not in current_keys:
+        if resolved_provider in _known_provider_names() and default_models and resolved_provider not in current_keys:
             # Cost-safe default, not ``default_models[0]``: metered aggregators list most-capable-first,
             # so [0] would silently escalate `/model nous` to the priciest flagship.
             return (resolved_provider, get_default_model_for_provider(resolved_provider) or default_models[0])
@@ -1129,13 +1135,15 @@ def normalize_provider(provider: Optional[str]) -> str:
 
 
 def provider_label(provider: Optional[str]) -> str:
-    """Return a human-friendly label for a provider id or alias."""
+    """Return the effective provider declaration's display label."""
     original = (provider or "openrouter").strip()
     normalized = original.lower()
     if normalized == "auto":
         return "Auto"
-    normalized = normalize_provider(normalized)
-    return _PROVIDER_LABELS.get(normalized, original or "OpenRouter")
+    from providers import get_provider_profile
+
+    profile = get_provider_profile(normalized)
+    return str(profile.display_name or profile.name) if profile else (original or "OpenRouter")
 
 
 def _is_openai_fast_model(model_id: Optional[str]) -> bool:

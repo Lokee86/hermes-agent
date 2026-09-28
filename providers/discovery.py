@@ -24,12 +24,6 @@ _BUNDLED_PLUGINS_DIR = (
     Path(__file__).resolve().parent.parent / "plugins" / "model-providers"
 )
 
-def process_discovered() -> bool:
-    return _discovered
-
-def discovery_in_progress() -> bool:
-    return _discovering
-
 def current_registration_source() -> str | None:
     return _current_source
 
@@ -143,8 +137,6 @@ def _scan_home_layer(layer: _registry._HomeLayer, key: str) -> None:
     finally:
         _registry._REGISTRATION_TARGET.reset(token)
         _discovering = prior_discovering
-    if _discovered and not _discovering:
-        _registry._sync_auth_registry()
 
 def _user_module_name(plugin_dir: Path, home_key: str) -> str:
     digest = hashlib.sha1(home_key.encode("utf-8")).hexdigest()[:10]
@@ -273,7 +265,6 @@ def ensure_process_discovered() -> None:
         _run_discovery_steps()
     finally:
         _discovering = False
-        _registry._sync_auth_registry()
 
 def _run_discovery_steps() -> None:
     """The discovery passes, in precedence order (see :func:`ensure_process_discovered`)."""

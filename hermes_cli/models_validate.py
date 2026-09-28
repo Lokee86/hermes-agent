@@ -442,7 +442,7 @@ def static_model_provider_conflict(model_name: str, provider: Optional[str], *, 
     if not strict and next(_m._static_catalog_matches(requested, normalized), None) is None:
         return None
     suggestions = get_close_matches(requested, catalog, n=limit, cutoff=0.4) or catalog[:limit]
-    label = _m._PROVIDER_LABELS.get(normalized, normalized)
+    label = _m.provider_label(normalized)
     return {
         "model": requested, "provider": normalized, "suggestions": suggestions,
         "message": (f"Model `{requested}` is not served by provider `{normalized}` ({label}). "
@@ -722,7 +722,7 @@ def _validate_catalog_fallback(req: _Request) -> dict[str, Any]:
     fail and the gateway never writes the session override). No catalog → accept with a warning."""
     from hermes_cli import models as _m
 
-    label = _m._PROVIDER_LABELS.get(req.normalized, req.normalized)
+    label = _m.provider_label(req.normalized)
     catalog = _static_catalog(req.normalized)
     if not catalog:
         return _soft_accept(f"Note: could not reach the {label} API to validate `{req.requested}`. "

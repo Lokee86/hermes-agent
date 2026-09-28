@@ -410,7 +410,7 @@ def _normalize_main_model_assignment(provider: str, model: str) -> tuple[str, st
        model is a vendor-prefixed slug, keep the user's CURRENT aggregator if on one, else
        openrouter. User-declared ``providers:``/``custom_providers:`` entries resolve first,
        and durable named-custom slugs (``custom`` / ``custom:<name>``) are excluded —
-       ``_KNOWN_PROVIDER_NAMES`` lists only the bare ``custom`` bucket, so without this a
+       ``_known_provider_names()`` lists only the bare ``custom`` bucket, so without this a
        LiteLLM proxy serving ``ollama/glm-5.2`` would be silently reassigned to openrouter.
        Matching only that syntax (not ``startswith("custom")``) avoids swallowing
        unconfigured vendors like ``customproxy``.
@@ -419,13 +419,14 @@ def _normalize_main_model_assignment(provider: str, model: str) -> tuple[str, st
     """
     from hermes_cli.config import load_config
     from hermes_cli.config import get_compatible_custom_providers
-    from hermes_cli.models import _AGGREGATOR_PROVIDERS, _KNOWN_PROVIDER_NAMES, normalize_provider
+    from hermes_cli.models import _AGGREGATOR_PROVIDERS, _known_provider_names, normalize_provider
     from hermes_cli.model_normalize import normalize_model_for_provider
     from hermes_cli.providers import resolve_custom_provider, resolve_user_provider
 
     prov_in = (provider or "").strip()
     model_in = (model or "").strip()
     canonical = normalize_provider(prov_in)
+    known_provider_names = _known_provider_names()
 
     try:
         cfg = load_config()
@@ -441,7 +442,7 @@ def _normalize_main_model_assignment(provider: str, model: str) -> tuple[str, st
         return declared.id, model_in
 
     is_custom_provider_slug = canonical == "custom" or canonical.startswith("custom:")
-    if canonical not in _KNOWN_PROVIDER_NAMES and not is_custom_provider_slug and "/" in model_in:
+    if canonical not in known_provider_names and not is_custom_provider_slug and "/" in model_in:
         try:
             cur_cfg = cfg.get("model", {})
             cur_provider = (
@@ -460,7 +461,7 @@ def _normalize_main_model_assignment(provider: str, model: str) -> tuple[str, st
             if provider_has_credentials("openrouter"):
                 canonical = prov_in = "openrouter"
 
-    if canonical in _KNOWN_PROVIDER_NAMES and not canonical.startswith("custom"):
+    if canonical in known_provider_names and not canonical.startswith("custom"):
         try:
             model_in = normalize_model_for_provider(model_in, canonical) or model_in
         except Exception:

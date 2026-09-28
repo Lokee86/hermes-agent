@@ -8,8 +8,6 @@ layers, and effective provider lookup. Discovery mechanics live in
 
 from __future__ import annotations
 
-import logging
-import sys
 import threading
 from contextlib import contextmanager
 from contextvars import ContextVar
@@ -17,8 +15,6 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from providers.base import ProviderProfile
-
-logger = logging.getLogger(__name__)
 
 # Process-wide layer: bundled plugins, pip entry points, legacy providers/<name>.py.
 _REGISTRY: dict[str, ProviderProfile] = {}
@@ -45,20 +41,6 @@ _HOME_LAYERS_LOCK = threading.Lock()
 _REGISTRATION_TARGET: ContextVar[_HomeLayer | None] = ContextVar(
     "_provider_registration_target", default=None
 )
-
-
-def _sync_auth_registry() -> None:
-    """Keep the remaining pre-5.2 catalogue mirror converged until Step 8."""
-    for module, attr in (
-        ("hermes_cli.models_catalog_static", "sync_plugin_provider_catalog"),
-    ):
-        sync = getattr(sys.modules.get(module), attr, None)
-        if sync is None:
-            continue
-        try:
-            sync()
-        except Exception as exc:  # pragma: no cover - never break registration
-            logger.debug("%s sync skipped: %s", module, exc)
 
 
 def _get_or_create_home_layer(key: str) -> _HomeLayer:
@@ -126,11 +108,6 @@ def register_provider(profile: ProviderProfile) -> None:
             _ALIASES[alias] = profile.name
         _PROVIDER_LIST_CACHE = None
 
-    # Step 2 preserves the existing mirrors. Later Phase 5.2 steps delete them.
-    from providers.discovery import discovery_in_progress, process_discovered
-
-    if process_discovered() and not discovery_in_progress():
-        _sync_auth_registry()
 
 
 def provider_source(name: str) -> str | None:

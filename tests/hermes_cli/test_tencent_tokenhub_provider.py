@@ -172,5 +172,5 @@ class TestTencentTokenhubApiMode:
         assert mode == "chat_completions"
 
 # =============================================================================
-# _KNOWN_PROVIDER_NAMES (models.py)
+# _known_provider_names() (models.py)
 # =============================================================================
