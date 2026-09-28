@@ -71,6 +71,7 @@ def test_aggregator_semantics_follow_profile_declaration(identity_profiles) -> N
 
 
 def test_named_custom_routes_are_routing_aggregators(identity_profiles) -> None:
+    assert normalize_provider("custom:fixture") == "custom:fixture"
     assert is_aggregator("custom:fixture") is True
     assert is_routing_aggregator("custom:fixture") is True
 

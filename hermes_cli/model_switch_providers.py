@@ -792,7 +792,7 @@ class _PickerBuild:
 def _lap_lmstudio_row(b: _PickerBuild, user_providers: dict) -> None:
     """Section 0: the active / ``providers:``-configured LM Studio row from the live catalog.
 
-    LM Studio has no models.dev mapping and its overlay row (section 2) needs a credential, so a
+    LM Studio has no models.dev mapping and its profile row (section 2) needs a credential, so a
     hand-written ``model.provider: lmstudio`` left the slug unclaimed until section 3, where a bare
     ``providers.lmstudio: {request_timeout_seconds: ...}`` block (no ``base_url``/``models``) cannot
     discover anything and rendered a one-model ``user-config`` row — discarding the catalog
@@ -946,7 +946,7 @@ def _lap_canonical_rows(b: _PickerBuild) -> None:
             _is_aws_sdk(cp_config) and _has_aws_sdk_creds_for_listing(cp.slug, b.current_provider))
         if not has_creds and cp_config is not None and cp_config.auth_type == "external_process":
             # Subprocess-backed providers own their auth; the binary resolving is the credential
-            # evidence for listing (same gate as the copilot-acp overlay row and hermes auth status).
+            # evidence for listing (same gate as the copilot-acp profile row and hermes auth status).
             try:
                 from hermes_cli.auth import get_external_process_provider_status
                 has_creds = bool(get_external_process_provider_status(cp.slug).get("configured"))

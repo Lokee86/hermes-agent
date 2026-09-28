@@ -42,6 +42,10 @@ def normalize_provider(name: str) -> str:
     key = str(name or "").strip().lower()
     if not key:
         return ""
+    # Named custom routes are already canonical identities. The generic
+    # custom profile must not collapse custom:<name> back to custom.
+    if key.startswith("custom:"):
+        return key
     profile = _profile_for(key)
     if profile is None:
         return key

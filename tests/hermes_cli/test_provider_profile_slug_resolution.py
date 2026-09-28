@@ -1,8 +1,8 @@
-"""Test that overlay providers with mismatched models.dev keys resolve correctly.
+"""Test that provider-profile aliases resolve to canonical Hermes slugs.
 
-HERMES_OVERLAYS keys may be models.dev IDs (e.g. "github-copilot") while
-_PROVIDER_MODELS and config.yaml use Hermes IDs ("copilot").  The slug
-resolution in list_authenticated_providers() Section 2 must bridge this gap.
+Provider profiles may expose aliases that differ from models.dev IDs and config
+spellings. Picker rows must use the profile's canonical identity rather than
+leaking an upstream/catalog alias.
 
 Covers: #5223, #6492
 """
@@ -18,7 +18,7 @@ from hermes_cli.model_switch import list_authenticated_providers
 
 @patch.dict(os.environ, {"COPILOT_GITHUB_TOKEN": "fake-ghu"}, clear=False)
 def test_copilot_uses_hermes_slug():
-    """github-copilot overlay should resolve to slug='copilot' with curated models."""
+    """The github-copilot alias should resolve to canonical slug='copilot'."""
     providers = list_authenticated_providers(current_provider="copilot")
 
     copilot = next((p for p in providers if p["slug"] == "copilot"), None)

@@ -1222,7 +1222,7 @@ def _env_secret(name: str) -> bool:
 def _explicit_env_credentials_present(normalized: str) -> bool:
     """True when the user has pasted an explicit credential env var for *normalized*.
 
-    Falls back to the models.dev ``ProviderDef`` (same shape) for non-registry providers such as
+    Falls back to the models.dev provider metadata for non-registry providers such as
     openrouter. AWS SDK providers are checked via explicit env vars only — NOT boto3's chain, so
     ambient EC2 IMDS / SSO profiles never auto-surface."""
     pconfig = PROVIDER_REGISTRY.get(normalized)

@@ -10,12 +10,11 @@ Bug 1 — OpenAI picker dumped the raw ``/v1/models`` catalog
     verbatim so discovery still works.
 
 Bug 2 — OpenRouter appeared authenticated whenever OPENAI_API_KEY was set
-    OpenRouter's HermesOverlay carried ``extra_env_vars=("OPENAI_API_KEY",)``.
-    ``list_authenticated_providers`` reads ``extra_env_vars`` to decide whether
-    a provider has credentials, so any OpenAI user saw a phantom OpenRouter
-    row. The overlay entry is removed; runtime credential resolution still
-    falls back to OPENAI_API_KEY for explicitly-selected OpenRouter (handled
-    in runtime_provider.py, independent of the overlay).
+    The picker historically treated ``OPENAI_API_KEY`` as evidence that
+    OpenRouter itself was configured, so any OpenAI user saw a phantom row.
+    The canonical OpenRouter profile now declares only its own credential
+    environment variable; explicit runtime credential fallback is a separate
+    resolution concern.
 """
 
 from unittest.mock import patch

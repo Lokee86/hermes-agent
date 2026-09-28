@@ -1,7 +1,7 @@
 """Focused tests for Fireworks AI first-class provider wiring.
 
 These tests pin the wiring that makes Fireworks a real provider — alias
-resolution through both CLI resolvers, config/doctor/overlay registration,
+resolution through both CLI resolvers, config/doctor/profile registration,
 and credential/base-URL resolution — without
 any live network calls.
 """
