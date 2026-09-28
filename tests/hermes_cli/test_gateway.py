@@ -51,6 +51,7 @@ def _run_native_windows_gateway_start_diag(
         import sys
         import types
 
+        from gateway import systemd_runtime
         import hermes_cli.gateway as gateway_cli
 
         async def start_gateway(**kwargs):
@@ -164,6 +165,7 @@ def test_gateway_run_subprocess_preserves_daemon_exit_codes(
         import sys
         import types
 
+        from gateway import systemd_runtime
         import hermes_cli.gateway as gateway_cli
 
         outcome = os.environ["HERMES_TEST_GATEWAY_OUTCOME"]
