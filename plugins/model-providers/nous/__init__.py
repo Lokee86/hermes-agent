@@ -6,9 +6,10 @@ from agent.portal_tags import get_affinity_scope, get_conversation_context, nous
 from agent.transports.codex import _cache_scope_from_session_id
 from providers import register_provider
 from providers.base import ProviderProfile
+from providers.model_normalizers import VendorQualifiedModelIdsMixin
 
 
-class NousProfile(ProviderProfile):
+class NousProfile(VendorQualifiedModelIdsMixin, ProviderProfile):
     """Nous Portal — product tags, reasoning with Nous-specific omission."""
 
     def resolve_aux_model(self, *, vision: bool = False) -> str:

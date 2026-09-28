@@ -5,6 +5,7 @@ from typing import Any
 from agent.reasoning_effort import NEBIUS_EFFORTS, clamp_effort
 from providers import register_provider
 from providers.base import ProviderProfile
+from providers.model_normalizers import MatchingPrefixModelIdsMixin
 
 # Conservative allowlist of model families that expose reasoning effort.
 _REASONING_MARKERS = (
@@ -12,7 +13,7 @@ _REASONING_MARKERS = (
 )
 
 
-class NebiusTokenFactoryProfile(ProviderProfile):
+class NebiusTokenFactoryProfile(MatchingPrefixModelIdsMixin, ProviderProfile):
     """Nebius Token Factory - top-level reasoning_effort."""
 
     def build_api_kwargs_extras(

@@ -3,6 +3,7 @@ from typing import Any
 
 from providers import register_provider
 from providers.base import ProviderProfile
+from providers.model_normalizers import MatchingPrefixModelIdsMixin
 
 
 def _normalize_parts(content: list) -> list | None:
@@ -23,8 +24,10 @@ def _normalize_parts(content: list) -> list | None:
     return parts if parts and changed else None
 
 
-class QwenProfile(ProviderProfile):
+class QwenProfile(MatchingPrefixModelIdsMixin, ProviderProfile):
     """Qwen Portal — message normalization, vl_high_resolution, metadata top-level."""
+
+    model_prefix_exclusions = ("qwen", "qwen-cli")
 
     def prepare_messages(self, messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
         """Normalize content to list-of-dicts and inject cache_control on the (first)

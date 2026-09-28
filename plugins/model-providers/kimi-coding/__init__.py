@@ -8,6 +8,7 @@ from agent.reasoning_effort import KIMI_K3_EFFORTS, KIMI_K3_OVERRIDES, thinking_
 from hermes_cli.version_info import get_version_info
 from providers import register_provider
 from providers.base import OMIT_TEMPERATURE, ProviderProfile
+from providers.model_normalizers import MatchingPrefixModelIdsMixin
 
 _HEADERS = {
     "HTTP-Referer": "https://hermes-agent.nousresearch.com",
@@ -34,8 +35,10 @@ def _is_confirmed_kimi_coding_url(base_url: str) -> bool:
     )
 
 
-class KimiProfile(ProviderProfile):
+class KimiProfile(MatchingPrefixModelIdsMixin, ProviderProfile):
     """Kimi/Moonshot — temperature omitted, thinking xor reasoning_effort."""
+
+    model_prefix_exclusions = ("kimi-for-coding",)
 
     def fetch_models(
         self, *, api_key: str | None = None, base_url: str | None = None, timeout: float = 8.0

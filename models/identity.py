@@ -1,16 +1,11 @@
-"""Canonical model identity.
-
-This module owns the meaning of provider-qualified model references. It may use
-the public provider-identity API, but it does not discover model catalogues,
-choose providers, resolve routes, or read credentials/configuration.
-"""
+"""Canonical model identity without catalogue, route, credential, or config ownership."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Iterable, Mapping
 
-from providers import is_aggregator, normalize_provider
+from providers import get_provider_profile, is_aggregator, normalize_provider
 
 
 @dataclass(frozen=True, slots=True)
@@ -142,16 +137,19 @@ def normalize_model_id(
     *,
     known_ids: Iterable[str] = (),
 ) -> str:
-    """Return the canonical model id for a known provider.
+    """Normalize via provider-owned rules and caller-supplied candidates.
 
-    Phase 5.3.2 establishes the final seam conservatively: unknown and
-    provider-native ids pass through unchanged apart from surrounding
-    whitespace. Provider-specific normalization moves behind this interface in
-    Phase 5.3.3. known_ids is accepted now so catalogue-assisted rules can
-    consume caller-supplied candidates without identity ever owning discovery.
+    Catalogue acquisition remains outside this module.
     """
 
-    return str(model or "").strip()
+    canonical = normalize_provider(provider)
+    value = str(model or "").strip()
+    if not value:
+        return value
+    profile = get_provider_profile(canonical)
+    if profile is None:
+        return value
+    return profile.normalize_model_id(value, known_ids=tuple(known_ids))
 
 
 def normalize_model_ref(

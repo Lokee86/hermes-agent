@@ -10,10 +10,14 @@ from typing import Any
 
 from providers import register_provider
 from providers.base import ProviderProfile
+from providers.model_normalizers import normalize_copilot_id
 
 
 class CopilotACPProfile(ProviderProfile):
     """GitHub Copilot ACP — external process, no REST models endpoint."""
+
+    def normalize_model_id(self, model: str, *, known_ids=()) -> str:
+        return normalize_copilot_id(model, known_ids)
 
     def create_client(self, **client_kwargs: Any) -> Any:
         """Build the ACP stdio shim rather than an HTTP client."""

@@ -7,12 +7,19 @@ import urllib.request
 from hermes_cli.urllib_security import open_credentialed_url
 from providers import register_provider
 from providers.base import ProviderProfile
+from providers.model_normalizers import strip_matching_prefix
 
 logger = logging.getLogger(__name__)
 
 
 class AnthropicProfile(ProviderProfile):
     """Native Anthropic — uses x-api-key header, not Bearer."""
+
+    def normalize_model_id(self, model: str, *, known_ids=()) -> str:
+        bare = strip_matching_prefix(
+            self, model, excluded_prefixes=("claude-oauth",)
+        )
+        return bare if "/" in bare else bare.replace(".", "-")
 
     def fetch_models(
         self, *, api_key: str | None = None, base_url: str | None = None, timeout: float = 8.0

@@ -7,8 +7,14 @@ and ``model.provider: alibaba-cn`` resolves at runtime.
 
 from providers import register_provider
 from providers.base import ProviderProfile
+from providers.model_normalizers import MatchingPrefixProviderProfile
 
-alibaba = ProviderProfile(
+
+class AlibabaProfile(MatchingPrefixProviderProfile):
+    model_prefix_exclusions = ("qwen-dashscope",)
+
+
+alibaba = AlibabaProfile(
     name="alibaba", aliases=("dashscope", "alibaba-cloud", "qwen-dashscope", "aliyun"),
     display_name="Qwen Cloud", description="Qwen Cloud / DashScope (Qwen + multi-provider)",
     signup_url="https://modelstudio.console.alibabacloud.com/", env_vars=("DASHSCOPE_API_KEY",),

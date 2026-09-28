@@ -10,9 +10,10 @@ from typing import Any
 from agent.reasoning_effort import OLLAMA_CLOUD_EFFORTS, OLLAMA_CLOUD_OVERRIDES, clamp_effort
 from providers import register_provider
 from providers.base import ProviderProfile
+from providers.model_normalizers import MatchingPrefixModelIdsMixin
 
 
-class OllamaCloudProfile(ProviderProfile):
+class OllamaCloudProfile(MatchingPrefixModelIdsMixin, ProviderProfile):
     """Ollama Cloud — maps xhigh→max via top-level reasoning_effort."""
 
     def build_api_kwargs_extras(

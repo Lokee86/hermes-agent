@@ -9,10 +9,14 @@ from typing import Any
 
 from providers import register_provider
 from providers.base import ProviderProfile
+from providers.model_normalizers import normalize_copilot_id
 
 
 class CopilotProfile(ProviderProfile):
     """GitHub Copilot / GitHub Models — editor headers + reasoning."""
+
+    def normalize_model_id(self, model: str, *, known_ids=()) -> str:
+        return normalize_copilot_id(model, known_ids)
 
     def build_api_kwargs_extras(
         self, *, model: str | None = None, reasoning_config: dict | None = None,

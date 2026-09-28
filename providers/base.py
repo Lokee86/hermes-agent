@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Callable
+from typing import TYPE_CHECKING, Any, Callable, Iterable
 
 if TYPE_CHECKING:
     from agent.account_usage import AccountUsageSnapshot
@@ -158,6 +158,17 @@ class ProviderProfile:
             raise ValueError(
                 f"{self.name}: base_url_env_var must not also appear in credential env_vars"
             )
+
+    def normalize_model_id(
+        self, model: str, *, known_ids: Iterable[str] = ()
+    ) -> str:
+        """Return this provider's canonical model ID.
+
+        The model domain calls this hook after provider identity is resolved.
+        Implementations must be pure and may inspect only caller-supplied
+        candidate IDs; catalogue discovery belongs outside this seam.
+        """
+        return str(model or "").strip()
 
     def fetch_account_usage(
         self, *, base_url: str | None = None, api_key: str | None = None

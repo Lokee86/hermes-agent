@@ -8,6 +8,7 @@ from agent.prompt_cache_scope import GROK_AGGREGATOR_MODEL_PREFIXES, is_fork_cac
 from agent.transports.codex import _cache_scope_from_session_id
 from providers import register_provider
 from providers.base import ProviderProfile
+from providers.model_normalizers import VendorQualifiedModelIdsMixin
 
 logger = logging.getLogger(__name__)
 
@@ -56,7 +57,7 @@ OPENROUTER_ENDPOINT_PINS: dict[str, tuple[str, tuple[str, ...]]] = {
 }
 
 
-class OpenRouterProfile(ProviderProfile):
+class OpenRouterProfile(VendorQualifiedModelIdsMixin, ProviderProfile):
     """OpenRouter aggregator — provider preferences, reasoning config passthrough."""
 
     @staticmethod

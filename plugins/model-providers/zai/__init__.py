@@ -10,6 +10,7 @@ from typing import Any
 from agent import reasoning_effort as re_
 from providers import register_provider
 from providers.base import ProviderProfile
+from providers.model_normalizers import MatchingPrefixModelIdsMixin
 
 _GLM_VERSION_RE = re.compile(r"^glm-(\d+)(?:\.(\d+))?")
 # Alias spellings seen on relays (Fireworks ``glm-5p2``, ``zai-org-glm-5-2``…).
@@ -42,7 +43,7 @@ def _glm_5_2_reasoning_effort(reasoning_config: dict | None, *, model: str | Non
     return clamped if clamped in efforts else floor
 
 
-class ZaiProfile(ProviderProfile):
+class ZaiProfile(MatchingPrefixModelIdsMixin, ProviderProfile):
     """Z.AI / GLM — extra_body.thinking on/off + GLM-5.2 reasoning_effort."""
 
     def build_api_kwargs_extras(

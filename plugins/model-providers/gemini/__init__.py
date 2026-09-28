@@ -8,9 +8,10 @@ from typing import Any
 
 from providers import register_provider
 from providers.base import ProviderProfile
+from providers.model_normalizers import MatchingPrefixModelIdsMixin
 
 
-class GeminiProfile(ProviderProfile):
+class GeminiProfile(MatchingPrefixModelIdsMixin, ProviderProfile):
     """Gemini — translate reasoning_config to thinking_config in extra_body."""
 
     def build_extra_body(self, *, session_id: str | None = None, **context: Any) -> dict[str, Any]:

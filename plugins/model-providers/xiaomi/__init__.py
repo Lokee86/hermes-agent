@@ -1,9 +1,9 @@
 """Xiaomi MiMo provider profile."""
 
 from providers import register_provider
-from providers.base import ProviderProfile
+from providers.model_normalizers import LowercaseMatchingPrefixProviderProfile
 
-xiaomi = ProviderProfile(
+xiaomi = LowercaseMatchingPrefixProviderProfile(
     name="xiaomi", aliases=("mimo", "xiaomi-mimo"), display_name="Xiaomi MiMo",
     description="Xiaomi MiMo (MiMo-V2.5 and V2 models: pro, omni, flash)",
     signup_url="https://platform.xiaomimimo.com", env_vars=("XIAOMI_API_KEY",), base_url="https://api.xiaomimimo.com/v1",

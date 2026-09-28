@@ -4,9 +4,10 @@ from typing import Any
 
 from providers import register_provider
 from providers.base import ProviderProfile
+from providers.model_normalizers import VendorQualifiedModelIdsMixin
 
 
-class VercelAIGatewayProfile(ProviderProfile):
+class VercelAIGatewayProfile(VendorQualifiedModelIdsMixin, ProviderProfile):
     """Vercel AI Gateway — attribution headers + reasoning passthrough."""
 
     def build_api_kwargs_extras(

@@ -45,6 +45,10 @@ def _is_glm_5_2_model(model: str | None) -> bool:
 class OpenCodeGoProfile(ProviderProfile):
     """OpenCode Go - model-specific reasoning controls."""
 
+    def normalize_model_id(self, model: str, *, known_ids=()) -> str:
+        value = str(model or "").strip()
+        return value.split("/", 1)[1].strip() if "/" in value else value
+
     # The relay's default max_tokens (262144) exceeds what Xiaomi accepts for
     # mimo-v2.5-pro and 400s; keys are normalized via _flat_model_name().
     _MODEL_MAX_TOKENS: dict[str, int] = {"mimo-v2.5-pro": 131072}
@@ -108,6 +112,12 @@ class OpenCodeGoProfile(ProviderProfile):
 
 class OpenCodeZenProfile(ProviderProfile):
     """OpenCode Zen - model-specific reasoning controls."""
+
+    def normalize_model_id(self, model: str, *, known_ids=()) -> str:
+        value = str(model or "").strip()
+        if "/" in value:
+            value = value.split("/", 1)[1].strip() or value
+        return value.replace(".", "-") if value.lower().startswith("claude-") else value
 
     def build_api_kwargs_extras(
         self, *, reasoning_config: dict | None = None, model: str | None = None, **context

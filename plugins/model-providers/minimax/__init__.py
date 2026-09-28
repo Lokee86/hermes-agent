@@ -10,6 +10,7 @@ from urllib.parse import urlparse
 
 from providers import register_provider
 from providers.base import ProviderProfile
+from providers.model_normalizers import MatchingPrefixModelIdsMixin
 
 
 def _is_minimax_global_openai_base_url(base_url: str | None) -> bool:
@@ -17,8 +18,10 @@ def _is_minimax_global_openai_base_url(base_url: str | None) -> bool:
     return (parsed.hostname or "").lower() == "api.minimax.io" and parsed.path.rstrip("/").lower() == "/v1"
 
 
-class MiniMaxProfile(ProviderProfile):
+class MiniMaxProfile(MatchingPrefixModelIdsMixin, ProviderProfile):
     """MiniMax — M3 OpenAI-compatible reasoning controls."""
+
+    model_prefix_exclusions = ("mini-max", "minimax-oauth-io")
 
     def build_api_kwargs_extras(
         self, *, reasoning_config: dict | None = None, model: str | None = None,
