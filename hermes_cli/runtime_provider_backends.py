@@ -234,7 +234,7 @@ def _resolve_bedrock_runtime(requested_provider: str, model_cfg: Dict[str, Any],
         route_extras["bedrock_anthropic"] = True
     runtime = rp._runtime("bedrock", None, route_base_url, route_api_key, model=current_model,
                           source=route_source, region=region, requested_provider=requested_provider,
-                          **route_extras)
+                          route_options=route_extras, **route_extras)
     if guardrail_config:
         runtime["guardrail_config"] = guardrail_config
     return runtime

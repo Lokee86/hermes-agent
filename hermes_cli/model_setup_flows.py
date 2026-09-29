@@ -554,7 +554,7 @@ def _model_flow_copilot(config, current_model=""):
     is the shared post-pick one in ``select_provider_and_model`` (Copilot's per-model level set
     comes from ``github_model_reasoning_efforts`` there)."""
     from hermes_cli.auth import resolve_api_key_provider_credentials
-    from hermes_cli.models import fetch_api_models, copilot_model_api_mode
+    from hermes_cli.models import fetch_api_models
     provider_id = "copilot"
     pconfig = get_provider_config(provider_id)
     creds = resolve_api_key_provider_credentials(provider_id)
@@ -584,8 +584,13 @@ def _model_flow_copilot(config, current_model=""):
         print("No change.")
         return
     selected = _normalize(selected)
-    _persist_model(selected, provider_id, base_url=effective_base,
-                   api_mode=copilot_model_api_mode(selected, catalog=catalog, api_key=api_key))
+    from providers.routing import InvocationRequest, resolve_invocation_route
+    route = resolve_invocation_route(InvocationRequest(
+        provider=provider_id,
+        model=selected,
+        base_url=effective_base,
+    ))
+    _persist_model(selected, provider_id, base_url=effective_base, api_mode=route.api_mode)
     print(f"Default model set to: {selected} (via {pconfig.name})")
 
 

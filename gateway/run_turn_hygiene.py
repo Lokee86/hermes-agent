@@ -794,7 +794,7 @@ class GatewayTurnHygieneMixin:
                 source=source, session_key=session_key,
                 user_config=hs.data if isinstance(hs.data, dict) else None,
             )
-            if str(_hyg_runtime.get("api_mode") or "").lower() == "codex_app_server":
+            if str(_hyg_runtime.get("runtime_kind") or "").lower() == "app_server":
                 await self._hmwa_hygiene_codex_compaction(hs, plan, history, session_entry, session_key, _hyg_runtime)
             elif _hyg_runtime.get("api_key"):
                 # Pass the FULL transcript (tool results included) as the agent loop does: filtering

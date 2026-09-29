@@ -166,9 +166,10 @@ class TestTencentTokenhubContextLength:
 class TestTencentTokenhubApiMode:
     """Verify determine_api_mode routes tencent-tokenhub correctly."""
 
-    def test_determine_api_mode_via_alias(self):
-        from hermes_cli.providers import determine_api_mode
-        mode = determine_api_mode("tencent")
+
+    def test_route_api_mode_via_alias(self):
+        from providers.routing import InvocationRequest, resolve_invocation_route
+        mode = resolve_invocation_route(InvocationRequest(provider="tencent")).api_mode
         assert mode == "chat_completions"
 
 # =============================================================================

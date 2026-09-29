@@ -9,8 +9,9 @@ and model selection do not belong here.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import re
 from typing import Any, Literal, Mapping
-from urllib.parse import urlparse
+from urllib.parse import urlparse, urlunparse
 
 from providers.base import ProviderProfile
 from providers.identity import normalize_provider
@@ -40,10 +41,6 @@ _API_MODE_ALIASES = {
     "bedrock-converse": "bedrock_converse",
     "bedrock_converse": "bedrock_converse",
     "converse": "bedrock_converse",
-    "app-server": "codex_app_server",
-    "app_server": "codex_app_server",
-    "codex-app-server": "codex_app_server",
-    "codex_app_server": "codex_app_server",
 }
 
 # Provider-owned requirements which cannot be inferred from a profile declaration
@@ -59,6 +56,8 @@ _PROVIDER_REQUIREMENTS = {
 }
 
 _RESPONSES_NATIVE_HOSTS = frozenset({"api.meta.ai", "api.router.com", "api.x.ai"})
+
+_OPENCODE_FAMILY_PATHS = {"opencode-zen": "/zen", "opencode-go": "/zen/go"}
 
 
 @dataclass(frozen=True)
@@ -215,6 +214,69 @@ def _provider_requirement(provider: str) -> str:
     return _PROVIDER_REQUIREMENTS.get(provider, "")
 
 
+def normalize_provider_base_url(provider: str, api_mode: str, base_url: str) -> str:
+    """Normalize provider-owned endpoint families after the wire protocol is resolved.
+
+    Built-in OpenCode Zen/Go providers heal a stale sibling relay path. Family-prefixed custom
+    providers keep their declared relay path but retain the shared /v1 wire normalization.
+    """
+    url = str(base_url or "").strip().rstrip("/")
+    raw_provider = str(provider or "").strip().lower()
+    canonical = normalize_provider(raw_provider)
+    family = canonical if canonical in _OPENCODE_FAMILY_PATHS else next(
+        (name for name in _OPENCODE_FAMILY_PATHS if raw_provider.startswith(name)),
+        "",
+    )
+    if not url or not family:
+        return url
+    parsed = _parsed_url(url)
+    if parsed is None:
+        return url
+    host = (parsed.hostname or "").lower().rstrip(".")
+    official = host == "opencode.ai" or host.endswith(".opencode.ai")
+    path = (parsed.path or "").rstrip("/")
+    if canonical in _OPENCODE_FAMILY_PATHS and official and re.fullmatch(r"/zen(/go)?(/v1)?", path):
+        path = _OPENCODE_FAMILY_PATHS[family] + ("/v1" if path.endswith("/v1") else "")
+    if api_mode == "anthropic_messages":
+        path = re.sub(r"/v1$", "", path)
+    elif official and not path.endswith("/v1"):
+        path += "/v1"
+    return urlunparse(parsed._replace(path=path))
+
+
+def _is_external_process_route(profile: ProviderProfile | None, base_url: str) -> bool:
+    if profile is not None and profile.auth_type == "external_process":
+        return True
+    parsed = _parsed_url(base_url)
+    scheme = (parsed.scheme or "").lower() if parsed is not None else ""
+    return scheme in {"acp", "acp+tcp", "stdio", "process"}
+
+
+def _generic_model_policy(
+    provider: str,
+    model: str,
+    base_url: str,
+    profile: ProviderProfile | None,
+) -> str:
+    """Cross-provider model-family policy retained from the runtime hard cut.
+
+    GPT-5-family models use Responses on ordinary HTTP-compatible providers.
+    Provider-specific route policy wins before this fallback. ACP/external
+    processes, Nous Portal, anonymous custom endpoints, Copilot's mini-tier
+    policy, Actual, and Azure OpenAI keep their own wire semantics.
+    """
+    model_slug = str(model or "").strip().lower().rsplit("/", 1)[-1]
+    if not model_slug.startswith("gpt-5"):
+        return ""
+    if provider in {"nous", "custom", "copilot", "actual"}:
+        return ""
+    if _is_external_process_route(profile, base_url):
+        return ""
+    if _exact_or_subdomain(_hostname(base_url), "openai.azure.com"):
+        return ""
+    return "codex_responses"
+
+
 def _profile_default(profile: ProviderProfile | None) -> str:
     if profile is None:
         return ""
@@ -225,8 +287,17 @@ def _is_app_server_request(request: InvocationRequest, provider: str) -> bool:
     runtime = str(request.openai_runtime or "").strip().lower().replace("-", "_")
     if runtime != "codex_app_server":
         return False
-    requested = normalize_provider(request.requested_provider or provider)
-    return provider in {"openai", "openai-codex"} or requested in {"openai", "openai-codex"}
+    requested_raw = str(request.requested_provider or provider).strip().lower()
+    requested = normalize_provider(requested_raw)
+    configured_raw = str(request.configured_provider or "").strip().lower()
+    eligible = {"openai", "openai-api", "openai-codex"}
+    return (
+        provider in eligible
+        or requested_raw in eligible
+        or requested in eligible
+        or requested_raw.startswith("custom:")
+        or (provider == "custom" and configured_raw in {"openai", "openai-api"})
+    )
 
 
 def _runtime_kind(
@@ -235,9 +306,7 @@ def _runtime_kind(
 ) -> str:
     if app_server:
         return "app_server"
-    if profile is not None and profile.auth_type == "external_process":
-        return "external_process"
-    if _hostname(base_url) == "" and str(base_url or "").lower().startswith(("acp:", "stdio:", "process:")):
+    if _is_external_process_route(profile, base_url):
         return "external_process"
     if api_mode == "bedrock_converse" or (profile is not None and profile.auth_type == "aws_sdk"):
         return "provider_client"
@@ -269,7 +338,10 @@ def resolve_invocation_route(request: InvocationRequest) -> InvocationRoute:
     if explicit:
         api_mode, source = explicit, "explicit"
     else:
-        mandated = endpoint_api_mode(base_url)
+        bedrock_branch = provider == "bedrock" and any(
+            bool(request.route_options.get(key)) for key in ("bedrock_anthropic", "bedrock_openai")
+        )
+        mandated = None if (_is_external_process_route(profile, base_url) or bedrock_branch) else endpoint_api_mode(base_url)
         if mandated:
             api_mode, source = mandated, "endpoint_mandate"
         else:
@@ -281,13 +353,20 @@ def resolve_invocation_route(request: InvocationRequest) -> InvocationRoute:
                 if configured and _providers_match(provider, request.configured_provider):
                     api_mode, source = configured, "configured"
                 else:
-                    default = _profile_default(profile)
-                    if default:
-                        api_mode, source = default, "profile"
+                    model_policy = _generic_model_policy(provider, model, base_url, profile)
+                    if model_policy:
+                        api_mode, source = model_policy, "model_policy"
                     else:
-                        api_mode, source = "chat_completions", "default"
+                        default = _profile_default(profile)
+                        if default:
+                            api_mode, source = default, "profile"
+                        else:
+                            api_mode, source = "chat_completions", "default"
 
-    app_server = source != "endpoint_mandate" and _is_app_server_request(request, provider)
+    base_url = normalize_provider_base_url(provider, api_mode, base_url)
+    app_server = _is_app_server_request(request, provider) and (
+        source != "endpoint_mandate" or api_mode == "codex_responses"
+    )
     runtime_kind = _runtime_kind(
         profile=profile,
         provider=provider,
@@ -315,5 +394,6 @@ __all__ = [
     "RuntimeKind",
     "canonicalize_api_mode",
     "endpoint_api_mode",
+    "normalize_provider_base_url",
     "resolve_invocation_route",
 ]

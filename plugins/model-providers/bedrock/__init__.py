@@ -7,6 +7,16 @@ from providers.base import ProviderProfile
 class BedrockProfile(ProviderProfile):
     """AWS Bedrock — no REST /v1/models endpoint; uses AWS SDK."""
 
+    def resolve_route_policy(self, model: str, base_url: str = "", *, options=None) -> str | None:
+        """Select the wire from the runtime builder's auth-aware Bedrock branch."""
+        del model, base_url
+        route = dict(options or {})
+        if route.get("bedrock_openai"):
+            return "codex_responses"
+        if route.get("bedrock_anthropic"):
+            return "anthropic_messages"
+        return "bedrock_converse"
+
 
 bedrock = BedrockProfile(
     name="bedrock", aliases=("aws", "aws-bedrock", "amazon-bedrock", "amazon"),

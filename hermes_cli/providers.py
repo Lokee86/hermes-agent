@@ -12,7 +12,7 @@ from providers import (
     get_provider_profile as _get_provider_profile,
     normalize_provider as _normalize_provider,
 )
-from utils import base_url_host_matches, base_url_hostname
+from utils import base_url_hostname
 
 logger = logging.getLogger(__name__)
 
@@ -125,111 +125,6 @@ def get_provider(name: str, *, allow_network: bool = True) -> Optional[_Resolved
 def _plugin_profile_pdef(name: str) -> Optional[_ResolvedProvider]:
     """Resolve a registered profile directly for the final full-resolution rung."""
     return _profile_resolved_provider(name)
-
-
-def is_official_openai_host(base_url: str) -> bool:
-    """True when *base_url* points at OpenAI's official API host family. Hostname-parsed matching
-    only — never substring — so lookalike hosts (``api.openai.com.attacker.test``) and path-segment
-    spoofs (``proxy.test/api.openai.com/v1``) are rejected; a genuine ``*.api.openai.com``
-    subdomain requires control of openai.com DNS.
-
-    A genuine ``*.api.openai.com`` subdomain requires control of openai.com DNS, so the dot-suffix match
-    does not reopen the #32243 spoofing hole. Delegates to ``utils.base_url_host_matches``, which owns the
-    exact-or-dot-suffix hostname contract (userinfo/port stripped, lowercased, trailing dot removed) — one
-    implementation, not two.
-    """
-    return base_url_host_matches(base_url, "api.openai.com")
-
-
-# Exact hostnames that are Responses-API-native: api.meta.ai only achieves prompt-cache hits on
-# Responses with prompt_cache_retention (chat/completions stays cache-cold); api.router.com (Ramp
-# Router) keeps reasoning validation/summaries and prompt caching on /v1/responses and serves
-# /v1/chat/completions as a minimal shim.
-_RESPONSES_NATIVE_HOSTS: frozenset[str] = frozenset({"api.meta.ai", "api.router.com"})
-
-
-def host_mandated_api_mode(base_url: str = "") -> Optional[str]:
-    """Return the wire protocol a specific endpoint *requires*, or None. Some hosts accept exactly
-    one API mode (api.openai.com 400s chat/completions for reasoning models with tools); these are
-    *mandatory*: a session carrying a stale api_mode (a /model switch that kept the previous
-    provider's ``chat_completions``) must be overridden, not merely filled in when empty.
-    Exact-hostname matching only — never substring — so lookalike hosts and path-segment spoofs are
-    not treated as the real endpoint."""
-    if not base_url:
-        return None
-    url_lower = base_url.rstrip("/").lower()
-    hostname = base_url_hostname(base_url)
-    if hostname == "api.actual.inc":
-        return "chat_completions"
-    # Exact-hostname matching only — never bare substring — so lookalike hosts
-    # (api.openai.com.attacker.test) and path-segment spoofs (proxy.test/api.openai.com/v1) are NOT treated
-    # as the real endpoint. (#32243)
-    if hostname == "api.kimi.com" and "/coding" in url_lower:
-        return "anthropic_messages"
-    if hostname == "api.anthropic.com" or url_lower.endswith("/anthropic"):
-        return "anthropic_messages"
-    # Official OpenAI host family (canonical + us./eu. data-residency hosts) mandates Responses;
-    # the shared predicate keeps this in lockstep with catalog filtering and listing authority.
-    if is_official_openai_host(base_url) or hostname in _RESPONSES_NATIVE_HOSTS:
-        # Ramp Router (api.router.com) is Responses-native: reasoning-effort validation, reasoning
-        # summaries, and prompt caching live on /v1/responses, and /v1/chat/completions is only a minimal
-        # compatibility shim (docs.router.com/api/endpoint). Exact-hostname match per #32243.
-        return "codex_responses"
-    if hostname.startswith("bedrock-runtime.") and base_url_host_matches(base_url, "amazonaws.com"):
-        return "bedrock_converse"
-    return None
-
-
-def nous_api_mode(model: str = "") -> str:
-    """Wire protocol for a Nous Portal model. Portal serves its ``anthropic/*`` catalog on a native
-    Messages route alongside OpenAI-compatible chat/completions for everything else.
-
-    ``anthropic/*`` rides chat/completions by default for now (``nous.anthropic_wire``). Measured
-    2026-09-06, 20 concurrent sessions x 6 tool calls on Fable 5.1, same account and hour: the
-    native route re-wrote the previous turn on 14-20% of consecutive calls (4 runs; the cache read
-    stopped at the prior breakpoint with byte-identical prefixes), chat/completions 0 of 320 pairs.
-    That is 15-20% of a fan-out's cache-write bill. The cause is inside the portal's native route
-    (NousResearch/api#227 carries the diagnostics); flip the default back to ``native`` when it is
-    fixed. Cost of ``chat``: prior-turn thinking travels as OpenAI-style reasoning fields instead of
-    signed native blocks, and cache_control scopes are translated by the portal's adapter.
-    Empty/unknown model defaults to ``chat_completions`` (the historical Nous transport)."""
-    if str(model or "").strip().lower().startswith("anthropic/"):
-        # ``auto`` starts on chat too: it is safe on every upstream, and ``agent/nous_wire.py``
-        # promotes the session to native from the first response when the upstream allows it.
-        return "anthropic_messages" if _nous_anthropic_wire() == "native" else "chat_completions"
-    return "chat_completions"
-
-
-def _nous_anthropic_wire() -> str:
-    """``nous.anthropic_wire``: ``"chat"`` (default), ``"native"``, or ``"auto"`` (chat, then per-session
-    promotion decided from the first response; see ``agent/nous_wire.py``). Anything else reads as ``chat``."""
-    try:
-        from hermes_cli.config import load_config_readonly
-        value = str(((load_config_readonly().get("nous") or {}).get("anthropic_wire")) or "chat").strip().lower()
-    except Exception:
-        return "chat"
-    return value if value in ("native", "auto") else "chat"
-
-
-def determine_api_mode(provider: str, base_url: str = "", model: str = "") -> str:
-    """API mode (wire protocol) for a provider/endpoint: host-mandated mode, then Nous dual-wire
-    (model-derived — the overlay alone says openai_chat and would pin Claude on the wrong wire),
-    then the known provider's transport, then bedrock, else ``chat_completions``."""
-    if is_actual_route(provider, base_url):
-        return "chat_completions"
-    mandated = host_mandated_api_mode(base_url)
-    if mandated is not None:
-        return mandated
-    if (provider or "").strip().lower() in {"nous", "nous-portal", "nousresearch"}:
-        return nous_api_mode(model)
-    pdef = get_provider(provider)
-    if pdef is not None:
-        from agent.transports import registered_api_modes
-        mode = (pdef.api_mode or "").strip()
-        return mode if mode in registered_api_modes() else "chat_completions"
-    if provider == "bedrock":
-        return "bedrock_converse"
-    return "chat_completions"
 
 
 # -- Provider from user config ------------------------------------------------

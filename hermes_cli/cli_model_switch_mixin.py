@@ -24,7 +24,7 @@ from hermes_cli.cli_agent_setup_mixin import _retire_agent
 # new model's effort behind with the old route.
 _RUNTIME_FIELDS = (
     "model", "provider", "requested_provider", "_explicit_api_key", "_explicit_base_url",
-    "api_key", "base_url", "api_mode", "reasoning_config")
+    "api_key", "base_url", "api_mode", "runtime_kind", "reasoning_config")
 
 
 def _runtime_fields(cli) -> dict:
@@ -46,7 +46,7 @@ def _resolve_cli_reasoning(cli) -> None:
 
 def stored_session_route(session_meta, *, current_model, current_provider):
     """The route a resumed session should run on, or ``None`` when the stored one is absent or
-    already current. Returns ``(model, provider, base_url, api_mode, provider_changed)``; the
+    already current. Returns ``(model, provider, base_url, api_mode, runtime_kind, provider_changed)``; the
     canonical row reader is ``SessionDB.session_gateway_runtime`` (``model_config.gateway_runtime``,
     else the TUI's top-level keys). Bare ``custom`` is healed because the CLI resolve path
     hard-fails on it (the TUI gateway keeps it when a base_url exists)."""
@@ -61,11 +61,12 @@ def stored_session_route(session_meta, *, current_model, current_provider):
     if stored_model == current_model and not provider_changed:
         return None
     api_mode = runtime.get("api_mode") or None
+    runtime_kind = runtime.get("runtime_kind") or None
     from hermes_cli.runtime_provider import is_foreign_provider_endpoint
     if is_foreign_provider_endpoint(provider, base_url):
         # The endpoint and its wire belong to the provider this chat left; resolve the stored one's own.
-        base_url = api_mode = None
-    return stored_model, provider, base_url, api_mode, provider_changed
+        base_url = api_mode = runtime_kind = None
+    return stored_model, provider, base_url, api_mode, runtime_kind, provider_changed
 
 
 def _heal_bare_custom_provider(provider, *, base_url, model):
@@ -402,7 +403,8 @@ class CLIModelSwitchMixin:
             # shapes can never diverge — the asymmetry that caused the original stale-key bug (#85261
             # simplify-code review).
             "base_url": result.base_url or None,
-            "api_mode": result.api_mode or None}
+            "api_mode": result.api_mode or None,
+            "runtime_kind": getattr(result, "runtime_kind", "") or None}
         try:
             db.update_session_model(sid, result.new_model)
             db.patch_session_model_config(sid, {"gateway_runtime": route, **route})
@@ -423,7 +425,7 @@ class CLIModelSwitchMixin:
         route = stored_session_route(session_meta, current_model=self.model, current_provider=self.provider)
         if route is None:
             return
-        stored_model, stored_provider, stored_base_url, stored_api_mode, provider_changed = route
+        stored_model, stored_provider, stored_base_url, stored_api_mode, stored_runtime_kind, provider_changed = route
         from hermes_cli.local_runtime.endpoint import LLAMACPP_ALIASES
         managed = str(stored_provider or "").strip().lower() in LLAMACPP_ALIASES
         self.model = stored_model
@@ -434,6 +436,8 @@ class CLIModelSwitchMixin:
                 self.base_url = stored_base_url
             if stored_api_mode:
                 self.api_mode = stored_api_mode
+            if stored_runtime_kind:
+                self.runtime_kind = stored_runtime_kind
         if managed and not (getattr(self, "_explicit_base_url", None) and not provider_changed):
             # The supervisor owns the live port: last boot's loopback URL (an ephemeral fallback when
             # 18434 was busy) must not pin the resume onto a dead endpoint. A launch-time --base-url
@@ -450,6 +454,8 @@ class CLIModelSwitchMixin:
                     self.base_url = resolved["base_url"]
                 if not stored_api_mode and resolved.get("api_mode"):
                     self.api_mode = resolved["api_mode"]
+                if not stored_runtime_kind and resolved.get("runtime_kind"):
+                    self.runtime_kind = resolved["runtime_kind"]
             except Exception:
                 if stored_base_url:
                     self.base_url = stored_base_url
@@ -473,6 +479,8 @@ class CLIModelSwitchMixin:
                     self.base_url = resolved["base_url"]
                 if not stored_api_mode and resolved.get("api_mode"):
                     self.api_mode = resolved["api_mode"]
+                if not stored_runtime_kind and resolved.get("runtime_kind"):
+                    self.runtime_kind = resolved["runtime_kind"]
             except Exception:
                 logger.debug(
                     "Credential re-resolution for resumed session provider "
@@ -485,7 +493,8 @@ class CLIModelSwitchMixin:
             try:
                 self.agent.switch_model(
                     new_model=self.model, new_provider=self.provider, api_key=self.api_key or "",
-                    base_url=self.base_url or "", api_mode=self.api_mode or "")
+                    base_url=self.base_url or "", api_mode=self.api_mode or "",
+                    runtime_kind=getattr(self, "runtime_kind", "") or "")
             except Exception:
                 logger.debug("In-place agent model swap on resume failed", exc_info=True)
         msg = f"Model restored from session: {stored_model}"
@@ -652,6 +661,8 @@ class CLIModelSwitchMixin:
             self.base_url = result.base_url
         if result.api_mode:
             self.api_mode = result.api_mode
+        if getattr(result, "runtime_kind", ""):
+            self.runtime_kind = result.runtime_kind
         _resolve_cli_reasoning(self)
 
         if self.agent is not None:
@@ -659,6 +670,7 @@ class CLIModelSwitchMixin:
                 self.agent.switch_model(
                     new_model=result.new_model, new_provider=result.target_provider,
                     api_key=result.api_key, base_url=result.base_url, api_mode=result.api_mode,
+                    runtime_kind=getattr(result, "runtime_kind", ""),
                     capabilities=getattr(result, "runtime_capabilities", None))
             except Exception as exc:
                 # The agent rolled itself back to the old working model/client. Roll the CLI's own staged
@@ -910,13 +922,14 @@ class CLIModelSwitchMixin:
         self._pending_moa_restore_model = {
             key: getattr(self, key, None)
             for key in (
-                "requested_provider", "provider", "model", "api_key", "base_url", "api_mode")}
+                "requested_provider", "provider", "model", "api_key", "base_url", "api_mode", "runtime_kind")}
         self.requested_provider = "moa"
         self.provider = "moa"
         self.model = preset
         self.api_key = "moa-virtual-provider"
         self.base_url = "moa://local"
         self.api_mode = "chat_completions"
+        self.runtime_kind = "http"
         _retire_agent(self)
         self._pending_moa_disable_after_turn = True
         self._pending_agent_seed = payload

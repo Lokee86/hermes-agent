@@ -5628,7 +5628,13 @@ class TestGpt5ApiModeRouting:
         agent.api_mode = "chat_completions"
         agent.model = "openai/gpt-5.5"
         assert not agent._is_direct_openai_url()
-        assert not AIAgent._provider_model_requires_responses_api(agent.model, provider=agent.provider)
+        from providers.routing import InvocationRequest, resolve_invocation_route
+        route = resolve_invocation_route(InvocationRequest(
+            provider=agent.provider,
+            model=agent.model,
+            base_url=agent.base_url,
+        ))
+        assert route.api_mode == "chat_completions"
 
     def test_is_azure_openai_url_detection(self, agent):
         assert agent._is_azure_openai_url("https://foo.openai.azure.com/openai/v1") is True

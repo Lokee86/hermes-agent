@@ -118,9 +118,16 @@ def _runtime(provider: str, api_mode: Optional[str], base_url: Any, api_key: Any
     requested_provider = str(extra.get("requested_provider") or provider).strip().lower()
     configured_provider = str(extra.pop("configured_provider", "") or _cfg_provider(model_cfg)).strip().lower()
     configured_api_mode = extra.pop("configured_api_mode", None)
-    if configured_api_mode is None and configured_provider:
+    if configured_api_mode is None:
         configured_api_mode = model_cfg.get("api_mode")
     openai_runtime = str(extra.pop("openai_runtime", model_cfg.get("openai_runtime") or "")).strip()
+    route_options = dict(extra.pop("route_options", {}) or {})
+    if normalize_provider(provider) == "nous" and "anthropic_wire" not in route_options:
+        try:
+            nous_cfg = (load_config().get("nous") or {})
+            route_options["anthropic_wire"] = str(nous_cfg.get("anthropic_wire") or "chat")
+        except Exception:
+            route_options["anthropic_wire"] = "chat"
     request = InvocationRequest(
         provider=str(provider or "").strip().lower(),
         model=model,
@@ -130,6 +137,7 @@ def _runtime(provider: str, api_mode: Optional[str], base_url: Any, api_key: Any
         configured_provider=configured_provider,
         openai_runtime=openai_runtime,
         requested_provider=requested_provider,
+        route_options=route_options,
     )
     # ``api_mode`` is supplied by a provider/custom entry, so it is a configured
     # mode. The routing domain applies the precedence rules; this layer never
@@ -146,6 +154,7 @@ def _runtime(provider: str, api_mode: Optional[str], base_url: Any, api_key: Any
             configured_provider=configured_provider,
             openai_runtime=request.openai_runtime,
             requested_provider=request.requested_provider,
+            route_options=request.route_options,
         )
     route = resolve_invocation_route(request)
     runtime_kind = getattr(route.runtime_kind, "value", route.runtime_kind)
@@ -159,10 +168,9 @@ def _runtime(provider: str, api_mode: Optional[str], base_url: Any, api_key: Any
         "api_key": api_key,
         "runtime_kind": runtime_kind,
         "is_routing_aggregator": route.is_routing_aggregator,
-        "source": route.source,
+        "source": credential_source or route.source,
+        "route_source": route.source,
     }
-    if credential_source is not None:
-        result["credential_source"] = credential_source
     result.update(extra)
     return result
 
@@ -583,7 +591,7 @@ def _resolve_explicit_runtime(*, provider: str, requested_provider: str, model_c
     if resolver is not None:
         return resolver(requested_provider, model_cfg, explicit_api_key, explicit_base_url, target_model)
     pconfig = get_provider_config(provider)
-    if not (pconfig and pconfig.auth_type == "api_key"):
+    if not (pconfig and pconfig.auth_type in {"api_key", "copilot"}):
         return None
     return _explicit_api_key_provider(provider, pconfig, requested_provider, model_cfg, explicit_api_key, explicit_base_url, target_model)
 
@@ -629,7 +637,7 @@ def _resolve_oauth_runtime(provider, requested_provider, model_cfg, target_model
 
 def _minimax_oauth_runtime(provider, requested_provider) -> Optional[Dict[str, Any]]:
     pconfig = get_provider_config(provider)
-    if not (pconfig and pconfig.auth_type == "oauth_minimax"):
+    if not (pconfig and pconfig.auth_type == "oauth_external"):
         return None
     creds = auth_mod.resolve_minimax_oauth_runtime_credentials()
     return _runtime(provider, None, creds["base_url"], creds["api_key"], model=_get_model_config().get("default", ""),
@@ -774,14 +782,25 @@ def _resolve_requested_shortcuts(requested_provider, explicit_api_key, explicit_
 
 
 def _local_endpoint_bypass(requested_provider: str, explicit_api_key, explicit_base_url) -> Optional[Dict[str, Any]]:
-    """provider "auto"/unset with a config base_url at a custom/local endpoint routes through the
-    OpenAI-compatible resolver, so resolve_provider() cannot pick up an env ANTHROPIC/OPENAI key
-    and send the request to a cloud API. Only non-cloud roots take the bypass; match on HOST, not
-    substring, so a look-alike (api.anthropic.com.attacker.test) cannot leak a cloud credential."""
+    """Resolve trusted configured endpoints before provider auto-detection can redirect them.
+
+    Auto/unset keeps the historical local/non-cloud rule. Bare custom may also use its
+    configured endpoint, but only through the stricter bare-custom trust predicate.
+    """
     model_cfg = _get_model_config()
     cfg_base_url = str(model_cfg.get("base_url") or "").strip()
-    if (not cfg_base_url or _cfg_provider(model_cfg) not in ("auto", "")
-            or any(base_url_host_matches(cfg_base_url, host) for host in _LOCAL_BYPASS_CLOUD_HOSTS)):
+    cfg_provider = _cfg_provider(model_cfg)
+    requested_norm = str(requested_provider or "").strip().lower()
+    if not cfg_base_url:
+        return None
+    if requested_norm == "custom":
+        if not _config_base_url_trustworthy_for_bare_custom(cfg_base_url, cfg_provider):
+            return None
+    elif requested_norm in {"", "auto"}:
+        if (cfg_provider not in {"", "auto"}
+                or any(base_url_host_matches(cfg_base_url, host) for host in _LOCAL_BYPASS_CLOUD_HOSTS)):
+            return None
+    else:
         return None
     return _openrouter_fallback(requested_provider, explicit_api_key, explicit_base_url)
 
@@ -889,7 +908,7 @@ def _ladder_rungs(requested_provider, explicit_api_key, explicit_base_url, targe
     if provider == "bedrock":
         yield _resolve_bedrock_runtime(requested_provider, model_cfg, target_model)
     pconfig = get_provider_config(provider)
-    if pconfig and pconfig.auth_type == "api_key":
+    if provider not in {"openrouter", "custom"} and pconfig and pconfig.auth_type in {"api_key", "copilot"}:
         yield _api_key_provider_runtime(provider, pconfig, requested_provider, model_cfg, target_model)
     fallback = _openrouter_fallback(requested_provider, explicit_api_key, explicit_base_url)
     if swallowed_auth_error is not None and not fallback.get("api_key"):

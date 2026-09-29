@@ -181,6 +181,7 @@ class GatewayModelCommandsMixin:
             cached_agent.switch_model(
                 new_model=result.new_model, new_provider=result.target_provider,
                 api_key=result.api_key, base_url=result.base_url, api_mode=result.api_mode,
+                runtime_kind=getattr(result, "runtime_kind", ""),
                 capabilities=getattr(result, "runtime_capabilities", None),
             )
         except Exception as exc:
@@ -216,6 +217,7 @@ class GatewayModelCommandsMixin:
                 await _sess_db.update_session_model(
                     _sess_entry.session_id, result.new_model, provider=result.target_provider,
                     base_url=result.base_url, api_mode=result.api_mode,
+                    runtime_kind=getattr(result, "runtime_kind", ""),
                 )
             except Exception as exc:
                 logger.debug("Failed to persist model switch to DB: %s", exc)
@@ -233,6 +235,7 @@ class GatewayModelCommandsMixin:
         self._session_model_overrides[ctx.session_key] = {
             "model": result.new_model, "provider": result.target_provider, "api_key": result.api_key,
             "base_url": result.base_url, "api_mode": result.api_mode,
+            "runtime_kind": getattr(result, "runtime_kind", ""),
             "request_overrides": dict(result.request_overrides or {}),
             "capabilities": dict(result.runtime_capabilities or {}),
         }

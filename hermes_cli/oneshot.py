@@ -576,7 +576,7 @@ def _run_agent(
             base_url=runtime.get("base_url"),
             provider=runtime.get("provider"),
             requested_provider=runtime.get("requested_provider"),
-            api_mode=runtime.get("api_mode"),
+            api_mode=runtime.get("api_mode"), runtime_kind=runtime.get("runtime_kind"),
             model=choice.model,
             enabled_toolsets=toolsets_list,
             quiet_mode=True,

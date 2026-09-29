@@ -1833,10 +1833,9 @@ def _fallback_reason_text(reason: "FailoverReason | None") -> str:
 
 
 def _is_anthropic_wire_url(url: str) -> bool:
-    """Same Messages-only host match as determine_api_mode() / _detect_api_mode_for_url(): api.anthropic.com,
-    a /anthropic suffix, or Kimi Code's api.kimi.com/coding (its /chat/completions 404s — #77256)."""
-    from hermes_cli.providers import host_mandated_api_mode
-    return host_mandated_api_mode(url) == "anthropic_messages"
+    """True when the canonical endpoint policy mandates the Messages wire."""
+    from providers.routing import endpoint_api_mode
+    return endpoint_api_mode(url) == "anthropic_messages"
 
 
 def _fallback_api_mode_hint(fb: dict, fb_provider: str, fb_base_url_hint: Optional[str]) -> tuple[bool, str]:
@@ -1844,9 +1843,10 @@ def _fallback_api_mode_hint(fb: dict, fb_provider: str, fb_base_url_hint: Option
     rewrites a dual-surface /anthropic base to /v1, losing the Anthropic wire signal. An explicit
     ``api_mode`` always wins (even "chat_completions") and suppresses later re-detection;
     ``provider: anthropic`` without a base_url still resolves to anthropic_messages."""
-    from hermes_cli.runtime_provider import _get_named_custom_provider, _parse_api_mode
+    from hermes_cli.runtime_provider import _get_named_custom_provider
+    from providers.routing import canonicalize_api_mode
     # Entries accept the same ``api_mode`` / ``transport`` spellings as ``providers.<name>``.
-    explicit = _parse_api_mode(fb.get("api_mode") or fb.get("transport"))
+    explicit = canonicalize_api_mode(fb.get("api_mode") or fb.get("transport"))
     if explicit:
         return True, explicit
     # A named ``providers.<name>`` block declares its wire once (``api_mode``/``transport``); a
@@ -1862,35 +1862,40 @@ def _fallback_api_mode_hint(fb: dict, fb_provider: str, fb_base_url_hint: Option
     return False, "chat_completions"
 
 
-def _fallback_api_mode_resolved(agent, fb_provider: str, fb_model: str, fb_base_url: str) -> str:
-    """Re-detect api_mode from provider / resolved base URL / model when the hint pass
-    landed on the chat_completions default (never called for an explicit api_mode)."""
-    if fb_provider == "openai-codex":
-        return "codex_responses"
-    from hermes_cli.models import opencode_model_api_mode
-    from hermes_cli.runtime_provider_custom import _opencode_family_for_custom
-    opencode_family = _opencode_family_for_custom(fb_provider, fb_base_url)
-    if opencode_family is not None:
-        # OpenCode Zen/Go/free serve Responses-only (muse-spark, gpt-*, grok-*), anthropic_messages
-        # (minimax, qwen) and chat_completions models behind one provider; the primary /model path
-        # already re-derives per model — the fallback wire must agree (#102148).
-        return opencode_model_api_mode(opencode_family, fb_model)
+def _fallback_invocation_route(
+    fb_provider: str,
+    fb_model: str,
+    fb_base_url: str,
+    *,
+    explicit_api_mode: str | None = None,
+):
+    """Resolve the fallback's complete invocation route, not only its wire protocol."""
+    from agent.opencode_affinity import opencode_transport
+    from providers.routing import InvocationRequest, resolve_invocation_route
+
+    opencode_mode, _ = opencode_transport(fb_provider, fb_model, fb_base_url)
+    route_options = {}
     if fb_provider in {"nous", "nous-portal", "nousresearch"}:
-        # Portal is dual-wire: anthropic/* must land on /v1/messages (the swap rebuilds the native client).
-        from hermes_cli.providers import nous_api_mode
-        return nous_api_mode(fb_model)
-    if _is_anthropic_wire_url(fb_base_url):
-        # Named custom providers (cron-anthropic) resolve base_url from config; the hint pass never saw it.
-        return "anthropic_messages"
-    if agent._is_azure_openai_url(fb_base_url):
-        return "chat_completions"  # Azure serves gpt-5.x on /chat/completions — no Responses API.
-    # Provider exceptions (Copilot gpt-5-mini) stay inside the requires-responses predicate.
-    if agent._is_direct_openai_url(fb_base_url) or agent._provider_model_requires_responses_api(fb_model, provider=fb_provider):
-        return "codex_responses"
-    host = base_url_hostname(fb_base_url)
-    if fb_provider == "bedrock" or (host.startswith("bedrock-runtime.") and base_url_host_matches(fb_base_url, "amazonaws.com")):
-        return "bedrock_converse"
-    return "chat_completions"
+        try:
+            from hermes_cli.config import load_config_readonly
+            nous_cfg = (load_config_readonly().get("nous") or {})
+            route_options["anthropic_wire"] = str(nous_cfg.get("anthropic_wire") or "chat")
+        except Exception:
+            route_options["anthropic_wire"] = "chat"
+
+    return resolve_invocation_route(InvocationRequest(
+        provider=fb_provider,
+        model=fb_model,
+        base_url=fb_base_url,
+        explicit_api_mode=explicit_api_mode or opencode_mode or None,
+        route_options=route_options,
+    ))
+
+
+def _fallback_api_mode_resolved(agent, fb_provider: str, fb_model: str, fb_base_url: str) -> str:
+    """Compatibility test seam: project the canonical fallback route to its wire protocol."""
+    del agent
+    return _fallback_invocation_route(fb_provider, fb_model, fb_base_url).api_mode
 
 
 def _rebind_fallback_credential_pool(agent, fb_provider: str, fb_model: str) -> None:
@@ -2137,10 +2142,17 @@ def try_activate_fallback(agent, reason: "FailoverReason | None" = None, reset_a
 
                 fb_base_url = str(fb_client.base_url)
                 from hermes_cli.providers import is_actual_route
+                explicit_route_mode = fb_api_mode if fb_api_mode_explicit else None
                 if is_actual_route(fb_provider, fb_base_url):
-                    fb_api_mode = "chat_completions"
-                elif not fb_api_mode_explicit and fb_api_mode == "chat_completions":
-                    fb_api_mode = _fallback_api_mode_resolved(agent, fb_provider, fb_model, fb_base_url)
+                    explicit_route_mode = "chat_completions"
+                route = _fallback_invocation_route(
+                    fb_provider,
+                    fb_model,
+                    fb_base_url,
+                    explicit_api_mode=explicit_route_mode,
+                )
+                fb_api_mode = route.api_mode
+                fb_runtime_kind = route.runtime_kind
 
             old_model, old_provider, old_base_url = agent.model, agent.provider, agent.base_url
 
@@ -2150,6 +2162,7 @@ def try_activate_fallback(agent, reason: "FailoverReason | None" = None, reset_a
             agent._config_context_length = None
             agent.model, agent.provider, agent.requested_provider = fb_model, fb_provider, fb_provider
             agent.base_url, agent.api_mode = fb_base_url, fb_api_mode
+            agent.runtime_kind = "http" if fb_provider == "moa" else fb_runtime_kind
             # reasoning_content echo opt-in travels with the active provider; restore_primary_runtime reverts it.
             agent._reasoning_echo_flag = bool(fb.get("reasoning_echo", False))
             if hasattr(agent, "_transport_cache"):

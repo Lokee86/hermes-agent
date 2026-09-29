@@ -2004,7 +2004,9 @@ def _restore_switch_snapshot(agent, snapshot: Dict[str, Any]) -> None:
             setattr(agent, name, value)
 
 
-def _resolve_switch_destination(agent, new_model, new_provider, base_url, api_mode, capabilities, old_norm, new_norm):
+def _resolve_switch_destination(
+    agent, new_model, new_provider, base_url, api_mode, runtime_kind, capabilities, old_norm, new_norm
+):
     """Resolve the canonical invocation route and destination capabilities for a switch."""
     from agent.native_compaction import resolve_native_compaction_capabilities
     from hermes_cli.models import opencode_provider_family
@@ -2019,7 +2021,7 @@ def _resolve_switch_destination(agent, new_model, new_provider, base_url, api_mo
         explicit_api_mode=api_mode or None,
         configured_api_mode=None,
         configured_provider=new_provider or None,
-        openai_runtime=None,
+        openai_runtime="codex_app_server" if runtime_kind == "app_server" else None,
         requested_provider=new_provider or "",
     ))
     effective_base_url = route.base_url
@@ -2322,7 +2324,7 @@ def _persist_switch_billing_route(agent) -> None:
 
 
 def switch_model(
-    agent, new_model, new_provider, api_key='', base_url='', api_mode='', capabilities=None
+    agent, new_model, new_provider, api_key='', base_url='', api_mode='', runtime_kind='', capabilities=None
 ):
     """Switch the model/provider in-place for a live agent (rebuild clients, caching flags,
     compressor). Mirrors ``_try_activate_fallback()`` but also updates ``_primary_runtime`` so
@@ -2339,7 +2341,7 @@ def switch_model(
     old_norm = (old_provider or "").strip().lower()
     new_norm = (new_provider or "").strip().lower()
     route, destination_capabilities = _resolve_switch_destination(
-        agent, new_model, new_provider, base_url, api_mode, capabilities, old_norm, new_norm
+        agent, new_model, new_provider, base_url, api_mode, runtime_kind, capabilities, old_norm, new_norm
     )
     snapshot = _snapshot_switch_state(agent)
     try:

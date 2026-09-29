@@ -194,11 +194,13 @@ class TestProvidersModule:
 
 
 
-    def test_determine_api_mode_from_bedrock_url(self):
-        from hermes_cli.providers import determine_api_mode
-        assert determine_api_mode(
-            "unknown", "https://bedrock-runtime.us-east-1.amazonaws.com"
-        ) == "bedrock_converse"
+    def test_route_api_mode_from_bedrock_url(self):
+        from providers.routing import InvocationRequest, resolve_invocation_route
+        route = resolve_invocation_route(InvocationRequest(
+            provider="unknown",
+            base_url="https://bedrock-runtime.us-east-1.amazonaws.com",
+        ))
+        assert route.api_mode == "bedrock_converse"
 
 
 

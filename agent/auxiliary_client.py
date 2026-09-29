@@ -1875,18 +1875,9 @@ class AsyncBedrockAuxiliaryClient(_AsyncAuxiliaryClientBase):
 
 
 def _endpoint_speaks_anthropic_messages(base_url: str) -> bool:
-    """True if ``base_url`` speaks Anthropic Messages, not OpenAI chat.completions.
-
-    Mirrors ``hermes_cli.runtime_provider._detect_api_mode_for_url`` so aux and main agree: any
-    ``/anthropic`` URL (MiniMax, Zhipu, LiteLLM), ``api.kimi.com/coding`` (chat 404s), ``api.anthropic.com``.
-    """
-    normalized = (base_url or "").strip().lower().rstrip("/")
-    if not normalized:
-        return False
-    if urlparse(normalized).path.rstrip("/").endswith(("/anthropic", "/anthropic/v1")):
-        return True
-    hostname = base_url_hostname(normalized)
-    return hostname == "api.anthropic.com" or bool(hostname == "api.kimi.com" and "/coding" in normalized)
+    """True when the canonical endpoint policy mandates Anthropic Messages."""
+    from providers.routing import endpoint_api_mode
+    return endpoint_api_mode(base_url) == "anthropic_messages"
 
 
 def _maybe_wrap_anthropic(
@@ -5001,12 +4992,11 @@ def _resolve_nous_branch(req: _ResolveRequest) -> _ResolveResult:
         logger.warning("resolve_provider_client: nous requested but Nous Portal not configured (run: hermes auth)")
         return None, None
     final_model = _normalize_resolved_model(model or default, req.provider)
-    # Dual-wire: anthropic/* → /v1/messages, else /chat/completions. Derive from the catalog id
-    # (not a stale api_mode) so aux matches the main agent.
-    from hermes_cli.providers import nous_api_mode
+    # Resolve the Portal wire through the same canonical route policy as the main runtime.
     client = _maybe_wrap_anthropic(
         client, final_model, str(getattr(client, "api_key", "") or ""),
-        str(getattr(client, "base_url", "") or ""), nous_api_mode(final_model),
+        str(getattr(client, "base_url", "") or ""),
+        _nous_route_api_mode(final_model, str(getattr(client, "base_url", "") or "")),
     )
     return _route_client(req, client, final_model)
 
@@ -5288,15 +5278,18 @@ def _resolve_api_key_branch(req: _ResolveRequest, pconfig: Any, resolve_creds: C
             return _route_client(req, client, final_model)
     headers = _endpoint_default_headers(base_url, provider, is_vision=req.is_vision, xai=True)
     client = _create_openai_client(api_key=api_key, base_url=base_url, **({"default_headers": headers} if headers else {}))
-    # Copilot GPT-5+ models (except gpt-5-mini) are only reachable via the Responses API;
-    # wrap so call_llm() transparently routes through responses.stream().
+    # Copilot model-dependent wire comes from the canonical route owner.
     if provider == "copilot" and final_model and not req.raw_codex:
-        with contextlib.suppress(ImportError):
-            from hermes_cli.models import _should_use_copilot_responses_api
-            if _should_use_copilot_responses_api(final_model):
-                logger.debug("resolve_provider_client: copilot model %s needs "
-                             "Responses API — wrapping with CodexAuxiliaryClient", final_model)
-                client = CodexAuxiliaryClient(client, final_model)
+        from providers.routing import InvocationRequest, resolve_invocation_route
+        route = resolve_invocation_route(InvocationRequest(
+            provider=provider,
+            model=final_model,
+            base_url=base_url,
+        ))
+        if route.api_mode == "codex_responses":
+            logger.debug("resolve_provider_client: copilot model %s needs "
+                         "Responses API — wrapping with CodexAuxiliaryClient", final_model)
+            client = CodexAuxiliaryClient(client, final_model)
     # api_mode handling for any API-key provider (direct OpenAI + codex model) and Anthropic-wire
     # endpoints (api.kimi.com/coding, /anthropic gateways) without per-provider branches.
     client = _wrap_transport(req, client, final_model, raw_base_url, api_key)
@@ -6445,12 +6438,27 @@ def _contains_profile_reasoning_fields(value: Any) -> bool:
 _NOUS_PROVIDER_NAMES = frozenset({"nous", "nous-portal", "nousresearch"})
 
 
+def _nous_route_api_mode(model: str, base_url: str = "") -> str:
+    """Resolve Nous dual-wire policy from already-read non-secret config."""
+    from providers.routing import InvocationRequest, resolve_invocation_route
+
+    wire = "chat"
+    try:
+        from hermes_cli.config import load_config_readonly
+        wire = str(((load_config_readonly().get("nous") or {}).get("anthropic_wire")) or "chat")
+    except Exception:
+        pass
+    return resolve_invocation_route(InvocationRequest(
+        provider="nous",
+        model=model,
+        base_url=base_url,
+        route_options={"anthropic_wire": wire},
+    )).api_mode
+
+
 def _nous_on_messages_wire(provider_norm: str, model: str) -> bool:
     """True when a Nous Portal route serves ``model`` over /v1/messages (dual-wire catalog)."""
-    if provider_norm not in _NOUS_PROVIDER_NAMES:
-        return False
-    from hermes_cli.providers import nous_api_mode
-    return nous_api_mode(model) == "anthropic_messages"
+    return provider_norm in _NOUS_PROVIDER_NAMES and _nous_route_api_mode(model) == "anthropic_messages"
 
 
 _NVIDIA_PROVIDER_NAMES = {"nvidia", "nvidia-nim", "nim", "build-nvidia", "nemotron"}

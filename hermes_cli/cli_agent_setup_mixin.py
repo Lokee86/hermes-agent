@@ -39,6 +39,7 @@ def _current_runtime(cli) -> dict:
         "provider": cli.provider,
         "requested_provider": getattr(cli, "requested_provider", cli.provider),
         "api_mode": cli.api_mode,
+        "runtime_kind": getattr(cli, "runtime_kind", "http"),
         "command": cli.acp_command,
         "args": list(cli.acp_args or []),
         "credential_pool": getattr(cli, "_credential_pool", None)}
@@ -48,7 +49,8 @@ def _route_signature(model, runtime: dict) -> tuple:
     """Hashable identity of (model, routing) used to detect when the agent must be rebuilt."""
     return (
         model, runtime.get("provider"), runtime.get("requested_provider"), runtime.get("base_url"),
-        runtime.get("api_mode"), runtime.get("command"), tuple(runtime.get("args") or ()))
+        runtime.get("api_mode"), runtime.get("runtime_kind"), runtime.get("command"),
+        tuple(runtime.get("args") or ()))
 
 
 def _cooldown_cause(entry) -> str:
@@ -266,8 +268,12 @@ class CLIAgentSetupMixin:
             # "free tier is here" notice the first time an identity is seen beside an own key.
             self._maybe_print_free_tier_available_notice()
         resolved_routing = (
-            resolved_provider, runtime.get("api_mode", self.api_mode), runtime.get("command"),
-            list(runtime.get("args") or []))
+            resolved_provider,
+            runtime.get("api_mode", self.api_mode),
+            runtime.get("runtime_kind", getattr(self, "runtime_kind", "http")),
+            runtime.get("command"),
+            list(runtime.get("args") or []),
+        )
         # A callable api_key is a bearer-token provider (Azure Entra ID): the OpenAI SDK
         # invokes it per request, so skip string validation / placeholder substitution.
         if not callable(api_key) and not (isinstance(api_key, str) and api_key):
@@ -292,8 +298,11 @@ class CLIAgentSetupMixin:
                   "Check your provider config or run: hermes setup")
             return False
         credentials_changed = api_key != self.api_key or base_url != self.base_url
-        routing_changed = resolved_routing != (self.provider, self.api_mode, self.acp_command, self.acp_args)
-        self.provider, self.api_mode, self.acp_command, self.acp_args = resolved_routing
+        routing_changed = resolved_routing != (
+            self.provider, self.api_mode, getattr(self, "runtime_kind", "http"),
+            self.acp_command, self.acp_args,
+        )
+        self.provider, self.api_mode, self.runtime_kind, self.acp_command, self.acp_args = resolved_routing
         self._credential_pool = runtime.get("credential_pool")
         self._provider_source = runtime.get("source")
         self.api_key = api_key
@@ -661,7 +670,8 @@ class CLIAgentSetupMixin:
                 model=effective_model, api_key=runtime.get("api_key"),
                 base_url=runtime.get("base_url"), provider=runtime.get("provider"),
                 requested_provider=runtime.get("requested_provider"),
-                api_mode=runtime.get("api_mode"), acp_command=runtime.get("command"),
+                api_mode=runtime.get("api_mode"), runtime_kind=runtime.get("runtime_kind"),
+                acp_command=runtime.get("command"),
                 acp_args=runtime.get("args"), credential_pool=runtime.get("credential_pool"),
                 max_iterations=self.max_turns,
                 run_budget_seconds=getattr(self, "run_budget_seconds", None),

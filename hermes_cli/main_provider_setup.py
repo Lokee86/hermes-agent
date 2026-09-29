@@ -417,8 +417,8 @@ _CUSTOM_API_MODE_ANSWERS = {answer: value for value, _, _, answers in _CUSTOM_AP
 
 def _prompt_custom_api_mode_selection(base_url: str, current_api_mode: str = "") -> Optional[str]:
     """Prompt for a custom provider API mode: an explicit mode string, or None for auto-detect."""
-    from hermes_cli.runtime_provider import _detect_api_mode_for_url
-    detected_mode = _detect_api_mode_for_url(base_url)
+    from providers.routing import endpoint_api_mode
+    detected_mode = endpoint_api_mode(base_url)
     default_mode = str(current_api_mode or "").strip().lower() or detected_mode or ""
 
     _say("", "Select API compatibility mode:")

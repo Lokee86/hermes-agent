@@ -1,9 +1,9 @@
 """Provider resolution consumes the canonical provider-domain contract."""
 
 from providers import ResolvedProvider
+from providers.routing import InvocationRequest, resolve_invocation_route
 
 from hermes_cli.providers import (
-    determine_api_mode,
     get_provider,
     resolve_custom_provider,
     resolve_provider_full,
@@ -122,5 +122,5 @@ def test_raw_user_provider_still_precedes_profile_alias(monkeypatch, tmp_path) -
 def test_api_mode_reads_canonical_resolved_provider(monkeypatch, tmp_path) -> None:
     monkeypatch.setenv("HERMES_HOME", str(tmp_path))
 
-    assert determine_api_mode("minimax") == "anthropic_messages"
-    assert determine_api_mode("openai-codex") == "codex_responses"
+    assert resolve_invocation_route(InvocationRequest(provider="minimax")).api_mode == "anthropic_messages"
+    assert resolve_invocation_route(InvocationRequest(provider="openai-codex")).api_mode == "codex_responses"

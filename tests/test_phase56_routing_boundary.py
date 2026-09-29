@@ -98,6 +98,17 @@ def test_consumers_do_not_import_old_cli_route_helpers():
     assert offenders == []
 
 
+def test_agent_model_route_heuristics_are_deleted():
+    path = ROOT / "run_agent.py"
+    defs = {
+        node.name
+        for node in ast.walk(_tree(path))
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+    }
+    assert "_model_requires_responses_api" not in defs
+    assert "_provider_model_requires_responses_api" not in defs
+
+
 def test_config_boundary_does_not_own_api_mode_alias_authority():
     path = ROOT / "hermes_cli" / "config_providers.py"
     defs = _top_level_definitions(path)

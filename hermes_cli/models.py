@@ -36,7 +36,6 @@ from hermes_cli.models_catalog_static import (
     OPENROUTER_MODELS,
     PREFERRED_SILENT_DEFAULT_MODEL,
     VERCEL_AI_GATEWAY_MODELS,
-    _AZURE_FOUNDRY_RESPONSES_PREFIXES,
     _BORROWED_MODEL_PROVIDERS,
     _LIVE_FIRST_PICKER_PROVIDERS,
     _MODELS_DEV_PREFERRED,
@@ -2312,34 +2311,6 @@ def _github_reasoning_efforts_for_model_id(model_id: str) -> list[str]:
     return []
 
 
-def _should_use_copilot_responses_api(model_id: str) -> bool:
-    """opencode's ``shouldUseCopilotResponsesApi``: GPT-5+ uses the Responses API except
-    ``gpt-5-mini``; non-GPT models (Claude, Gemini, ...) use Chat Completions."""
-    match = re.match(r"^gpt-(\d+)", model_id)
-    return bool(match) and int(match.group(1)) >= 5 and not model_id.startswith("gpt-5-mini")
-
-
-def copilot_model_api_mode(
-    model_id: Optional[str], *, catalog: Optional[list[dict[str, Any]]] = None,
-    api_key: Optional[str] = None) -> str:
-    """API mode for a Copilot model from the id pattern (opencode's approach). Copilot's Claude models
-    go through its OpenAI-compatible chat endpoint, not the native Anthropic adapter: the catalog may
-    advertise /v1/messages but the Copilot token/header scheme lives in the OpenAI client path."""
-    if catalog is None and api_key:  # fetch once so normalize + endpoint check share it
-        catalog = fetch_github_model_catalog(api_key=api_key)
-    normalized = normalize_copilot_model_id(model_id, catalog=catalog, api_key=api_key)
-    if normalized and _should_use_copilot_responses_api(normalized):
-        return "codex_responses"
-    return "chat_completions"
-
-
-def azure_foundry_model_api_mode(model_name: Optional[str]) -> Optional[str]:
-    """``"codex_responses"`` for families that only accept the Responses API on Azure Foundry (GPT-5.x
-    incl. gpt-5-mini, codex, o1/o3/o4), else None. Any ``vendor/`` prefix is stripped first."""
-    raw = str(model_name or "").strip().lower().rsplit("/", 1)[-1]
-    return "codex_responses" if raw and raw.startswith(tuple(_AZURE_FOUNDRY_RESPONSES_PREFIXES)) else None
-
-
 _OPENCODE_FAMILIES = ("opencode-go", "opencode-zen")
 
 
@@ -2373,60 +2344,16 @@ def normalize_opencode_model_id(provider_id: Optional[str], model_id: Optional[s
     return current
 
 
-# Per-family (model-id prefix → api_mode) routing from OpenCode's published Zen/Go endpoint
-# tables, checked in order. GPT/Codex/Grok and Muse Spark use /v1/responses (Muse Spark 503s on
-# chat/completions); Claude (Zen), MiniMax (Go), Union Alpha, and Qwen use /v1/messages;
-# everything else falls through to /v1/chat/completions.
-_OPENCODE_API_MODE_PREFIXES: dict[str, tuple[tuple[tuple[str, ...], str], ...]] = {
-    "opencode-go": (
-        (("gpt-", "grok-", "muse-spark"), "codex_responses"),
-        (("minimax-", "qwen", "union-alpha"), "anthropic_messages")),
-    "opencode-zen": (
-        (("claude-", "union-alpha"), "anthropic_messages"), (("gpt-", "grok-", "muse-spark"), "codex_responses"),
-        (("qwen",), "anthropic_messages"))}
-
-
-def opencode_model_api_mode(provider_id: Optional[str], model_id: Optional[str]) -> str:
-    """Determine the API mode for an OpenCode Zen / Go model (see ``_OPENCODE_API_MODE_PREFIXES``)."""
-    family = opencode_provider_family(provider_id)
-    normalized = normalize_opencode_model_id(provider_id, model_id).lower()
-    if normalized:
-        for prefixes, mode in _OPENCODE_API_MODE_PREFIXES.get(family or "", ()):
-            if normalized.startswith(prefixes):
-                return mode
-    return "chat_completions"
-
-
-# Relay path per OpenCode family on opencode.ai hosts.
-_OPENCODE_FAMILY_PATHS = {"opencode-zen": "/zen", "opencode-go": "/zen/go"}
-
-
 def normalize_opencode_base_url(
     provider_id: Optional[str], api_mode: Optional[str], base_url: Optional[str]) -> str:
-    """Normalize an OpenCode Zen / Go base URL for the API mode. Must be SYMMETRIC: the anthropic-
-    stripped URL gets persisted to ``model.base_url`` after switching into an anthropic-routed model,
-    and chat/codex modes heal it by re-adding ``/v1`` — but only on opencode.ai hosts, so custom
-    ``OPENCODE_*_BASE_URL`` proxies are left alone. On those hosts the relay path segment follows
-    the resolved family too (``/zen`` vs ``/zen/go``): the two relays serve different model sets,
-    so a ``model.base_url`` carried over from the other family 401s ("Model ... is not supported").
-    The family heal applies to the BUILT-IN providers only: a custom provider merely named after a
-    family (``opencode-go-bridge``) declared its relay path explicitly in ``providers:`` and keeps it.
-    Only the path is edited, so a port, userinfo, query or fragment round-trips untouched."""
-    url = str(base_url or "").strip().rstrip("/")
-    family = opencode_provider_family(provider_id)
-    if not url or family is None:
-        return url
-    parsed = urllib.parse.urlparse(url)
-    host = (parsed.hostname or "").lower()
-    official = host == "opencode.ai" or host.endswith(".opencode.ai")
-    path = parsed.path.rstrip("/")
-    if official and _normalize_provider(provider_id) in _OPENCODE_FAMILIES and re.fullmatch(r"/zen(/go)?(/v1)?", path):
-        path = _OPENCODE_FAMILY_PATHS[family] + ("/v1" if path.endswith("/v1") else "")
-    if api_mode == "anthropic_messages":
-        path = re.sub(r"/v1$", "", path)
-    elif official and not path.endswith("/v1"):
-        path += "/v1"
-    return urllib.parse.urlunparse(parsed._replace(path=path))
+    """Compatibility projection of the provider-owned OpenCode endpoint policy."""
+    from providers.routing import normalize_provider_base_url
+
+    return normalize_provider_base_url(
+        str(provider_id or ""),
+        str(api_mode or ""),
+        str(base_url or ""),
+    )
 
 
 def github_model_reasoning_efforts(

@@ -90,6 +90,67 @@ def test_route_precedence_is_explicit_then_endpoint_then_policy_then_config_then
     assert route().api_mode == "codex_responses"
 
 
+def test_generic_gpt5_model_policy_is_owned_by_routing(monkeypatch):
+    profiles = {
+        "external": ProviderProfile(name="external", auth_type="external_process"),
+        "copilot": ProviderProfile(name="copilot", auth_type="copilot"),
+    }
+    monkeypatch.setattr("providers.routing._get_profile", profiles.get)
+
+    generic = resolve_invocation_route(
+        InvocationRequest(
+            provider="generic-http",
+            model="openai/gpt-5.6",
+            base_url="https://proxy.example.invalid/v1",
+        )
+    )
+    assert generic.api_mode == "codex_responses"
+    assert generic.source == "model_policy"
+
+    configured = resolve_invocation_route(
+        InvocationRequest(
+            provider="generic-http",
+            model="gpt-5.6",
+            base_url="https://proxy.example.invalid/v1",
+            configured_provider="generic-http",
+            configured_api_mode="chat_completions",
+        )
+    )
+    assert configured.api_mode == "chat_completions"
+    assert configured.source == "configured"
+
+    azure = resolve_invocation_route(
+        InvocationRequest(
+            provider="generic-http",
+            model="gpt-5.6",
+            base_url="https://resource.openai.azure.com/openai/v1",
+        )
+    )
+    assert azure.api_mode == "chat_completions"
+
+    custom = resolve_invocation_route(
+        InvocationRequest(provider="custom", model="gpt-5.6", base_url="https://proxy.invalid/v1")
+    )
+    assert custom.api_mode == "chat_completions"
+
+    external = resolve_invocation_route(
+        InvocationRequest(provider="external", model="gpt-5.6", base_url="https://proxy.invalid/v1")
+    )
+    assert external.api_mode == "chat_completions"
+    assert external.runtime_kind == "external_process"
+
+    external_official_marker = resolve_invocation_route(
+        InvocationRequest(provider="external", model="gpt-5.6", base_url="https://api.openai.com/v1")
+    )
+    assert external_official_marker.api_mode == "chat_completions"
+    assert external_official_marker.runtime_kind == "external_process"
+
+    copilot = resolve_invocation_route(
+        InvocationRequest(provider="copilot", model="gpt-5-mini")
+    )
+    assert copilot.api_mode == "chat_completions"
+
+
 def test_configured_mode_does_not_cross_provider_boundary(monkeypatch):
     profile = ProviderProfile(name="route-provider", api_mode="chat_completions")
     monkeypatch.setattr("providers.routing._get_profile", lambda _provider: profile)

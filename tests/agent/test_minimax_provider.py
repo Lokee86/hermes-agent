@@ -110,17 +110,13 @@ class TestMinimaxBetaHeaders:
 
 
 class TestMinimaxApiMode:
-    """Verify determine_api_mode returns anthropic_messages for MiniMax providers.
-
-    The MiniMax /anthropic endpoint speaks Anthropic Messages wire format,
-    not OpenAI chat completions.  The overlay transport must reflect this
-    so that code paths calling determine_api_mode() without a base_url
-    (e.g. /model switch) get the correct api_mode.
-    """
+    """Verify the canonical route policy selects Anthropic Messages for MiniMax."""
 
     def test_minimax_returns_anthropic_messages(self):
-        from hermes_cli.providers import determine_api_mode
-        assert determine_api_mode("minimax") == "anthropic_messages"
+        from providers.routing import InvocationRequest, resolve_invocation_route
+        assert resolve_invocation_route(
+            InvocationRequest(provider="minimax")
+        ).api_mode == "anthropic_messages"
 
 
 

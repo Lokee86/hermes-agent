@@ -312,15 +312,15 @@ def _normalize_run_budget_seconds(value) -> Optional[float]:
 
 
 def _refuse_checkpoint_required_on_codex_app_server(
-    checkpoint_required: bool, api_mode: Optional[str]
+    checkpoint_required: bool, runtime_kind: Optional[str]
 ) -> None:
     """Fail closed at init: the codex app-server compacts its own thread without a truthful
     pre-compaction boundary (default "native" mode), so a required checkpoint can't be
     guaranteed — the compress_context() guard alone cannot cover native turns."""
-    if checkpoint_required and api_mode == "codex_app_server":
+    if checkpoint_required and runtime_kind == "app_server":
         raise RuntimeError(
             "BLOCKED_MISSING_PREREQUISITE: compression.checkpoint_required "
-            "is incompatible with the codex_app_server API mode: the codex "
+            "is incompatible with the codex_app_server runtime: the codex "
             "agent compacts its own thread without a truthful pre-compaction "
             "transcript boundary, so a required pre-compress checkpoint "
             "cannot be guaranteed. Disable compression.checkpoint_required "
@@ -1457,7 +1457,7 @@ def _parse_compression_config(agent, _agent_cfg) -> CompressionSettings:
     protect_first = max(0, int(cfg.get("protect_first_n", 3)))
     checkpoint_required = is_truthy_value(cfg.get("checkpoint_required"), default=False)
     _refuse_checkpoint_required_on_codex_app_server(
-        checkpoint_required, getattr(agent, "api_mode", None)
+        checkpoint_required, getattr(agent, "runtime_kind", None)
     )
     app_server_auto, responses_native, compact_threshold = _compression_codex_settings(cfg)
     # Opt-in idle compaction: compact up front when a session resumes after this many
@@ -2287,6 +2287,7 @@ _CALLBACK_PARAMS = (
 
 def init_agent(
     agent, base_url: str = None, api_key: str = None, provider: str = None, api_mode: str = None,
+    runtime_kind: str = None,
     acp_command: str = None, acp_args: list[str] | None = None, command: str = None,
     args: list[str] | None = None, model: str = "", max_iterations: int = sys.maxsize,
     enabled_toolsets: List[str] = None, disabled_toolsets: List[str] = None,
@@ -2364,7 +2365,7 @@ def init_agent(
         explicit_api_mode=api_mode,
         configured_api_mode=None,
         configured_provider=provider_name,
-        openai_runtime=None,
+        openai_runtime="codex_app_server" if runtime_kind == "app_server" else None,
         requested_provider=requested_provider_name,
     ))
     agent._invocation_route = route

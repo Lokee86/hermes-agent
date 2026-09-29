@@ -490,6 +490,7 @@ class ModelSwitchResult:
     api_key: str = ""
     base_url: str = ""
     api_mode: str = ""
+    runtime_kind: str = ""
     request_overrides: Optional[dict] = None
     error_message: str = ""
     warning_message: str = ""
@@ -918,7 +919,8 @@ def _configured_provider_identity(slug: str, cfg: dict) -> tuple[str, str, str, 
     normalizer that builds the compat view, so a ``providers.<slug>`` row, its ``custom:<name>``
     projection and a legacy duplicate of the same endpoint reduce to one tuple. Any difference in
     endpoint, credential identity or wire protocol keeps two rows distinct."""
-    from hermes_cli.config_providers import _canonical_api_mode, _normalize_custom_provider_entry
+    from hermes_cli.config_providers import _normalize_custom_provider_entry
+    from providers.routing import canonicalize_api_mode
     # ``provider_key`` is the compat view's stamp, not a config key: drop it so the normalizer does
     # not warn about it as unknown.
     entry = _normalize_custom_provider_entry({k: v for k, v in cfg.items() if k != "provider_key"},
@@ -931,7 +933,7 @@ def _configured_provider_identity(slug: str, cfg: dict) -> tuple[str, str, str, 
     credential = (f"key:{api_key}" if api_key else f"env:{key_env}" if key_env
                   else f"cmd:{_clean(entry.get('key_cmd'))}" if _clean(entry.get("key_cmd")) else "")
     api_mode = _clean(entry.get("api_mode") or entry.get("transport"))
-    return name, base_url, credential, _canonical_api_mode(api_mode).lower() if api_mode else ""
+    return name, base_url, credential, canonicalize_api_mode(api_mode).lower() if api_mode else ""
 
 
 def _duplicates_configured_row(
@@ -1114,7 +1116,7 @@ def _apply_direct_alias_endpoint(st: "_Switch", da: DirectAlias) -> None:
             # Different origin, or no configured root to safely associate the headers with.
             st.validation_headers, st.suppress_ollama_headers, st.api_key = {}, True, "no-key-required"
     st.api_key = st.api_key or "no-key-required"
-    st.api_mode = ""  # clear so determine_api_mode re-detects from URL
+    st.api_mode = ""  # canonical route resolver finalizes the wire after credentials settle
 
 
 def _moa_default_preset() -> str:
@@ -1150,6 +1152,7 @@ class _Switch:
     api_key: str = ""
     base_url: str = ""
     api_mode: str = ""
+    runtime_kind: str = ""
     validation_headers: dict = field(default_factory=dict)
     suppress_ollama_headers: bool = False
     validation: dict = field(default_factory=dict)
@@ -1172,6 +1175,7 @@ class _Switch:
         rt = resolve_runtime_provider(target_model=self.new_model, **kwargs)
         self.api_key, self.base_url = rt.get("api_key", ""), rt.get("base_url", "")
         self.api_mode = rt.get("api_mode", "")
+        self.runtime_kind = rt.get("runtime_kind", "")
         self.validation_headers = rt.get("extra_headers") or self.validation_headers
 
 
@@ -1395,7 +1399,7 @@ def _creds_for_switched_provider(st: _Switch) -> Optional[ModelSwitchResult]:
             if st.base_url and not _fell_back_to_openrouter_default(st):
                 key, url = st.api_key, st.base_url
         st.api_key, st.base_url = key, url
-        st.api_mode = determine_api_mode(st.target_provider, st.base_url)
+        st.api_mode = ""  # canonical route resolver finalizes this in _build_switch_result
     else:
         # A URL-bearing LOCAL direct alias (ollama, vllm — labels that resolve to `custom`)
         # supplies its endpoint HERE as well as in _apply_direct_alias_endpoint: the resolver
@@ -1594,11 +1598,11 @@ def _build_switch_result(st: _Switch) -> ModelSwitchResult:
         explicit_api_mode=None,
         configured_api_mode=st.api_mode or None,
         configured_provider=st.target_provider or None,
-        openai_runtime=None,
+        openai_runtime="codex_app_server" if st.runtime_kind == "app_server" else None,
         requested_provider=st.explicit_provider or st.target_provider,
     ))
     st.target_provider, st.new_model = route.provider, route.model
-    st.base_url, st.api_mode = route.base_url, route.api_mode
+    st.base_url, st.api_mode, st.runtime_kind = route.base_url, route.api_mode, route.runtime_kind
 
     # OpenCode base URLs end with /v1 for OpenAI-compatible models but the Anthropic SDK prepends
     # its own /v1/messages: strip for anthropic_messages, re-append for
@@ -1627,7 +1631,8 @@ def _build_switch_result(st: _Switch) -> ModelSwitchResult:
         request_overrides = None
     return ModelSwitchResult(
         success=True, new_model=st.new_model, target_provider=st.target_provider,
-        provider_changed=st.provider_changed, api_key=st.api_key, base_url=st.base_url, api_mode=st.api_mode,
+        provider_changed=st.provider_changed, api_key=st.api_key, base_url=st.base_url,
+        api_mode=st.api_mode, runtime_kind=st.runtime_kind,
         request_overrides=dict(request_overrides or {}), warning_message=" | ".join(warnings) if warnings else "",
         provider_label=st.provider_label, resolved_via_alias=st.resolved_alias, capabilities=capabilities,
         runtime_capabilities={
