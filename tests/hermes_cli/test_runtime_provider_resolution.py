@@ -8,6 +8,60 @@ import pytest
 from hermes_cli import runtime_provider as rp
 
 
+def test_runtime_projects_one_canonical_route_with_credentials(monkeypatch):
+    class Request:
+        def __init__(self, **values):
+            self.__dict__.update(values)
+
+    seen = {}
+
+    def resolve_route(request):
+        seen["request"] = request
+        return SimpleNamespace(
+            provider=request.provider,
+            model=request.model,
+            base_url=request.base_url,
+            api_mode="codex_responses",
+            runtime_kind=SimpleNamespace(value="http"),
+            is_routing_aggregator=True,
+            source="endpoint",
+        )
+
+    monkeypatch.setattr(
+        rp,
+        "_routing_contract",
+        lambda: (Request, lambda raw: str(raw).lower(), resolve_route),
+    )
+    monkeypatch.setattr(
+        rp,
+        "_get_model_config",
+        lambda: {
+            "default": "model-from-config",
+            "provider": "demo",
+            "api_mode": "responses",
+            "openai_runtime": "",
+        },
+    )
+
+    runtime = rp._runtime(
+        "demo",
+        None,
+        "https://example.test/v1",
+        "credential",
+        source="pool:demo",
+    )
+
+    assert seen["request"].provider == "demo"
+    assert seen["request"].model == "model-from-config"
+    assert seen["request"].configured_api_mode == "responses"
+    assert runtime["provider"] == "demo"
+    assert runtime["api_mode"] == "codex_responses"
+    assert runtime["runtime_kind"] == "http"
+    assert runtime["is_routing_aggregator"] is True
+    assert runtime["source"] == "endpoint"
+    assert runtime["credential_source"] == "pool:demo"
+
+
 def test_configured_api_key_provider_without_key_fails_closed(monkeypatch):
     """A saved provider must not resolve as another authenticated provider."""
     monkeypatch.setattr(

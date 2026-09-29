@@ -161,9 +161,10 @@ def _match_new_style_provider(requested_norm: str, providers: Dict[str, Any]) ->
             result["key_cmd"] = key_cmd
         # v12 migration writes ``transport``; hand-edited configs may still use ``api_mode``.
         # Accept both or migrated configs silently downgrade to chat_completions.
+        from providers.routing import canonicalize_api_mode
         _lift_common_custom_fields(
             entry, result, provider_key=_clean(ep_name), key_env=key_env,
-            api_mode=rp._parse_api_mode(entry.get("api_mode") or entry.get("transport")),
+            api_mode=canonicalize_api_mode(entry.get("api_mode") or entry.get("transport")),
         )
         return result
     return None
@@ -182,8 +183,9 @@ def _match_legacy_custom_provider(requested_norm: str, custom_providers) -> Opti
         model_name = _clean(entry.get("model", ""))
         if model_name:
             result["model"] = model_name
+        from providers.routing import canonicalize_api_mode
         _lift_common_custom_fields(entry, result, provider_key=provider_key, key_env=_clean(entry.get("key_env", "")),
-                                   api_mode=_rp()._parse_api_mode(entry.get("api_mode")))
+                                   api_mode=canonicalize_api_mode(entry.get("api_mode")))
         return result
     return None
 
@@ -367,7 +369,8 @@ def is_routable_provider(provider: Optional[str]) -> bool:
 
 
 def _try_resolve_from_custom_pool(
-    base_url: str, provider_label: str, api_mode_override: Optional[str] = None, provider_name: Optional[str] = None
+    base_url: str, provider_label: str, api_mode_override: Optional[str] = None, provider_name: Optional[str] = None,
+    model: Optional[str] = None,
 ) -> Optional[Dict[str, Any]]:
     """Runtime dict from the first credential pool that owns this custom endpoint, else None."""
     rp = _rp()
@@ -393,8 +396,8 @@ def _try_resolve_from_custom_pool(
                 # hundred lines below, and the "actual" provider's local-offline exemption further down) --
                 # this pool path was the one gap (issue #86864).
                 pool_api_key = "no-key-required"
-            return rp._runtime(provider_label, api_mode_override or rp._detect_api_mode_for_url(base_url) or "chat_completions",
-                               base_url, pool_api_key, source=f"pool:{pool_key}", credential_pool=pool)
+            return rp._runtime(provider_label, api_mode_override, base_url, pool_api_key, model=model,
+                               source=f"pool:{pool_key}", credential_pool=pool)
         except Exception:
             continue
     return None
@@ -453,9 +456,8 @@ def _resolve_llamacpp_runtime(requested_provider: str, explicit_api_key: Optiona
 
 
 def _custom_runtime(rp, base_url: str, api_key: Any, api_mode: Optional[str], **extra: Any) -> Dict[str, Any]:
-    """``custom`` runtime dict with URL-detected api_mode fallback and the no-auth placeholder."""
-    return rp._runtime("custom", api_mode or rp._detect_api_mode_for_url(base_url) or "chat_completions", base_url,
-                       api_key or "no-key-required", **extra)
+    """Build a custom runtime through the canonical route owner."""
+    return rp._runtime("custom", api_mode, base_url, api_key or "no-key-required", **extra)
 
 
 # Aliases for direct REST APIs not modeled in canonical provider projection, so ``provider: openai`` (aux slots,
@@ -501,24 +503,6 @@ def _resolve_direct_alias_runtime(requested_provider: str, explicit_api_key: Opt
     return _custom_runtime(rp, base_url, api_key, None, source="direct-alias", requested_provider=requested_provider)
 
 
-def _opencode_family_for_custom(requested_provider: str, base_url: str) -> Optional[str]:
-    """OpenCode family by provider name, else by opencode.ai host (``/zen/go`` => opencode-go)."""
-    # Custom providers in the OpenCode family (name extends opencode-go/zen, or base_url hosted on
-    # opencode.ai) serve models behind different API surfaces per model — a static api_mode 503s for
-    # /v1/responses-only models like grok-4.5 (#85589). Re-derive api_mode from the effective model and
-    # normalize the /v1 suffix, exactly like the built-in opencode-zen/go paths do.
-    from hermes_cli.models import opencode_provider_family
-    family = opencode_provider_family(requested_provider)
-    if family is not None:
-        return family
-    try:
-        if base_url_hostname(base_url).lower() == "opencode.ai":
-            return "opencode-go" if "/zen/go" in base_url.lower() else "opencode-zen"
-    except Exception:
-        pass
-    return None
-
-
 def _resolve_named_custom_runtime(*, requested_provider: str, explicit_api_key: Optional[str] = None,
                                   explicit_base_url: Optional[str] = None,
                                   target_model: Optional[str] = None, config=None) -> Optional[Dict[str, Any]]:
@@ -556,6 +540,7 @@ def _resolve_named_custom_runtime(*, requested_provider: str, explicit_api_key: 
     pool_result = rp._try_resolve_from_custom_pool(
         base_url, "custom", custom_provider.get("api_mode"),
         provider_name=custom_provider.get("provider_key") or custom_provider.get("name"),
+        model=target_model or custom_provider.get("model"),
     )
     if pool_result:
         # The pool doesn't know the custom_providers fields — propagate them here too.
@@ -582,14 +567,4 @@ def _resolve_named_custom_runtime(*, requested_provider: str, explicit_api_key: 
                              source=f"custom_provider:{custom_provider.get('name', requested_provider)}",
                              requested_provider=requested_provider)
     _apply_custom_provider_extras(custom_provider, target_model, result)
-    # OpenCode-family custom providers (opencode-go/zen names, or opencode.ai hosts) serve models
-    # on different API surfaces — a static api_mode 503s for /v1/responses-only models. Re-derive
-    # api_mode from the model and normalize /v1 like the built-in paths.
-    family = _opencode_family_for_custom(requested_provider, base_url)
-    if family is not None and not custom_provider.get("api_mode"):
-        from hermes_cli.models import normalize_opencode_base_url, opencode_model_api_mode
-        effective_model = str(target_model or custom_provider.get("model") or rp._get_model_config().get("default") or "").strip()
-        if effective_model:
-            result["api_mode"] = opencode_model_api_mode(family, effective_model)
-        result["base_url"] = normalize_opencode_base_url(family, result["api_mode"], result["base_url"])
     return result
