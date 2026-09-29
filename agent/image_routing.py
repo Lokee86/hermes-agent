@@ -287,7 +287,7 @@ def _probe_models_dev(provider: str, model: str, cfg: Optional[Dict[str, Any]]) 
     when an image needs routing, and the text-only-main guard depends on catalog
     data — a cold cache returning "unknown" would reintroduce attempting the call.
     The fetch is cached (4h TTL) and backoff-limited."""
-    from agent.models_dev import get_model_capabilities
+    from agent.models_dev import query_model_metadata
 
     # allow_network=True on purpose: vision-capability lookup runs when an image actually needs routing (not
     # per turn), and the #31179 text-only-main guard depends on catalog data — a cold cache returning
@@ -301,7 +301,7 @@ def _probe_models_dev(provider: str, model: str, cfg: Optional[Dict[str, Any]]) 
         from agent.model_metadata import strip_codex_context_variant_suffix
 
         model = strip_codex_context_variant_suffix(model)
-    caps = get_model_capabilities(provider, model, allow_network=True)
+    caps = query_model_metadata(provider, model, allow_network=True)
     return None if caps is None else caps.supports_vision
 
 

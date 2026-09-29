@@ -44,7 +44,7 @@ def _run_copilot_switch(
             return_value=_MOCK_VALIDATION,
         ),
         patch("hermes_cli.model_switch.get_model_info", return_value=None),
-        patch("hermes_cli.model_switch.get_model_capabilities", return_value=None),
+        patch("hermes_cli.model_switch.query_model_metadata", return_value=None),
         patch("hermes_cli.models.detect_provider_for_model", return_value=None),
     ):
         return switch_model(

@@ -15,7 +15,7 @@ from agent.models_dev import (
     _override_for,
     _validate_registry,
     fetch_models_dev,
-    get_model_capabilities,
+    query_model_metadata,
     get_model_info,
     lookup_models_dev_context,
 )
@@ -658,11 +658,11 @@ class TestNoNetworkOnHotPaths:
     """Query functions must default to allow_network=False on hot paths."""
 
     @patch("agent.models_dev.requests.get")
-    def test_get_model_capabilities_default_no_network(self, mock_get):
-        """get_model_capabilities defaults to allow_network=False."""
+    def test_query_model_metadata_default_no_network(self, mock_get):
+        """query_model_metadata defaults to allow_network=False."""
         with patch("agent.models_dev.fetch_models_dev") as mock_fetch:
             mock_fetch.return_value = CAPS_REGISTRY
-            get_model_capabilities("anthropic", "claude-sonnet-4")
+            query_model_metadata("anthropic", "claude-sonnet-4")
         # fetch_models_dev was called with allow_network=False
         mock_fetch.assert_called_once_with(allow_network=False)
 
@@ -685,7 +685,7 @@ class TestNoNetworkOnHotPaths:
 
 
 # ---------------------------------------------------------------------------
-# get_model_capabilities — vision via modalities.input
+# query_model_metadata — vision via modalities.input
 # ---------------------------------------------------------------------------
 
 
@@ -728,13 +728,13 @@ CAPS_REGISTRY = {
 }
 
 
-class TestGetModelCapabilities:
-    """Tests for get_model_capabilities vision detection."""
+class TestQueryModelMetadata:
+    """Tests for query_model_metadata vision detection."""
 
     def test_vision_from_attachment_flag(self):
         """Models with attachment=True and no modalities should report supports_vision=True."""
         with patch("agent.models_dev.fetch_models_dev", return_value=CAPS_REGISTRY):
-            caps = get_model_capabilities("anthropic", "claude-sonnet-4")
+            caps = query_model_metadata("anthropic", "claude-sonnet-4")
         assert caps is not None
         assert caps.supports_vision is True
 
@@ -753,7 +753,7 @@ class TestGetModelCapabilities:
             }},
         }
         with patch("agent.models_dev.fetch_models_dev", return_value=registry):
-            caps = get_model_capabilities("gemini", "weird-model")
+            caps = query_model_metadata("gemini", "weird-model")
         assert caps is not None
         assert caps.supports_vision is False
 
@@ -765,7 +765,7 @@ class TestGetModelCapabilities:
         overrides = {"925llm": {"deepseek-v4.1-flash": {"context_window": 1_000_000}}}
         with patch("agent.models_dev._load_model_overrides", return_value=overrides), \
              patch("agent.models_dev.fetch_models_dev", return_value={}):
-            caps = get_model_capabilities("925llm", "deepseek-v4.1-flash")
+            caps = query_model_metadata("925llm", "deepseek-v4.1-flash")
             info = get_model_info("925llm", "deepseek-v4.1-flash")
 
         assert caps is not None
@@ -798,14 +798,17 @@ class TestCatalogProviderAlias:
                               "tool_call": True, "reasoning": False,
                               "modalities": {"input": ["text"], "output": ["text"]}}}}}
         with self._cfg(config), patch("agent.models_dev.fetch_models_dev", return_value=registry):
-            builtin = get_model_capabilities("925llm", "deepseek-v4.1-flash")
-            prefixed = get_model_capabilities("custom:925llm", "deepseek-v4.1-flash")
-            catalog = get_model_capabilities("925llm", "deepseek-chat")
+            builtin = query_model_metadata("925llm", "deepseek-v4.1-flash")
+            prefixed = query_model_metadata("custom:925llm", "deepseek-v4.1-flash")
+            catalog = query_model_metadata("925llm", "deepseek-chat")
             ctx = lookup_models_dev_context("925llm", "deepseek-chat")
             info = get_model_info("925llm", "deepseek-chat")
 
         assert builtin is not None and builtin.supports_vision is True
-        assert prefixed == builtin
+        assert prefixed is not None
+        assert prefixed.ref.provider == "custom:925llm"
+        assert prefixed.ref.model == builtin.ref.model
+        assert prefixed.supports_vision == builtin.supports_vision
         assert catalog is not None and catalog.supports_vision is False and catalog.max_output_tokens == 8000
         assert ctx == 128000
         assert info is not None and info.provider_id == "deepseek" and info.context_window == 128000
@@ -824,7 +827,7 @@ class TestCatalogProviderAlias:
         with self._cfg(config), patch("agent.models_dev.fetch_models_dev", return_value={"deepseek": {"models": {}}}), \
                 caplog.at_level(logging.WARNING, logger="agent.models_dev"):
             info = get_model_info("925llm", "deepseek-v4.1-flash")
-            assert get_model_capabilities("925llm", "deepseek-v4.1-flash").supports_vision is None
+            assert query_model_metadata("925llm", "deepseek-v4.1-flash").supports_vision is None
             get_model_info("925llm", "deepseek-v4.1-flash")
 
         assert info is not None and info.provider_id == "925llm"
@@ -836,8 +839,8 @@ class TestCatalogProviderAlias:
         config = {"providers": {"925llm": {"api": "http://gw.internal/v1"}},
                   "custom_providers": [{"name": "legacy-gw", "base_url": "http://x/v1", "catalog_provider": "deepseek"}]}
         with self._cfg(config), patch("agent.models_dev.fetch_models_dev", return_value={}):
-            assert get_model_capabilities("925llm", "deepseek-v4.1-flash") is None
-            legacy = get_model_capabilities("legacy-gw", "deepseek-v4.1-flash")
+            assert query_model_metadata("925llm", "deepseek-v4.1-flash") is None
+            legacy = query_model_metadata("legacy-gw", "deepseek-v4.1-flash")
         assert legacy is not None and legacy.supports_vision is True
 
 
@@ -1028,7 +1031,7 @@ class TestModelOverrides:
         warnings = [r for r in caplog.records if "model_overrides" in r.message]
         assert len(warnings) == 1
 
-    # --- get_model_capabilities with overrides ---
+    # --- query_model_metadata with overrides ---
 
     def test_caps_override_unknown_model(self):
         """Override provides capabilities for a model NOT in the catalog (#8731)."""
@@ -1044,7 +1047,7 @@ class TestModelOverrides:
         }
         with self._setup_overrides(overrides), \
              patch("agent.models_dev.fetch_models_dev", return_value={}):
-            caps = get_model_capabilities("custom:my-vllm", "my-llava-model")
+            caps = query_model_metadata("custom:my-vllm", "my-llava-model")
         assert caps is not None
         assert caps.context_window == 8192
         assert caps.supports_vision is True
@@ -1069,8 +1072,8 @@ class TestModelOverrides:
         }
         with self._setup_overrides(overrides), \
              patch("agent.models_dev.fetch_models_dev", return_value={}):
-            unknown = get_model_capabilities("custom-gateway", "upstream-model")
-            explicit_false = get_model_capabilities("custom-gateway", "text-model")
+            unknown = query_model_metadata("custom-gateway", "upstream-model")
+            explicit_false = query_model_metadata("custom-gateway", "text-model")
 
         assert unknown is not None
         assert unknown.context_window == 1_000_000
@@ -1091,7 +1094,7 @@ class TestModelOverrides:
         }
         with self._setup_overrides(overrides), \
              patch("agent.models_dev.fetch_models_dev", return_value=CAPS_REGISTRY):
-            caps = get_model_capabilities("anthropic", "claude-sonnet-4")
+            caps = query_model_metadata("anthropic", "claude-sonnet-4")
         assert caps is not None
         # Override wins
         assert caps.context_window == 500000
@@ -1108,14 +1111,14 @@ class TestModelOverrides:
         }
         with self._setup_overrides(overrides), \
              patch("agent.models_dev.fetch_models_dev", return_value=CAPS_REGISTRY):
-            caps = get_model_capabilities("anthropic", "claude-sonnet-4")
+            caps = query_model_metadata("anthropic", "claude-sonnet-4")
         assert caps is not None
         assert caps.context_window != 1000
 
     def test_caps_no_override_no_catalog_returns_none(self):
         with self._setup_overrides({}), \
              patch("agent.models_dev.fetch_models_dev", return_value={}):
-            caps = get_model_capabilities("anthropic", "unknown-model")
+            caps = query_model_metadata("anthropic", "unknown-model")
         assert caps is None
 
     def test_caps_override_default_for_unknown_model(self):
@@ -1130,7 +1133,7 @@ class TestModelOverrides:
         }
         with self._setup_overrides(overrides), \
              patch("agent.models_dev.fetch_models_dev", return_value={}):
-            caps = get_model_capabilities("custom:my-vllm", "some-new-model")
+            caps = query_model_metadata("custom:my-vllm", "some-new-model")
         assert caps is not None
         assert caps.context_window == 32768
         assert caps.supports_tools is True
@@ -1312,14 +1315,14 @@ class TestModelOverrides:
         }
         with self._setup_overrides(overrides), \
              patch("agent.models_dev.fetch_models_dev", return_value=registry):
-            caps = get_model_capabilities("ollama-cloud", "kimi-k2.6")
+            caps = query_model_metadata("ollama-cloud", "kimi-k2.6")
         assert caps is not None
         assert caps.context_window == 262144  # catalog, not the _default
         assert caps.supports_tools is True
 
     def test_model_info_unknown_model_gets_safe_defaults(self):
         """get_model_info's unknown-model path seeds the same safe
-        defaults as get_model_capabilities (200K/tools-on), so a partial
+        defaults as query_model_metadata (200K/tools-on), so a partial
         override doesn't yield ctx=0/tools-off."""
         overrides = {
             "custom:my-vllm": {
@@ -1385,8 +1388,8 @@ class TestOpenRouterRoutingVariantCatalogLookup:
         with patch("agent.models_dev.fetch_models_dev", return_value=self.REGISTRY):
             routed = f"z-ai/glm-5.3-flash:{suffix}"
             assert lookup_models_dev_context("openrouter", routed) == 1310720
-            base_caps = get_model_capabilities("openrouter", "z-ai/glm-5.3-flash")
-            routed_caps = get_model_capabilities("openrouter", routed)
+            base_caps = query_model_metadata("openrouter", "z-ai/glm-5.3-flash")
+            routed_caps = query_model_metadata("openrouter", routed)
             assert routed_caps.context_window == base_caps.context_window == 1310720
             assert routed_caps.supports_tools == base_caps.supports_tools
             assert get_model_info("openrouter", routed).context_window == 1310720
@@ -1406,7 +1409,7 @@ class TestOpencodeRelayVisionMarker:
     @pytest.mark.parametrize("provider", ["opencode-go", "opencode-zen", "opencode-go-bridge"])
     def test_vision_marker_fills_the_catalog_gap_for_opencode_family(self, provider):
         with patch("agent.models_dev.fetch_models_dev", return_value={}):
-            caps = get_model_capabilities(provider, "deepseek-v4-flash-vision-exp")
+            caps = query_model_metadata(provider, "deepseek-v4-flash-vision-exp")
         assert caps is not None and caps.supports_vision is True
         assert caps.supports_reasoning is None  # only vision is claimed
 
@@ -1415,8 +1418,8 @@ class TestOpencodeRelayVisionMarker:
             "deepseek-v4-flash-vision-exp": {"id": "deepseek-v4-flash-vision-exp", "modalities": {"input": ["text"]},
                                              "limit": {"context": 500000}}}}}
         with patch("agent.models_dev.fetch_models_dev", return_value={}):
-            assert get_model_capabilities("opencode-go", "deepseek-v4-flash") is None
-            assert get_model_capabilities("deepseek", "some-vision-model") is None
+            assert query_model_metadata("opencode-go", "deepseek-v4-flash") is None
+            assert query_model_metadata("deepseek", "some-vision-model") is None
         with patch("agent.models_dev.fetch_models_dev", return_value=registry):
-            caps = get_model_capabilities("opencode-go", "deepseek-v4-flash-vision-exp")
+            caps = query_model_metadata("opencode-go", "deepseek-v4-flash-vision-exp")
         assert caps.supports_vision is False and caps.context_window == 500000

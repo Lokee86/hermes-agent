@@ -8,15 +8,15 @@ from models.metadata.interpretation import (
     extract_context,
     extract_limit,
     merge_catalog_entry_with_override,
-    model_capabilities_from_entry,
     model_info_from_entry,
+    model_metadata_from_entry,
+    model_metadata_patch_from_entry,
     override_int,
     override_to_catalog_shape,
     provider_info_from_entry,
     vision_marker_metadata,
 )
 from models.metadata.types import (
-    ModelCapabilities,
     ModelInfo,
     ModelMetadata,
     ModelMetadataContext,
@@ -26,7 +26,6 @@ from models.metadata.types import (
 )
 
 __all__ = [
-    "ModelCapabilities",
     "ModelInfo",
     "ModelMetadata",
     "ModelMetadataContext",
@@ -40,8 +39,9 @@ __all__ = [
     "extract_context",
     "extract_limit",
     "merge_catalog_entry_with_override",
-    "model_capabilities_from_entry",
     "model_info_from_entry",
+    "model_metadata_from_entry",
+    "model_metadata_patch_from_entry",
     "override_int",
     "override_to_catalog_shape",
     "provider_info_from_entry",

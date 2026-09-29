@@ -661,8 +661,8 @@ def _main_model_reasoning_efforts(model: str, provider: str) -> Optional[list[st
         from hermes_cli.models import github_model_reasoning_efforts
         return github_model_reasoning_efforts(model) or None
     try:
-        from agent.models_dev import get_model_capabilities
-        meta = get_model_capabilities(slug, model)
+        from agent.models_dev import query_model_metadata
+        meta = query_model_metadata(slug, model)
     except Exception:
         meta = None
     if meta is not None and meta.supports_reasoning is False:

@@ -494,7 +494,7 @@ def test_switch_model_accepts_explicit_bare_custom_current_endpoint(monkeypatch)
     """Picker selections for bare custom endpoints should route to current base_url."""
     monkeypatch.setattr("hermes_cli.models_validate.validate_requested_model", lambda *a, **k: _MOCK_VALIDATION)
     monkeypatch.setattr("hermes_cli.model_switch.get_model_info", lambda *a, **k: None)
-    monkeypatch.setattr("hermes_cli.model_switch.get_model_capabilities", lambda *a, **k: None)
+    monkeypatch.setattr("hermes_cli.model_switch.query_model_metadata", lambda *a, **k: None)
 
     result = switch_model(
         raw_input="gpt-4o-mini",
@@ -527,7 +527,7 @@ def test_switch_to_bare_custom_from_another_provider_resolves_the_configured_end
     monkeypatch.setenv("HERMES_HOME", str(home))
     monkeypatch.setattr("hermes_cli.models_validate.validate_requested_model", lambda *a, **k: _MOCK_VALIDATION)
     monkeypatch.setattr("hermes_cli.model_switch.get_model_info", lambda *a, **k: None)
-    monkeypatch.setattr("hermes_cli.model_switch.get_model_capabilities", lambda *a, **k: None)
+    monkeypatch.setattr("hermes_cli.model_switch.query_model_metadata", lambda *a, **k: None)
 
     result = switch_model(
         raw_input="qwen3:8b",
@@ -557,7 +557,7 @@ def test_switch_to_bare_custom_with_no_configured_endpoint_keeps_the_current_one
     monkeypatch.setenv("OPENROUTER_API_KEY", "sk-or-env")
     monkeypatch.setattr("hermes_cli.models_validate.validate_requested_model", lambda *a, **k: _MOCK_VALIDATION)
     monkeypatch.setattr("hermes_cli.model_switch.get_model_info", lambda *a, **k: None)
-    monkeypatch.setattr("hermes_cli.model_switch.get_model_capabilities", lambda *a, **k: None)
+    monkeypatch.setattr("hermes_cli.model_switch.query_model_metadata", lambda *a, **k: None)
 
     result = switch_model(
         raw_input="m2",
@@ -603,7 +603,7 @@ def test_switch_to_bare_custom_ignores_an_openrouter_mirror(monkeypatch, tmp_pat
     monkeypatch.setenv("OPENROUTER_BASE_URL", "https://mirror.example.com/v1")
     monkeypatch.setattr("hermes_cli.models_validate.validate_requested_model", lambda *a, **k: _MOCK_VALIDATION)
     monkeypatch.setattr("hermes_cli.model_switch.get_model_info", lambda *a, **k: None)
-    monkeypatch.setattr("hermes_cli.model_switch.get_model_capabilities", lambda *a, **k: None)
+    monkeypatch.setattr("hermes_cli.model_switch.query_model_metadata", lambda *a, **k: None)
 
     result = switch_model(
         raw_input="m2",
@@ -682,7 +682,7 @@ def test_switch_model_does_not_send_ollama_headers_to_unrelated_custom_endpoint(
     )
     monkeypatch.setattr("hermes_cli.models_validate.validate_requested_model", fake_validation)
     monkeypatch.setattr("hermes_cli.model_switch.get_model_info", lambda *a, **k: None)
-    monkeypatch.setattr("hermes_cli.model_switch.get_model_capabilities", lambda *a, **k: None)
+    monkeypatch.setattr("hermes_cli.model_switch.query_model_metadata", lambda *a, **k: None)
 
     result = switch_model(
         raw_input="new-model",
@@ -719,7 +719,7 @@ def test_picker_selection_resolves_named_custom_provider_model_id(monkeypatch):
     )
     monkeypatch.setattr("hermes_cli.model_switch.get_model_info", lambda *a, **k: None)
     monkeypatch.setattr(
-        "hermes_cli.model_switch.get_model_capabilities",
+        "hermes_cli.model_switch.query_model_metadata",
         lambda *a, **k: None,
     )
 

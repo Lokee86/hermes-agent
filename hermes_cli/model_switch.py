@@ -32,7 +32,7 @@ from hermes_cli.providers import (
 )
 from hermes_cli.models_catalog_static import static_provider_model_ids
 from agent.models_dev import (
-    ModelCapabilities, ModelInfo, get_model_capabilities, get_model_info, list_provider_models)
+    ModelMetadata, ModelInfo, query_model_metadata, get_model_info, list_provider_models)
 from utils import base_url_host_matches, base_url_hostname, base_url_origin, file_signature
 # Re-exported: callers/tests patch hermes_cli.model_switch.<name>.
 from hermes_cli.model_switch_providers import list_authenticated_providers
@@ -495,7 +495,7 @@ class ModelSwitchResult:
     warning_message: str = ""
     provider_label: str = ""
     resolved_via_alias: str = ""
-    capabilities: Optional[ModelCapabilities] = None
+    capabilities: Optional[ModelMetadata] = None
     runtime_capabilities: Optional[dict[str, bool]] = None
     model_info: Optional[ModelInfo] = None
     is_global: bool = False
@@ -1655,7 +1655,7 @@ def _build_switch_result(st: _Switch) -> ModelSwitchResult:
     if opencode_provider_family(st.target_provider) is not None and isinstance(st.base_url, str):
         st.base_url = normalize_opencode_base_url(st.target_provider, st.api_mode, st.base_url)
 
-    capabilities = get_model_capabilities(st.target_provider, st.new_model, allow_network=True)
+    capabilities = query_model_metadata(st.target_provider, st.new_model, allow_network=True)
     from agent.native_compaction import resolve_native_compaction_capabilities
     runtime_capabilities = resolve_native_compaction_capabilities(
         model=st.new_model, base_url=st.base_url, provider=st.target_provider,

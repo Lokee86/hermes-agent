@@ -12,7 +12,14 @@ import contextlib
 import logging
 from typing import Any, Mapping, Optional
 
-from models.metadata.types import ModelCapabilities, ModelInfo, ProviderInfo
+from models.identity import ModelRef
+from models.metadata.types import (
+    ModelInfo,
+    ModelMetadata,
+    ModelMetadataPatch,
+    ProviderInfo,
+    ReasoningMetadata,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -171,23 +178,90 @@ def entry_supports_vision(entry: Mapping[str, Any]) -> bool:
     )
 
 
-def model_capabilities_from_entry(
+def model_metadata_patch_from_entry(
     raw: Mapping[str, Any], *, unknown_model: bool = False
-) -> ModelCapabilities:
-    """Interpret one effective raw entry as the legacy capability view."""
-    return ModelCapabilities(
-        supports_tools=bool(raw.get("tool_call", False)),
-        supports_vision=(
-            None
-            if unknown_model and "attachment" not in raw and "modalities" not in raw
-            else entry_supports_vision(raw)
+) -> ModelMetadataPatch:
+    """Interpret one effective raw catalogue entry as canonical metadata facts.
+
+    Missing capability fields remain unknown for an unknown model.  A known
+    catalogue entry with an explicit false field, stale attachment flag, or
+    malformed modalities value keeps the established false result.
+    """
+    modalities = dict_or_empty(raw.get("modalities"))
+    input_values = modalities.get("input")
+    output_values = modalities.get("output")
+    input_modalities = tuple(input_values) if isinstance(input_values, list) else None
+    output_modalities = tuple(output_values) if isinstance(output_values, list) else None
+
+    if input_modalities is not None:
+        supports_vision: Optional[bool] = "image" in input_modalities
+    elif "attachment" in raw or "modalities" in raw:
+        supports_vision = entry_supports_vision(raw)
+    else:
+        supports_vision = None if unknown_model else False
+
+    def capability(key: str) -> Optional[bool]:
+        if key in raw:
+            return bool(raw[key])
+        return None if unknown_model else False
+
+    reasoning = ReasoningMetadata(
+        supported=capability("reasoning"),
+        supported_efforts=(
+            tuple(raw["reasoning_efforts"])
+            if isinstance(raw.get("reasoning_efforts"), list)
+            else None
         ),
-        supports_reasoning=(
-            None if unknown_model and "reasoning" not in raw else bool(raw.get("reasoning", False))
-        ),
+        mandatory=(bool(raw["reasoning_mandatory"]) if "reasoning_mandatory" in raw else None),
+    )
+    return ModelMetadataPatch(
         context_window=extract_limit(raw, "context") or 200000,
         max_output_tokens=extract_limit(raw, "output"),
-        model_family=raw.get("family", "") or "",
+        max_input_tokens=extract_limit(raw, "input"),
+        supports_tools=capability("tool_call"),
+        supports_vision=supports_vision,
+        supports_reasoning=reasoning.supported,
+        supports_structured_output=capability("structured_output"),
+        supports_temperature=capability("temperature"),
+        input_modalities=input_modalities,
+        output_modalities=output_modalities,
+        reasoning=reasoning,
+        model_family=(str(raw["family"] or "") if "family" in raw else None),
+        open_weights=capability("open_weights"),
+        release_date=(str(raw["release_date"] or "") if "release_date" in raw else None),
+        status=(str(raw["status"] or "") if "status" in raw else None),
+        knowledge_cutoff=(str(raw["knowledge"] or "") if "knowledge" in raw else None),
+    )
+
+
+def model_metadata_from_entry(
+    ref: ModelRef,
+    raw: Mapping[str, Any],
+    *,
+    unknown_model: bool = False,
+    provenance: Optional[Mapping[str, str]] = None,
+) -> ModelMetadata:
+    """Interpret one effective raw catalogue entry as canonical metadata."""
+    patch = model_metadata_patch_from_entry(raw, unknown_model=unknown_model)
+    return ModelMetadata(
+        ref=ref,
+        context_window=patch.context_window,
+        max_output_tokens=patch.max_output_tokens,
+        max_input_tokens=patch.max_input_tokens,
+        supports_tools=patch.supports_tools,
+        supports_vision=patch.supports_vision,
+        supports_reasoning=patch.supports_reasoning,
+        supports_structured_output=patch.supports_structured_output,
+        supports_temperature=patch.supports_temperature,
+        input_modalities=patch.input_modalities or (),
+        output_modalities=patch.output_modalities or (),
+        reasoning=patch.reasoning or ReasoningMetadata(),
+        model_family=patch.model_family or "",
+        open_weights=patch.open_weights,
+        release_date=patch.release_date or "",
+        status=patch.status or "",
+        knowledge_cutoff=patch.knowledge_cutoff or "",
+        provenance=dict(provenance or {}),
     )
 
 
@@ -259,8 +333,9 @@ __all__ = [
     "extract_context",
     "extract_limit",
     "merge_catalog_entry_with_override",
-    "model_capabilities_from_entry",
     "model_info_from_entry",
+    "model_metadata_from_entry",
+    "model_metadata_patch_from_entry",
     "override_int",
     "override_to_catalog_shape",
     "provider_info_from_entry",

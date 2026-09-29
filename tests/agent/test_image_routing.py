@@ -148,18 +148,18 @@ class TestLookupSupportsVisionOverride:
 
     def test_no_override_falls_back_to_models_dev(self):
         fake_caps = type("Caps", (), {"supports_vision": True})()
-        with patch("agent.models_dev.get_model_capabilities", return_value=fake_caps):
+        with patch("agent.models_dev.query_model_metadata", return_value=fake_caps):
             assert _lookup_supports_vision("anthropic", "claude-sonnet-4", {}) is True
 
     def test_models_dev_unknown_capability_stays_fail_open(self):
         fake_caps = type("Caps", (), {"supports_vision": None})()
-        with patch("agent.models_dev.get_model_capabilities", return_value=fake_caps):
+        with patch("agent.models_dev.query_model_metadata", return_value=fake_caps):
             assert _lookup_supports_vision("custom-gateway", "upstream-model", {}) is None
 
 
     def test_ollama_probe_when_models_dev_missing(self):
         cfg = {"model": {"base_url": "http://localhost:11434/v1"}}
-        with patch("agent.models_dev.get_model_capabilities", return_value=None), \
+        with patch("agent.models_dev.query_model_metadata", return_value=None), \
              patch("agent.image_routing._should_probe_ollama_vision", return_value=True), \
              patch("agent.model_metadata.query_ollama_supports_vision", return_value=True):
             assert _lookup_supports_vision("ollama", "gemma4:e2b", cfg) is True
@@ -167,7 +167,7 @@ class TestLookupSupportsVisionOverride:
 
     def test_cfg_none_falls_back_to_models_dev(self):
         # Caller didn't pass cfg at all — old call sites must still work.
-        with patch("agent.models_dev.get_model_capabilities", return_value=None):
+        with patch("agent.models_dev.query_model_metadata", return_value=None):
             assert _lookup_supports_vision("openrouter", "x", None) is None
 
 
@@ -243,12 +243,12 @@ class TestAutoModeRespectsOverride:
 
     def test_auto_text_for_custom_with_supports_vision_false(self):
         cfg = {"model": {"supports_vision": False}}
-        with patch("agent.models_dev.get_model_capabilities", return_value=None):
+        with patch("agent.models_dev.query_model_metadata", return_value=None):
             assert decide_image_input_mode("custom", "some-text-only", cfg) == "text"
 
     def test_auto_text_for_custom_with_no_override(self):
         # Unchanged baseline: unknown custom model → text.
-        with patch("agent.models_dev.get_model_capabilities", return_value=None):
+        with patch("agent.models_dev.query_model_metadata", return_value=None):
             assert decide_image_input_mode("custom", "unknown", {}) == "text"
 
 
@@ -638,7 +638,7 @@ class TestProbeApiKeyForwarding:
         key = _fake_key("lookup")
         import agent.models_dev  # noqa: F401 — make the patch target importable
         with patch(
-            "agent.models_dev.get_model_capabilities", return_value=None
+            "agent.models_dev.query_model_metadata", return_value=None
         ), patch(
             "agent.image_routing._resolve_inference_base_url",
             return_value="https://remote/v1",
@@ -664,7 +664,7 @@ class TestCodexContextVariantVisionLookup:
             seen.append(model)
             return SimpleNamespace(supports_vision=True) if model == "gpt-5.6-sol" else None
 
-        monkeypatch.setattr(models_dev, "get_model_capabilities", fake_caps)
+        monkeypatch.setattr(models_dev, "query_model_metadata", fake_caps)
         assert image_routing._probe_models_dev("openai-codex", "gpt-5.6-sol-900k", {}) is True
         assert seen == ["gpt-5.6-sol"]
         # Ineligible alias: looked up verbatim, no capability gained.

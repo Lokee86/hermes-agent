@@ -5460,7 +5460,7 @@ class TestSubmittedCustomEndpointSurvivesAssignment:
             "hermes_cli.models_validate.validate_requested_model",
             lambda *a, **k: {"accepted": True, "persist": True, "recognized": True, "message": None})
         monkeypatch.setattr("hermes_cli.model_switch.get_model_info", lambda *a, **k: None)
-        monkeypatch.setattr("hermes_cli.model_switch.get_model_capabilities", lambda *a, **k: None)
+        monkeypatch.setattr("hermes_cli.model_switch.query_model_metadata", lambda *a, **k: None)
 
         cfg = {"model": {"provider": "openrouter", "default": "m"}}
         result = _validated_main_model_selection(

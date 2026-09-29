@@ -99,18 +99,6 @@ class ModelMetadata:
 
 
 @dataclass
-class ModelCapabilities:
-    """Legacy capability view used by existing runtime consumers."""
-
-    supports_tools: bool = True
-    supports_vision: Optional[bool] = None
-    supports_reasoning: Optional[bool] = None
-    context_window: int = 200000
-    max_output_tokens: Optional[int] = None
-    model_family: str = ""
-
-
-@dataclass
 class ModelInfo:
     """Full interpreted metadata for one catalogue model."""
 

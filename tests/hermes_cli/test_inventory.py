@@ -595,7 +595,7 @@ def test_list_authenticated_providers_refresh_busts_cache():
 def test_picker_metadata_uses_one_config_read_for_real_models_dev_lookups(tmp_path, monkeypatch):
     """Custom-provider metadata stays constant-read as its model count grows (#119048).
 
-    ``get_model_capabilities`` and ``get_model_info`` deliberately stay real:
+    ``query_model_metadata`` and ``get_model_info`` deliberately stay real:
     each lookup resolves ``providers.lab.catalog_provider`` before consulting
     the seeded models.dev catalog.  Removing snapshot threading from that
     path makes the larger payload re-open config.yaml once per lookup.
@@ -641,14 +641,14 @@ def test_picker_metadata_uses_one_config_read_for_real_models_dev_lookups(tmp_pa
     snapshot = config_module.load_config_readonly()
     baseline = [
         (
-            models_dev.get_model_capabilities("custom:lab", model),
+            models_dev.query_model_metadata("custom:lab", model),
             models_dev.get_model_info("custom:lab", model),
         )
         for model in models
     ]
     snapshot_result = [
         (
-            models_dev.get_model_capabilities("custom:lab", model, config=snapshot),
+            models_dev.query_model_metadata("custom:lab", model, config=snapshot),
             models_dev.get_model_info("custom:lab", model, config=snapshot),
         )
         for model in models

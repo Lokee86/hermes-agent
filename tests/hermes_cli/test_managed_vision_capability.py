@@ -97,7 +97,7 @@ def test_lookup_chain_consults_managed_runtime(hermes_home, monkeypatch):
     def catalog_must_not_run(*a, **k):
         raise AssertionError("cloud catalog consulted for a managed model")
 
-    monkeypatch.setattr("agent.models_dev.get_model_capabilities",
+    monkeypatch.setattr("agent.models_dev.query_model_metadata",
                         catalog_must_not_run)
 
     got = ir._lookup_supports_vision("llamacpp", "Some-Local-Model", {})

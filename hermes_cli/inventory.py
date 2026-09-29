@@ -322,9 +322,9 @@ def _apply_capabilities(rows: list[dict], *, metadata_config: dict | None = None
     from hermes_cli.models import model_supports_fast_mode
 
     try:
-        from agent.models_dev import get_model_capabilities
+        from agent.models_dev import query_model_metadata
     except Exception:
-        get_model_capabilities = None  # type: ignore[assignment]
+        query_model_metadata = None  # type: ignore[assignment]
 
     for row in rows:
         slug = row.get("slug") or ""
@@ -333,9 +333,9 @@ def _apply_capabilities(rows: list[dict], *, metadata_config: dict | None = None
 
         for model in row.get("models") or []:
             reasoning = True
-            if get_model_capabilities is not None and slug:
+            if query_model_metadata is not None and slug:
                 try:
-                    meta = get_model_capabilities(slug, model, config=metadata_config)
+                    meta = query_model_metadata(slug, model, config=metadata_config)
                     if meta is not None and meta.supports_reasoning is not None:
                         reasoning = meta.supports_reasoning
                 except Exception:

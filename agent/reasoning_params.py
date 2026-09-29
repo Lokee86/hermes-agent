@@ -68,9 +68,9 @@ def unset_reasoning_default(agent) -> dict | None:
     if not default:
         return None
     try:
-        from agent.models_dev import get_model_capabilities
+        from agent.models_dev import query_model_metadata
 
-        caps = get_model_capabilities(provider, model, allow_network=False)
+        caps = query_model_metadata(provider, model, allow_network=False)
     except Exception:
         caps = None
     if caps is not None and caps.supports_reasoning is False:

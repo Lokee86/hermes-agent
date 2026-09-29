@@ -19,9 +19,10 @@ from typing import Any, Dict, List, Optional, Tuple
 from utils import atomic_json_write, atomic_write_text
 
 from hermes_constants import openrouter_variant_base
+from models import ModelRef
 from models.metadata import (
-    ModelCapabilities,
     ModelInfo,
+    ModelMetadata,
     ProviderInfo,
     UNKNOWN_MODEL_BASE,
     builtin_model_metadata,
@@ -29,8 +30,8 @@ from models.metadata import (
     extract_context as _extract_context,
     extract_limit as _extract_limit,
     merge_catalog_entry_with_override,
-    model_capabilities_from_entry,
     model_info_from_entry,
+    model_metadata_from_entry,
     override_int as _override_int,
     provider_info_from_entry,
     vision_marker_metadata,
@@ -695,17 +696,14 @@ def _apply_overrides(
     )
 
 
-def get_model_capabilities(
+def query_model_metadata(
     provider: str, model: str, *, allow_network: bool = False, config: Optional[Dict[str, Any]] = None,
-) -> Optional[ModelCapabilities]:
-    """Capability metadata from the models.dev cache, or None if unresolvable. EXPLICIT ``model_overrides``
-    patch catalog fields; ``_default`` fills the gap only for models the catalog does not know. Unspecified
-    fields fall through to the catalog, or to safe defaults. ``allow_network`` defaults to False (hot path).
+) -> Optional[ModelMetadata]:
+    """Return canonical metadata for a provider/model, or None if unresolvable.
 
-    EXPLICIT ``model_overrides`` entries (per-provider+model) win over catalog values for the fields they
-    set. ``_default`` entries fill the gap only for models the catalog does not know — the supported
-    self-unblock path for custom/local models (#8731) and for models with wrong metadata in models.dev
-    (#84482).
+    Catalogue acquisition remains opt-in on ``allow_network``; the default is
+    the no-network hot path. ``model_overrides`` and built-in/relay facts are
+    applied before the raw entry is interpreted by ``models.metadata``.
     """
     models = _get_provider_models(provider, allow_network=allow_network, config=config)
     entry = _find_model_entry(models, model, provider) if models is not None else None
@@ -716,7 +714,11 @@ def get_model_capabilities(
     raw = _apply_overrides(provider, model, entry, config=config)
     if raw is None:
         return None
-    return model_capabilities_from_entry(raw, unknown_model=unknown_base)
+    return model_metadata_from_entry(
+        ModelRef(provider, model),
+        raw,
+        unknown_model=unknown_base,
+    )
 
 
 def list_provider_models(provider: str, *, allow_network: bool = True) -> List[str]:
