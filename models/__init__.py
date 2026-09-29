@@ -15,6 +15,18 @@ from models.identity import (
     resolve_model_alias,
     suggest_prefixed_model_id,
 )
+from models.selection import (
+    CapabilityRequirements,
+    CandidateRejection,
+    ModelSelection,
+    SelectionCandidate,
+    SelectionConstraints,
+    SelectionPolicy,
+    SelectionReason,
+    SelectionRequest,
+    build_selection_candidate,
+    select_model,
+)
 
 __all__ = [
     "AmbiguousModelAliasError",
@@ -30,4 +42,14 @@ __all__ = [
     "resolve_declared_model_id",
     "resolve_model_alias",
     "suggest_prefixed_model_id",
+    "CapabilityRequirements",
+    "CandidateRejection",
+    "ModelSelection",
+    "SelectionCandidate",
+    "SelectionConstraints",
+    "SelectionPolicy",
+    "SelectionReason",
+    "SelectionRequest",
+    "build_selection_candidate",
+    "select_model",
 ]
