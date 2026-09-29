@@ -70,7 +70,6 @@ def generate_systemd_unit(
 ) -> str:
     executable = service_process.python_path()
     working_dir = service_process.stable_working_dir()
-    venv_dir = service_process.service_venv_dir()
     path_entries = service_process.service_path_dirs()
 
     if not system:
@@ -97,7 +96,6 @@ def generate_systemd_unit(
             if hermes_home
             else service_process.remap_path_for_user(working_dir, home_dir)
         )
-        venv_dir = service_process.remap_path_for_user(venv_dir, home_dir)
         path_entries = [service_process.remap_path_for_user(p, home_dir) for p in path_entries]
         target_node_entries: list[str] = []
         service_process.append_node_dir(
@@ -149,7 +147,6 @@ Type={systemd_type}
 {watchdog_directives}{identity_lines}ExecStart={executable} -m hermes_cli.main{profile_fragment} gateway run
 WorkingDirectory={working_dir}
 {env_lines}Environment="PATH={sane_path}"
-Environment="VIRTUAL_ENV={venv_dir}"
 Environment="HERMES_HOME={hermes_home}"
 Environment="HERMES_SUPERVISED_CHILD=1"
 Restart=always

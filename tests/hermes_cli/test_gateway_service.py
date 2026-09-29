@@ -389,7 +389,7 @@ class TestGeneratedSystemdUnits:
         link_node = local_bin / "node"
         link_node.symlink_to(real_node)
 
-        monkeypatch.setattr(gateway_cli.shutil, "which", lambda cmd: str(link_node) if cmd == "node" else None)
+        monkeypatch.setattr(service_process.shutil, "which", lambda cmd: str(link_node) if cmd == "node" else None)
 
         unit = systemd_unit_render.generate_systemd_unit(system=False)
 
@@ -882,14 +882,14 @@ class TestLaunchdUnsupportedFallbackPolicy:
 class TestGatewayServiceDetection:
     def test_supports_systemd_services_requires_systemctl_binary(self, monkeypatch):
         monkeypatch.setattr(gateway_cli, "is_linux", lambda: True)
-        monkeypatch.setattr(gateway_cli.shutil, "which", lambda name: None)
+        monkeypatch.setattr(systemd_runtime.shutil, "which", lambda name: None)
 
         assert systemd_runtime.supports_services() is False
 
     def test_supports_systemd_services_returns_true_when_systemctl_present(self, monkeypatch):
         monkeypatch.setattr(gateway_cli, "is_linux", lambda: True)
         monkeypatch.setattr(gateway_cli, "is_wsl", lambda: False)
-        monkeypatch.setattr(gateway_cli.shutil, "which", lambda name: "/usr/bin/systemctl")
+        monkeypatch.setattr(systemd_runtime.shutil, "which", lambda name: "/usr/bin/systemctl")
 
         assert systemd_runtime.supports_services() is True
 
@@ -1427,10 +1427,10 @@ class TestSystemUnitHermesHome:
         monkeypatch.setattr(gateway_cli, "get_hermes_home", lambda: root_hermes)
         monkeypatch.setattr(service_process, "service_path_dirs", lambda: [])
 
-        monkeypatch.setattr(gateway_cli.shutil, "which", lambda name: "/root/bin/node")
+        monkeypatch.setattr(service_process.shutil, "which", lambda name: "/root/bin/node")
         root_unit = systemd_unit_render.generate_systemd_unit(system=True, run_as_user="alice")
 
-        monkeypatch.setattr(gateway_cli.shutil, "which", lambda name: "/home/alice/.local/bin/node")
+        monkeypatch.setattr(service_process.shutil, "which", lambda name: "/home/alice/.local/bin/node")
         user_unit = systemd_unit_render.generate_systemd_unit(system=True, run_as_user="alice")
 
         assert root_unit == user_unit
@@ -1555,7 +1555,7 @@ class TestSystemUnitRefreshSyncsHermesHome:
         monkeypatch.setattr(
             service_process, "build_user_local_paths", lambda home, existing: []
         )
-        monkeypatch.setattr(gateway_cli.shutil, "which", lambda cmd: None)
+        monkeypatch.setattr(service_process.shutil, "which", lambda cmd: None)
         monkeypatch.setattr(systemd_identity, "unit_path", lambda system=False: unit_path)
         monkeypatch.setattr(systemd_runtime, "run_systemctl", lambda *a, **k: None)
         monkeypatch.delenv("HERMES_RESTART_DRAIN_TIMEOUT", raising=False)
@@ -2620,7 +2620,7 @@ class TestTimeoutStopSecCoversCronFloor:
         monkeypatch.setenv("HERMES_HOME", str(hermes))
         monkeypatch.delenv("HERMES_RESTART_DRAIN_TIMEOUT", raising=False)
         monkeypatch.delenv("HERMES_CRON_DRAIN_TIMEOUT", raising=False)
-        monkeypatch.setattr(gateway_cli.shutil, "which", lambda cmd: None)
+        monkeypatch.setattr(service_process.shutil, "which", lambda cmd: None)
         monkeypatch.setattr(
             service_process, "build_user_local_paths", lambda home, existing: []
         )
