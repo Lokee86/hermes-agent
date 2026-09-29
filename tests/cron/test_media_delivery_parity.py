@@ -65,7 +65,7 @@ def _install_fake_slack_sender(monkeypatch, result_factory):
         })
         return result_factory(calls[-1])
 
-    import gateway.platform_registry as reg_mod
+    import plugin_runtime.platform_registry as reg_mod
 
     entry = reg_mod.platform_registry.get("slack")
     if entry is None:

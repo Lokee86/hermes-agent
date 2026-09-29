@@ -244,7 +244,7 @@ def _messaging_platform_catalog() -> tuple[dict[str, Any], ...]:
         # server process doesn't do — trigger it explicitly (idempotent).
         from plugin_runtime.lifecycle import discover_plugins
         discover_plugins()
-        from gateway.platform_registry import platform_registry
+        from plugin_runtime.platform_registry import platform_registry
         for plugin_entry in platform_registry.plugin_entries():
             plugin_map[plugin_entry.name] = plugin_entry
     except Exception:

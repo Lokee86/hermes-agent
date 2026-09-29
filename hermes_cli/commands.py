@@ -357,6 +357,11 @@ def resolve_command(name: str) -> CommandDef | None:
     return _COMMAND_LOOKUP.get(name.lower().lstrip("/"))
 
 
+from plugin_runtime.host_bindings import bind_plugin_host
+
+bind_plugin_host(command_resolver=resolve_command)
+
+
 def _build_description(cmd: CommandDef) -> str:
     """CLI-facing description including the usage hint."""
     if not cmd.args_hint:

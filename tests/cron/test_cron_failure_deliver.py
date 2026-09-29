@@ -63,7 +63,7 @@ def run_env(monkeypatch, tmp_path):
         return {"success": transport["success"], "chat_id": chat_id,
                 "message_id": "1.2", "error": None if transport["success"] else "transport refused"}
 
-    import gateway.platform_registry as reg
+    import plugin_runtime.platform_registry as reg
     import plugin_runtime.lifecycle as hp
 
     entry = reg.platform_registry.get("slack")

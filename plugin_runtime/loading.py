@@ -319,7 +319,7 @@ class PluginLoaderMixin:
         """Publish the deferred loader as a ledger-owned lease; False when the registry refused it."""
         platform_name = self._platform_name_from_manifest(manifest)
         try:
-            from gateway.platform_registry import platform_registry
+            from plugin_runtime.platform_registry import platform_registry
             scope = self.scope_key
 
             def _loader(_manifest: PluginManifest = manifest) -> None:
@@ -494,9 +494,8 @@ class PluginLoaderMixin:
             self._plugins[plugin_key] = loaded
             return
         # After the compat-removal date an external plugin that still imports pre-decomposition paths is
-        # skipped with a clear reason instead of dying on ImportError mid-register (hermes_cli.plugin_compat).
-        from hermes_cli.plugin_compat import disable_reason
-        reason = disable_reason(manifest)
+        # skipped with a clear reason instead of dying on ImportError mid-register.
+        reason = self._plugin_load_disable_reason(manifest)
         if reason:
             loaded.error = reason
             logger.warning("Plugin '%s' not loaded: %s", manifest.name, reason)

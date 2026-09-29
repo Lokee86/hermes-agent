@@ -13,6 +13,7 @@ from typing import Any, Callable, Dict, List, Mapping, Optional, Set, Tuple
 from hermes_constants import get_hermes_home, hermes_home_key
 from plugin_runtime.activation import activation_summaries
 from plugin_runtime import compat as plugin_compat
+from plugin_runtime.config_bridge import load_plugin_config
 from plugin_runtime.context import PluginContext
 from plugin_runtime.discovery import (
     _get_disabled_plugins,
@@ -32,18 +33,19 @@ from plugin_runtime.loading import LoadedPlugin, PluginLoaderMixin, in_plugin_lo
 from plugin_runtime.manifest import PluginManifest, manifest_key, resolve_plugin_load_order
 from plugin_runtime.ownership import PluginOwnershipMixin
 from plugin_runtime.registration import PluginRegistration
+from plugin_runtime.contracts import RegisteredApprovalTransport
 from plugin_runtime.relay_policy import RELAY_PLUGINS_CONFIG_ENV, legacy_relay_plugin_keys
 from plugin_runtime.scope import plugin_home_scope as _plugin_home_scope
+from plugin_runtime.host_bindings import get_plugin_host_callback
 from utils import env_var_enabled
 
 logger = logging.getLogger("hermes_cli.plugins")
 
 
 def _installed_plugin_removal(name: str, plugin_dir: Any):
-    """Lazy bridge to the catalog owner used by the discovery recall gate."""
-    from hermes_cli.plugins_cmd_catalog import installed_plugin_removal
-
-    return installed_plugin_removal(name, plugin_dir)
+    """Call the host-owned catalog recall policy when that host is available."""
+    callback = get_plugin_host_callback("installed_plugin_removal")
+    return callback(name, plugin_dir) if callback is not None else None
 
 
 class PluginManager(PluginLoaderMixin, PluginDispatchMixin, PluginOwnershipMixin):
@@ -263,15 +265,13 @@ class PluginManager(PluginLoaderMixin, PluginDispatchMixin, PluginOwnershipMixin
         activation), reset the cache and re-apply. Fail-open: never raises into discover_and_load."""
         try:
             from agent.secret_sources.registry import list_plugin_sources
-            from hermes_cli.env_loader import load_hermes_dotenv, reset_secret_source_cache
             plugin_sources = list_plugin_sources()
         except Exception:
             return
         if not plugin_sources:
             return
         try:
-            from hermes_cli.config import load_config
-            secrets = (load_config() or {}).get("secrets") or {}
+            secrets = (load_plugin_config() or {}).get("secrets") or {}
         except Exception:
             secrets = {}
 
@@ -289,10 +289,11 @@ class PluginManager(PluginLoaderMixin, PluginDispatchMixin, PluginOwnershipMixin
             # Reset and reload the SAME home the process (or routed turn) resolves to: under multiplex this
             # runs at gateway boot after sibling profiles may already have hydrated, and a global clear
             # wiped their snapshots; a routed discovery must rebuild the profile it just dropped.
-            from hermes_constants import get_hermes_home
             home = get_hermes_home()
-            reset_secret_source_cache(home)
-            load_hermes_dotenv(hermes_home=home)
+            refresh = get_plugin_host_callback("refresh_secret_sources")
+            if refresh is None:
+                return
+            refresh(home)
             logger.debug("Re-applied secret sources after plugin discovery for: %s",
                          ", ".join(sorted(enabled_names)))
         except Exception as exc:
@@ -369,7 +370,6 @@ class PluginManager(PluginLoaderMixin, PluginDispatchMixin, PluginOwnershipMixin
     def register_approval_transport(self, name: str, present_fn: Callable, *, plugin_id: str) -> None:
         """Manager-level registration (public API kept for out-of-tree plugins); the PluginContext
         method is the tracked path plugins normally use. Same validation, no unload tracking."""
-        from hermes_cli.approval_transport import RegisteredApprovalTransport
         clean = str(name).strip().lower()
         if clean == "builtin":
             raise ValueError("approval transport name 'builtin' is reserved")

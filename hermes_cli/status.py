@@ -202,7 +202,7 @@ def _render_platforms(ctx):
         _row(name, has_token, _configured(has_token) + (f" (home: {home_channel})" if home_channel else ""))
 
     try:  # Plugin-registered platforms
-        from gateway.platform_registry import platform_registry
+        from plugin_runtime.platform_registry import platform_registry
         for entry in platform_registry.plugin_entries():
             # Per-entry guard: one raising probe must not abort the listing of every remaining
             # plugin platform (matches the other check_fn sites).

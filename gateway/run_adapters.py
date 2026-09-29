@@ -1786,7 +1786,7 @@ class GatewayAdapterLifecycleMixin:
                 "thread_sessions_per_user", getattr(self.config, "thread_sessions_per_user", False)
             )
         with _log_suppressed(logging.DEBUG, "Platform registry lookup for '%s' failed: %s", platform.value):
-            from gateway.platform_registry import platform_registry
+            from plugin_runtime.platform_registry import platform_registry
             if platform_registry.is_registered(platform.value):
                 adapter = platform_registry.create_adapter(platform.value, config)
                 if adapter is None:  # registered but failed — never fall through to built-ins

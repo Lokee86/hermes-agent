@@ -18,6 +18,13 @@ def load_plugin_config() -> dict[str, Any]:
     return load_config()
 
 
+def load_plugin_config_readonly() -> dict[str, Any]:
+    """Load the user-facing read-only config view for policy checks."""
+    from hermes_cli.config import load_config_readonly
+
+    return load_config_readonly()
+
+
 def read_enabled_plugins() -> set[str] | None:
     """Return the plugins.enabled allow-list; None means missing or malformed."""
     try:
@@ -153,3 +160,14 @@ def load_plugin_config_for_home(home: Path) -> dict[str, Any]:
 
     with plugin_home_scope(home):
         return load_plugin_config()
+
+
+def read_running_hermes_version() -> str:
+    """Return the canonical running code's base release version.
+
+    Compatibility policy remains runtime-owned; the CLI-owned identity
+    resolver is reached only through this narrow bridge.
+    """
+    from hermes_version import __version__
+
+    return str(__version__)

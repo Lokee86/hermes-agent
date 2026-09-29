@@ -1626,7 +1626,7 @@ class TestCronSchedulerRegistry:
         discover + manually invoke the register hook so the resolver sees
         ``cron_deliver_env_var``.
         """
-        from gateway.platform_registry import platform_registry
+        from plugin_runtime.platform_registry import platform_registry
         if platform_registry.get("google_chat") is not None:
             return
         # Discover first so the plugin is loaded at all.
@@ -1645,7 +1645,7 @@ class TestCronSchedulerRegistry:
             manifest = _M()
             _manager = type("_Mgr", (), {"_plugin_platform_names": set()})()
             def register_platform(self, **kwargs):
-                from gateway.platform_registry import PlatformEntry
+                from plugin_runtime.platform_registry import PlatformEntry
                 entry = PlatformEntry(source="plugin", **kwargs)
                 platform_registry.register(entry)
         _register(_Ctx())

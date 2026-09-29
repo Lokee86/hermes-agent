@@ -137,7 +137,7 @@ def _all_platforms() -> list[dict]:
     by_key = {p["key"]: p for p in platforms}
 
     try:
-        from gateway.platform_registry import platform_registry
+        from plugin_runtime.platform_registry import platform_registry
     except Exception:
         return platforms
 

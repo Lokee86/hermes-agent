@@ -992,7 +992,7 @@ class GatewayStartupMixin:
         allowed_vars = list(self._BUILTIN_ALLOWED_USERS_VARS)
         allow_all_vars = ["GATEWAY_ALLOW_ALL_USERS", *self._BUILTIN_ALLOW_ALL_VARS]
         with suppress(Exception):
-            from gateway.platform_registry import platform_registry
+            from plugin_runtime.platform_registry import platform_registry
             entries = platform_registry.plugin_entries()
             allowed_vars += [e.allowed_users_env for e in entries if e.allowed_users_env]
             allow_all_vars += [e.allow_all_env for e in entries if e.allow_all_env]

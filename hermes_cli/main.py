@@ -2925,7 +2925,7 @@ def _resolve_deferred_platform_cli_command(command_name: str | None) -> None:
     if not command_name:
         return
     try:
-        from gateway.platform_registry import platform_registry
+        from plugin_runtime.platform_registry import platform_registry
 
         platform_registry.get(command_name)
     except Exception as exc:

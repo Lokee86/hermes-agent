@@ -423,7 +423,7 @@ def load_yaml_layer(home: Path, gw_data: dict) -> None:
     try:
         from plugin_runtime.lifecycle import discover_plugins
         discover_plugins()  # idempotent
-        from gateway.platform_registry import platform_registry as registry
+        from plugin_runtime.platform_registry import platform_registry as registry
     except Exception as e:
         logger.debug("plugin discovery skipped: %s", e)
         registry = None

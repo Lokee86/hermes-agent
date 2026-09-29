@@ -167,7 +167,7 @@ class TestFallbackMirrorEndToEnd:
             send_calls.append({"chat_id": chat_id, "thread_id": thread_id})
             return {"success": True, "chat_id": chat_id, "message_id": "1.2"}
 
-        import gateway.platform_registry as reg
+        import plugin_runtime.platform_registry as reg
         import plugin_runtime.lifecycle as hp
 
         entry = reg.platform_registry.get("slack")

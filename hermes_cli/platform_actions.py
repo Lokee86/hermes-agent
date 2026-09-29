@@ -203,6 +203,11 @@ class PlatformActions:
         )
 
 
+from plugin_runtime.host_bindings import bind_plugin_host
+
+bind_plugin_host(platform_actions_factory=PlatformActions)
+
+
 # ---- BEGIN PLUGIN-COMPAT (revert-scheduled; see COMPAT_MANIFEST.md) ----
 # Names external plugins imported from this module before the Sep 2026 decomposition.
 # Internal code MUST NOT use these (scripts/check_compat_pointers.py fails CI if it does).

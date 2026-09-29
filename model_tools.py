@@ -158,7 +158,7 @@ try:  # plugin tool discovery (user/project/pip plugins)
     # message — freezing Discord/Telegram heartbeats for up to 120s whenever any configured MCP server was
     # slow or unreachable (#16856). - gateway/run.py            -> start_gateway() uses run_in_executor -
     # acp_adapter/server.py     -> asyncio.to_thread on session init
-    from hermes_cli.plugins import discover_plugins
+    from plugin_runtime.lifecycle import discover_plugins
     discover_plugins()
 except Exception as e:
     logger.debug("Plugin discovery failed: %s", e)

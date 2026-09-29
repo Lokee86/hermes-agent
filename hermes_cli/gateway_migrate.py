@@ -515,7 +515,7 @@ def platform_serves_profile_prefix(platform_value: str) -> bool:
         # after discovery; a bare CLI process has not run it yet.
         from plugin_runtime.lifecycle import discover_plugins
         discover_plugins()  # idempotent
-        from gateway.platform_registry import platform_registry
+        from plugin_runtime.platform_registry import platform_registry
         entry = platform_registry.get(platform_value)
         if entry is not None:
             factory = entry.adapter_factory

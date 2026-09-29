@@ -867,3 +867,13 @@ def catalog_versions() -> Dict[str, str]:
         return {e.name: e.version for e in load_catalog_live() if e.version}
     except Exception:
         return {}
+
+
+from plugin_runtime.host_bindings import bind_plugin_host
+
+
+def _installed_plugin_removal_callback(name: str, plugin_dir):
+    return installed_plugin_removal(name, plugin_dir)
+
+
+bind_plugin_host(installed_plugin_removal=_installed_plugin_removal_callback)

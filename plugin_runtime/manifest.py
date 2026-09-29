@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Any, Callable, Dict, List, Mapping, Optional, Set, Union
 
 from utils import fast_safe_load
+from plugin_runtime.config_bridge import read_running_hermes_version
 from plugin_runtime.capabilities import parse_declared_capabilities as _parse_declared_capabilities
 from plugin_runtime.debug import plugin_debug_enabled
 
@@ -405,9 +406,7 @@ _VERSION_COMPARATOR_RE = re.compile(r"^\s*(>=|<=|==|!=|>|<)\s*(.+?)\s*$")
 
 def running_hermes_version() -> str:
     """Base release version of the Hermes code that is running."""
-    from hermes_cli.version_info import get_version_info
-
-    return get_version_info().base_version
+    return read_running_hermes_version()
 
 
 _VERSION_SEGMENT_RE = re.compile(r"^\d+")

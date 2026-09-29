@@ -29,6 +29,7 @@ from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Tuple
 
 from plugin_runtime.compat_warning import HermesPluginCompatWarning
+from plugin_runtime.config_bridge import load_plugin_config_readonly
 from utils import atomic_json_write
 
 COMPAT_REMOVAL_DATE = _dt.date(2026, 9, 14)
@@ -295,8 +296,7 @@ def allow_deprecated_imports(config: Optional[dict] = None) -> bool:
     """``plugins.allow_deprecated_imports: true`` keeps hitting plugins loading after the date."""
     try:
         if config is None:
-            from hermes_cli.config import load_config_readonly
-            config = load_config_readonly()
+            config = load_plugin_config_readonly()
         # Literal boolean only: YAML `"false"` / `"no"` must not open the post-removal bypass.
         return ((config or {}).get("plugins") or {}).get(ALLOW_KEY, False) is True
     except Exception:

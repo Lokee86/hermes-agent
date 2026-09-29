@@ -414,7 +414,7 @@ def _default_platform_hint(platform_key: str) -> str:
     hint = PLATFORM_HINTS.get(platform_key, "")
     if not hint and platform_key:
         try:
-            from gateway.platform_registry import platform_registry
+            from plugin_runtime.platform_registry import platform_registry
             _entry = platform_registry.get(platform_key)
             hint = (_entry and _entry.platform_hint) or ""
         except Exception:

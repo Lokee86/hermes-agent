@@ -141,24 +141,31 @@ def clean_registry():
     """Undo everything a synthetic plugin leaves behind.
 
     Each test writes a fresh plugin to its own tmp_path but reuses the
-    ``probeplat`` name, so the imported ``hermes_plugins.*`` modules have to go
-    too — otherwise the next test's ``import_module`` returns the previous
-    test's cached submodule instead of reading the new file.
+    probeplat name, so both global and profile-scoped tool registrations
+    plus imported hermes_plugins.* modules must be restored. Scoped
+    registrations are first-class now; cleaning only registry._tools lets
+    one test's live predecessor leak into the next replacement generation.
     """
-    from gateway.platform_registry import platform_registry
+    from plugin_runtime.platform_registry import platform_registry
     from tools.registry import registry
 
-    before_tools = set(registry._tools)
+    before_tools = dict(registry._tools)
+    before_scoped_tools = {scope: dict(entries) for scope, entries in registry._scoped_tools.items()}
     before_modules = set(sys.modules)
     yield
-    for name in set(registry._tools) - before_tools:
-        registry._tools.pop(name, None)
+    with registry._lock:
+        registry._tools.clear()
+        registry._tools.update(before_tools)
+        registry._scoped_tools.clear()
+        registry._scoped_tools.update(
+            {scope: dict(entries) for scope, entries in before_scoped_tools.items()}
+        )
+        registry._generation += 1
     for platform in ("probeplat", "barefoot", "quietplat", "promiseplat"):
         platform_registry.unregister(platform)
     for name in set(sys.modules) - before_modules:
         if name.startswith("hermes_plugins."):
             sys.modules.pop(name, None)
-
 
 # ── the reported symptom, against the real a2a plugin ──────────────────────
 
@@ -290,7 +297,7 @@ class TestDeferredPlatformToolPreregistration:
         the gateway later materializes the adapter, ``_load_plugin`` reuses
         that module instead of re-running its body.
         """
-        from gateway.platform_registry import platform_registry
+        from plugin_runtime.platform_registry import platform_registry
         from plugin_runtime.manager import PluginManager
 
         manifest = _write_platform_plugin(tmp_path, "probeplat", with_tools_module=True)
@@ -314,7 +321,7 @@ class TestDeferredPlatformToolPreregistration:
         ``register()``. Tools registered at discovery are already in the
         "before" snapshot, so the diff alone would report zero.
         """
-        from gateway.platform_registry import platform_registry
+        from plugin_runtime.platform_registry import platform_registry
         from plugin_runtime.manager import PluginManager
 
         manifest = _write_platform_plugin(tmp_path, "probeplat", with_tools_module=True)
@@ -407,7 +414,7 @@ class TestDeferredPlatformToolPreregistration:
 
         ``enabled`` stays False on purpose: the adapter genuinely did not load.
         """
-        from gateway.platform_registry import platform_registry
+        from plugin_runtime.platform_registry import platform_registry
         from plugin_runtime.manager import PluginManager
         from toolsets import resolve_toolset
 

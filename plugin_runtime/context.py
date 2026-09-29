@@ -41,6 +41,8 @@ from plugin_runtime.loading import _serialized_replacement
 from plugin_runtime.manifest import PluginManifest, manifest_key
 from plugin_runtime.registration import PluginRegistration, replacement_coordinator
 from plugin_runtime.state import PluginState
+from plugin_runtime.contracts import RegisteredApprovalTransport
+from plugin_runtime.host_bindings import get_plugin_host_callback
 
 
 logger = logging.getLogger("hermes_cli.plugins")
@@ -110,8 +112,10 @@ class PluginContext:
         re-checks ``gateway.platform_actions`` (legacy ``plugins.entries.<id>.allow_platform_actions``,
         default OFF) and returns ``{"ok": bool, ...}`` — verbs never raise into hook dispatch; no adapter
         handles or raw SDK objects."""
-        from hermes_cli.platform_actions import PlatformActions
-        return PlatformActions(self.plugin_id)
+        factory = get_plugin_host_callback("platform_actions_factory")
+        if factory is None:
+            raise RuntimeError("platform actions host is unavailable")
+        return factory(self.plugin_id)
 
     def _wrong_type(self, obj: Any, base_class: type, label: str, article: str = "a") -> bool:
         """Warn-and-ignore gate shared by every registrar that requires a base class."""
@@ -248,7 +252,6 @@ class PluginContext:
         """Register a human approval transport, inactive until ``security.approval.transport:
         <name>`` selects it. It receives a redacted ``ApprovalRequest`` and returns only a
         correlated decision; policy and persistence stay host-owned. ``present_fn`` may be async."""
-        from hermes_cli.approval_transport import RegisteredApprovalTransport
         transports = self._manager._approval_transports
         clean = str(name).strip().lower()
         if clean == "builtin":
@@ -491,8 +494,8 @@ class PluginContext:
             logger.warning("Plugin '%s' tried to register a command with an empty name.", self.manifest.name)
             return
         with suppress(Exception):  # reject if it conflicts with a built-in command
-            from hermes_cli.commands import resolve_command
-            if resolve_command(clean) is not None:
+            resolver = get_plugin_host_callback("command_resolver")
+            if resolver is not None and resolver(clean) is not None:
                 logger.warning("Plugin '%s' tried to register command '/%s' which conflicts "
                                "with a built-in command. Skipping.", self.manifest.name, clean)
                 return
@@ -571,9 +574,14 @@ class PluginContext:
         """Register a :class:`hermes_cli.dashboard_auth.DashboardAuthProvider` for the dashboard
         auth gate (non-loopback bind without ``--insecure``). Wrong type / duplicate name warn and
         are ignored, never raised."""
-        from hermes_cli.dashboard_auth import DashboardAuthProvider
-        from hermes_cli.dashboard_auth.registry import register_global_provider, unregister_global_provider
-        if self._wrong_type(provider, DashboardAuthProvider, "dashboard-auth provider"):
+        provider_type = get_plugin_host_callback("dashboard_auth_provider_type")
+        register_global_provider = get_plugin_host_callback("dashboard_auth_register")
+        unregister_global_provider = get_plugin_host_callback("dashboard_auth_unregister")
+        if provider_type is None or register_global_provider is None or unregister_global_provider is None:
+            logger.warning("Plugin '%s' tried to register dashboard-auth provider but the host is unavailable",
+                           self.manifest.name)
+            return
+        if self._wrong_type(provider, provider_type, "dashboard-auth provider"):
             return
         launch_scope = hermes_home_key(get_process_hermes_home())
         if self._manager.scope_key != launch_scope:
@@ -619,7 +627,7 @@ class PluginContext:
         it freely); an ACTIVE installer goes in ``ensure_deps_fn`` (called from ``create_adapter()`` when
         ``check_fn`` is False). Extra kwargs (``setup_fn``, ``emoji``, ``allowed_users_env``,
         ``platform_hint``, ``ensure_deps_fn``) forward to ``PlatformEntry``; unknown keys raise TypeError."""
-        from gateway.platform_registry import platform_registry, PlatformEntry
+        from plugin_runtime.platform_registry import platform_registry, PlatformEntry
         entry_kwargs.setdefault("plugin_name", self.manifest.name)
         entry = PlatformEntry(
             name=name, label=label, adapter_factory=adapter_factory, check_fn=check_fn,
@@ -697,8 +705,9 @@ class PluginContext:
         if not all(c.isalnum() or c == "_" for c in key):
             raise ValueError(f"Plugin '{me}' auxiliary task key {key!r} "
                              f"must contain only alphanumeric characters and underscores")
-        from hermes_cli.main_provider_setup import _AUX_TASKS as _BUILTIN_AUX_TASKS
-        if key in {k for k, _name, _desc in _BUILTIN_AUX_TASKS}:
+        builtin_keys = get_plugin_host_callback("builtin_auxiliary_task_keys")
+        reserved = set(builtin_keys()) if builtin_keys is not None else set()
+        if key in reserved:
             raise ValueError(f"Plugin '{me}' cannot register auxiliary task {key!r} — that key is reserved "
                              f"for a built-in task. Pick a plugin-namespaced key (e.g. '{me}_{key}').")
         # Owner is the canonical id ``ctx.llm`` is bound to, so agent/plugin_llm.py can match it.

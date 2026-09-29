@@ -19,6 +19,7 @@ from plugin_runtime.loading import (
 )
 from plugin_runtime.manager import PluginManager
 from plugin_runtime.debug import install_plugin_debug_handler
+from plugin_runtime.host_bindings import get_plugin_host_callback
 
 logger = logging.getLogger("hermes_cli.plugins")
 
@@ -148,12 +149,12 @@ def reset_plugin_managers_for_tests() -> None:
     with _published_tui_host_lock:
         _published_tui_message_injector = None
 
-    try:
-        from hermes_cli.dashboard_auth.registry import clear_providers
-
-        clear_providers()
-    except Exception:
-        logger.debug("dashboard-auth registry clear failed", exc_info=True)
+    clear_providers = get_plugin_host_callback("dashboard_auth_clear")
+    if clear_providers is not None:
+        try:
+            clear_providers()
+        except Exception:
+            logger.debug("dashboard-auth registry clear failed", exc_info=True)
 
 
 def has_enabled_agent_plugin_mcp(raw_config: Mapping[str, Any]) -> bool:

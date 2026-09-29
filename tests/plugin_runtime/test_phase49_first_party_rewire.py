@@ -1,4 +1,4 @@
-"""Phase 4.9 migration ledger for cutting first-party plugin runtime off hermes_cli."""
+"""Permanent first-party plugin ownership checks retained from Phase 4.9."""
 
 from __future__ import annotations
 
@@ -28,8 +28,8 @@ ROOT_SOURCES = (
     "run_agent.py",
 )
 
-# Phase 4.9 is a hard-cut migration. This ledger is intentionally non-empty at
-# the start of the phase and must shrink as consumers move to plugin_runtime.
+# The Phase 4.9 migration is complete; these exact-zero assertions remain as a
+# permanent regression check for first-party consumers.
 PHASE49_REWIRE_DEBT_IMPORTS = 0
 PHASE49_REWIRE_DEBT_FILES: set[str] = set()
 

@@ -24,7 +24,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from gateway.config import GatewayConfig, Platform, PlatformConfig, _apply_env_overrides
-from gateway.platform_registry import PlatformEntry, platform_registry
+from plugin_runtime.platform_registry import PlatformEntry, platform_registry
 
 
 @pytest.fixture
