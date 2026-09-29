@@ -340,7 +340,7 @@ def test_unmanaged_root_home_child_ignores_sticky_active_profile(tmp_path, monke
 @pytest.mark.parametrize("standalone", [False, True])
 def test_named_profile_without_multiplex_evidence_starts_the_host_gateway(tmp_path, monkeypatch, standalone):
     """`gateway run` refuses a profiles/<name> home a gateway of its own, so ensure must start the host."""
-    from hermes_cli import gateway_runtime as runtime, gateway_runtime_service as service, gateway_runtime_start as start
+    from gateway import runtime, runtime_service as service, runtime_start as start
 
     root = tmp_path / ".hermes"
     home = root / "profiles" / "alpha"

@@ -33,8 +33,8 @@ def implied_host_root(home: Path) -> Path | None:
     root = multiplexer_root_for(home)
     if root is None:
         return None
-    from hermes_cli.gateway_multiplex_mode import explicit_multiplex_flag
-    from hermes_cli.profiles import profile_is_standalone
+    from gateway.multiplex_mode import explicit_multiplex_flag
+    from gateway.profile_serving import profile_is_standalone
     if explicit_multiplex_flag(root) is False or profile_is_standalone(home):
         return None
     return root
