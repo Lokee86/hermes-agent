@@ -357,65 +357,7 @@ class CompressionSettings(SimpleNamespace):
     """Parsed ``compression`` config section (see ``_parse_compression_config``)."""
 
 
-_EXPLICIT_API_MODES = {
-    "chat_completions", "codex_responses", "anthropic_messages", "bedrock_converse",
-    "codex_app_server",
-}
-
-
-def _resolve_api_mode(agent, api_mode, provider_name, base_url):
-    """Set ``agent.api_mode`` (and provider rewrites) — ordered ladder, first match wins."""
-    from hermes_cli.providers import is_actual_route
-    from agent.transports import registered_api_modes
-    host, url = agent._base_url_hostname, agent._base_url_lower
-    if is_actual_route(agent.provider, base_url):
-        agent.api_mode = "chat_completions"
-    elif api_mode in _EXPLICIT_API_MODES or (api_mode and api_mode in registered_api_modes()):
-        # A provider plugin's own dialect (``register_transport(api_mode, cls)``) is as explicit
-        # as the in-tree modes; rewriting it to chat_completions silently dropped its transport.
-        agent.api_mode = api_mode
-    elif agent.provider in {"openai-codex", "xai", "xai-oauth"}:
-        agent.api_mode = "codex_responses"
-    elif provider_name is None and host == "chatgpt.com" and "/backend-api/codex" in url:
-        agent.api_mode = "codex_responses"
-        agent.provider = "openai-codex"
-    elif provider_name is None and host == "api.x.ai":
-        agent.api_mode = "codex_responses"
-        agent.provider = "xai"
-    elif agent.provider == "anthropic" or (provider_name is None and host == "api.anthropic.com"):
-        agent.api_mode = "anthropic_messages"
-        agent.provider = "anthropic"
-    elif url.rstrip("/").endswith("/anthropic"):
-        # Third-party Anthropic-compatible endpoints (MiniMax, DashScope) end in /anthropic.
-        agent.api_mode = "anthropic_messages"
-    elif agent.provider == "bedrock" or (
-        host.startswith("bedrock-runtime.") and base_url_host_matches(url, "amazonaws.com")
-    ):
-        agent.api_mode = "bedrock_converse"
-    elif agent.provider in {"nous", "nous-portal", "nousresearch"}:
-        # Portal is dual-wire (anthropic/* → Messages, else chat_completions); covers direct
-        # AIAgent construction without a resolved runtime.
-        from hermes_cli.providers import nous_api_mode
-        agent.api_mode = nous_api_mode(agent.model)
-    else:
-        # Host-mandated wire check — LAST, so the provider-slug rewrites above always win.
-        # Covers api.meta.ai → codex_responses (prompt caching: 0% on chat vs 93-99%).
-        # URL-driven, not provider-name-driven: `providers.meta` may point anywhere.
-        try:
-            # Note: provider="meta" without an api.meta.ai base_url (or with a non-api.meta.ai base_url)
-            # intentionally falls through to chat_completions here. The wire protocol for Meta is URL-driven
-            # BY DESIGN, not provider-name-driven, because user config `providers.meta` may point at any
-            # OpenAI-compatible endpoint, and forcing `codex_responses` on the provider name alone would
-            # break custom endpoints named "meta" that do not host the Responses API. See #63425.
-            from hermes_cli.providers import host_mandated_api_mode as _host_mandated_api_mode
-            _mandated = _host_mandated_api_mode(base_url or "")
-        except Exception:
-            _mandated = None
-        agent.api_mode = _mandated if _mandated is not None else "chat_completions"
-
-
-def _finalize_routing(agent, api_mode, credential_pool):
-    from hermes_cli.providers import is_actual_route
+def _finalize_routing(agent, route, credential_pool):
     # Credential-pool validation runs AFTER provider auto-detection so a pool scoped to
     # "anthropic" isn't rejected for provider=None + anthropic.com URL.
     # Regression from #63048 which placed this check before the URL-based auto-detection block above (fixed
@@ -462,37 +404,6 @@ def _finalize_routing(agent, api_mode, credential_pool):
     from hermes_cli.anon_auth import pin_model_for_route
     agent.model = pin_model_for_route(agent.provider, agent.base_url, agent.model)
 
-    # Auto-upgrade to Responses for GPT-5.x-style models and direct OpenAI URLs, unless
-    # api_mode was explicit, the runtime is ACP (`acp://` clients route themselves, no
-    # Responses surface) or Azure OpenAI (gpt-5.x on /chat/completions only). Provider
-    # exceptions live in _provider_model_requires_responses_api.
-    from hermes_cli.runtime_provider_backends import _is_external_process_provider
-
-    _base_lower = str(agent.base_url or "").lower()
-    if (
-        # GPT-5.x models usually require the Responses API path, but some providers have exceptions (for
-        # example Copilot's gpt-5-mini still uses chat completions). ACP runtimes are excluded: an ACP
-        # client handles its own routing and does not implement the Responses API surface. Keyed on the
-        # `acp://` scheme AND the profile's external_process auth_type (an `<X>_ACP_BASE_URL` override
-        # can carry an https marker), not one vendor, so every ACP client is covered. When api_mode was explicitly
-        # provided, respect it — the user knows what their endpoint supports (#10473). Exception: Azure
-        # OpenAI serves gpt-5.x on /chat/completions and does NOT support the Responses API — skip the
-        # upgrade for Azure (openai.azure.com), even though it looks OpenAI-compatible.
-        api_mode is None
-        and agent.api_mode == "chat_completions"
-        and not is_actual_route(agent.provider, agent.base_url)
-        and not _base_lower.startswith(("acp://", "acp+tcp://"))
-        and not _is_external_process_provider(agent.provider)
-        and not agent._is_azure_openai_url()
-        and (
-            agent._is_direct_openai_url()
-            or agent._provider_model_requires_responses_api(agent.model, provider=agent.provider)
-        )
-    ):
-        agent.api_mode = "codex_responses"
-        # Invalidate the eager-warmed transport cache — api_mode changed after the warm.
-        if hasattr(agent, "_transport_cache"):
-            agent._transport_cache.clear()
 
     # Pre-warm the OpenRouter metadata cache (1h TTL) off-thread so the first pricing estimate
     # doesn't block. Process-level Event guard: an unguarded spawn leaks a thread per message.
@@ -2437,19 +2348,34 @@ def init_agent(
     # Skips the end-of-turn review fork (~30K tokens/event); one switch for both review paths.
     agent.skip_background_review = bool(skip_background_review)
     agent.log_prefix = f"{log_prefix} " if log_prefix else ""
-    # Effective base URL for feature detection (prompt caching, reasoning, etc.)
-    from hermes_cli.providers import is_actual_route
-    if is_actual_route(provider, base_url):
-        from hermes_cli.auth import normalize_actual_base_url
-        base_url = normalize_actual_base_url(base_url)
-    agent.base_url = base_url or ""
+    # Route identity and wire mode are resolved once, before any client or transport is built.
+    from providers.routing import InvocationRequest, resolve_invocation_route
+
     provider_name = provider.strip().lower() if isinstance(provider, str) and provider.strip() else None
-    agent.provider = provider_name or ""
-    agent.requested_provider = (
+    requested_provider_name = (
         requested_provider.strip().lower()
         if isinstance(requested_provider, str) and requested_provider.strip()
-        else agent.provider
+        else provider_name or ""
     )
+    route = resolve_invocation_route(InvocationRequest(
+        provider=provider_name or "",
+        model=agent.model,
+        base_url=base_url or "",
+        explicit_api_mode=api_mode,
+        configured_api_mode=None,
+        configured_provider=provider_name,
+        openai_runtime=None,
+        requested_provider=requested_provider_name,
+    ))
+    agent._invocation_route = route
+    agent.provider = route.provider
+    agent.model = route.model
+    agent.base_url = route.base_url
+    agent.api_mode = route.api_mode
+    agent.runtime_kind = route.runtime_kind
+    agent.is_routing_aggregator = route.is_routing_aggregator
+    agent._route_source = route.source
+    agent.requested_provider = requested_provider_name
     agent.capabilities = {
         key: value for key, value in (capabilities or {}).items()
         if isinstance(key, str) and isinstance(value, bool)
@@ -2457,8 +2383,7 @@ def init_agent(
     agent._credential_pool = credential_pool
     agent.acp_command = acp_command or command
     agent.acp_args = list(acp_args or args or [])
-    _resolve_api_mode(agent, api_mode, provider_name, base_url)
-    _finalize_routing(agent, api_mode, credential_pool)
+    _finalize_routing(agent, route, credential_pool)
 
     # Platform callbacks are stored under their parameter names verbatim.
     for _cb in _CALLBACK_PARAMS:
@@ -2483,7 +2408,7 @@ def init_agent(
     _init_turn_state(agent, run_budget_seconds)
     _setup_logging(agent)
     _set_defaults(agent, _STREAM_STATE)
-    _build_client(agent, api_key, base_url, fallback_model)
+    _build_client(agent, api_key, agent.base_url, fallback_model)
     _init_fallback_chain(agent, fallback_model)
     _load_tools(agent, enabled_toolsets, disabled_toolsets)
     _init_session_state(

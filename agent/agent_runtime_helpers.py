@@ -995,8 +995,12 @@ def _apply_primary_runtime_fields(agent, rt: Dict[str, Any]) -> None:
     agent.provider = rt["provider"]
     agent.requested_provider = rt.get("requested_provider", agent.provider)
     agent.base_url = rt["base_url"]           # setter updates _base_url_lower
-    from hermes_cli.providers import is_actual_route
-    agent.api_mode = "chat_completions" if is_actual_route(agent.provider, agent.base_url) else rt["api_mode"]
+    agent.api_mode = rt["api_mode"]
+    agent._invocation_route = rt.get("invocation_route")
+    if agent._invocation_route is not None:
+        agent.runtime_kind = agent._invocation_route.runtime_kind
+        agent.is_routing_aggregator = agent._invocation_route.is_routing_aggregator
+        agent._route_source = agent._invocation_route.source
     if hasattr(agent, "_transport_cache"):
         agent._transport_cache.clear()
     agent.api_key = rt["api_key"]
@@ -1975,7 +1979,8 @@ def _apply_switched_provider_request_overrides(agent, new_provider):
 _SWITCH_SNAPSHOT_FIELDS = (
     "model", "provider", "requested_provider", "base_url", "api_mode", "api_key", "client",
     "_anthropic_client", "_anthropic_api_key", "_anthropic_base_url", "_is_anthropic_oauth",
-    "_config_context_length", "_reasoning_echo_flag", "runtime_capabilities",
+    "_config_context_length", "_reasoning_echo_flag", "runtime_capabilities", "_invocation_route",
+    "runtime_kind", "is_routing_aggregator", "_route_source",
     "_credential_pool", "_credential_pool_entry_id",
 )
 _MISSING = object()
@@ -2000,44 +2005,47 @@ def _restore_switch_snapshot(agent, snapshot: Dict[str, Any]) -> None:
 
 
 def _resolve_switch_destination(agent, new_model, new_provider, base_url, api_mode, capabilities, old_norm, new_norm):
-    """Resolve ``(api_mode, base_url, destination_capabilities)`` for the switch target."""
-    from hermes_cli.providers import determine_api_mode, is_actual_route
+    """Resolve the canonical invocation route and destination capabilities for a switch."""
     from agent.native_compaction import resolve_native_compaction_capabilities
     from hermes_cli.models import opencode_provider_family
-    # Pass model so dual-wire providers (Nous Portal anthropic/* -> Messages) resolve correctly.
-    if not api_mode:
-        api_mode = determine_api_mode(new_provider, base_url, model=new_model)
-    if not base_url and new_norm == "openai":
-        # An omitted URL means the provider's canonical direct endpoint.
-        base_url = "https://api.openai.com/v1"
     # Same-provider switches may omit base_url (e.g. credential refresh); resolve capabilities from
     # the endpoint the normalization below retains.
-    effective_base_url = base_url
-    if not effective_base_url and old_norm == new_norm:
-        effective_base_url = getattr(agent, "base_url", "")
-    if is_actual_route(new_provider, effective_base_url):
-        api_mode = "chat_completions"
-        if effective_base_url:
-            from hermes_cli.auth import normalize_actual_base_url
-            base_url = normalize_actual_base_url(effective_base_url)
+    effective_base_url = base_url or (getattr(agent, "base_url", "") if old_norm == new_norm else "")
+    from providers.routing import InvocationRequest, resolve_invocation_route
+    route = resolve_invocation_route(InvocationRequest(
+        provider=new_provider or "",
+        model=new_model,
+        base_url=effective_base_url,
+        explicit_api_mode=api_mode or None,
+        configured_api_mode=None,
+        configured_provider=new_provider or None,
+        openai_runtime=None,
+        requested_provider=new_provider or "",
+    ))
+    effective_base_url = route.base_url
     destination_capabilities = (
         dict(capabilities)
         if isinstance(capabilities, dict)
         else resolve_native_compaction_capabilities(
-            model=new_model, base_url=effective_base_url, provider=new_provider,
-            is_codex_backend=new_norm == "openai-codex",
+            model=route.model, base_url=effective_base_url, provider=route.provider,
+            is_codex_backend=route.provider.strip().lower() == "openai-codex",
         )
     )
     # Guard against a trailing /v1 on OpenCode base_url reaching the anthropic_messages client
     # (double-/v1 404); model_switch already strips it, direct callers may not.
     if (
-        api_mode == "anthropic_messages"
-        and opencode_provider_family(new_provider) is not None
-        and isinstance(base_url, str)
-        and base_url
+        route.api_mode == "anthropic_messages"
+        and opencode_provider_family(route.provider) is not None
+        and isinstance(route.base_url, str)
+        and route.base_url
     ):
-        base_url = re.sub(r"/v1/?$", "", base_url)
-    return api_mode, base_url, destination_capabilities
+        route = route.__class__(
+            provider=route.provider, model=route.model,
+            base_url=re.sub(r"/v1/?$", "", route.base_url), api_mode=route.api_mode,
+            runtime_kind=route.runtime_kind,
+            is_routing_aggregator=route.is_routing_aggregator, source=route.source,
+        )
+    return route, destination_capabilities
 
 
 def _build_switched_client(agent, new_provider, api_key, base_url, api_mode, new_norm) -> None:
@@ -2112,26 +2120,30 @@ def _build_switched_client(agent, new_provider, api_key, base_url, api_mode, new
     agent.client = agent._create_openai_client(dict(agent._client_kwargs), reason="switch_model", shared=True)
 
 
-def _swap_switch_runtime(agent, new_model, new_provider, api_key, base_url, api_mode, old_provider, old_norm, new_norm) -> None:
+def _swap_switch_runtime(agent, route, api_key, old_provider, old_norm, new_norm) -> None:
     """Swap identity/transport fields, reload the pool, rebuild the client (rolled back by the caller on error)."""
     # Clear the per-config override so the new model's context window is re-resolved.
     agent._config_context_length = None
-    agent.model = new_model
-    agent.provider = agent.requested_provider = new_provider
+    agent.model = route.model
+    agent.provider = agent.requested_provider = route.provider
     # Re-read reasoning_echo so the flag reflects the new primary model (see _reasoning_echo_opt_in).
     agent._reasoning_echo_flag = agent._read_reasoning_echo_from_config()
     # Empty base_url while the provider changes means upstream resolution failed; falling back to
     # the old provider's URL pairs the wrong host and persists via _primary_runtime. Fail loud.
     # Same-provider re-select (credential refresh) may keep the URL.
-    if base_url:
-        agent.base_url = base_url
+    if route.base_url:
+        agent.base_url = route.base_url
     elif old_norm != new_norm:
         raise ValueError(
             f"switch_model: no base_url resolved for provider "
-            f"'{new_provider}' (switching from '{old_provider}'); "
+            f"'{route.provider}' (switching from '{old_provider}'); "
             "refusing to keep the previous provider's endpoint"
         )
-    agent.api_mode = api_mode
+    agent.api_mode = route.api_mode
+    agent._invocation_route = route
+    agent.runtime_kind = route.runtime_kind
+    agent.is_routing_aggregator = route.is_routing_aggregator
+    agent._route_source = route.source
     # New api_mode may need a different transport.
     if hasattr(agent, "_transport_cache"):
         agent._transport_cache.clear()
@@ -2145,13 +2157,13 @@ def _swap_switch_runtime(agent, new_model, new_provider, api_key, base_url, api_
         agent._credential_pool_entry_id = None
         try:
             from agent.credential_pool import load_pool
-            agent._credential_pool = load_pool(new_provider)
+            agent._credential_pool = load_pool(route.provider)
         except Exception as _pool_exc:  # noqa: BLE001
             logger.warning(
                 "switch_model: credential pool reload failed for %s (%s); "
-                "continuing without pool rotation this turn", new_provider, _pool_exc,
+                "continuing without pool rotation this turn", route.provider, _pool_exc,
             )
-    _build_switched_client(agent, new_provider, api_key, base_url, api_mode, new_norm)
+    _build_switched_client(agent, route.provider, api_key, route.base_url, route.api_mode, new_norm)
     sync_credential_pool_entry_id(agent)
 
 
@@ -2240,6 +2252,7 @@ def _build_primary_runtime_snapshot(agent, api_mode) -> Dict[str, Any]:
         "requested_provider": agent.requested_provider,
         "base_url": agent.base_url,
         "api_mode": agent.api_mode,
+        "invocation_route": getattr(agent, "_invocation_route", None),
         "api_key": getattr(agent, "api_key", ""),
         "client_kwargs": dict(agent._client_kwargs),
         "use_prompt_caching": agent._use_prompt_caching,
@@ -2325,13 +2338,13 @@ def switch_model(
     # swallowed: the switch itself must still complete.
     old_norm = (old_provider or "").strip().lower()
     new_norm = (new_provider or "").strip().lower()
-    api_mode, base_url, destination_capabilities = _resolve_switch_destination(
+    route, destination_capabilities = _resolve_switch_destination(
         agent, new_model, new_provider, base_url, api_mode, capabilities, old_norm, new_norm
     )
     snapshot = _snapshot_switch_state(agent)
     try:
         _swap_switch_runtime(
-            agent, new_model, new_provider, api_key, base_url, api_mode, old_provider, old_norm, new_norm
+            agent, route, api_key, old_provider, old_norm, new_norm
         )
     except Exception:
         _restore_switch_snapshot(agent, snapshot)
@@ -2342,7 +2355,7 @@ def switch_model(
     if custom_providers is not None:
         agent._custom_providers = custom_providers
     agent._use_prompt_caching, agent._use_native_cache_layout = agent._anthropic_prompt_cache_policy(
-        provider=new_provider, base_url=agent.base_url, api_mode=api_mode, model=new_model
+        provider=route.provider, base_url=agent.base_url, api_mode=route.api_mode, model=route.model
     )
     if hasattr(agent, "context_compressor") and agent.context_compressor:
         _update_switch_compressor(agent, custom_providers, effective_context_length, snapshot)
@@ -2366,11 +2379,11 @@ def switch_model(
     # short-circuiting the freshly selected healthy provider.
     from agent.chat_completion_helpers import _reset_stale_streak
     _reset_stale_streak(agent)
-    agent._primary_runtime = _build_primary_runtime_snapshot(agent, api_mode)
-    _finish_switch(agent, new_provider, old_norm, new_norm)
+    agent._primary_runtime = _build_primary_runtime_snapshot(agent, route.api_mode)
+    _finish_switch(agent, route.provider, old_norm, new_norm)
     logger.info(
         "Model switched in-place: %s (%s) -> %s (%s)",
-        old_model, old_provider, new_model, new_provider,
+        old_model, old_provider, route.model, route.provider,
     )
     _persist_switch_billing_route(agent)
 

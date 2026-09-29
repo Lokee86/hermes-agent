@@ -28,7 +28,7 @@ from models import (
     resolve_model_alias,
 )
 from hermes_cli.providers import (
-    LLAMACPP_ALIASES, determine_api_mode, host_mandated_api_mode, resolve_provider_full,
+    LLAMACPP_ALIASES, resolve_provider_full,
 )
 from hermes_cli.models_catalog_static import static_provider_model_ids
 from agent.models_dev import (
@@ -1444,7 +1444,6 @@ def _creds_for_current_provider(st: _Switch) -> None:
     if keep_current_ollama_endpoint:
         st.api_key = st.current_api_key or "no-key-required"
         st.base_url = st.current_base_url
-        st.api_mode = determine_api_mode(st.current_provider, st.base_url)
         st.validation_headers = ollama_headers
     else:
         try:
@@ -1461,7 +1460,6 @@ def _creds_for_current_provider(st: _Switch) -> None:
             and (not st.base_url or _fell_back_to_openrouter_default(st))
         ):
             st.base_url, st.api_key = st.current_base_url, st.current_api_key
-            st.api_mode = determine_api_mode(st.current_provider, st.base_url)
 
 
 def _fell_back_to_openrouter_default(st: _Switch) -> bool:
@@ -1528,15 +1526,6 @@ def _resolve_switch_credentials(st: _Switch) -> Optional[ModelSwitchResult]:
         if da is not None and da.base_url:
             _apply_direct_alias_endpoint(st, da)
 
-    # Fills an empty mode (alias cleared it) and overrides a STALE mode carried from previous
-    # session state when the host mandates one wire protocol (e.g. gpt-5.x on api.openai.com
-    # would otherwise 400 on tools+reasoning). ``codex_app_server`` is the resolver's
-    # ``model.openai_runtime`` opt-in, not a wire protocol the host can mandate: keep it.
-    from hermes_cli.providers import is_actual_route
-    mandated_mode = "chat_completions" if is_actual_route(st.target_provider, st.base_url) else host_mandated_api_mode(st.base_url)
-    if mandated_mode is not None and st.api_mode != "codex_app_server":
-        st.api_mode = mandated_mode
-    st.api_mode = st.api_mode or determine_api_mode(st.target_provider, st.base_url)
     return None
 
 
@@ -1595,58 +1584,21 @@ def _validate_switch(st: _Switch) -> Optional[ModelSwitchResult]:
     return None
 
 
-def _copilot_api_mode(provider: str, model: str, api_key: str) -> str:
-    from hermes_cli.models import copilot_model_api_mode
-    return copilot_model_api_mode(model, api_key=api_key)
-
-
-def _opencode_api_mode(provider: str, model: str, api_key: str) -> str:
-    # Re-derive api_mode from the effective model rather than the persisted api_mode: the opencode providers
-    # serve both anthropic_messages and chat_completions models, so the previous session's mode must not
-    # leak across /model switches. Refs #16878.
-    # opencode-zen/go must always re-derive api_mode from the target model (not the stale persisted
-    # api_mode), because the same provider serves both anthropic_messages (e.g. minimax-m2.7) and
-    # chat_completions (e.g. deepseek-v4-flash) and switching models via /model would otherwise carry the
-    # previous mode forward, stripping /v1 from base_url for chat_completions models and 404'ing. Refs
-    # #16878.
-    from hermes_cli.models import opencode_model_api_mode
-    return opencode_model_api_mode(provider, model)
-
-
-def _nous_api_mode(provider: str, model: str, api_key: str) -> str:
-    # Portal serves anthropic/* on /v1/messages and everything else on /chat/completions;
-    # re-derive from the FINAL model so alias clears / empty fallbacks cannot leave Claude on the
-    # OpenAI wire.
-    from hermes_cli.providers import nous_api_mode
-    return nous_api_mode(model)
-
-
-# Per-provider api_mode overrides applied after validation, keyed on the final target provider
-# (the key sets are disjoint, so exactly one — or none — fires).
-_PROVIDER_API_MODE_OVERRIDES: dict[str, Any] = {
-    **dict.fromkeys(("copilot", "github-copilot"), _copilot_api_mode),
-    **dict.fromkeys(("opencode-zen", "opencode-go", "opencode"), _opencode_api_mode),
-    **dict.fromkeys(("nous", "nous-portal", "nousresearch"), _nous_api_mode)}
-
-
-def model_derived_api_mode(provider: str, model: str, api_key: str = "") -> Optional[str]:
-    """api_mode re-derived from the FINAL model for providers that serve several wire formats behind one
-    endpoint (OpenCode Zen/Go and custom providers extending a family slug, Copilot, Nous); None when the
-    provider's wire is fixed by its endpoint. A persisted api_mode from an earlier model of such a provider
-    is never authoritative — resume paths must call this instead of honoring the row (#96066)."""
-    from hermes_cli.models import opencode_provider_family
-    key = str(provider or "").strip().lower()
-    override = _PROVIDER_API_MODE_OVERRIDES.get(opencode_provider_family(key) or key)
-    return override(key, model, api_key) if override is not None else None
-
-
 def _build_switch_result(st: _Switch) -> ModelSwitchResult:
     """COMMON PATH part 3: final api_mode / base_url shaping, metadata, warnings."""
-    derived = model_derived_api_mode(st.target_provider, st.new_model, st.api_key)
-    if derived is not None:
-        st.api_mode = derived
-    if not st.api_mode:
-        st.api_mode = determine_api_mode(st.target_provider, st.base_url, model=st.new_model)
+    from providers.routing import InvocationRequest, resolve_invocation_route
+    route = resolve_invocation_route(InvocationRequest(
+        provider=st.target_provider,
+        model=st.new_model,
+        base_url=st.base_url,
+        explicit_api_mode=None,
+        configured_api_mode=st.api_mode or None,
+        configured_provider=st.target_provider or None,
+        openai_runtime=None,
+        requested_provider=st.explicit_provider or st.target_provider,
+    ))
+    st.target_provider, st.new_model = route.provider, route.model
+    st.base_url, st.api_mode = route.base_url, route.api_mode
 
     # OpenCode base URLs end with /v1 for OpenAI-compatible models but the Anthropic SDK prepends
     # its own /v1/messages: strip for anthropic_messages, re-append for

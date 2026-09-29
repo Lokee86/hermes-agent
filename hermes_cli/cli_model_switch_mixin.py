@@ -65,16 +65,6 @@ def stored_session_route(session_meta, *, current_model, current_provider):
     if is_foreign_provider_endpoint(provider, base_url):
         # The endpoint and its wire belong to the provider this chat left; resolve the stored one's own.
         base_url = api_mode = None
-    # A row's api_mode/base_url were written for whichever model the session last ran. Providers that
-    # pick the wire per model (OpenCode Zen/Go, Copilot, Nous) re-derive both from the stored model, or a
-    # resumed opencode-go session keeps a MiniMax-era anthropic_messages route for a chat_completions
-    # model (#96066) — the CLI/oneshot twin of tui_gateway's _rederive_per_model_route.
-    from hermes_cli.model_switch import model_derived_api_mode
-    derived = model_derived_api_mode(provider or "", stored_model)
-    if derived is not None:
-        from hermes_cli.models import normalize_opencode_base_url
-        api_mode = derived
-        base_url = normalize_opencode_base_url(provider, api_mode, base_url) or None
     return stored_model, provider, base_url, api_mode, provider_changed
 
 
@@ -316,19 +306,6 @@ class CLIModelSwitchMixin:
                 current_model = canonical
                 changed = True
 
-        def _adopt_with_mode(normalize, api_mode_of, notice) -> bool:
-            """Provider families that also own the wire protocol: adopt id, then sync api_mode."""
-            nonlocal changed
-            try:
-                _adopt(normalize(current_model), notice)
-                resolved_mode = api_mode_of(current_model)
-                if resolved_mode != self.api_mode:
-                    self.api_mode = resolved_mode
-                    changed = True
-            except Exception:
-                pass
-            return changed
-
         try:
             from hermes_cli.models_catalog_static import static_provider_model_ids
             from models import normalize_model_id
@@ -347,21 +324,21 @@ class CLIModelSwitchMixin:
             pass
 
         if resolved_provider == "copilot":
-            from hermes_cli.models import copilot_model_api_mode, normalize_copilot_model_id
-            return _adopt_with_mode(
-                lambda m: normalize_copilot_model_id(m, api_key=self.api_key),
-                lambda m: copilot_model_api_mode(m, api_key=self.api_key),
+            from hermes_cli.models import normalize_copilot_model_id
+            _adopt(
+                normalize_copilot_model_id(current_model, api_key=self.api_key),
                 lambda new: f"Normalized Copilot model '{current_model}' to '{new}'.")
+            return changed
 
         from hermes_cli.models import opencode_provider_family
         if opencode_provider_family(resolved_provider) is not None:
-            from hermes_cli.models import normalize_opencode_model_id, opencode_model_api_mode
-            return _adopt_with_mode(
-                lambda m: normalize_opencode_model_id(resolved_provider, m),
-                lambda m: opencode_model_api_mode(resolved_provider, m),
+            from hermes_cli.models import normalize_opencode_model_id
+            _adopt(
+                normalize_opencode_model_id(resolved_provider, current_model),
                 lambda new: (
                     f"Stripped provider prefix from '{current_model}'; "
                     f"using '{new}' for {resolved_provider}."))
+            return changed
 
         if resolved_provider != "openai-codex":
             return changed
