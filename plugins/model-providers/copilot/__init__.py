@@ -16,7 +16,7 @@ from providers.model_normalizers import normalize_copilot_id
 class CopilotProfile(ProviderProfile):
     """GitHub Copilot / GitHub Models — editor headers + reasoning."""
 
-    def resolve_route_policy(self, model: str, base_url: str = "") -> str | None:
+    def resolve_route_policy(self, model: str, base_url: str = "", *, options=None) -> str | None:
         """Use Responses for Copilot's GPT-5+ models, except the chat-only mini tier."""
         del base_url
         normalized = normalize_copilot_id(model, ())

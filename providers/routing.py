@@ -8,8 +8,8 @@ and model selection do not belong here.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Any, Literal
+from dataclasses import dataclass, field
+from typing import Any, Literal, Mapping
 from urllib.parse import urlparse
 
 from providers.base import ProviderProfile
@@ -77,6 +77,7 @@ class InvocationRequest:
     configured_provider: str = ""
     openai_runtime: str = ""
     requested_provider: str = ""
+    route_options: Mapping[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -197,10 +198,12 @@ def _providers_match(active: str, configured: str) -> bool:
     return normalize_provider(active_name) == normalize_provider(configured_name)
 
 
-def _profile_policy(profile: ProviderProfile | None, model: str, base_url: str) -> str:
+def _profile_policy(
+    profile: ProviderProfile | None, model: str, base_url: str, options: Mapping[str, Any]
+) -> str:
     if profile is not None:
         try:
-            policy = profile.resolve_route_policy(model, base_url)
+            policy = profile.resolve_route_policy(model, base_url, options=dict(options or {}))
         except Exception:
             policy = None
         if policy:
@@ -219,7 +222,7 @@ def _profile_default(profile: ProviderProfile | None) -> str:
 
 
 def _is_app_server_request(request: InvocationRequest, provider: str) -> bool:
-    runtime = canonicalize_api_mode(request.openai_runtime)
+    runtime = str(request.openai_runtime or "").strip().lower().replace("-", "_")
     if runtime != "codex_app_server":
         return False
     requested = normalize_provider(request.requested_provider or provider)
@@ -227,9 +230,10 @@ def _is_app_server_request(request: InvocationRequest, provider: str) -> bool:
 
 
 def _runtime_kind(
-    *, profile: ProviderProfile | None, provider: str, base_url: str, api_mode: str
+    *, profile: ProviderProfile | None, provider: str, base_url: str, api_mode: str,
+    app_server: bool = False,
 ) -> str:
-    if api_mode == "codex_app_server":
+    if app_server:
         return "app_server"
     if profile is not None and profile.auth_type == "external_process":
         return "external_process"
@@ -269,7 +273,7 @@ def resolve_invocation_route(request: InvocationRequest) -> InvocationRoute:
         if mandated:
             api_mode, source = mandated, "endpoint_mandate"
         else:
-            policy = _profile_policy(profile, model, base_url) or _provider_requirement(provider)
+            policy = _profile_policy(profile, model, base_url, request.route_options) or _provider_requirement(provider)
             if policy:
                 api_mode, source = policy, "provider_policy"
             else:
@@ -283,14 +287,13 @@ def resolve_invocation_route(request: InvocationRequest) -> InvocationRoute:
                     else:
                         api_mode, source = "chat_completions", "default"
 
-    if not explicit and source != "endpoint_mandate" and _is_app_server_request(request, provider):
-        api_mode, source = "codex_app_server", "openai_runtime"
-
+    app_server = source != "endpoint_mandate" and _is_app_server_request(request, provider)
     runtime_kind = _runtime_kind(
         profile=profile,
         provider=provider,
         base_url=base_url,
         api_mode=api_mode,
+        app_server=app_server,
     )
     if runtime_kind not in _RUNTIME_KINDS:  # defensive contract guard for future extensions
         runtime_kind = "http"

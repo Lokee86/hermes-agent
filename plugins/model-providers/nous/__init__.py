@@ -12,16 +12,15 @@ from providers.model_normalizers import VendorQualifiedModelIdsMixin
 class NousProfile(VendorQualifiedModelIdsMixin, ProviderProfile):
     """Nous Portal — product tags, reasoning with Nous-specific omission."""
 
-    def resolve_route_policy(self, model: str, base_url: str = "") -> str | None:
-        """Select the native Messages wire for Portal Anthropic model IDs.
-
-        Routing policy is deliberately model- and endpoint-input-only. In particular,
-        this hook must not read ``nous.anthropic_wire`` or warm the Portal catalog;
-        configured route preferences and endpoint mandates are resolved by the route
-        owner around this provider policy.
-        """
+    def resolve_route_policy(
+        self, model: str, base_url: str = "", *, options: dict[str, Any] | None = None
+    ) -> str | None:
+        """Resolve the Portal\'s model-dependent wire from already-read route policy."""
         del base_url
-        return "anthropic_messages" if str(model or "").strip().lower().startswith("anthropic/") else None
+        if not str(model or "").strip().lower().startswith("anthropic/"):
+            return None
+        wire = str((options or {}).get("anthropic_wire") or "chat").strip().lower()
+        return "anthropic_messages" if wire == "native" else "chat_completions"
 
     def resolve_aux_model(self, *, vision: bool = False) -> str:
         """Portal's tier-aware ``/api/nous/recommended-models`` pick (cached, offline-safe)."""

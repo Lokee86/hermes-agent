@@ -8,7 +8,7 @@ from providers.base import ProviderProfile
 class AzureFoundryProfile(ProviderProfile):
     """Azure Foundry's model-dependent Responses API policy."""
 
-    def resolve_route_policy(self, model: str, base_url: str = "") -> str | None:
+    def resolve_route_policy(self, model: str, base_url: str = "", *, options=None) -> str | None:
         """Use Responses for Azure deployments that do not accept Chat Completions."""
         del base_url
         normalized = str(model or "").strip().lower().rsplit("/", 1)[-1]

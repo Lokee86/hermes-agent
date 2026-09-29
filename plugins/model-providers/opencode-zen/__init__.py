@@ -45,7 +45,7 @@ def _is_glm_5_2_model(model: str | None) -> bool:
 class OpenCodeGoProfile(ProviderProfile):
     """OpenCode Go - model-specific reasoning controls."""
 
-    def resolve_route_policy(self, model: str, base_url: str = "") -> str | None:
+    def resolve_route_policy(self, model: str, base_url: str = "", *, options=None) -> str | None:
         """Return Go's wire for models with a non-chat endpoint contract."""
         del base_url
         normalized = _flat_model_name(self.normalize_model_id(model))
@@ -123,7 +123,7 @@ class OpenCodeGoProfile(ProviderProfile):
 class OpenCodeZenProfile(ProviderProfile):
     """OpenCode Zen - model-specific reasoning controls."""
 
-    def resolve_route_policy(self, model: str, base_url: str = "") -> str | None:
+    def resolve_route_policy(self, model: str, base_url: str = "", *, options=None) -> str | None:
         """Return Zen's wire for models with a non-chat endpoint contract."""
         del base_url
         normalized = _flat_model_name(self.normalize_model_id(model))

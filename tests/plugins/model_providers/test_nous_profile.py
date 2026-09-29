@@ -140,8 +140,13 @@ class TestNousReasoningWireShape:
 
 
 class TestNousRoutePolicy:
-    def test_anthropic_models_select_the_messages_wire(self, nous_profile):
-        assert nous_profile.resolve_route_policy("anthropic/claude-opus-4.8") == "anthropic_messages"
+    def test_anthropic_models_default_to_chat_wire(self, nous_profile):
+        assert nous_profile.resolve_route_policy("anthropic/claude-opus-4.8") == "chat_completions"
+
+    def test_native_policy_selects_messages_wire(self, nous_profile):
+        assert nous_profile.resolve_route_policy(
+            "anthropic/claude-opus-4.8", options={"anthropic_wire": "native"}
+        ) == "anthropic_messages"
 
     def test_non_anthropic_models_leave_the_profile_default_in_charge(self, nous_profile):
         assert nous_profile.resolve_route_policy("hermes-4-405b") is None

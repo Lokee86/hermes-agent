@@ -49,7 +49,7 @@ def test_endpoint_policy_is_exact_and_spoof_resistant():
 
 def test_route_precedence_is_explicit_then_endpoint_then_policy_then_config_then_profile(monkeypatch):
     class PolicyProfile(ProviderProfile):
-        def resolve_route_policy(self, model: str, base_url: str = "") -> str | None:
+        def resolve_route_policy(self, model: str, base_url: str = "", *, options=None) -> str | None:
             return "anthropic_messages" if model == "policy-model" else None
 
     profile = PolicyProfile(
@@ -132,9 +132,9 @@ def test_app_server_runtime_is_an_openai_runtime_overlay(monkeypatch):
     route = resolve_invocation_route(
         InvocationRequest(provider="openai-codex", model="gpt-5", openai_runtime="codex_app_server")
     )
-    assert route.api_mode == "codex_app_server"
+    assert route.api_mode == "codex_responses"
     assert route.runtime_kind == "app_server"
-    assert route.source == "openai_runtime"
+    assert route.source in {"provider_policy", "profile"}
 
 
 def test_hard_endpoint_mandate_beats_app_server_overlay():
