@@ -59,9 +59,7 @@ def _run_switch(
     resolution, normalization, and model metadata.  This isolates the new
     configured-provider detection step.
     """
-    with patch("hermes_cli.model_switch.resolve_alias", return_value=None), \
-         patch("hermes_cli.model_switch.list_provider_models", return_value=[]), \
-         patch("hermes_cli.model_switch.normalize_model_id", side_effect=lambda provider, model, **kwargs: model), \
+    with patch("hermes_cli.model_switch.list_provider_models", return_value=[]), \
          patch("hermes_cli.models_validate.validate_requested_model", return_value=validation), \
          patch("hermes_cli.models.detect_provider_for_model", return_value=None), \
          patch("hermes_cli.model_switch.get_model_info", return_value=None), \

@@ -46,7 +46,6 @@ def _run_opencode_switch(
     """
     effective_runtime_base = runtime_base_url or current_base_url
     with (
-        patch("hermes_cli.model_switch.resolve_alias", return_value=None),
         patch("hermes_cli.model_switch.list_provider_models", return_value=[]),
         patch(
             "hermes_cli.runtime_provider.resolve_runtime_provider",

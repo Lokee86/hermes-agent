@@ -1,7 +1,7 @@
 """Shared model-switching logic for the CLI and gateway /model commands.
 
-Pipeline: parse flags -> model identity -> alias/provider resolution -> credentials ->
-normalize model name -> metadata lookup -> build result. Known ``provider:model`` prefixes
+Pipeline: parse flags -> canonical model selection -> credentials -> validation ->
+metadata lookup -> build result. Known ``provider:model`` prefixes
 are canonical model references; provider-native colons remain part of the model ID."""
 
 from __future__ import annotations
@@ -21,11 +21,15 @@ from models import (
     AmbiguousModelAliasError,
     MODEL_ALIASES,
     ModelRef,
-    normalize_model_id,
     parse_configured_provider_ref,
     parse_model_ref,
-    resolve_declared_model_id,
-    resolve_model_alias,
+)
+from models.selection import (
+    ExplicitAlias,
+    ExplicitProviderFacts,
+    ExplicitSelectionError,
+    explicit_provider_hint,
+    select_explicit_model,
 )
 from hermes_cli.providers import (
     LLAMACPP_ALIASES, resolve_provider_full,
@@ -712,95 +716,6 @@ def _provider_identity(name: str, user_providers: Optional[dict] = None,
     return pdef.id if pdef is not None else normalize_provider(name or "")
 
 
-def resolve_alias(raw_input: str, current_provider: str, user_providers: Optional[dict] = None,
-                  custom_providers: Optional[list] = None) -> Optional[tuple[str, str, str]]:
-    """Resolve a short alias against the current provider's catalog.
-
-    Direct aliases (and reverse lookup by exact model id) win; then :data:`MODEL_ALIASES` is
-    matched against the provider's models.dev catalog by ``vendor/family`` prefix (``family``
-    for non-aggregators). Returns ``(provider, resolved_model_id, alias_name)`` or None; raises
-    :class:`models.AmbiguousModelAliasError` when several catalog models match."""
-    key = raw_input.strip().lower()
-
-    _ensure_direct_aliases()
-    direct = DIRECT_ALIASES.get(key)
-    if direct is not None:
-        route_provider = _provider_identity(
-            direct.ref.provider, user_providers, custom_providers
-        )
-        return (route_provider, direct.ref.model, key)
-
-    # Reverse lookup so full names ("kimi-k2.5") route through direct aliases instead of
-    # falling through to the catalog/OpenRouter. Several aliases may expose one model id on
-    # different providers: prefer the one served by current_provider, since insertion order is
-    # not a routing decision and the wrong alias hands back another provider's base_url.
-    reverse_fallback: Optional[tuple[str, str, str]] = None
-    current_id = _provider_identity(current_provider, user_providers, custom_providers)
-    for alias_name, da in DIRECT_ALIASES.items():
-        if da.ref.model.lower() != key:
-            continue
-        route_provider = _provider_identity(
-            da.ref.provider, user_providers, custom_providers
-        )
-        if route_provider == current_id:
-            return (route_provider, da.ref.model, alias_name)
-        if reverse_fallback is None:
-            reverse_fallback = (route_provider, da.ref.model, alias_name)
-    if reverse_fallback is not None:
-        return reverse_fallback
-
-    process_catalog, process_aliases = _external_process_catalog(current_provider)
-    if process_catalog or process_aliases:
-        # External-process providers own their IDs and aliases; catalogue acquisition never
-        # escapes to models.dev for them.
-        declared = resolve_declared_model_id(
-            key,
-            current_provider,
-            process_catalog,
-            provider_aliases=process_aliases,
-        )
-        if declared is not None:
-            return (current_provider, declared, key)
-        resolved = resolve_model_alias(
-            key,
-            current_provider,
-            process_catalog,
-            provider_aliases=process_aliases,
-        )
-        return (current_provider, resolved, key) if resolved else None
-
-    if key not in MODEL_ALIASES:
-        return None
-
-    # Catalogue acquisition stays outside model identity. The canonical resolver receives only
-    # caller-supplied candidates.
-    catalog = list_provider_models(current_provider)
-    try:
-        from hermes_cli.models import _PROVIDER_MODELS
-
-        seen = {model.lower() for model in catalog}
-        catalog.extend(
-            model
-            for model in _PROVIDER_MODELS.get(current_provider, [])
-            if model.lower() not in seen
-        )
-    except Exception:
-        pass
-
-    resolved = resolve_model_alias(key, current_provider, catalog)
-    return (current_provider, resolved, key) if resolved else None
-
-
-def _external_process_catalog(provider: str) -> tuple[list[str], dict[str, str]]:
-    """``(declared model ids, own aliases)`` of an ``external_process`` profile, else empty."""
-    from providers import get_provider_profile
-    profile = get_provider_profile(provider)
-    if profile is None or profile.auth_type != "external_process":
-        return [], {}
-    return list(profile.fallback_models), {k.lower(): v for k, v in profile.model_aliases.items()}
-
-
-
 def get_authenticated_provider_slugs(
     current_provider: str = "", user_providers: dict = None, custom_providers: list | None = None
 ) -> list[str]:
@@ -812,18 +727,6 @@ def get_authenticated_provider_slugs(
             custom_providers=custom_providers, max_models=0, non_blocking_catalogs=True)]
     except Exception:
         return []
-
-
-def _resolve_alias_fallback(
-    raw_input: str, authenticated_providers: list[str] = (), user_providers: Optional[dict] = None,
-    custom_providers: Optional[list] = None) -> Optional[tuple[str, str, str]]:
-    """Resolve an alias on the user's authenticated providers (``("openrouter", "nous")`` when none given).
-
-    AmbiguousModelAliasError propagates: the alias exists on this provider, the user just has to
-    choose — trying the next provider would silently switch them somewhere they didn't ask for."""
-    results = (resolve_alias(raw_input, p, user_providers, custom_providers)
-               for p in authenticated_providers or ("openrouter", "nous"))
-    return next((r for r in results if r is not None), None)
 
 
 def resolve_display_context_length(
@@ -949,36 +852,6 @@ def _duplicates_configured_row(
                  if identity == row or (provider_key == row_slug.lower() and identity[1:3] == row[1:3])), None)
 
 
-def _current_provider_match(st: "_Switch", cfg_matches: dict[str, str]) -> Optional[str]:
-    """The slug in *cfg_matches* the session already runs on: an exact hit, or — for a session on
-    the compat projection slug (``custom:relay``) of ``providers.relay`` — that row's slug, so a
-    same-provider switch keeps the caller's slug instead of flipping it (#112788)."""
-    if st.current_provider in cfg_matches:
-        return st.current_provider
-    current = _clean(st.current_provider).lower()
-    providers = st.user_providers if isinstance(st.user_providers, dict) else {}
-    return next((slug for slug in cfg_matches if isinstance(providers.get(slug), dict)
-                 and current in custom_provider_aliases(str(providers[slug].get("name") or ""), slug)), None)
-
-
-def _resolve_named_custom_model_id(model_name: str, target_provider: str, custom_providers: Optional[list]) -> str:
-    """Map a picker-prefixed custom model selection (``prefix/model``) to its configured ID."""
-    provider = _clean(target_provider).lower()
-    if not provider.startswith("custom:") or "/" not in model_name:
-        return model_name
-
-    prefix, candidate = (part.strip() for part in model_name.split("/", 1))
-    if not prefix or not candidate:
-        return model_name
-    for entry in _custom_entries(custom_providers):
-        entry_slugs = _entry_aliases(entry)
-        if provider in entry_slugs and f"custom:{prefix.lower()}" in entry_slugs:
-            for model_id in _declared_model_ids(entry.get("models")):
-                if model_id.lower() == candidate.lower():
-                    return model_id
-    return model_name
-
-
 def _custom_entries(custom_providers: Any) -> list[dict]:
     """The dict-shaped entries of a ``custom_providers:`` list (anything else is ignored)."""
     return [e for e in custom_providers if isinstance(e, dict)] if isinstance(custom_providers, list) else []
@@ -986,6 +859,116 @@ def _custom_entries(custom_providers: Any) -> list[dict]:
 
 def _entry_aliases(entry: dict) -> frozenset[str]:
     return custom_provider_aliases(str(entry.get("name") or ""), str(entry.get("provider_key") or ""))
+
+
+def _selection_provider_facts(
+    provider: str,
+    user_providers: Optional[dict],
+    custom_providers: Optional[list],
+    *,
+    include_models: bool = True,
+) -> ExplicitProviderFacts:
+    """Materialize selection facts without moving discovery/config ownership."""
+
+    canonical = _provider_identity(provider, user_providers, custom_providers)
+    from providers import get_provider_profile
+
+    profile = get_provider_profile(canonical)
+    identity_aliases: set[str] = {canonical, str(provider or "").strip().lower()}
+    model_aliases: dict[str, str] = dict(getattr(profile, "model_aliases", {}) or {})
+
+    providers_cfg = user_providers if isinstance(user_providers, dict) else {}
+    for slug, cfg in providers_cfg.items():
+        if not isinstance(cfg, dict):
+            continue
+        aliases = custom_provider_aliases(str(cfg.get("name") or slug), str(slug))
+        if canonical in aliases or str(provider or "").strip().lower() in aliases:
+            identity_aliases.update(aliases)
+
+    for entry in _custom_entries(custom_providers):
+        aliases = _entry_aliases(entry)
+        if canonical not in aliases and str(provider or "").strip().lower() not in aliases:
+            continue
+        identity_aliases.update(aliases)
+        models = _declared_model_ids(entry.get("models"))
+        for alias in aliases:
+            prefix = alias.removeprefix("custom:")
+            if not prefix:
+                continue
+            for model_id in models:
+                model_aliases.setdefault(f"{prefix}/{model_id}".lower(), model_id)
+
+    catalog_models = tuple(list_provider_models(canonical)) if include_models else ()
+    static_models = tuple(static_provider_model_ids(canonical))
+    fallback_models = tuple(getattr(profile, "fallback_models", ()) or ())
+    alias_models = tuple(dict.fromkeys((*catalog_models, *static_models, *fallback_models)))
+
+    return ExplicitProviderFacts(
+        provider=canonical,
+        alias_models=alias_models,
+        catalog_models=catalog_models,
+        model_aliases=tuple(
+            (str(key).strip().lower(), str(value).strip())
+            for key, value in model_aliases.items()
+            if str(key).strip() and str(value).strip()
+        ),
+        identity_aliases=tuple(sorted(value for value in identity_aliases if value)),
+        aggregator=is_aggregator(canonical),
+        normalization_ids=static_models,
+    )
+
+
+def _selection_direct_aliases(
+    user_providers: Optional[dict], custom_providers: Optional[list]
+) -> tuple[ExplicitAlias, ...]:
+    _ensure_direct_aliases()
+    return tuple(
+        ExplicitAlias(
+            name=name,
+            ref=ModelRef(
+                _provider_identity(alias.ref.provider, user_providers, custom_providers),
+                alias.ref.model,
+            ),
+        )
+        for name, alias in DIRECT_ALIASES.items()
+    )
+
+
+def _selection_provider_fact_set(
+    providers: list[tuple[str, bool]],
+    user_providers: Optional[dict],
+    custom_providers: Optional[list],
+) -> tuple[ExplicitProviderFacts, ...]:
+    """Build one merged fact row per canonical provider."""
+
+    merged: dict[str, ExplicitProviderFacts] = {}
+    for provider, include_models in providers:
+        if not provider:
+            continue
+        fact = _selection_provider_facts(
+            provider,
+            user_providers,
+            custom_providers,
+            include_models=include_models,
+        )
+        prior = merged.get(fact.provider)
+        if prior is None:
+            merged[fact.provider] = fact
+            continue
+        merged[fact.provider] = ExplicitProviderFacts(
+            provider=fact.provider,
+            alias_models=tuple(dict.fromkeys((*prior.alias_models, *fact.alias_models))),
+            catalog_models=tuple(dict.fromkeys((*prior.catalog_models, *fact.catalog_models))),
+            model_aliases=tuple(dict((*prior.model_aliases, *fact.model_aliases)).items()),
+            identity_aliases=tuple(
+                dict.fromkeys((*prior.identity_aliases, *fact.identity_aliases))
+            ),
+            aggregator=prior.aggregator or fact.aggregator,
+            normalization_ids=tuple(
+                dict.fromkeys((*prior.normalization_ids, *fact.normalization_ids))
+            ),
+        )
+    return tuple(merged.values())
 
 
 # --- Core model-switching pipeline
@@ -1044,13 +1027,6 @@ def _aggregator_alias_error(
         f"Provider '{explicit_norm}' is an alias that routes "
         f"through {get_provider_label(target_provider)}, which "
         f"has no credentials configured.{hint}")
-
-
-def _aggregator_catalog_match(new_model: str, catalog: list) -> str | None:
-    """Exact (case-insensitive) match on full id, then on the bare part after ``vendor/``."""
-    wanted = new_model.lower()
-    return next((mid for mid in catalog if mid.lower() == wanted), None) or next(
-        (mid for mid in catalog if "/" in mid and mid.split("/", 1)[1].lower() == wanted), None)
 
 
 def _config_declares_model(
@@ -1179,175 +1155,226 @@ class _Switch:
         self.validation_headers = rt.get("extra_headers") or self.validation_headers
 
 
-def _route_explicit_provider(st: _Switch) -> Optional[ModelSwitchResult]:
-    """PATH A (``--provider`` given): resolve the provider, auto-detect a model from a local
-    endpoint when none was typed, then resolve the alias on the TARGET provider."""
-    pdef = resolve_provider_full(st.explicit_provider, st.user_providers, st.custom_providers)
-    if pdef is None and st.explicit_provider.strip().lower() == "custom":
-        pdef = _bare_custom_provider_def(st.current_base_url)
-    if pdef is None:
-        return st.fail(_unknown_provider_message(st.explicit_provider))
+def _select_switch_target(st: _Switch) -> Optional[ModelSwitchResult]:
+    """Resolve explicit /model intent through the canonical selection domain."""
 
-    st.target_provider, st.provider_label = pdef.id, pdef.display_name  # label is re-derived in the credential step
-    if st.target_provider == "moa" and not st.new_model:
-        st.new_model = _moa_default_preset()
+    raw = st.raw_input.strip()
+    explicit_target = ""
+    if st.explicit_provider:
+        pdef = resolve_provider_full(
+            st.explicit_provider, st.user_providers, st.custom_providers
+        )
+        if pdef is None and st.explicit_provider.strip().lower() == "custom":
+            pdef = _bare_custom_provider_def(st.current_base_url)
+        if pdef is None:
+            return st.fail(_unknown_provider_message(st.explicit_provider))
+        explicit_target, st.provider_label = pdef.id, pdef.display_name
+        if explicit_target == "moa" and not raw:
+            raw = _moa_default_preset()
+        agg_err = _aggregator_alias_error(
+            st.explicit_provider,
+            explicit_target,
+            st.current_provider,
+            st.user_providers,
+            st.custom_providers,
+        )
+        if agg_err:
+            st.target_provider = explicit_target
+            return st.fail_on_target(agg_err)
+        if not raw:
+            if not pdef.base_url:
+                st.target_provider = explicit_target
+                return st.fail_on_target(
+                    f"Provider '{pdef.display_name}' has no base URL configured. "
+                    f"Specify a model: /model <model-name> --provider {st.explicit_provider}"
+                )
+            from hermes_cli.runtime_provider import _auto_detect_local_model
 
-    agg_err = _aggregator_alias_error(
-        st.explicit_provider, st.target_provider, st.current_provider, st.user_providers, st.custom_providers)
-    if agg_err:
-        return st.fail_on_target(agg_err)
+            raw = _auto_detect_local_model(pdef.base_url)
+            if not raw:
+                st.target_provider = explicit_target
+                return st.fail_on_target(
+                    f"No model detected on {pdef.display_name} ({pdef.base_url}). "
+                    f"Specify the model explicitly: /model <model-name> "
+                    f"--provider {st.explicit_provider}"
+                )
 
-    if not st.new_model:
-        if not pdef.base_url:
-            return st.fail_on_target(
-                f"Provider '{pdef.display_name}' has no base URL configured. "
-                f"Specify a model: /model <model-name> --provider {st.explicit_provider}")
-        from hermes_cli.runtime_provider import _auto_detect_local_model
-        st.new_model = _auto_detect_local_model(pdef.base_url)
-        if not st.new_model:
-            return st.fail_on_target(
-                f"No model detected on {pdef.display_name} ({pdef.base_url}). "
-                f"Specify the model explicitly: /model <model-name> --provider {st.explicit_provider}")
+    moa_ref = None
+    if not explicit_target:
+        try:
+            from hermes_cli.config import load_config
+            from hermes_cli.moa_config import (
+                exact_moa_preset_name,
+                normalize_moa_config,
+            )
 
-    try:
-        alias_result = resolve_alias(st.new_model, st.target_provider, st.user_providers, st.custom_providers)
-    except AmbiguousModelAliasError as err:
-        return st.fail(_ambiguous_alias_message(err), target_provider=st.target_provider)
-    if alias_result is not None:
-        alias_provider, st.new_model, alias_name = alias_result
-        # Adopt the alias (and with it its base_url and key) only when it belongs to the provider
-        # the user named: a reverse model-id match may land on another provider's alias, and
-        # honouring it would send the turn to that provider's endpoint under this one's identity.
-        if (_provider_identity(alias_provider, st.user_providers, st.custom_providers)
-                == _provider_identity(st.target_provider, st.user_providers, st.custom_providers)):
-            st.resolved_alias = alias_name
-    return None
+            moa_match = exact_moa_preset_name(
+                normalize_moa_config(load_config().get("moa") or {}), raw
+            )
+            if moa_match:
+                moa_ref = ModelRef("moa", moa_match)
+        except Exception:
+            pass
 
+    known_ids, named_custom_ids = _model_ref_context(
+        st.user_providers, st.custom_providers
+    )
+    qualified_provider = (
+        explicit_provider_hint(
+            raw,
+            known_provider_ids=tuple(known_ids),
+            named_custom_provider_ids=tuple(named_custom_ids),
+        )
+        if not explicit_target
+        else ""
+    )
 
-def _route_alias_fallback(st: _Switch, key: str) -> Optional[ModelSwitchResult]:
-    """Step b: the alias exists but not on the current provider -> try the user's authenticated providers."""
-    authed = get_authenticated_provider_slugs(
-        current_provider=st.current_provider, user_providers=st.user_providers, custom_providers=st.custom_providers,
+    configured = _configured_provider_matches(
+        raw, st.user_providers, st.custom_providers
+    )
+    configured_refs = tuple(
+        ModelRef(provider, model) for provider, model in configured.items()
+    )
+    configured_credential_providers = tuple(
+        str(provider).strip().lower()
+        for provider in (st.user_providers or {})
+        if str(provider).strip()
+    )
+
+    guest_block = False
+    if not explicit_target and st.current_provider == "nous":
+        try:
+            from hermes_cli.anon_auth import GUEST_MODEL, route_is_welcome_host
+
+            guest_block = (
+                route_is_welcome_host(st.current_base_url)
+                and raw != GUEST_MODEL
+            )
+        except Exception:
+            guest_block = False
+
+    hold_current = (
+        st.current_provider in {"custom", "local"}
+        or st.current_provider.startswith("custom:")
+        or base_url_hostname(st.current_base_url or "") in ("localhost", "127.0.0.1")
+    )
+
+    detection = None
+    if (
+        not explicit_target
+        and not guest_block
+        and not hold_current
+        and not configured_refs
+        and moa_ref is None
+    ):
+        from hermes_cli.model_selection_facts import build_explicit_detection_facts
+
+        detection = build_explicit_detection_facts(raw, st.current_provider)
+
+    authenticated: list[str] = []
+    if not explicit_target and raw.lower() in MODEL_ALIASES:
+        authenticated = get_authenticated_provider_slugs(
+            current_provider=st.current_provider,
+            user_providers=st.user_providers,
+            custom_providers=st.custom_providers,
+        )
+
+    semantic_alias = raw.lower() in MODEL_ALIASES
+    requested_facts: list[tuple[str, bool]] = [
+        (
+            st.current_provider,
+            semantic_alias or is_aggregator(st.current_provider),
+        )
+    ]
+    for provider in (explicit_target, qualified_provider):
+        if provider:
+            requested_facts.append((provider, semantic_alias))
+    detection_providers = detection.candidate_providers() if detection is not None else ()
+    for provider in (
+        *(ref.provider for ref in configured_refs),
+        *detection_providers,
+    ):
+        if provider:
+            requested_facts.append((provider, False))
+    requested_facts.extend((provider, True) for provider in authenticated)
+
+    facts = _selection_provider_fact_set(
+        requested_facts, st.user_providers, st.custom_providers
     )
     try:
-        fallback_result = _resolve_alias_fallback(st.raw_input, authed, st.user_providers, st.custom_providers)
+        selection = select_explicit_model(
+            raw,
+            st.current_provider,
+            explicit_provider=explicit_target,
+            provider_facts=facts,
+            direct_aliases=_selection_direct_aliases(
+                st.user_providers, st.custom_providers
+            ),
+            configured_matches=configured_refs,
+            fallback_providers=tuple(authenticated),
+            known_provider_ids=tuple(known_ids),
+            named_custom_provider_ids=tuple(named_custom_ids),
+            detection=detection,
+            block_provider_fallback=guest_block,
+            hold_current_provider=hold_current,
+            moa_ref=moa_ref,
+        )
     except AmbiguousModelAliasError as err:
         return st.fail(_ambiguous_alias_message(err))
-    if fallback_result is None:
-        identity = MODEL_ALIASES[key]
-        return st.fail(
-            f"Alias '{key}' maps to {identity.vendor}/{identity.family} "
-            f"but no matching model was found in any provider catalog. "
-            f"Try specifying the full model name.")
-    st.target_provider, st.new_model, st.resolved_alias = fallback_result
-    logger.debug(
-        "Alias '%s' resolved via fallback to %s on %s", st.resolved_alias, st.new_model, st.target_provider)
-    return None
+    except ExplicitSelectionError as err:
+        if err.code == "ambiguous_configured":
+            return st.fail(
+                f"'{raw}' is declared by multiple configured providers "
+                f"({', '.join(err.providers)}). Re-run with --provider <slug> "
+                "to choose which one to use."
+            )
+        if err.code == "alias_unavailable":
+            identity = MODEL_ALIASES[raw.lower()]
+            return st.fail(
+                f"Alias '{raw.lower()}' maps to {identity.vendor}/{identity.family} "
+                "but no matching model was found in any provider catalog. "
+                "Try specifying the full model name."
+            )
+        return st.fail(f"Could not resolve model '{raw}'.")
 
-
-def _route_configured_provider(st: _Switch) -> Optional[ModelSwitchResult] | bool:
-    """Step d.5: a model declared in user/custom provider config routes there BEFORE
-    detect_provider_for_model() guesses from static catalogs and before a soft-accepting current
-    provider (openai-codex) can swallow it as an unknown hidden model. Returns a failure result,
-    ``True`` when routed, else ``False``."""
-    cfg_matches = _configured_provider_matches(st.new_model, st.user_providers, st.custom_providers)
-    if not cfg_matches:
-        return False
-    current_slug = _current_provider_match(st, cfg_matches)
-    if current_slug is not None:
-        st.new_model = cfg_matches[current_slug]
-        return True
-    match_slugs = sorted(cfg_matches)
-    if len(match_slugs) > 1:
-        return st.fail(
-            f"'{st.new_model}' is declared by multiple configured "
-            f"providers ({', '.join(match_slugs)}). Re-run with "
-            f"--provider <slug> to choose which one to use.")
-    st.target_provider = match_slugs[0]
-    st.new_model = cfg_matches[st.target_provider]
-    logger.debug("Configured-provider detection routed '%s' to %s", st.new_model, st.target_provider)
-    # providers.<slug> endpoints resolve in the credential block via resolve_user_provider(),
-    # which is gated on explicit_provider; custom:* slugs resolve at runtime directly.
-    if isinstance(st.user_providers, dict) and st.target_provider in st.user_providers:
+    if selection.selected is None:
+        return st.fail(f"Could not resolve model '{raw}'.")
+    selected = selection.selected
+    st.target_provider = selected.ref.provider
+    st.new_model = selected.ref.model
+    st.resolved_alias = selection.matched_alias
+    target_identity = _provider_identity(
+        st.target_provider, st.user_providers, st.custom_providers
+    )
+    current_identity = _provider_identity(
+        st.current_provider, st.user_providers, st.custom_providers
+    )
+    if (
+        not st.explicit_provider
+        and st.target_provider in configured_credential_providers
+        and (
+            selected.source == "explicit"
+            or target_identity != current_identity
+        )
+    ):
         st.explicit_provider = st.target_provider
-    return True
 
+    if guest_block and selected.source == "current":
+        from hermes_cli.anon_auth import GUEST_MODEL
 
-def _route_from_model_input(st: _Switch) -> Optional[ModelSwitchResult]:
-    """PATH B: MoA preset -> qualified model ref -> alias/catalog/config detection."""
-
-    from hermes_cli.models import detect_provider_for_model
-
-    raw_input, current_provider = st.raw_input, st.current_provider
-    try:
-        from hermes_cli.config import load_config
-        from hermes_cli.moa_config import exact_moa_preset_name, normalize_moa_config
-        moa_match = exact_moa_preset_name(
-            normalize_moa_config(load_config().get("moa") or {}), raw_input
-        )
-    except Exception:
-        moa_match = None
-    if moa_match:
-        st.target_provider, st.new_model, st.resolved_alias = "moa", moa_match, ""
-    else:
-        known_ids, named_custom_ids = _model_ref_context(
-            st.user_providers, st.custom_providers
-        )
-        qualified = parse_model_ref(
-            raw_input,
-            "",
-            known_provider_ids=known_ids,
-            named_custom_provider_ids=named_custom_ids,
-        )
-        if qualified.provider:
-            st.raw_input = qualified.model
-            st.new_model = qualified.model
-            st.explicit_provider = qualified.provider
-            return _route_explicit_provider(st)
-        try:
-            alias_result = resolve_alias(raw_input, current_provider, st.user_providers, st.custom_providers)
-        except AmbiguousModelAliasError as err:
-            return st.fail(_ambiguous_alias_message(err))
-        if alias_result is not None:
-            st.target_provider, st.new_model, st.resolved_alias = alias_result
-            logger.debug("Alias '%s' resolved to %s on %s", st.resolved_alias, st.new_model, st.target_provider)
-        elif raw_input.strip().lower() in MODEL_ALIASES:
-            fail = _route_alias_fallback(st, raw_input.strip().lower())
-            if fail is not None:
-                return fail
-
-    # Step d: if the CURRENT provider's live catalog resolved the model, step e must not
-    # second-guess and switch providers — flat-namespace resellers (opencode-go/zen) return bare
-    # ids that coincidentally match native providers' static catalogs.
-    resolved_in_current_catalog = False
-    if is_aggregator(st.target_provider) and not st.resolved_alias:
-        catalog = list_provider_models(st.target_provider)
-        if catalog:
-            matched = _aggregator_catalog_match(st.new_model, catalog)
-            if matched is not None:
-                st.new_model, resolved_in_current_catalog = matched, True
-
-    # Steps d.5 / e only apply while the request is still unrouted on the current provider.
-    if st.resolved_alias or resolved_in_current_catalog or st.target_provider != current_provider:
-        return None
-    if current_provider == "nous":
-        # The welcome host serves nous/welcome only; a model outside it needs an account or a key.
-        # Never hop to another provider on the user's behalf here (there is no key to hop to).
-        from hermes_cli.anon_auth import GUEST_MODEL, route_is_welcome_host
-        if route_is_welcome_host(st.current_base_url) and st.new_model != GUEST_MODEL:
+        if st.new_model != GUEST_MODEL:
             return st.fail(
                 f"{st.new_model} needs a Nous account or an API key. "
-                "Use /login to sign in, or /model to pick another provider.")
-    config_routed = _route_configured_provider(st)  # d.5 — deliberately NOT gated on ``not is_custom``
-    if isinstance(config_routed, ModelSwitchResult):
-        return config_routed
-    is_custom = (
-        current_provider in {"custom", "local"} or current_provider.startswith("custom:")
-        or base_url_hostname(st.current_base_url or "") in ("localhost", "127.0.0.1"))
-    if not config_routed and not is_custom:  # e
-        detected = detect_provider_for_model(st.new_model, current_provider)
-        if detected:
-            st.target_provider, st.new_model = detected
+                "Use /login to sign in, or /model to pick another provider."
+            )
+
+    logger.debug(
+        "Selection resolved %r to %s on %s via %s",
+        st.raw_input,
+        st.new_model,
+        st.target_provider,
+        selected.source,
+    )
     return None
 
 
@@ -1534,17 +1561,9 @@ def _resolve_switch_credentials(st: _Switch) -> Optional[ModelSwitchResult]:
 
 
 def _validate_switch(st: _Switch) -> Optional[ModelSwitchResult]:
-    """COMMON PATH part 2: normalize the model name for the target provider, validate it, and
-    accept config-declared models the remote catalog lacks."""
+    """COMMON PATH part 2: validate the already-selected canonical model."""
     from hermes_cli.models_local import _get_ollama_request_headers
     from hermes_cli.models_validate import validate_requested_model
-    st.new_model = _resolve_named_custom_model_id(st.new_model, st.target_provider, st.custom_providers)
-    st.new_model = normalize_model_id(
-        st.target_provider,
-        st.new_model,
-        known_ids=static_provider_model_ids(st.target_provider),
-    )
-
     from hermes_cli.chat_catalog import is_known_non_chat_model
     if is_known_non_chat_model(st.new_model):
         return st.fail(
@@ -1655,8 +1674,7 @@ def switch_model(
         current_base_url=current_base_url, current_api_key=current_api_key, is_global=is_global,
         explicit_provider=explicit_provider, user_providers=user_providers, custom_providers=custom_providers,
         new_model=raw_input.strip(), target_provider=current_provider)
-    route = _route_explicit_provider if explicit_provider else _route_from_model_input
-    for step in (route, _resolve_switch_credentials, _validate_switch):
+    for step in (_select_switch_target, _resolve_switch_credentials, _validate_switch):
         fail = step(st)
         if fail is not None:
             return fail

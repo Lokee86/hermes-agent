@@ -18,6 +18,10 @@ from models.identity import (
 from models.selection import (
     CapabilityRequirements,
     CandidateRejection,
+    ExplicitAlias,
+    ExplicitDetectionFacts,
+    ExplicitProviderFacts,
+    ExplicitSelectionError,
     ModelSelection,
     SelectionCandidate,
     SelectionConstraints,
@@ -25,6 +29,9 @@ from models.selection import (
     SelectionReason,
     SelectionRequest,
     build_selection_candidate,
+    explicit_provider_hint,
+    select_detected_model,
+    select_explicit_model,
     select_model,
 )
 
@@ -44,6 +51,10 @@ __all__ = [
     "suggest_prefixed_model_id",
     "CapabilityRequirements",
     "CandidateRejection",
+    "ExplicitAlias",
+    "ExplicitDetectionFacts",
+    "ExplicitProviderFacts",
+    "ExplicitSelectionError",
     "ModelSelection",
     "SelectionCandidate",
     "SelectionConstraints",
@@ -51,5 +62,8 @@ __all__ = [
     "SelectionReason",
     "SelectionRequest",
     "build_selection_candidate",
+    "explicit_provider_hint",
+    "select_detected_model",
+    "select_explicit_model",
     "select_model",
 ]

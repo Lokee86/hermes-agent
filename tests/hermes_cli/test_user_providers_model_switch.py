@@ -482,9 +482,7 @@ def _run_user_provider_override_case(
         }
     }
 
-    with patch("hermes_cli.model_switch.resolve_alias", return_value=None), \
-         patch("hermes_cli.model_switch.list_provider_models", return_value=[]), \
-         patch("hermes_cli.model_switch.normalize_model_id", side_effect=lambda provider, model, **kwargs: model), \
+    with patch("hermes_cli.model_switch.list_provider_models", return_value=[]), \
          patch("hermes_cli.models_validate.validate_requested_model", return_value=_REJECTED_VALIDATION), \
          patch("hermes_cli.models.detect_provider_for_model", return_value=None), \
          patch("hermes_cli.model_switch.get_model_info", return_value=None), \

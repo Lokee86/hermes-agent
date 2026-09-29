@@ -29,7 +29,6 @@ def _run_copilot_switch(
 ):
     """Run switch_model with Copilot mocks and return the result."""
     with (
-        patch("hermes_cli.model_switch.resolve_alias", return_value=None),
         patch("hermes_cli.model_switch.list_provider_models", return_value=[]),
         patch(
             "hermes_cli.runtime_provider.resolve_runtime_provider",

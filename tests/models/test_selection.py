@@ -199,3 +199,28 @@ def test_selection_result_exposes_no_secret_or_runtime_object_fields():
     result_fields = {item.name for item in fields(result)}
     forbidden = {"api_key", "token", "credentials", "credential_pool", "client", "config"}
     assert result_fields.isdisjoint(forbidden)
+
+def test_identity_only_candidate_supports_explicit_selection():
+    candidate = SelectionCandidate(ref=ModelRef("openai", "gpt-test"))
+    result = select_model(SelectionRequest(
+        candidates=(candidate,),
+        explicit=candidate.ref,
+    ))
+    assert result.selected == candidate
+    assert result.reason is SelectionReason.EXPLICIT_MATCH
+
+
+def test_missing_candidate_facts_do_not_satisfy_fact_constraints():
+    candidate = SelectionCandidate(ref=ModelRef("openai", "gpt-test"))
+    result = select_model(SelectionRequest(
+        candidates=(candidate,),
+        constraints=SelectionConstraints(
+            capabilities=CapabilityRequirements(tools=True),
+            allowed_api_modes=("chat_completions",),
+        ),
+    ))
+    assert result.selected is None
+    assert result.rejected[0].reasons == (
+        "api_mode_not_allowed",
+        "requires_tools=True",
+    )

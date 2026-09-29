@@ -1,140 +1,50 @@
-"""Pure provider/model selection over a caller-supplied canonical universe.
-
-Discovery, credentials, health, client construction, persistence, and
-presentation stay at higher layers.
-"""
+"""Pure provider/model selection over a caller-supplied canonical universe."""
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field, replace
-from enum import StrEnum
+from dataclasses import replace
 
 from models.identity import ModelRef
 from models.metadata.types import ModelMetadata
-from providers.identity import normalize_provider
-from providers.routing import InvocationRequest, InvocationRoute, resolve_invocation_route
-
-
-@dataclass(frozen=True, slots=True)
-class CapabilityRequirements:
-    """Hard capability requirements; unknown never satisfies a requirement."""
-
-    tools: bool | None = None
-    vision: bool | None = None
-    reasoning: bool | None = None
-    structured_output: bool | None = None
-    minimum_context_window: int | None = None
-
-
-@dataclass(frozen=True, slots=True)
-class SelectionConstraints:
-    """Hard filters applied before preference ranking."""
-
-    allowed_providers: tuple[str, ...] = ()
-    allowed_models: tuple[ModelRef, ...] = ()
-    excluded_models: tuple[ModelRef, ...] = ()
-    require_catalogued: bool = False
-    capabilities: CapabilityRequirements = field(default_factory=CapabilityRequirements)
-    allowed_api_modes: tuple[str, ...] = ()
-    allowed_runtime_kinds: tuple[str, ...] = ()
-
-    def __post_init__(self) -> None:
-        normalized = (normalize_provider(value) for value in self.allowed_providers if value)
-        object.__setattr__(self, "allowed_providers", tuple(dict.fromkeys(normalized)))
-
-
-@dataclass(frozen=True, slots=True)
-class SelectionPolicy:
-    """Replayable preference data; never discovers or mutates candidates."""
-
-    name: str = "default"
-    preferred: tuple[ModelRef, ...] = ()
-    provider_order: tuple[str, ...] = ()
-    prefer_catalogued: bool = False
-
-    def __post_init__(self) -> None:
-        normalized = (normalize_provider(value) for value in self.provider_order if value)
-        object.__setattr__(self, "provider_order", tuple(dict.fromkeys(normalized)))
-
-
-@dataclass(frozen=True, slots=True)
-class SelectionCandidate:
-    """One canonical candidate snapshot from the available model universe."""
-
-    ref: ModelRef
-    metadata: ModelMetadata
-    route: InvocationRoute
-    catalogued: bool = False
-    source: str = ""
-    stable_order: int = 0
-
-    def __post_init__(self) -> None:
-        if self.metadata.ref != self.ref:
-            raise ValueError("candidate metadata identity does not match candidate ref")
-        if ModelRef(self.route.provider, self.route.model) != self.ref:
-            raise ValueError("candidate route identity does not match candidate ref")
-
-
-@dataclass(frozen=True, slots=True)
-class SelectionRequest:
-    candidates: tuple[SelectionCandidate, ...]
-    purpose: str = ""
-    explicit: ModelRef | None = None
-    constraints: SelectionConstraints = field(default_factory=SelectionConstraints)
-    policy: SelectionPolicy = field(default_factory=SelectionPolicy)
-
-    def __post_init__(self) -> None:
-        refs = tuple(candidate.ref for candidate in self.candidates)
-        if len(refs) != len(set(refs)):
-            raise ValueError("selection candidates must have unique canonical identities")
-        if self.explicit is not None and (not self.explicit.provider or not self.explicit.model):
-            raise ValueError("explicit selection requires a canonical provider and model")
-
-
-@dataclass(frozen=True, slots=True)
-class CandidateRejection:
-    ref: ModelRef
-    reasons: tuple[str, ...]
-
-
-class SelectionReason(StrEnum):
-    EXPLICIT_MATCH = "explicit_match"
-    PREFERRED_MATCH = "preferred_match"
-    POLICY_DEFAULT = "policy_default"
-    EXPLICIT_UNAVAILABLE = "explicit_unavailable"
-    NO_ELIGIBLE_CANDIDATE = "no_eligible_candidate"
-
-
-@dataclass(frozen=True, slots=True)
-class ModelSelection:
-    selected: SelectionCandidate | None
-    eligible: tuple[SelectionCandidate, ...]
-    rejected: tuple[CandidateRejection, ...]
-    reason: SelectionReason
-    purpose: str = ""
-    policy: str = ""
-
-    @property
-    def success(self) -> bool:
-        return self.selected is not None
+from models.selection_types import (
+    CapabilityRequirements,
+    CandidateRejection,
+    ModelSelection,
+    SelectionCandidate,
+    SelectionConstraints,
+    SelectionPolicy,
+    SelectionReason,
+    SelectionRequest,
+)
+from providers.routing import InvocationRequest, resolve_invocation_route
 
 
 def build_selection_candidate(
     ref: ModelRef,
-    metadata: ModelMetadata,
-    route_request: InvocationRequest,
+    metadata: ModelMetadata | None = None,
+    route_request: InvocationRequest | None = None,
     *,
     catalogued: bool = False,
     source: str = "",
     stable_order: int = 0,
 ) -> SelectionCandidate:
-    """Build a candidate through the canonical Phase 5.6 route owner."""
+    """Build one candidate from already-known facts.
 
-    route = resolve_invocation_route(replace(route_request, provider=ref.provider, model=ref.model))
+    A route is optional because identity selection occurs before credentials and
+    runtime route context are available on some callers.
+    """
+
+    route = None
+    if route_request is not None:
+        route = resolve_invocation_route(
+            replace(route_request, provider=ref.provider, model=ref.model)
+        )
     return SelectionCandidate(ref, metadata, route, catalogued, source, stable_order)
 
 
-def _rejections(candidate: SelectionCandidate, constraints: SelectionConstraints) -> tuple[str, ...]:
+def _rejections(
+    candidate: SelectionCandidate, constraints: SelectionConstraints
+) -> tuple[str, ...]:
     reasons: list[str] = []
     if constraints.allowed_providers and candidate.ref.provider not in constraints.allowed_providers:
         reasons.append("provider_not_allowed")
@@ -144,22 +54,33 @@ def _rejections(candidate: SelectionCandidate, constraints: SelectionConstraints
         reasons.append("model_excluded")
     if constraints.require_catalogued and not candidate.catalogued:
         reasons.append("not_catalogued")
-    if constraints.allowed_api_modes and candidate.route.api_mode not in constraints.allowed_api_modes:
+
+    route = candidate.route
+    if constraints.allowed_api_modes and (
+        route is None or route.api_mode not in constraints.allowed_api_modes
+    ):
         reasons.append("api_mode_not_allowed")
-    if constraints.allowed_runtime_kinds and candidate.route.runtime_kind not in constraints.allowed_runtime_kinds:
+    if constraints.allowed_runtime_kinds and (
+        route is None or route.runtime_kind not in constraints.allowed_runtime_kinds
+    ):
         reasons.append("runtime_kind_not_allowed")
 
     metadata, req = candidate.metadata, constraints.capabilities
-    for name, actual, required in (
-        ("tools", metadata.supports_tools, req.tools),
-        ("vision", metadata.supports_vision, req.vision),
-        ("reasoning", metadata.supports_reasoning, req.reasoning),
-        ("structured_output", metadata.supports_structured_output, req.structured_output),
+    for name, required in (
+        ("tools", req.tools),
+        ("vision", req.vision),
+        ("reasoning", req.reasoning),
+        ("structured_output", req.structured_output),
     ):
-        if required is not None and actual is not required:
+        if required is None:
+            continue
+        actual = getattr(metadata, f"supports_{name}", None) if metadata is not None else None
+        if actual is not required:
             reasons.append(f"requires_{name}={required}")
     if req.minimum_context_window is not None and (
-        metadata.context_window is None or metadata.context_window < req.minimum_context_window
+        metadata is None
+        or metadata.context_window is None
+        or metadata.context_window < req.minimum_context_window
     ):
         reasons.append(f"minimum_context_window={req.minimum_context_window}")
     return tuple(reasons)
@@ -173,7 +94,10 @@ def _index(value, values: tuple) -> int:
 
 
 def _rank(candidate: SelectionCandidate, policy: SelectionPolicy) -> tuple:
-    catalog_rank = 0 if policy.prefer_catalogued and candidate.catalogued else int(policy.prefer_catalogued)
+    catalog_rank = (
+        0 if policy.prefer_catalogued and candidate.catalogued
+        else int(policy.prefer_catalogued)
+    )
     return (
         _index(candidate.ref, policy.preferred),
         _index(candidate.ref.provider, policy.provider_order),
@@ -191,8 +115,10 @@ def select_model(request: SelectionRequest) -> ModelSelection:
     rejected: list[CandidateRejection] = []
     for candidate in request.candidates:
         reasons = _rejections(candidate, request.constraints)
-        (rejected.append(CandidateRejection(candidate.ref, reasons))
-         if reasons else accepted.append(candidate))
+        if reasons:
+            rejected.append(CandidateRejection(candidate.ref, reasons))
+        else:
+            accepted.append(candidate)
 
     if request.explicit is not None:
         selected = next((item for item in accepted if item.ref == request.explicit), None)
@@ -215,13 +141,43 @@ def select_model(request: SelectionRequest) -> ModelSelection:
             request.purpose, request.policy.name,
         )
     selected = eligible[0]
-    reason = (SelectionReason.PREFERRED_MATCH if selected.ref in request.policy.preferred
-              else SelectionReason.POLICY_DEFAULT)
-    return ModelSelection(selected, eligible, tuple(rejected), reason, request.purpose, request.policy.name)
+    reason = (
+        SelectionReason.PREFERRED_MATCH
+        if selected.ref in request.policy.preferred
+        else SelectionReason.POLICY_DEFAULT
+    )
+    return ModelSelection(
+        selected, eligible, tuple(rejected), reason, request.purpose, request.policy.name
+    )
+
+
+from models.selection_detection import ExplicitDetectionFacts, select_detected_model  # noqa: E402
+
+from models.selection_explicit import (  # noqa: E402
+    ExplicitAlias,
+    ExplicitProviderFacts,
+    ExplicitSelectionError,
+    explicit_provider_hint,
+    select_explicit_model,
+)
 
 
 __all__ = [
-    "CapabilityRequirements", "CandidateRejection", "ModelSelection",
-    "SelectionCandidate", "SelectionConstraints", "SelectionPolicy",
-    "SelectionReason", "SelectionRequest", "build_selection_candidate", "select_model",
+    "CapabilityRequirements",
+    "CandidateRejection",
+    "ExplicitAlias",
+    "ExplicitDetectionFacts",
+    "ExplicitProviderFacts",
+    "ExplicitSelectionError",
+    "explicit_provider_hint",
+    "ModelSelection",
+    "SelectionCandidate",
+    "SelectionConstraints",
+    "SelectionPolicy",
+    "SelectionReason",
+    "SelectionRequest",
+    "build_selection_candidate",
+    "select_detected_model",
+    "select_explicit_model",
+    "select_model",
 ]

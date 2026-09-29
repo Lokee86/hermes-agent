@@ -18,8 +18,7 @@ _MOCK_VALIDATION = {"accepted": True, "persist": True, "recognized": True, "mess
 
 def _run_switch_result(raw_input: str, current_provider: str = "openrouter"):
     """Run switch_model with network/catalog dependencies mocked."""
-    with patch("hermes_cli.model_switch.resolve_alias", return_value=None), \
-         patch("hermes_cli.model_switch.list_provider_models", return_value=[]), \
+    with patch("hermes_cli.model_switch.list_provider_models", return_value=[]), \
          patch("hermes_cli.runtime_provider.resolve_runtime_provider",
                return_value={"api_key": "test", "base_url": "", "api_mode": "chat_completions"}), \
          patch("hermes_cli.models_validate.validate_requested_model", return_value=_MOCK_VALIDATION), \
