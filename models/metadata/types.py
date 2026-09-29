@@ -7,7 +7,7 @@ catalogue membership, route selection, request policy, or credentials.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Mapping
+from typing import Any, Mapping, Optional
 
 from models.identity import ModelRef
 
@@ -96,3 +96,81 @@ class ModelMetadata:
 
     # field name -> provenance label (explicit/configured/live/catalog/static)
     provenance: Mapping[str, str] = field(default_factory=dict)
+
+
+@dataclass
+class ModelCapabilities:
+    """Legacy capability view used by existing runtime consumers."""
+
+    supports_tools: bool = True
+    supports_vision: Optional[bool] = None
+    supports_reasoning: Optional[bool] = None
+    context_window: int = 200000
+    max_output_tokens: Optional[int] = None
+    model_family: str = ""
+
+
+@dataclass
+class ModelInfo:
+    """Full interpreted metadata for one catalogue model."""
+
+    id: str
+    name: str
+    family: str
+    provider_id: str
+    reasoning: bool = False
+    tool_call: bool = False
+    attachment: bool = False
+    temperature: bool = False
+    structured_output: bool = False
+    open_weights: bool = False
+    input_modalities: tuple[str, ...] = ()
+    output_modalities: tuple[str, ...] = ()
+    context_window: int = 0
+    max_output: int = 0
+    max_input: Optional[int] = None
+    cost_input: float = 0.0
+    cost_output: float = 0.0
+    cost_cache_read: Optional[float] = None
+    cost_cache_write: Optional[float] = None
+    knowledge_cutoff: str = ""
+    release_date: str = ""
+    status: str = ""
+    interleaved: Any = False
+
+    def has_cost_data(self) -> bool:
+        return self.cost_input > 0 or self.cost_output > 0
+
+    def supports_vision(self) -> bool:
+        return self.attachment or "image" in self.input_modalities
+
+    def supports_pdf(self) -> bool:
+        return "pdf" in self.input_modalities
+
+    def supports_audio_input(self) -> bool:
+        return "audio" in self.input_modalities
+
+    def format_capabilities(self) -> str:
+        """Human-readable capabilities, e.g. 'reasoning, tools, vision, PDF'."""
+        flags = (
+            (self.reasoning, "reasoning"),
+            (self.tool_call, "tools"),
+            (self.supports_vision(), "vision"),
+            (self.supports_pdf(), "PDF"),
+            (self.supports_audio_input(), "audio"),
+            (self.structured_output, "structured output"),
+            (self.open_weights, "open weights"),
+        )
+        return ", ".join(label for on, label in flags if on) or "basic"
+
+
+@dataclass
+class ProviderInfo:
+    """Interpreted metadata for one catalogue provider."""
+
+    id: str
+    name: str
+    env: tuple[str, ...]
+    api: str
+    doc: str = ""
+    model_count: int = 0

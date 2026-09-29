@@ -13,13 +13,30 @@ import logging
 import re
 import threading
 import time
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 from utils import atomic_json_write, atomic_write_text
 
 from hermes_constants import openrouter_variant_base
+from models.metadata import (
+    ModelCapabilities,
+    ModelInfo,
+    ProviderInfo,
+    UNKNOWN_MODEL_BASE,
+    builtin_model_metadata,
+    dict_or_empty,
+    extract_context as _extract_context,
+    extract_limit as _extract_limit,
+    merge_catalog_entry_with_override,
+    model_capabilities_from_entry,
+    model_info_from_entry,
+    override_int as _override_int,
+    provider_info_from_entry,
+    vision_marker_metadata,
+)
+
+from models.metadata.interpretation import _OVERRIDE_WARNED_KEYS
 
 import requests
 
@@ -34,76 +51,6 @@ _models_dev_retry_after: float = 0
 _models_dev_fetch_lock = threading.Lock()
 _models_dev_refresh_lock = threading.Lock()
 _models_dev_refresh_in_flight = False
-
-
-@dataclass
-class ModelInfo:
-    """Full metadata for a single model from models.dev."""
-    id: str
-    name: str
-    family: str
-    provider_id: str        # models.dev provider ID (e.g. "anthropic")
-    # Capabilities
-    reasoning: bool = False
-    tool_call: bool = False
-    attachment: bool = False       # supports image/file attachments (vision)
-    temperature: bool = False
-    structured_output: bool = False
-    open_weights: bool = False
-    # Modalities
-    input_modalities: Tuple[str, ...] = ()    # ("text", "image", "pdf", ...)
-    output_modalities: Tuple[str, ...] = ()
-    # Limits
-    context_window: int = 0
-    max_output: int = 0
-    max_input: Optional[int] = None
-    # Cost (per million tokens, USD)
-    cost_input: float = 0.0
-    cost_output: float = 0.0
-    cost_cache_read: Optional[float] = None
-    cost_cache_write: Optional[float] = None
-    # Metadata
-    knowledge_cutoff: str = ""
-    release_date: str = ""
-    status: str = ""          # "alpha", "beta", "deprecated", or ""
-    interleaved: Any = False  # True or {"field": "reasoning_content"}
-    def has_cost_data(self) -> bool:
-        return self.cost_input > 0 or self.cost_output > 0
-    def supports_vision(self) -> bool:
-        return self.attachment or "image" in self.input_modalities
-    def supports_pdf(self) -> bool:
-        return "pdf" in self.input_modalities
-    def supports_audio_input(self) -> bool:
-        return "audio" in self.input_modalities
-    def format_capabilities(self) -> str:
-        """Human-readable capabilities, e.g. 'reasoning, tools, vision, PDF'."""
-        flags = (
-            (self.reasoning, "reasoning"), (self.tool_call, "tools"), (self.supports_vision(), "vision"), (self.supports_pdf(), "PDF"),
-            (self.supports_audio_input(), "audio"), (self.structured_output, "structured output"), (self.open_weights, "open weights"),
-        )
-        return ", ".join(label for on, label in flags if on) or "basic"
-
-
-@dataclass
-class ProviderInfo:
-    """Full metadata for a provider from models.dev."""
-    id: str                         # models.dev provider ID
-    name: str                       # display name
-    env: Tuple[str, ...]            # env var names for API key
-    api: str                        # base URL
-    doc: str = ""                   # documentation URL
-    model_count: int = 0
-
-
-@dataclass
-class ModelCapabilities:
-    """Structured capability metadata for a model from models.dev."""
-    supports_tools: bool = True
-    supports_vision: Optional[bool] = None
-    supports_reasoning: Optional[bool] = None
-    context_window: int = 200000
-    max_output_tokens: Optional[int] = None
-    model_family: str = ""
 
 
 # Hermes provider names → models.dev provider IDs
@@ -581,17 +528,6 @@ def _find_model_entry(
     return next((entry for _mid, entry in _iter_model_entries(models, model, provider=provider)), None)
 
 
-def _extract_limit(entry: Any, key: str) -> Optional[int]:
-    """Positive int ``entry.limit[key]`` or None (audio/image models have context=0)."""
-    value = _dict_or_empty(_dict_or_empty(entry).get("limit")).get(key)
-    return int(value) if isinstance(value, (int, float)) and value > 0 else None
-
-
-def _extract_context(entry: Dict[str, Any]) -> Optional[int]:
-    """Context length from a models.dev model entry, or None if invalid/zero."""
-    return _extract_limit(entry, "context")
-
-
 def lookup_models_dev_context(provider: str, model: str, *, allow_network: bool = False) -> Optional[int]:
     """Context window in tokens for provider+model, or None if not found. An EXPLICIT ``model_overrides``
     entry wins over the catalog; ``_default`` fills the gap only when the catalog has no answer (the
@@ -618,40 +554,8 @@ def lookup_models_dev_context(provider: str, model: str, *, allow_network: bool 
 # models the catalog does not know and never displace catalog data. Provider keys accept the Hermes
 # or models.dev id; model ids match exactly, then case-insensitively (mirroring catalog lookup).
 # Resolution semantics: 1. 2. See #84482, #8731.
-_OVERRIDE_WARNED_KEYS: set = set()
-# Safe defaults for models absent from the catalog (tools on, 200K context). Capability fields and the
-# output limit stay absent so consumers see them as unknown instead of a synthesized value.
-_UNKNOWN_MODEL_BASE: Dict[str, Any] = {"limit": {"context": 200000}, "tool_call": True}
-
-# Account-gated models may be usable before models.dev has indexed them.  Keep
-# their capabilities available for an explicitly selected/discovered model
-# without adding them to any picker catalog.
-_DEEPSEEK_FLASH_VISION: Dict[str, Any] = {
-    "limit": {"context": 1_000_000, "output": 384_000},
-    "modalities": {"input": ["text", "image"], "output": ["text"]},
-    "tool_call": True,
-    "reasoning": True,
-    "family": "deepseek-flash",
-}
-
-_BUILTIN_MODEL_METADATA: Dict[Tuple[str, str], Dict[str, Any]] = {
-    ("openai", "gpt-6-astra"): {
-        "limit": {"context": 1_050_000, "output": 128_000},
-        "modalities": {"input": ["text", "image"], "output": ["text"]},
-        "tool_call": True,
-        "reasoning": True,
-        "family": "gpt-6",
-    },
-    # Native DeepSeek V4.1-Flash is multimodal (https://api-docs.deepseek.com/guides/vision).
-    # models.dev lagged the 2026-09-10 rename; without this, a cold/empty cache treats
-    # ``deepseek-flash`` as unknown → image_input_mode falls through to lossy text.
-    # ``deepseek-v4-pro`` stays catalog-only: vendor docs still mark it text-only.
-    ("deepseek", "deepseek-flash"): _DEEPSEEK_FLASH_VISION,
-    ("deepseek", "deepseek-v4-flash"): _DEEPSEEK_FLASH_VISION,
-    ("deepseek", "deepseek-v4.1-flash"): _DEEPSEEK_FLASH_VISION,
-    ("deepseek", "deepseek-v4-flash-vision-exp"): _DEEPSEEK_FLASH_VISION,
-}
-
+# Interpretation lives in models.metadata; this module retains only override
+# source resolution and catalogue acquisition.
 
 def _load_model_overrides(*, config: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     """The ``model_overrides`` config section ({} on any failure). Deliberately not memoized:
@@ -715,22 +619,6 @@ def _override_for(
     return explicit if explicit is not None or catalog_hit else _default_model_override(provider, config=config)
 
 
-def _override_int(override: Dict[str, Any], key: str) -> Optional[int]:
-    """Coerce an override field to a positive int, warning once on garbage."""
-    raw = override.get(key)
-    if raw is None:
-        return None
-    with contextlib.suppress(TypeError, ValueError):
-        value = int(raw)
-        if value > 0:
-            return value
-    warn_key = (key, repr(raw))
-    if warn_key not in _OVERRIDE_WARNED_KEYS:
-        _OVERRIDE_WARNED_KEYS.add(warn_key)
-        logger.warning("model_overrides: ignoring invalid %s value %r (expected a positive integer)", key, raw)
-    return None
-
-
 def _override_context_window(provider: str, model: str) -> Optional[int]:
     """EXPLICITLY overridden context_window, or None. Explicit-only on purpose: this runs early in the
     resolution chain (agent/model_metadata.py, before custom_providers and live probes) where a
@@ -746,55 +634,12 @@ def _default_override_context(provider: str) -> Optional[int]:
     return _override_int(default, "context_window") if default is not None else None
 
 
-def _override_to_catalog_shape(override: Dict[str, Any]) -> Tuple[Dict[str, Any], Optional[bool]]:
-    """Translate canonical override keys into a models.dev-shaped patch. Returns ``(patch, vision)`` —
-    vision is out-of-band because it maps onto the ``modalities.input`` list rather than a scalar field."""
-    patch: Dict[str, Any] = {}
-    limit = {
-        catalog_key: value for catalog_key, override_key in (("context", "context_window"),)
-        if (value := _override_int(override, override_key)) is not None
-    }
-    if limit:
-        patch["limit"] = limit
-    for override_key, catalog_key in (("supports_tools", "tool_call"), ("supports_reasoning", "reasoning")):
-        if override_key in override:
-            patch[catalog_key] = bool(override[override_key])
-    vision: Optional[bool] = None
-    if "supports_vision" in override:
-        vision = patch["attachment"] = bool(override["supports_vision"])
-    if "model_family" in override:
-        patch["family"] = str(override["model_family"] or "")
-    return patch, vision
-
-
-def _merge_catalog_entry_with_override(raw: Dict[str, Any], override: Dict[str, Any]) -> Dict[str, Any]:
-    """Patch a catalog entry with a canonical-schema override. Sub-dicts (``limit``, ``modalities``) are
-    merged, not clobbered — setting only ``context_window`` must not wipe the catalog's ``limit.output``."""
-    shaped, vision_override = _override_to_catalog_shape(override)
-    merged = dict(raw)
-    limit_patch = shaped.pop("limit", None)
-    if limit_patch:
-        merged["limit"] = {**_dict_or_empty(raw.get("limit")), **limit_patch}
-    if vision_override is not None:
-        base_mods = dict(_dict_or_empty(raw.get("modalities")))
-        input_mods = base_mods.get("input")
-        input_mods = list(input_mods) if isinstance(input_mods, list) else []
-        if vision_override and "image" not in input_mods:
-            input_mods.append("image")
-        elif not vision_override and "image" in input_mods:
-            input_mods.remove("image")
-        base_mods["input"] = input_mods
-        merged["modalities"] = base_mods
-    merged.update(shaped)
-    return merged
-
-
 def _builtin_model_metadata(
     provider: str, model: str, *, config: Optional[Dict[str, Any]] = None,
 ) -> Optional[Dict[str, Any]]:
     """Built-in metadata for a provider/model pair, if Hermes has a vendor-specific entry."""
     provider_key = _models_dev_id(provider, config=config) or (provider or "").strip()
-    return _BUILTIN_MODEL_METADATA.get((provider_key, (model or "").strip().lower()))
+    return builtin_model_metadata(provider_key, model)
 
 
 def _relay_vision_marker_metadata(provider: str, model: str) -> Optional[Dict[str, Any]]:
@@ -805,9 +650,12 @@ def _relay_vision_marker_metadata(provider: str, model: str) -> Optional[Dict[st
     keeps the unknown-model defaults, so only vision is claimed."""
     from hermes_cli.models import opencode_provider_family
 
-    if "-vision" not in (model or "").strip().lower() or opencode_provider_family(provider) is None:
+    if "-vision" not in (model or "").strip().lower():
         return None
-    return {**_UNKNOWN_MODEL_BASE, "modalities": {"input": ["text", "image"], "output": ["text"]}}
+    return vision_marker_metadata(
+        is_opencode_family=opencode_provider_family(provider) is not None,
+        model_id=model,
+    )
 
 
 def _provider_model_capabilities(provider: str, model: str) -> Dict[str, Any]:
@@ -830,18 +678,21 @@ def _apply_overrides(
     base = entry if entry is not None else builtin
     declared = _provider_model_capabilities(provider, model)
     if declared:
-        base = _merge_catalog_entry_with_override(base if base is not None else _UNKNOWN_MODEL_BASE, declared)
+        base = merge_catalog_entry_with_override(
+            base if base is not None else UNKNOWN_MODEL_BASE,
+            declared,
+        )
     override = _override_for(provider, model, catalog_hit=base is not None, config=config)
     if base is None:
         base = _relay_vision_marker_metadata(provider, model)
-    return base if override is None else _merge_catalog_entry_with_override(base if base is not None else _UNKNOWN_MODEL_BASE, override)
-
-
-def _entry_supports_vision(entry: Dict[str, Any]) -> bool:
-    """Prefer explicit ``modalities.input`` (the older ``attachment`` flag can be stale or too broad
-    for image routing); fall back to it only when the input modalities are absent/invalid."""
-    input_mods = _dict_or_empty(entry.get("modalities", {})).get("input")
-    return "image" in input_mods if isinstance(input_mods, list) else bool(entry.get("attachment", False))
+    return (
+        base
+        if override is None
+        else merge_catalog_entry_with_override(
+            base if base is not None else UNKNOWN_MODEL_BASE,
+            override,
+        )
+    )
 
 
 def get_model_capabilities(
@@ -865,18 +716,7 @@ def get_model_capabilities(
     raw = _apply_overrides(provider, model, entry, config=config)
     if raw is None:
         return None
-    return ModelCapabilities(
-        supports_tools=bool(raw.get("tool_call", False)),
-        supports_vision=(
-            None
-            if unknown_base and "attachment" not in raw and "modalities" not in raw
-            else _entry_supports_vision(raw)
-        ),
-        supports_reasoning=None if unknown_base and "reasoning" not in raw else bool(raw.get("reasoning", False)),
-        context_window=_extract_limit(raw, "context") or 200000,
-        max_output_tokens=_extract_limit(raw, "output"),
-        model_family=raw.get("family", "") or "",
-    )
+    return model_capabilities_from_entry(raw, unknown_model=unknown_base)
 
 
 def list_provider_models(provider: str, *, allow_network: bool = True) -> List[str]:
@@ -918,44 +758,13 @@ def list_agentic_models(provider: str, *, allow_network: bool = True) -> List[st
     ] if models is not None else []
 
 
-def _parse_model_info(model_id: str, raw: Dict[str, Any], provider_id: str) -> ModelInfo:
-    """Convert a raw models.dev model entry dict into a ModelInfo dataclass."""
-    cost = _dict_or_empty(raw.get("cost"))
-    modalities = _dict_or_empty(raw.get("modalities"))
-    def _mods(key: str) -> Tuple[str, ...]:
-        mods = modalities.get(key) or []
-        return tuple(mods) if isinstance(mods, list) else ()
-    def _cost(key: str) -> Optional[float]:
-        return float(cost[key]) if cost.get(key) is not None else None
-    return ModelInfo(
-        id=model_id, name=raw.get("name", "") or model_id, family=raw.get("family", "") or "", provider_id=provider_id,
-        **{k: bool(raw.get(k, False)) for k in ("reasoning", "tool_call", "attachment", "temperature", "structured_output", "open_weights")},
-        input_modalities=_mods("input"), output_modalities=_mods("output"),
-        context_window=_extract_limit(raw, "context") or 0, max_output=_extract_limit(raw, "output") or 0, max_input=_extract_limit(raw, "input"),
-        cost_input=float(cost.get("input", 0) or 0), cost_output=float(cost.get("output", 0) or 0),
-        cost_cache_read=_cost("cache_read"), cost_cache_write=_cost("cache_write"),
-        knowledge_cutoff=raw.get("knowledge", "") or "", release_date=raw.get("release_date", "") or "",
-        status=raw.get("status", "") or "", interleaved=raw.get("interleaved", False),
-    )
-
-
-def _parse_provider_info(provider_id: str, raw: Dict[str, Any]) -> ProviderInfo:
-    """Convert a raw models.dev provider entry dict into a ProviderInfo."""
-    env = raw.get("env") or []
-    models = raw.get("models") or {}
-    return ProviderInfo(
-        id=provider_id, name=raw.get("name", "") or provider_id, env=tuple(env) if isinstance(env, list) else (),
-        api=raw.get("api", "") or "", doc=raw.get("doc", "") or "", model_count=len(models) if isinstance(models, dict) else 0,
-    )
-
-
 def get_provider_info(
     provider_id: str, *, allow_network: bool = True, config: Optional[Dict[str, Any]] = None,
 ) -> Optional[ProviderInfo]:
     """Provider metadata by Hermes or models.dev ID, or None if not cataloged. ``allow_network`` defaults to True (interactive setup)."""
     mdev_id = _models_dev_id(provider_id, config=config) or provider_id
     raw = _registry_provider(mdev_id, allow_network)
-    return _parse_provider_info(mdev_id, raw) if raw is not None else None
+    return provider_info_from_entry(mdev_id, raw) if raw is not None else None
 
 
 def get_model_info(
@@ -975,4 +784,4 @@ def get_model_info(
     mid, entry = next(_iter_model_entries(models, model_id, suffix_fallback=False, provider=provider_id), (model_id, None)) if models is not None else (model_id, None)
     # Not in catalog — an override (explicit or _default) may still provide it.
     raw = _apply_overrides(provider_id, model_id, entry, config=config)
-    return _parse_model_info(mid, raw, mdev_id) if raw is not None else None
+    return model_info_from_entry(mid, raw, mdev_id) if raw is not None else None
