@@ -26,7 +26,7 @@ from tools.registry import tool_error
 
 def prepare_send_message_platforms() -> None:
     """Load enabled standalone plugins before tool schemas/cache keys are built."""
-    from hermes_cli.plugins import discover_plugins
+    from plugin_runtime.lifecycle import discover_plugins
     discover_plugins()
 
 

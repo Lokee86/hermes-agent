@@ -99,7 +99,7 @@ def test_tools_action_accepts_deferred_plugin_without_materializing(action, caps
 
     try:
         with patch(
-            "hermes_cli.plugins.discover_plugins",
+            "plugin_runtime.lifecycle.discover_plugins",
             side_effect=discover_deferred_platform,
         ) as discover, \
              patch("hermes_cli.tools_config.load_config", return_value=config), \

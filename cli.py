@@ -443,7 +443,7 @@ def _prepare_deferred_agent_startup() -> None:
     _deferred_agent_startup_done = True
     _accept_hooks = os.environ.get("HERMES_ACCEPT_HOOKS", "").lower() in {"1", "true", "yes", "on"}
     try:
-        from hermes_cli.plugins import discover_plugins
+        from plugin_runtime.lifecycle import discover_plugins
 
         discover_plugins()
     except Exception:
@@ -759,7 +759,7 @@ build_bundle_invocation_message = _lazy_shim("agent.skill_bundles", "build_bundl
 def _get_plugin_cmd_handler_names() -> set:
     """Return plugin command names (without slash prefix) for dispatch matching."""
     try:
-        from hermes_cli.plugins import get_plugin_commands
+        from plugin_runtime.api import get_plugin_commands
         return set(get_plugin_commands().keys())
     except Exception:
         return set()
@@ -1278,7 +1278,7 @@ class HermesCLI(CLIInitMixin, CLITuiRuntimeMixin, CLIProcessNotificationsMixin, 
         return True
 
     def _run_plugin_slash_command(self, base_cmd: str, user_args: str) -> None:
-        from hermes_cli.plugins import get_plugin_command_handler
+        from plugin_runtime.api import get_plugin_command_handler
         from plugin_runtime.dispatch import resolve_plugin_command_result
 
         plugin_handler = get_plugin_command_handler(base_cmd.lstrip("/"))

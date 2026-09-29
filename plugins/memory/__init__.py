@@ -144,7 +144,7 @@ def _entry_point_package_dir(entry_point) -> Optional[Path]:
     if entry_point is None:
         return None
     try:
-        from hermes_cli.plugins import resolve_module_origin
+        from plugin_runtime.manifest import resolve_module_origin
 
         module_name = (entry_point.value or "").split(":")[0].strip()
         origin = resolve_module_origin(module_name)
@@ -400,7 +400,7 @@ class _ProviderCollector:
             self._plugin_context().register_skill(*args, **kwargs)
             qualified_name = f"{self.name}:{args[0] if args else kwargs.get('name')}"
 
-            from hermes_cli.plugins import get_plugin_manager
+            from plugin_runtime.lifecycle import get_plugin_manager
 
             registered_path = get_plugin_manager().find_plugin_skill(qualified_name)
             if registered_path is not None:
@@ -432,7 +432,7 @@ class _ProviderCollector:
         """A real ``PluginContext``, built once on demand: the common provider that only
         calls ``register_memory_provider`` must not pay for importing the plugin manager."""
         if self._context is None:
-            from hermes_cli.plugins import get_plugin_manager
+            from plugin_runtime.lifecycle import get_plugin_manager
             from plugin_runtime.context import PluginContext
             from plugin_runtime.manifest import PluginManifest
 
@@ -478,7 +478,7 @@ def _prune_inactive_memory_provider_skills(active_provider: Optional[str] = None
     if active_provider is None:
         active_provider = _get_active_memory_provider()
 
-    from hermes_cli.plugins import get_plugin_manager
+    from plugin_runtime.lifecycle import get_plugin_manager
 
     manager = get_plugin_manager()
     registered = _registered_skills_for_active_home()

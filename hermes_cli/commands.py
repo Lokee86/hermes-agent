@@ -492,7 +492,7 @@ def _iter_plugin_command_entries() -> list[tuple[str, str, str]]:
     """(name, description, args_hint) for ``PluginContext.register_command`` slash commands.
     Lazy so importing this module never forces plugin discovery."""
     try:
-        from hermes_cli.plugins import get_plugin_commands
+        from plugin_runtime.api import get_plugin_commands
         commands = get_plugin_commands() or {}
     except Exception:
         return []
@@ -603,7 +603,7 @@ def _collect_gateway_skill_entries(
     # --- Tier 1: Plugin slash commands (never trimmed) ---------------------
     plugin_pairs: list[tuple[str, str, str]] = []
     try:
-        from hermes_cli.plugins import get_plugin_commands
+        from plugin_runtime.api import get_plugin_commands
         plugin_cmds = get_plugin_commands()
         for cmd_name in sorted(plugin_cmds):
             if platform == "telegram":

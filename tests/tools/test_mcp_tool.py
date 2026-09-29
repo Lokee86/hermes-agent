@@ -142,8 +142,8 @@ class TestLoadMCPConfig:
         manager = SimpleNamespace(get_portable_mcp_servers=lambda: portable)
         with (
             patch("hermes_cli.config.load_config", return_value={"mcp_servers": native}),
-            patch("hermes_cli.plugins.discover_plugins"),
-            patch("hermes_cli.plugins.get_plugin_manager", return_value=manager),
+            patch("plugin_runtime.lifecycle.discover_plugins"),
+            patch("plugin_runtime.lifecycle.get_plugin_manager", return_value=manager),
             patch.dict(os.environ, {"PORT": "3000"}),
         ):
             from tools.mcp_tool_config import _load_mcp_config
@@ -159,7 +159,6 @@ class TestLoadMCPConfig:
         import json
         import hermes_yaml as yaml
         from hermes_cli.agent_plugins import MCP_SCHEMA_V1, PLUGIN_SCHEMA_V1
-        from hermes_cli import plugins as plugins_mod
 
         home = tmp_path / "home"
         plugin = home / "plugins" / "portable"

@@ -18,6 +18,7 @@ from plugin_runtime.loading import (
     in_plugin_load_worker,
 )
 from plugin_runtime.manager import PluginManager
+from plugin_runtime.debug import install_plugin_debug_handler
 
 logger = logging.getLogger("hermes_cli.plugins")
 
@@ -112,6 +113,7 @@ def _attach_published_tui_host(manager: PluginManager) -> None:
 
 def get_plugin_manager() -> PluginManager:
     """Return the manager for the active Hermes profile/home."""
+    install_plugin_debug_handler()
     global _plugin_manager
     current_home = _plugin_home_key()
     with _plugin_managers_lock:

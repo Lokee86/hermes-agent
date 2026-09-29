@@ -77,11 +77,11 @@ _DELEGATION_TASK_DESC = "subagent model (delegate_task)"
 
 def _all_aux_tasks() -> list[tuple[str, str, str]]:
     """Built-in aux tasks (in order) followed by plugin-registered ones
-    (:meth:`hermes_cli.plugins.PluginContext.register_auxiliary_task`)."""
+    (:meth:`plugin_runtime.context.PluginContext.register_auxiliary_task`)."""
     tasks = list(_AUX_TASKS)
     # Plugin discovery failure must not break the aux config UI.
     with contextlib.suppress(Exception):
-        from hermes_cli.plugins import get_plugin_auxiliary_tasks
+        from plugin_runtime.api import get_plugin_auxiliary_tasks
         for entry in get_plugin_auxiliary_tasks():
             tasks.append((entry["key"], entry["display_name"], entry["description"]))
     return tasks

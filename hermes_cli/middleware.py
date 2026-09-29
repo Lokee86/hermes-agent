@@ -63,7 +63,7 @@ def _apply_request_chain(
     kind: str, payload_key: str, trace: List[Dict[str, Any]], original: Any, **kwargs: Any
 ) -> RequestMiddlewareResult:
     """Feed ``kwargs[payload_key]`` through every ``kind`` middleware; each may return ``{payload_key: {...}}``."""
-    from hermes_cli.plugins import invoke_middleware
+    from plugin_runtime.api import invoke_middleware
 
     current = kwargs[payload_key]
     for result in invoke_middleware(kind, **middleware_payload(**kwargs)):
@@ -86,7 +86,7 @@ def _apply_request_chain(
 
 def apply_llm_request_middleware(request: Dict[str, Any], **context: Any) -> RequestMiddlewareResult:
     """Apply registered LLM request middleware; ``{"request": {...}}`` replaces the provider kwargs."""
-    from hermes_cli.plugins import has_middleware
+    from plugin_runtime.api import has_middleware
 
     if not has_middleware(LLM_REQUEST_MIDDLEWARE):
         return RequestMiddlewareResult(payload=request, original_payload=request)
@@ -118,7 +118,7 @@ def apply_tool_request_middleware(
             current_args = _safe_copy(relay_args)
             trace.append({"source": "nemo_relay"})
 
-    from hermes_cli.plugins import has_middleware
+    from plugin_runtime.api import has_middleware
 
     if not has_middleware(TOOL_REQUEST_MIDDLEWARE):
         return RequestMiddlewareResult(

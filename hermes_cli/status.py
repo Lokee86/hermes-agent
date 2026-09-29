@@ -182,7 +182,7 @@ def _render_terminal(ctx):
         # Plugin-registered terminal backends: show availability via the provider's doctor rows
         # (fail-soft — never break `hermes status`).
         try:
-            from hermes_cli.plugins import discover_plugins
+            from plugin_runtime.lifecycle import discover_plugins
             discover_plugins()
             from agent.terminal_env_registry import get_provider
             provider = get_provider(terminal_env)

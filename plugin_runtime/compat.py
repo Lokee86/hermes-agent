@@ -234,7 +234,7 @@ def compat_report(manifests=None, *, force: bool = False) -> Dict[str, List[Hit]
     """
     if manifests is None:
         try:
-            from hermes_cli.plugins import get_plugin_manager
+            from plugin_runtime.lifecycle import get_plugin_manager
             mgr = get_plugin_manager()
             mgr.discover_and_load()
             manifests = [lp.manifest for lp in mgr._plugins.values()]

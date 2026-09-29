@@ -251,7 +251,7 @@ _SIMPLE_RPCS = {
     "reload.env": (5015, lambda params: {"updated": int(_tools_mod("hermes_cli.config").reload_env())}),
     "plugins.list": (5032, lambda params: {"plugins": [
         {"name": n, "version": getattr(i, "version", "?"), "enabled": getattr(i, "enabled", True)}
-        for n, i in _tools_mod("hermes_cli.plugins").get_plugin_manager()._plugins.items()]}),
+        for n, i in _tools_mod("plugin_runtime.lifecycle").get_plugin_manager()._plugins.items()]}),
     "tools.list": (5031, lambda params: {"toolsets": _toolset_rows(params, with_tools=True)}),
     "toolsets.list": (5032, lambda params: {"toolsets": _toolset_rows(params, with_tools=False)}),
     "agents.list": (5033, lambda params: {"processes": [
@@ -470,7 +470,7 @@ def _dispatch_quick(rid, params, session, name, arg):
 
 def _plugin_command_handler(name: str):
     try:
-        return _tools_mod("hermes_cli.plugins").get_plugin_command_handler(name)
+        return _tools_mod("plugin_runtime.api").get_plugin_command_handler(name)
     except Exception:
         return None
 

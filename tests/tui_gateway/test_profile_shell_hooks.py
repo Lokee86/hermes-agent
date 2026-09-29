@@ -11,7 +11,7 @@ import hermes_yaml as yaml
 
 def test_agent_build_arms_only_consented_profile_policy(tmp_path, monkeypatch):
     from agent import shell_hooks
-    from hermes_cli import plugins
+    from hermes_cli import plugin_policy
     from hermes_constants import reset_hermes_home_override, set_hermes_home_override
     from tui_gateway import server
 
@@ -44,9 +44,9 @@ def test_agent_build_arms_only_consented_profile_policy(tmp_path, monkeypatch):
             try:
                 agent = server._make_agent(label, label, context_cwd_is_launch_artifact=False)
                 assert agent is not None
-                block = plugins.get_pre_tool_call_block_message('write_file', {'path': str(tmp_path / 'protected'), 'content': 'x'})
+                block = plugin_policy.get_pre_tool_call_block_message('write_file', {'path': str(tmp_path / 'protected'), 'content': 'x'})
                 assert block == (None if label == 'unapproved' else label)
-                assert plugins.get_pre_tool_call_block_message('read_file', {'path': str(tmp_path / 'protected')}) is None
+                assert plugin_policy.get_pre_tool_call_block_message('read_file', {'path': str(tmp_path / 'protected')}) is None
             finally:
                 reset_hermes_home_override(token)
     finally:

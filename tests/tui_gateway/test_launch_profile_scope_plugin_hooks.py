@@ -22,7 +22,7 @@ from pathlib import Path
 import pytest
 
 from agent.secret_scope import set_multiplex_active
-from hermes_cli import plugins as plugins_mod
+from hermes_cli import plugin_policy
 from hermes_constants import get_hermes_home, get_hermes_home_override
 from tools.daemon_pool import DaemonThreadPoolExecutor
 from tools.thread_context import propagate_context_to_thread
@@ -59,7 +59,7 @@ def two_homes(tmp_path, monkeypatch):
     for home in (launch, routed):
         token = set_hermes_home_override(str(home))
         try:
-            manager = plugins_mod.get_plugin_manager()
+            manager = plugin_lifecycle.get_plugin_manager()
         finally:
             reset_hermes_home_override(token)
         manager._discovered = True  # never scan the real plugin tree
@@ -74,7 +74,7 @@ def _fire_from_tool_worker():
     pool = DaemonThreadPoolExecutor(max_workers=1)
     try:
         return pool.submit(propagate_context_to_thread(
-            lambda: plugins_mod._dispatch_pre_tool_call_hooks(
+            lambda: plugin_policy._dispatch_pre_tool_call_hooks(
                 "terminal", {"command": "true"}, tool_call_id="c1", turn_id="t1"))).result(10)
     finally:
         pool.shutdown(wait=False)
@@ -83,7 +83,7 @@ def _fire_from_tool_worker():
 def _fire_off_turn_workers(launch_manager_hook_seen):
     """The two worker-thread deliveries: stream observer queue and the plugin event bus."""
     from agent import plugin_stream_hooks
-    manager = plugins_mod.get_plugin_manager()
+    manager = plugin_lifecycle.get_plugin_manager()
     observed: list[dict] = []
 
     def observer(**_kw):

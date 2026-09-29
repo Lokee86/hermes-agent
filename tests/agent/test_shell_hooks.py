@@ -325,7 +325,7 @@ class TestIdempotentRegistration:
         assert len(first) == 1
         assert second == []
         # Only one callback on the manager
-        mgr = plugins.get_plugin_manager()
+        mgr = plugin_lifecycle.get_plugin_manager()
         assert len(mgr._hooks.get("on_session_start", [])) == 1
 
     def test_same_command_different_matcher_registers_both(
@@ -353,7 +353,7 @@ class TestIdempotentRegistration:
 
         registered = shell_hooks.register_from_config(cfg, accept_hooks=True)
         assert len(registered) == 2
-        mgr = plugins.get_plugin_manager()
+        mgr = plugin_lifecycle.get_plugin_manager()
         assert len(mgr._hooks.get("pre_tool_call", [])) == 2
 
 

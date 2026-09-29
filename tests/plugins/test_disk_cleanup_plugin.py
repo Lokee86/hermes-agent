@@ -559,7 +559,6 @@ class TestBundledDiscovery:
 
     def test_disk_cleanup_discovered_but_not_loaded_by_default(self, _isolate_env):
         """Bundled plugins are discovered but NOT loaded without opt-in."""
-        from hermes_cli import plugins as pmod
         mgr = PluginManager()
         mgr.discover_and_load()
         # Discovered — appears in the registry
@@ -581,7 +580,6 @@ class TestBundledDiscovery:
                 "disabled": ["disk-cleanup"],
             }
         }))
-        from hermes_cli import plugins as pmod
         mgr = PluginManager()
         mgr.discover_and_load()
         loaded = mgr._plugins["disk-cleanup"]
@@ -594,7 +592,6 @@ class TestBundledDiscovery:
         self._write_enabled_config(
             _isolate_env, ["memory", "context_engine", "disk-cleanup"]
         )
-        from hermes_cli import plugins as pmod
         mgr = PluginManager()
         mgr.discover_and_load()
         assert "memory" not in mgr._plugins

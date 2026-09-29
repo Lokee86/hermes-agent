@@ -690,7 +690,7 @@ class GatewayConfig:
                 # into, and the gateway then tries to connect to Discord / Teams / Google Chat with no token
                 # and emits noisy retry-forever errors. ``_platform_status`` was already fixed for the same
                 # bug class in commit 7849a3d73; this is the runtime counterpart.
-                from hermes_cli.plugins import discover_plugins
+                from plugin_runtime.lifecycle import discover_plugins
                 discover_plugins()
             entry = platform_registry.get(platform.value)
             if entry:

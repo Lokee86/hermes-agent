@@ -155,7 +155,7 @@ def test_memory_provider_skill_prune_only_touches_the_active_home(homes, monkeyp
     """Pruning under profile B (whose active provider differs) must leave profile A's registered
     provider skill in place; A's own later prune still retracts it."""
     import plugins.memory as mem
-    from hermes_cli.plugins import get_plugin_manager
+    from plugin_runtime.lifecycle import get_plugin_manager
 
     a, b = homes
     plugin_lifecycle.reset_plugin_managers_for_tests()

@@ -787,7 +787,7 @@ def _discover_all_plugins() -> list:
     seen: dict = {}
     # memory/, context_engine/ and model-providers/ load through dedicated registries, not the
     # PluginManager opt-in surface, so listing them as toggleable plugins would mislead.
-    from hermes_cli.plugins import discover_entrypoint_manifests, get_bundled_plugins_dir
+    from plugin_runtime.discovery import discover_entrypoint_manifests, get_bundled_plugins_dir
     for base, source, skip in (
         (get_bundled_plugins_dir(), "bundled", {"memory", "context_engine", "model-providers"}),
         (_plugins_dir(), "user", set()),
@@ -843,7 +843,7 @@ def _get_plugin_toolset_key(name: str) -> Optional[str]:
         return next((e.toolset for t in tool_names if (e := registry.get_entry(t)) and e.toolset), None)
 
     def _from_loaded_plugin() -> Optional[str]:
-        from hermes_cli.plugins import discover_plugins, get_plugin_manager
+        from plugin_runtime.lifecycle import discover_plugins, get_plugin_manager
         discover_plugins()  # idempotent — ensures plugins are loaded
         for _key, loaded in get_plugin_manager()._plugins.items():
             if loaded.manifest.name == name or _key == name:
@@ -851,7 +851,7 @@ def _get_plugin_toolset_key(name: str) -> Optional[str]:
         return None
 
     def _from_manifest_on_disk() -> Optional[str]:
-        from hermes_cli.plugins import get_bundled_plugins_dir
+        from plugin_runtime.discovery import get_bundled_plugins_dir
         return next((
             toolset for base in (get_bundled_plugins_dir(), _plugins_dir())
             if base.is_dir() and (base / name).is_dir()

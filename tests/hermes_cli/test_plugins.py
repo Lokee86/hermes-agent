@@ -379,7 +379,8 @@ class TestPluginDiscovery:
 
     def test_middleware_helpers_skip_no_listener_work(self, monkeypatch):
         manager = types.SimpleNamespace(_middleware={})
-        monkeypatch.setattr("hermes_cli.plugins.get_plugin_manager", lambda: manager)
+        monkeypatch.setattr("plugin_runtime.api.delivery_manager", lambda: manager)
+        monkeypatch.setattr("plugin_runtime.lifecycle.delivery_manager", lambda: manager)
 
         request = {"messages": []}
         args = {"path": "README.md"}
@@ -654,7 +655,7 @@ class TestPluginLoading:
             group=ENTRY_POINTS_GROUP,
         )
         monkeypatch.setattr(
-            "hermes_cli.plugins.importlib.metadata.entry_points",
+            "plugin_runtime.discovery.importlib.metadata.entry_points",
             lambda: SimpleNamespace(
                 select=lambda group: [ep] if group == ENTRY_POINTS_GROUP else []
             ),
@@ -707,7 +708,7 @@ class TestPluginLoading:
             group=ENTRY_POINTS_GROUP,
         )
         monkeypatch.setattr(
-            "hermes_cli.plugins.importlib.metadata.entry_points",
+            "plugin_runtime.discovery.importlib.metadata.entry_points",
             lambda: SimpleNamespace(
                 select=lambda group: [ep] if group == ENTRY_POINTS_GROUP else []
             ),
@@ -769,7 +770,7 @@ class TestPluginLoading:
             group=ENTRY_POINTS_GROUP,
         )
         monkeypatch.setattr(
-            "hermes_cli.plugins.importlib.metadata.entry_points",
+            "plugin_runtime.discovery.importlib.metadata.entry_points",
             lambda: SimpleNamespace(
                 select=lambda group: [ep] if group == ENTRY_POINTS_GROUP else []
             ),
@@ -862,7 +863,7 @@ class TestPluginLoading:
             group=ENTRY_POINTS_GROUP,
         )
         monkeypatch.setattr(
-            "hermes_cli.plugins.importlib.metadata.entry_points",
+            "plugin_runtime.discovery.importlib.metadata.entry_points",
             lambda: SimpleNamespace(
                 select=lambda group: [ep] if group == ENTRY_POINTS_GROUP else []
             ),
@@ -1697,7 +1698,7 @@ class TestPreToolCallBlocking:
 
     def test_block_message_returned_for_valid_directive(self, monkeypatch):
         monkeypatch.setattr(
-            "hermes_cli.plugins.invoke_hook",
+            "plugin_runtime.api.invoke_hook",
             lambda hook_name, **kwargs: [{"action": "block", "message": "blocked by plugin"}],
         )
         assert get_pre_tool_call_block_message("todo", {}, task_id="t1") == "blocked by plugin"
@@ -1717,7 +1718,7 @@ class TestPreToolCallDirective:
             lambda hook_name, **kwargs: observed.append((hook_name, kwargs)),
         )
         monkeypatch.setattr(
-            "hermes_cli.plugins.invoke_hook",
+            "plugin_runtime.api.invoke_hook",
             lambda hook_name, **kwargs: [],
         )
 
@@ -1735,7 +1736,7 @@ class TestPreToolCallDirective:
     def test_approve_directive_returned(self, monkeypatch):
         from hermes_cli.plugins import get_pre_tool_call_directive
         monkeypatch.setattr(
-            "hermes_cli.plugins.invoke_hook",
+            "plugin_runtime.api.invoke_hook",
             lambda hook_name, **kwargs: [
                 {"action": "approve", "message": "needs human ok"}
             ],
@@ -1747,7 +1748,7 @@ class TestPreToolCallDirective:
         """approve may omit a message (block may not)."""
         from hermes_cli.plugins import get_pre_tool_call_directive
         monkeypatch.setattr(
-            "hermes_cli.plugins.invoke_hook",
+            "plugin_runtime.api.invoke_hook",
             lambda hook_name, **kwargs: [{"action": "approve"}],
         )
         assert get_pre_tool_call_directive("write_file", {}) == ("approve", None)
@@ -1758,7 +1759,7 @@ class TestPreToolCallDirective:
         approve means no prompt at all, so the veto would otherwise be dropped silently."""
         from hermes_cli.plugins import _get_pre_tool_call_directive_details
         monkeypatch.setattr(
-            "hermes_cli.plugins.invoke_hook",
+            "plugin_runtime.api.invoke_hook",
             lambda hook_name, **kwargs: [
                 {"action": "modify", "args": {"path": "/safe"}},
                 {"action": "approve", "message": "earlier plugin approves", "rule_key": "k"},
@@ -1775,7 +1776,7 @@ class TestPreToolCallDirective:
         incl. its rule_key) and must keep accumulating modify directives that follow it."""
         from hermes_cli.plugins import _get_pre_tool_call_directive_details
         monkeypatch.setattr(
-            "hermes_cli.plugins.invoke_hook",
+            "plugin_runtime.api.invoke_hook",
             lambda hook_name, **kwargs: [
                 {"action": "block"},  # message-less block is invalid and ignored
                 {"action": "approve", "message": "first", "rule_key": " write_file:ssh "},
@@ -1799,7 +1800,7 @@ class TestResolvePreToolBlock:
 
         seen = {}
         monkeypatch.setattr(
-            "hermes_cli.plugins.invoke_hook",
+            "plugin_runtime.api.invoke_hook",
             lambda hook_name, **kwargs: [
                 {"action": "approve", "message": "why"}
             ],
@@ -1826,7 +1827,7 @@ class TestResolvePreToolBlock:
         seen = {}
 
         monkeypatch.setattr(
-            "hermes_cli.plugins.invoke_hook",
+            "plugin_runtime.api.invoke_hook",
             lambda hook_name, **kwargs: [
                 {
                     "action": "approve",
@@ -1855,7 +1856,7 @@ class TestResolvePreToolBlock:
     def test_approve_gate_exception_fails_closed(self, monkeypatch):
         from hermes_cli.plugins import resolve_pre_tool_block
         monkeypatch.setattr(
-            "hermes_cli.plugins.invoke_hook",
+            "plugin_runtime.api.invoke_hook",
             lambda hook_name, **kwargs: [{"action": "approve", "message": "why"}],
         )
         def _boom(*a, **k):
@@ -1871,7 +1872,7 @@ class TestPreToolCallModify:
     def test_modify_returns_merged_args(self, monkeypatch):
         """A single modify hook should return merged args."""
         monkeypatch.setattr(
-            "hermes_cli.plugins.invoke_hook",
+            "plugin_runtime.api.invoke_hook",
             lambda hook_name, **kwargs: [
                 {"action": "modify", "args": {"path": "/safe/dir"}}
             ],
@@ -1885,7 +1886,7 @@ class TestPreToolCallModify:
     def test_modify_accumulates_multiple_hooks(self, monkeypatch):
         """Multiple modify hooks should accumulate — hook A + hook B both survive."""
         monkeypatch.setattr(
-            "hermes_cli.plugins.invoke_hook",
+            "plugin_runtime.api.invoke_hook",
             lambda hook_name, **kwargs: [
                 {"action": "modify", "args": {"path": "/safe"}},
                 {"action": "modify", "args": {"content": "fixed"}},
@@ -1900,7 +1901,7 @@ class TestPreToolCallModify:
     def test_modify_last_wins_on_same_key(self, monkeypatch):
         """When two hooks modify the same key, the later hook wins."""
         monkeypatch.setattr(
-            "hermes_cli.plugins.invoke_hook",
+            "plugin_runtime.api.invoke_hook",
             lambda hook_name, **kwargs: [
                 {"action": "modify", "args": {"path": "/first"}},
                 {"action": "modify", "args": {"path": "/second"}},
@@ -1914,7 +1915,7 @@ class TestPreToolCallModify:
     def test_modify_with_block_returns_both(self, monkeypatch):
         """When a modify precedes a block, both are returned."""
         monkeypatch.setattr(
-            "hermes_cli.plugins.invoke_hook",
+            "plugin_runtime.api.invoke_hook",
             lambda hook_name, **kwargs: [
                 {"action": "modify", "args": {"path": "/safe"}},
                 {"action": "block", "message": "still blocked"},
@@ -1929,7 +1930,7 @@ class TestPreToolCallModify:
     def test_modify_after_block_is_invisible(self, monkeypatch):
         """A modify after a block is never reached — first block wins."""
         monkeypatch.setattr(
-            "hermes_cli.plugins.invoke_hook",
+            "plugin_runtime.api.invoke_hook",
             lambda hook_name, **kwargs: [
                 {"action": "block", "message": "stopped"},
                 {"action": "modify", "args": {"path": "/invisible"}},
@@ -1944,7 +1945,7 @@ class TestPreToolCallModify:
     def test_modify_with_none_args(self, monkeypatch):
         """Modify should handle None args gracefully."""
         monkeypatch.setattr(
-            "hermes_cli.plugins.invoke_hook",
+            "plugin_runtime.api.invoke_hook",
             lambda hook_name, **kwargs: [
                 {"action": "modify", "args": {"path": "/safe"}}
             ],
@@ -1956,7 +1957,7 @@ class TestPreToolCallModify:
     def test_modify_none_when_no_hooks(self, monkeypatch):
         """No hooks → both return values are None."""
         monkeypatch.setattr(
-            "hermes_cli.plugins.invoke_hook",
+            "plugin_runtime.api.invoke_hook",
             lambda hook_name, **kwargs: [],
         )
         block_msg, modified = _dispatch_pre_tool_call_hooks(
@@ -1968,7 +1969,7 @@ class TestPreToolCallModify:
     def test_modify_invalid_args_ignored(self, monkeypatch):
         """Non-dict args and empty dicts should be silently ignored."""
         monkeypatch.setattr(
-            "hermes_cli.plugins.invoke_hook",
+            "plugin_runtime.api.invoke_hook",
             lambda hook_name, **kwargs: [
                 {"action": "modify", "args": "not a dict"},
                 {"action": "modify", "args": {}},          # empty
@@ -1986,7 +1987,7 @@ class TestGetPreVerifyContinueMessage:
 
 
     def test_none_when_no_hooks(self, monkeypatch):
-        monkeypatch.setattr("hermes_cli.plugins.invoke_hook", lambda hook_name, **kwargs: [])
+        monkeypatch.setattr("hermes_cli.plugin_policy.invoke_hook", lambda hook_name, **kwargs: [])
         assert get_pre_verify_continue_message() is None
 
     def test_forwards_scope_signals_to_hooks(self, monkeypatch):
@@ -2013,7 +2014,7 @@ class TestThreadToolWhitelist:
         )
 
         monkeypatch.setattr(
-            "hermes_cli.plugins.invoke_hook",
+            "plugin_runtime.api.invoke_hook",
             lambda hook_name, **kwargs: [],
         )
         set_thread_tool_whitelist({"memory", "skill_manage"})
@@ -2030,7 +2031,7 @@ class TestThreadToolWhitelist:
         )
 
         monkeypatch.setattr(
-            "hermes_cli.plugins.invoke_hook",
+            "plugin_runtime.api.invoke_hook",
             lambda hook_name, **kwargs: [],
         )
         set_thread_tool_whitelist({"memory"})
@@ -2049,7 +2050,7 @@ class TestThreadToolWhitelist:
         )
 
         monkeypatch.setattr(
-            "hermes_cli.plugins.invoke_hook",
+            "plugin_runtime.api.invoke_hook",
             lambda hook_name, **kwargs: [],
         )
 

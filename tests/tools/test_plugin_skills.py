@@ -54,7 +54,6 @@ class TestIsValidNamespace:
 class TestPluginSkillRegistry:
     @pytest.fixture
     def pm(self, monkeypatch):
-        from hermes_cli import plugins as plugins_mod
         from plugin_runtime.manager import PluginManager
 
         fresh = PluginManager()
@@ -87,8 +86,7 @@ class TestPluginSkillRegistry:
 class TestPluginContextRegisterSkill:
     @pytest.fixture
     def ctx(self, tmp_path, monkeypatch):
-        from hermes_cli import plugins as plugins_mod
-        from hermes_cli.plugins import PluginManifest
+        from plugin_runtime.manifest import PluginManifest
         from plugin_runtime.manager import PluginManager
         from plugin_runtime.context import PluginContext
 
@@ -167,7 +165,6 @@ class TestSkillViewQualifiedName:
     @pytest.fixture(autouse=True)
     def _isolate(self, tmp_path, monkeypatch):
         """Fresh plugin manager + empty SKILLS_DIR for each test."""
-        from hermes_cli import plugins as plugins_mod
         from plugin_runtime.manager import PluginManager
 
         self.pm = PluginManager()
@@ -393,7 +390,6 @@ class TestSkillViewPluginGuards:
     def _isolate(self, tmp_path, monkeypatch):
         import sys
 
-        from hermes_cli import plugins as plugins_mod
         from plugin_runtime.manager import PluginManager
 
         self.pm = PluginManager()
@@ -417,7 +413,7 @@ class TestSkillViewPluginGuards:
         from tools.skills_tool import skill_view
 
         self._reg(tmp_path, "---\nname: foo\n---\nBody.\n")
-        monkeypatch.setattr("hermes_cli.plugins._get_disabled_plugins", lambda: {"myplugin"})
+        monkeypatch.setattr("plugin_runtime.discovery._get_disabled_plugins", lambda: {"myplugin"})
 
         result = json.loads(skill_view("myplugin:foo"))
         assert result["success"] is False
@@ -448,7 +444,6 @@ class TestSkillViewPluginGuards:
 class TestBundleContextBanner:
     @pytest.fixture(autouse=True)
     def _isolate(self, tmp_path, monkeypatch):
-        from hermes_cli import plugins as plugins_mod
         from plugin_runtime.manager import PluginManager
 
         self.pm = PluginManager()

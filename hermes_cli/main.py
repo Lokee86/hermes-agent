@@ -2728,7 +2728,7 @@ def _dashboard_prepare_runtime(args, headless_backend) -> bool:
     # runtime depends on plugin-registered providers (image_gen, web,
     # dashboard_auth, …).
     try:
-        from hermes_cli.plugins import discover_plugins
+        from plugin_runtime.lifecycle import discover_plugins
         discover_plugins()
     except Exception as exc:
         # Must not block startup; the gate's fail-closed branch surfaces a
@@ -3012,7 +3012,7 @@ def _prepare_agent_startup(args) -> None:
     if not _is_tui_chat_launch(args):
         # The TUI backend does its own discovery; the launcher only spawns Node.
         try:
-            from hermes_cli.plugins import start_background_plugin_discovery
+            from plugin_runtime.lifecycle import start_background_plugin_discovery
 
             # Daemon thread: ~150ms of manifest scanning overlaps the rest of
             # startup. Every synchronous reader goes through discover_plugins(),
@@ -3386,7 +3386,7 @@ def _register_plugin_cli_commands(subparsers) -> None:
         return
     try:
         from plugins.memory import discover_plugin_cli_commands
-        from hermes_cli.plugins import discover_plugins, get_plugin_manager
+        from plugin_runtime.lifecycle import discover_plugins, get_plugin_manager
 
         seen_plugin_commands = set()
         for cmd_info in discover_plugin_cli_commands():

@@ -28,6 +28,6 @@ from plugin_runtime.portable import (
 
 def has_enabled_agent_plugin_mcp(raw_config: Mapping[str, Any]) -> bool:
     """Import-compatible wrapper for the shared PluginManager MCP probe."""
-    from hermes_cli.plugins import has_enabled_agent_plugin_mcp as _probe
+    from plugin_runtime.lifecycle import has_enabled_agent_plugin_mcp as _probe
 
     return _probe(raw_config)
