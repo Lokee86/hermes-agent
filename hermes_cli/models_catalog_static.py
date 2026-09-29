@@ -270,7 +270,7 @@ _PROVIDER_MODELS: dict[str, list[str]] = {
     # Static fallback when live discovery (ListFoundationModels + ListInferenceProfiles) is
     # unavailable. Inference-profile IDs (us.*) because most models require them.
     "bedrock": [
-        # [0] is the provider default (get_default_model_for_provider) — keep the cheaper Sonnet there.
+        # [0] is the provider default (select_provider_default) — keep the cheaper Sonnet there.
         "us.anthropic.claude-sonnet-5", "us.anthropic.claude-opus-5-5", "us.anthropic.claude-sonnet-4-6",
         "us.anthropic.claude-opus-4-6-v1",
         "us.anthropic.claude-haiku-4-5-20251001-v1:0", "us.anthropic.claude-sonnet-4-5-20250929-v1:0",
@@ -378,7 +378,7 @@ PREFERRED_SILENT_DEFAULT_MODEL = "z-ai/glm-5.2"
 
 
 # Providers whose *silent* auto-default goes through the cost-safe catalog-labeled default
-# (``get_preferred_silent_default_model``) instead of curated entry [0]. Metered aggregators order
+# (``preferred_silent_default_model``) instead of curated entry [0]. Metered aggregators order
 # best-first, so [0] is the priciest flagship; a profile that sets a provider with no model would
 # otherwise silently bill the most expensive model (863 Opus requests before one user noticed).
 # Network-free (cache-only) on purpose — this is the hot resolution path. The *interactive* default

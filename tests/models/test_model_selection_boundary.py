@@ -12,6 +12,7 @@ SELECTION_FILES = (
     ROOT / "models" / "selection_types.py",
     ROOT / "models" / "selection_explicit.py",
     ROOT / "models" / "selection_detection.py",
+    ROOT / "models" / "selection_defaults.py",
 )
 METADATA_ROOT = ROOT / "models" / "metadata"
 
@@ -119,6 +120,8 @@ def test_selection_public_definitions_are_owned_once():
         "ExplicitSelectionError",
         "build_selection_candidate",
         "explicit_provider_hint",
+        "select_default_model",
+        "select_nous_default_model",
         "select_detected_model",
         "select_explicit_model",
         "select_model",
@@ -155,3 +158,14 @@ def test_model_switch_consumes_selection_and_old_route_owners_are_deleted():
     assert "select_explicit_model" in calls
     assert "normalize_model_id" not in calls
     assert "detect_provider_for_model" not in calls
+
+
+def test_legacy_default_selection_owners_are_deleted():
+    path = ROOT / "hermes_cli" / "models.py"
+    obsolete = {
+        "get_preferred_silent_default_model",
+        "pick_silent_default_model",
+        "recommended_nous_default_model",
+        "get_default_model_for_provider",
+    }
+    assert _definitions(path).isdisjoint(obsolete)

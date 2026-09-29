@@ -986,7 +986,7 @@ def settle_after_upgrade(account_state: Dict[str, Any]) -> Dict[str, Any]:
     = welcome host. An account cannot keep either: the welcome host refuses account tokens, and the
     portal host serves ``nous/welcome`` as a paid model. When the config is on the free tier's route,
     ``model.base_url`` becomes the account's inference host and ``model.default`` the recommended
-    default for the account's tier (:func:`hermes_cli.models.recommended_nous_default_model`, the
+    default for the account's tier (:func:`hermes_cli.model_selection_defaults.select_nous_recommended_default`, the
     same pick as ``GET /api/model/recommended-default``), through the same config write a plain Nous
     login uses. A config on the user's own model and host is left alone.
 
@@ -1010,9 +1010,13 @@ def settle_after_upgrade(account_state: Dict[str, Any]) -> Dict[str, Any]:
         return {"model": current, "changed": False}
     model = current
     if on_welcome_model:
-        from hermes_cli.models import recommended_nous_default_model
+        from hermes_cli.model_selection_defaults import (
+            select_nous_recommended_default,
+            selected_model_id,
+        )
         try:
-            model = str(recommended_nous_default_model().get("model") or "")
+            selection, _free_tier = select_nous_recommended_default()
+            model = selected_model_id(selection)
         except Exception as exc:
             logger.debug("sign-in completion: recommended default unavailable: %s", exc)
             model = ""

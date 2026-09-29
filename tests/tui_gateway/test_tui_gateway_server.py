@@ -4224,6 +4224,22 @@ def test_resolve_model_strips_config_model(monkeypatch):
     assert server._resolve_model() == "nous/hermes-test"
 
 
+def test_resolve_model_uses_canonical_silent_default_when_unconfigured(monkeypatch):
+    monkeypatch.delenv("HERMES_MODEL", raising=False)
+    monkeypatch.delenv("HERMES_INFERENCE_MODEL", raising=False)
+    monkeypatch.setattr(server, "_load_cfg", lambda: {})
+    monkeypatch.setattr(
+        "hermes_cli.model_selection_defaults.select_provider_default",
+        lambda provider: provider,
+    )
+    monkeypatch.setattr(
+        "hermes_cli.model_selection_defaults.selected_model_id",
+        lambda provider: "safe/default" if provider == "openrouter" else "",
+    )
+
+    assert server._resolve_model() == "safe/default"
+
+
 def _sync_test_session(**extra):
     session = {
         "agent": types.SimpleNamespace(model="old/model"),

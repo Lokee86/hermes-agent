@@ -21,8 +21,8 @@ def build_explicit_detection_facts(
         _provider_keys,
         _resolve_provider_prefix,
         _static_catalog_matches,
-        get_default_model_for_provider,
     )
+    from hermes_cli.model_selection_defaults import select_provider_default, selected_model_id
     from hermes_cli.models_detect import (
         current_provider_catalog_match,
         current_provider_owns_vendor,
@@ -45,7 +45,7 @@ def build_explicit_detection_facts(
         if defaults and named_provider not in current_keys:
             named = ModelRef(
                 named_provider,
-                get_default_model_for_provider(named_provider) or defaults[0],
+                selected_model_id(select_provider_default(named_provider)) or defaults[0],
             )
 
     static = tuple(

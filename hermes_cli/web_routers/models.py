@@ -168,8 +168,16 @@ async def get_model_options(
 
 
 def _nous_recommended_default() -> dict:
-    from hermes_cli.models import recommended_nous_default_model
-    return recommended_nous_default_model()
+    from hermes_cli.model_selection_defaults import (
+        select_nous_recommended_default,
+        selected_model_id,
+    )
+    selection, free_tier = select_nous_recommended_default()
+    return {
+        "provider": "nous",
+        "model": selected_model_id(selection),
+        "free_tier": bool(free_tier),
+    }
 
 
 @router.get("/api/model/recommended-default")
@@ -193,7 +201,10 @@ def get_recommended_default_model(provider: str = "", profile: Optional[str] = N
 
     try:
         from hermes_cli.inventory import build_models_payload, load_picker_context
-        from hermes_cli.models import pick_silent_default_model
+        from hermes_cli.model_selection_defaults import (
+            select_silent_default,
+            selected_model_id,
+        )
 
         # build_models_payload -> list_authenticated_providers -> _save_discovered_models_to_config:
         # this GET lazily PERSISTS discovered custom-provider models, so it needs the scope too.
@@ -202,7 +213,12 @@ def get_recommended_default_model(provider: str = "", profile: Optional[str] = N
         for row in payload.get("providers", []):
             if str(row.get("slug", "")).lower() == slug:
                 models = [str(m) for m in (row.get("models") or [])]
-                return {"provider": slug, "model": pick_silent_default_model(models, provider=slug), "free_tier": None}
+                selection = select_silent_default(slug, models)
+                return {
+                    "provider": slug,
+                    "model": selected_model_id(selection),
+                    "free_tier": None,
+                }
         return {"provider": slug, "model": "", "free_tier": None}
     except Exception:
         _log.exception("GET /api/model/recommended-default failed")

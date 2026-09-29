@@ -19,8 +19,8 @@ def _resolve_model() -> str:
         return m.strip()
     # No env seed / config preference: the cost-safe silent default (cache-only read), never an unpicked flagship.
     with contextlib.suppress(Exception):
-        from hermes_cli.models import get_preferred_silent_default_model
-        return get_preferred_silent_default_model()
+        from hermes_cli.model_selection_defaults import select_provider_default, selected_model_id
+        return selected_model_id(select_provider_default("openrouter"))
     return "z-ai/glm-5.2"
 
 

@@ -152,6 +152,7 @@ def select_model(request: SelectionRequest) -> ModelSelection:
 
 
 from models.selection_detection import ExplicitDetectionFacts, select_detected_model  # noqa: E402
+from models.selection_defaults import select_default_model, select_nous_default_model  # noqa: E402
 
 from models.selection_explicit import (  # noqa: E402
     ExplicitAlias,
@@ -177,6 +178,8 @@ __all__ = [
     "SelectionReason",
     "SelectionRequest",
     "build_selection_candidate",
+    "select_default_model",
+    "select_nous_default_model",
     "select_detected_model",
     "select_explicit_model",
     "select_model",

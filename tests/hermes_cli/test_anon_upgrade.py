@@ -227,12 +227,12 @@ class TestSignInCompletionSettlesTheModel:
 
     def test_no_eligible_recommendation_leaves_no_default_rather_than_a_model_the_account_may_not_use(
             self, portal, free_account, monkeypatch, capsys):
-        from hermes_cli import models as m
+        from hermes_cli import model_selection_defaults as defaults
         anon_auth.ensure_portal_identity(explicit=True)
         _write_model_config({"provider": "nous", "default": anon_auth.GUEST_MODEL, "base_url": WELCOME})
         def _portal_down():
             raise RuntimeError("recommended models unavailable")
-        monkeypatch.setattr(m, "recommended_nous_default_model", _portal_down)
+        monkeypatch.setattr(defaults, "select_nous_recommended_default", _portal_down)
         assert anon_auth.upgrade_guest(_args()) == 0
         model_cfg = _model_config()
         assert "default" not in model_cfg

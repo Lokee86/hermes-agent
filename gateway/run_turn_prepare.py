@@ -179,8 +179,11 @@ class GatewayTurnPrepareMixin:
         # provider's first catalog model.
         if not model and runtime_kwargs.get("provider"):
             with suppress(Exception):
-                from hermes_cli.models import get_default_model_for_provider
-                model = get_default_model_for_provider(runtime_kwargs["provider"])
+                from hermes_cli.model_selection_defaults import (
+                    select_provider_default,
+                    selected_model_id,
+                )
+                model = selected_model_id(select_provider_default(runtime_kwargs["provider"]))
                 if model:
                     logger.info(
                         "No model configured — defaulting to %s for provider %s", model, runtime_kwargs["provider"],
