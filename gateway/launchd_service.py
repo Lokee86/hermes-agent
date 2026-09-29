@@ -922,7 +922,7 @@ def launchd_restart():
     # kickstart below would hang on the same wall — go straight to the
     # bootout/bootstrap-retry path, which is bounded and reports its own
     # failure instead of stalling the update for 90s.
-    refresh_ok = _gw().refresh_launchd_plist_if_needed()
+    refresh_ok = refresh_launchd_plist_if_needed()
     from gateway.status import get_running_pid
     try:
         pid = get_running_pid()
@@ -956,7 +956,7 @@ def launchd_restart():
                 print("⚠ launchd did not revive the gateway after its graceful exit — forcing restart")
             else:
                 print(f"⚠ Gateway drain timed out after {wait_budget:.0f}s — forcing launchd restart")
-        if not refresh_ok and _gw().get_launchd_plist_path().exists() and not _gw().launchd_plist_is_current():
+        if not refresh_ok and get_launchd_plist_path().exists() and not launchd_plist_is_current():
             # The refresh attempted a reload and launchd never re-registered
             # the (rewritten) job: kickstart would hang on the same wall. The
             # bootout already happened inside the refresh — bootstrap is the
@@ -964,8 +964,8 @@ def launchd_restart():
             # already-current plist also returns False, and both must keep
             # the ordinary kickstart flow.)
             print("↻ launchd job was not re-registered by the plist refresh; reloading")
-            plist_path = str(_gw().get_launchd_plist_path())
-            subprocess.run(["launchctl", "bootstrap", _gw()._launchd_domain(), plist_path], check=True, timeout=30)
+            plist_path = str(get_launchd_plist_path())
+            subprocess.run(["launchctl", "bootstrap", _launchd_domain(), plist_path], check=True, timeout=30)
             subprocess.run(["launchctl", "kickstart", target], check=True, timeout=30)
             _launchd_ok("✓ Service restarted")
             return

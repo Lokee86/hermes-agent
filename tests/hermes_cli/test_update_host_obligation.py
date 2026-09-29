@@ -177,6 +177,7 @@ def test_recovery_keeps_separate_processes_separate(tmp_path, monkeypatch):
 
 
 
+@pytest.mark.platforms("posix")
 @pytest.mark.skipif(getattr(os, "geteuid", lambda: 1)() == 0, reason="root ignores directory permissions")
 def test_unwritable_host_state_dir_still_arms_the_obligation(two_profiles, no_live_fleet, monkeypatch, tmp_path):
     """An unwritable host state dir must never silently disarm the update→restart obligation.

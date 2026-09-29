@@ -8,6 +8,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from gateway import process_discovery
 from hermes_cli import main as cli_main
 
 def test_restore_windows_gateway_service_waits_out_stop_pending(monkeypatch):
