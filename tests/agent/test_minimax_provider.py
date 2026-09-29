@@ -18,7 +18,7 @@ class TestMinimaxM3StaleCacheGuard:
     def test_m2_cache_not_clobbered(self, tmp_path, monkeypatch):
         monkeypatch.setenv("HERMES_HOME", str(tmp_path))
         import importlib
-        import agent.model_metadata as mm
+        import models.metadata.context as mm
         importlib.reload(mm)
         base = "https://api.minimaxi.com/anthropic"
         # 204,800 is the CORRECT value for M2.x — guard must not touch it.

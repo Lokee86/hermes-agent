@@ -39,7 +39,7 @@ from agent.gemini_native_adapter import is_native_gemini_base_url
 # Remote endpoints must never be fingerprinted: the probe waterfall is only valid for local/LM-Studio/Ollama
 # boxes. Non-Ollama remotes (sglang, vLLM, OpenAI-compat) expose Ollama-compat endpoints that can
 # misidentify and, without an api_key, return 401 on every leg (issue #89863).
-from agent.model_metadata import is_local_endpoint
+from models.metadata.context import is_local_endpoint
 from agent.message_content import flatten_message_text
 from agent.message_metadata import PERSISTENCE_ONLY_MESSAGE_FIELDS, append_message, stamp_message_timestamp
 from agent.message_sanitization import (
@@ -2002,7 +2002,7 @@ def _update_fallback_context_compressor(agent) -> None:
     compressor = getattr(agent, "context_compressor", None)
     if not compressor:
         return
-    from agent.model_metadata import get_model_context_length
+    from models.metadata.context import get_model_context_length
     fb_context_length = get_model_context_length(
         agent.model, base_url=agent.base_url,
         api_key=agent.api_key if isinstance(agent.api_key, str) else "",  # callable (Entra ID) → probes need str

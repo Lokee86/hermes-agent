@@ -121,11 +121,11 @@ def test_custom_provider_context_avoids_false_shrink_warning(monkeypatch):
     # Force the probe-down path that hit the "qwen" → 131072 catalog match
     # when custom_providers was not threaded through.
     monkeypatch.setattr(
-        "agent.model_metadata._resolve_endpoint_context_length",
+        "models.metadata.context._resolve_endpoint_context_length",
         lambda *a, **k: None,
     )
     monkeypatch.setattr(
-        "agent.model_metadata._query_ollama_api_show",
+        "models.metadata.context._query_ollama_api_show",
         lambda *a, **k: None,
     )
     monkeypatch.setattr(

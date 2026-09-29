@@ -3482,7 +3482,7 @@ class TestModelInfoEndpoint:
             }
         })
 
-        with patch("agent.model_metadata.get_model_context_length", return_value=200000):
+        with patch("models.metadata.context.get_model_context_length", return_value=200000):
             resp = self.client.get("/api/model/info")
 
         data = resp.json()
@@ -3500,7 +3500,7 @@ class TestModelInfoEndpoint:
             "model": "some/obscure-model"
         })
 
-        with patch("agent.model_metadata.get_model_context_length", side_effect=Exception("boom")):
+        with patch("models.metadata.context.get_model_context_length", side_effect=Exception("boom")):
             resp = self.client.get("/api/model/info")
 
         assert resp.status_code == 200

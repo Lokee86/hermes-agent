@@ -183,7 +183,7 @@ class TestXiaomiURLMapping:
 
     def test_infer_from_regional_urls(self):
         """Regional token-plan endpoints should also resolve to xiaomi."""
-        from agent.model_metadata import _infer_provider_from_url
+        from models.metadata.context import _infer_provider_from_url
         assert _infer_provider_from_url("https://token-plan-ams.xiaomimimo.com/v1") == "xiaomi"
         assert _infer_provider_from_url("https://token-plan-cn.xiaomimimo.com/v1") == "xiaomi"
         assert _infer_provider_from_url("https://token-plan-sgp.xiaomimimo.com/v1") == "xiaomi"

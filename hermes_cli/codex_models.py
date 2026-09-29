@@ -75,7 +75,7 @@ def _add_context_variants(model_ids: List[str]) -> List[str]:
     The suffix is Hermes-side only — stripped before the id hits the wire (agent/transports/codex.py,
     agent/auxiliary_client.py).
     """
-    from agent.model_metadata import CODEX_CONTEXT_VARIANT_SUFFIX, has_codex_context_variant
+    from models.metadata.context import CODEX_CONTEXT_VARIANT_SUFFIX, has_codex_context_variant
 
     out: List[str] = []
     present = set(model_ids)
@@ -158,7 +158,7 @@ def _fetch_models_from_api(access_token: str, base_url: Optional[str] = None) ->
     catalog is fetched there, never from a host the credential does not belong to (#121486).
     """
     try:
-        from agent.model_metadata import _codex_catalog_probe_allowed
+        from models.metadata.context import _codex_catalog_probe_allowed
         from hermes_cli.auth_codex import _codex_base_url
         catalog_base = (base_url or "").strip().rstrip("/") or _codex_base_url()
         if not _codex_catalog_probe_allowed(access_token, catalog_base):
@@ -168,7 +168,7 @@ def _fetch_models_from_api(access_token: str, base_url: Optional[str] = None) ->
         # masquerades as "no models") and, for residency-enforced workspaces, the residency header.
         from agent.codex_headers import codex_account_headers
         headers = {"Authorization": f"Bearer {access_token}", **codex_account_headers(access_token)}
-        from agent.model_metadata import fetch_codex_catalog_entries
+        from models.metadata.context import fetch_codex_catalog_entries
         entries, _status = fetch_codex_catalog_entries(
             lambda url: httpx.get(url, headers=headers, timeout=10), base_url=catalog_base)
     except Exception as exc:

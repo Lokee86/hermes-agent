@@ -1116,7 +1116,7 @@ def _strip_vendor_prefix(model_id: str) -> str:
 
 def model_supports_fast_mode(model_id: Optional[str]) -> bool:
     """Return whether Hermes should expose the /fast toggle for this model."""
-    from agent.model_metadata import is_grok_46_family
+    from models.metadata.context import is_grok_46_family
 
     return (
         _is_anthropic_fast_model(model_id)
@@ -1127,7 +1127,7 @@ def model_supports_fast_mode(model_id: Optional[str]) -> bool:
 def _is_anthropic_fast_model(model_id: Optional[str]) -> bool:
     """Accepts the Anthropic Fast Mode ``speed`` param (Opus 4.8 / Opus 5 / Opus 5.5 only) —
     deliberately NOT a general "fast model" check. The list lives in ``agent.model_metadata``."""
-    from agent.model_metadata import is_anthropic_fast_mode_model
+    from models.metadata.context import is_anthropic_fast_mode_model
 
     return is_anthropic_fast_mode_model(model_id)
 
@@ -1137,7 +1137,7 @@ def _fast_mode_route_supported(
     """Only the first-party endpoint that bills for fast mode may receive its params."""
     from urllib.parse import urlparse
 
-    from agent.model_metadata import is_grok_46_family
+    from models.metadata.context import is_grok_46_family
 
     if _is_anthropic_fast_model(model_id):
         allowed = {"anthropic": "api.anthropic.com"}

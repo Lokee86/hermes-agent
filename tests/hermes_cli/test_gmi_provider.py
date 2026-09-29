@@ -22,7 +22,7 @@ from hermes_cli.models import (
     provider_model_ids,
 )
 from agent.auxiliary_client import resolve_provider_client
-from agent.model_metadata import get_model_context_length
+from models.metadata.context import get_model_context_length
 
 
 @pytest.fixture(autouse=True)
@@ -175,16 +175,16 @@ class TestGmiModelMetadata:
 
     def test_known_gmi_endpoint_still_uses_endpoint_metadata(self):
         with patch(
-            "agent.model_metadata.get_cached_context_length",
+            "models.metadata.context.get_cached_context_length",
             return_value=None,
         ), patch(
-            "agent.model_metadata.fetch_endpoint_model_metadata",
+            "models.metadata.context.fetch_endpoint_model_metadata",
             return_value={"anthropic/claude-opus-4.6": {"context_length": 409600}},
         ), patch(
             "agent.models_dev.lookup_models_dev_context",
             return_value=None,
         ), patch(
-            "agent.model_metadata.fetch_model_metadata",
+            "models.metadata.context.fetch_model_metadata",
             return_value={},
         ):
             result = get_model_context_length(

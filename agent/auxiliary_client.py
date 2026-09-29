@@ -117,7 +117,7 @@ def aux_probe_mode():
 
 
 from agent.credential_pool import load_pool
-from agent.model_metadata import MINIMUM_CONTEXT_LENGTH, get_model_context_length
+from models.metadata.context import MINIMUM_CONTEXT_LENGTH, get_model_context_length
 from hermes_cli.config import get_hermes_home
 from hermes_cli.config_providers import _canonical_api_mode
 from hermes_cli.provider_auth import get_provider_config, iter_provider_configs
@@ -594,7 +594,7 @@ def _is_codex_gpt54_or_gpt55(model: Optional[str], provider: Optional[str] = Non
     bare = _codex_route_bare_model(model, provider)
     if bare is None:
         return False
-    from agent.model_metadata import is_codex_context_variant
+    from models.metadata.context import is_codex_context_variant
     if is_codex_context_variant(bare):
         return False
     if "astra" in bare:
@@ -4708,7 +4708,7 @@ def _to_async_client(sync_client, model: str, is_vision: bool = False):
     else:
         # Provider for the profile-header fallback is inferred from the hostname.
         try:
-            from agent.model_metadata import _infer_provider_from_url
+            from models.metadata.context import _infer_provider_from_url
             inferred = _infer_provider_from_url(sync_base_url) or ""
         except Exception:
             inferred = ""

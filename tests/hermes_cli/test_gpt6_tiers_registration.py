@@ -11,11 +11,7 @@ Invariant tests only, no list snapshots. They pin what would silently regress:
 """
 
 from agent.auxiliary_client import _compression_threshold_for_model
-from agent.model_metadata import (
-    _verified_codex_ctx_for_slug,
-    is_codex_900k_base,
-    strip_codex_context_variant_suffix,
-)
+from models.metadata.context import _verified_codex_ctx_for_slug, is_codex_900k_base, strip_codex_context_variant_suffix
 from agent.reasoning_effort import CODEX_GPT56_EFFORTS, codex_supported_efforts
 from hermes_cli.codex_models import _finalize_codex_models
 from models import model_alias_sort_key

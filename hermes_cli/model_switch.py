@@ -834,7 +834,7 @@ def resolve_display_context_length(
     """Context length to show in /model output.
 
     models.dev reports per-vendor context but provider-enforced limits can be lower (Codex OAuth
-    caps gpt-5.5 at 272k), so ``agent.model_metadata.get_model_context_length`` is authoritative
+    caps gpt-5.5 at 272k), so ``models.metadata.context.get_model_context_length`` is authoritative
     (it also honors ``custom_providers[].models.<id>.context_length``); ``model_info.context_window``
     is the fallback. A ``config_context_length`` pin is dropped when the route changed.
 
@@ -852,7 +852,7 @@ def resolve_display_context_length(
             config_context_length = None
 
     try:
-        from agent.model_metadata import get_model_context_length
+        from models.metadata.context import get_model_context_length
         ctx = get_model_context_length(
             model, base_url=base_url or "", api_key=api_key or "", provider=provider or None,
             custom_providers=custom_providers, config_context_length=config_context_length)

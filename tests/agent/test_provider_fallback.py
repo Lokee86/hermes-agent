@@ -426,7 +426,7 @@ class TestFallbackExtraBodyReResolution:
             "agent.auxiliary_client.resolve_provider_client",
             return_value=(_mock_client(base_url=self.FB_URL), "fb-model"),
         ), patch(
-            "agent.model_metadata.get_model_context_length",
+            "models.metadata.context.get_model_context_length",
             return_value=128_000,
         ):
             assert agent._try_activate_fallback() is True

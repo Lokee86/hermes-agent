@@ -139,7 +139,7 @@ class TestFallbackChainResetOnTransportRecovery:
                 "models.normalize_model_id",
                 side_effect=lambda p, m, **kwargs: m,
             ),
-            patch("agent.model_metadata.get_model_context_length", return_value=200000),
+            patch("models.metadata.context.get_model_context_length", return_value=200000),
         ):
             result = agent.run_conversation("hello")
 

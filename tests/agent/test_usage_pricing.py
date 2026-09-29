@@ -877,7 +877,7 @@ def _anthropic_usage(speed=None):
 
 
 def test_anthropic_fast_mode_responses_price_from_the_fast_rate_row():
-    from agent.model_metadata import _ANTHROPIC_FAST_MODE_MODELS
+    from models.metadata.context import _ANTHROPIC_FAST_MODE_MODELS
     from agent.usage_pricing import _ANTHROPIC_FAST_MODE_PRICING
 
     # Every model the fast-mode gate sends ``speed`` to has a fast rate and a standard rate.

@@ -19,7 +19,8 @@ from agent.codex_responses_adapter import _summarize_user_message_for_log
 from agent.fast_mode import begin_turn as begin_fast_mode_turn
 from agent.message_metadata import append_message
 from agent.message_sanitization import _repair_tool_call_arguments, _sanitize_surrogates
-from agent.model_metadata import MINIMUM_CONTEXT_LENGTH, _estimate_tools_tokens_rough
+from agent.model_metadata import _estimate_tools_tokens_rough
+from models.metadata.context import MINIMUM_CONTEXT_LENGTH
 from agent.process_bootstrap import _install_safe_stdio
 from agent.prompt_builder import RUNTIME_ENVIRONMENT_END, RUNTIME_ENVIRONMENT_HEADING
 from agent.prompt_caching import (
@@ -1790,7 +1791,7 @@ _PLUGIN_COMPAT_LAZY = {
     'normalize_usage': ('agent.usage_pricing', 'normalize_usage'),
     'parse_available_output_tokens_from_error': ('agent.model_metadata', 'parse_available_output_tokens_from_error'),
     'reanchor_current_turn_user_idx': ('agent.turn_context', 'reanchor_current_turn_user_idx'),
-    'save_context_length': ('agent.model_metadata', 'save_context_length'),
+    'save_context_length': ('models.metadata.context', 'save_context_length'),
     'serialized_messages_bytes': ('agent.message_sanitization', 'serialized_messages_bytes'),
     'splice_provider_projection': ('agent.provider_projection', 'splice_provider_projection'),
     'zai_coding_overload_retry_ceiling': ('agent.retry_utils', 'zai_coding_overload_retry_ceiling'),

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any, Callable, List, Optional
 
-from agent.model_metadata import MINIMUM_CONTEXT_LENGTH
+from models.metadata.context import MINIMUM_CONTEXT_LENGTH
 from hermes_cli.model_switch import ModelSwitchResult, resolve_display_context_length
 
 

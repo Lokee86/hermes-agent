@@ -172,7 +172,7 @@ class CLIInfoMixin:
                 self._show_tool_availability_warnings()
 
         # Low context warning — tied to the runtime guard so guidance cannot drift.
-        from agent.model_metadata import MINIMUM_CONTEXT_LENGTH, is_local_endpoint
+        from models.metadata.context import MINIMUM_CONTEXT_LENGTH, is_local_endpoint
         self._show_plugin_compat_notice()
         if ctx_len and ctx_len < MINIMUM_CONTEXT_LENGTH:
             self._console_print()

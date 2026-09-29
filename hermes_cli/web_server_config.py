@@ -6,7 +6,7 @@ import os
 from dataclasses import replace
 from fastapi import HTTPException
 from typing import Any, Dict, List, Optional, Tuple, TYPE_CHECKING
-from agent.model_metadata import is_local_endpoint
+from models.metadata.context import is_local_endpoint
 from hermes_cli.config import (
     DEFAULT_CONFIG,
     cfg_get,

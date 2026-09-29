@@ -307,14 +307,16 @@ def test_catalog_requests_ask_as_the_newest_client(monkeypatch):
     import sys
     from urllib.parse import parse_qs, urlparse
 
-    from agent import model_metadata
+    from agent import model_metadata as _runtime_hooks  # installs context metadata hooks
+    from models.metadata import context as model_metadata
     from hermes_cli import codex_models
 
     seen_urls = []
     get = _gated_codex_catalog(seen_urls)
     monkeypatch.setitem(sys.modules, "httpx", type("_FakeHttpx", (), {"get": staticmethod(get)}))
     assert "gpt-6-sol" in codex_models._fetch_models_from_api(access_token=_codex_jwt("acct"))
-    monkeypatch.setattr(model_metadata.model_metadata_http, "get", get)
+    from agent import model_metadata_http
+    monkeypatch.setattr(model_metadata_http, "get", get)
     monkeypatch.setattr(model_metadata, "_codex_oauth_context_cache", {})
     live, fresh = model_metadata._fetch_codex_oauth_context_lengths_with_source(_codex_jwt("acct"))
     assert fresh and "gpt-6-sol" in live
@@ -367,7 +369,7 @@ def test_picker_catalog_honours_the_custom_codex_base(monkeypatch):
 def test_catalog_falls_back_to_the_ungated_sentinel_when_newest_client_is_rejected():
     """If the backend goes back to rejecting out-of-sequence versions (empty list or non-200), the
     ``0.0.0`` sentinel is tried next; a sentinel that is itself empty yields no entries."""
-    from agent.model_metadata import CODEX_UNGATED_CLIENT_VERSION, fetch_codex_catalog_entries
+    from models.metadata.context import CODEX_UNGATED_CLIENT_VERSION, fetch_codex_catalog_entries
 
     class _Resp:
         def __init__(self, status, models):

@@ -2089,7 +2089,7 @@ def check_compression_model_feasibility(agent: Any) -> None:
             _resolve_task_provider_model, _try_configured_fallback_for_unavailable_client,
             get_text_auxiliary_client,
         )
-        from agent.model_metadata import MINIMUM_CONTEXT_LENGTH, get_model_context_length
+        from models.metadata.context import MINIMUM_CONTEXT_LENGTH, get_model_context_length
         # Provider may be "auto"; fall back to the client's base_url hostname so the
         # user can tell where the compression model is actually called.
         try:
@@ -2194,7 +2194,7 @@ def ensure_compression_feasibility_checked(agent: Any, estimated_tokens: int) ->
     lazy probe in ``compress_context`` to re-raise hard rejections."""
     if getattr(agent, "_compression_feasibility_checked", False) or not getattr(agent, "context_compressor", None):
         return
-    from agent.model_metadata import MINIMUM_CONTEXT_LENGTH
+    from models.metadata.context import MINIMUM_CONTEXT_LENGTH
     if int(estimated_tokens or 0) < MINIMUM_CONTEXT_LENGTH:
         return
     try:

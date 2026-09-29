@@ -163,7 +163,7 @@ class TestLookupSupportsVisionOverride:
         cfg = {"model": {"base_url": "http://localhost:11434/v1"}}
         with patch("agent.models_dev.query_model_metadata", return_value=None), \
              patch("agent.model_capability_sources._should_probe_ollama_vision", return_value=True), \
-             patch("agent.model_metadata.query_ollama_supports_vision", return_value=True):
+             patch("models.metadata.context.query_ollama_supports_vision", return_value=True):
             assert _lookup_supports_vision("ollama", "gemma4:e2b", cfg) is True
 
 
@@ -213,7 +213,7 @@ class TestShouldProbeOllamaVision:
         # A local endpoint is still probed; the api_key must be forwarded so
         # keyed local servers don't 401.
         with patch(
-            "agent.model_metadata.detect_local_server_type",
+            "models.metadata.context.detect_local_server_type",
             return_value="ollama",
         ) as mock_detect:
             result = _should_probe_ollama_vision(
@@ -227,7 +227,7 @@ class TestShouldProbeOllamaVision:
     def test_local_endpoint_without_key(self):
         # Legacy call: no api_key → forwarded as "" (existing behaviour).
         with patch(
-            "agent.model_metadata.detect_local_server_type",
+            "models.metadata.context.detect_local_server_type",
             return_value="ollama",
         ) as mock_detect:
             result = _should_probe_ollama_vision(
@@ -645,7 +645,7 @@ class TestProbeApiKeyForwarding:
             "agent.image_routing._resolve_inference_base_url",
             return_value="https://remote/v1",
         ), patch(
-            "agent.model_metadata.detect_local_server_type", return_value=None
+            "models.metadata.context.detect_local_server_type", return_value=None
         ) as detect:
             _lookup_supports_vision("custom", "llava", {"model": {"api_key": key}})
         assert detect.call_args.kwargs.get("api_key") == key

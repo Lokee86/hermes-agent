@@ -150,7 +150,7 @@ from agent.vision_message_prep import VisionMessagePrepMixin
 from agent.reasoning_params import ReasoningParamsMixin
 from agent.lazy_forward import forward as _forward, forward_static as _forward_static
 from agent.session_activity import ActivityProvenance
-from agent.model_metadata import is_local_endpoint
+from models.metadata.context import is_local_endpoint
 from agent.message_sanitization import (
     coalesce_tool_call_id as _sanitize_coalesce_tool_call_id,
     deterministic_call_id as _codex_deterministic_call_id,

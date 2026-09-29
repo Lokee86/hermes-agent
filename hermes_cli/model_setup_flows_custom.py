@@ -40,7 +40,7 @@ def _report_context_length_detection(model_name: str, base_url: str, api_key: st
     is NOT written to config, which would freeze a probe result into a permanent override.
     """
     try:
-        from agent.model_metadata import DEFAULT_FALLBACK_CONTEXT, get_model_context_length
+        from models.metadata.context import DEFAULT_FALLBACK_CONTEXT, get_model_context_length
         from hermes_cli.banner import _format_context_length
         detected = get_model_context_length(model_name, base_url=base_url, api_key=api_key or "")
     except Exception:  # a failing probe must never block the save

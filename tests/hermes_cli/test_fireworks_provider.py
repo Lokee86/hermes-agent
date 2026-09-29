@@ -151,6 +151,6 @@ class TestFireworksAuxiliary:
 
 class TestFireworksModelMetadata:
     def test_url_infers_fireworks(self):
-        from agent.model_metadata import _infer_provider_from_url
+        from models.metadata.context import _infer_provider_from_url
 
         assert _infer_provider_from_url("https://api.fireworks.ai/inference/v1") == "fireworks"

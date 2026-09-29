@@ -28,9 +28,7 @@ from agent.iteration_budget import IterationBudget, normalize_budget_warning_rat
 from agent.memory_manager import StreamingContextScrubber
 from agent.memory_provider import is_core_memory_provider
 from agent.session_activity import ActivityProvenance
-from agent.model_metadata import (
-    MINIMUM_CONTEXT_LENGTH, fetch_model_metadata, is_local_endpoint, query_ollama_num_ctx
-)
+from models.metadata.context import MINIMUM_CONTEXT_LENGTH, fetch_model_metadata, is_local_endpoint, query_ollama_num_ctx
 from agent.process_bootstrap import _install_safe_stdio
 from agent.subdirectory_hints import SubdirectoryHintTracker
 from agent.think_scrubber import StreamingThinkScrubber
@@ -1991,7 +1989,7 @@ def _build_context_engine(agent, _agent_cfg, cs, _custom_providers, _effective_c
         # External engines own compaction policy: the host compression threshold (including the Codex
         # gpt-5.5 autoraise above) only configures the built-in ContextCompressor and never reaches the
         # plugin, so the autoraise notice would announce a change that does not apply. (#44439)
-        from agent.model_metadata import get_model_context_length
+        from models.metadata.context import get_model_context_length
         _plugin_ctx_len = get_model_context_length(
             agent.model, base_url=agent.base_url, api_key=getattr(agent, "api_key", ""),
             config_context_length=_effective_context_length, provider=agent.provider,

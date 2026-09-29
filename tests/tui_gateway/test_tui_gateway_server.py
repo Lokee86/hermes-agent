@@ -11318,8 +11318,8 @@ def test_prompt_submit_expands_context_refs(monkeypatch):
             injected_tokens=0,
         )
     )
-    fake_meta = types.ModuleType("agent.model_metadata")
-    fake_meta.get_model_context_length = lambda *args, **kwargs: 100000
+    import models.metadata.context as context_metadata
+    monkeypatch.setattr(context_metadata, "get_model_context_length", lambda *args, **kwargs: 100000)
 
     server._sessions["sid"] = _session(agent=_Agent())
     monkeypatch.setattr(server.threading, "Thread", _ImmediateThread)
@@ -11327,7 +11327,6 @@ def test_prompt_submit_expands_context_refs(monkeypatch):
     monkeypatch.setattr(server, "make_stream_renderer", lambda cols: None)
     monkeypatch.setattr(server, "render_message", lambda raw, cols: None)
     monkeypatch.setitem(sys.modules, "agent.context_references", fake_ctx)
-    monkeypatch.setitem(sys.modules, "agent.model_metadata", fake_meta)
 
     server.handle_request(
         {

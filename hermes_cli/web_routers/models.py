@@ -52,7 +52,7 @@ def _load_config_scoped(profile: Optional[str]) -> dict:
 
 
 # Blocking budget for /api/model/info's context-length resolution. The resolver
-# chain (agent.model_metadata.get_model_context_length) runs several sequential
+# chain (models.metadata.context.get_model_context_length) runs several sequential
 # provider probes, each with its own multi-second timeout, so an unreachable or
 # blackholed model.base_url can hold this response for tens of seconds — and the
 # Desktop Model Settings page waits on it (#63214).
@@ -66,7 +66,7 @@ def _bounded_context_length_probe(model: str, base_url: str, provider: str) -> i
     by its own per-request timeouts) while the response degrades to
     ``auto_context_length = 0`` ("auto-detected: unknown").
     """
-    from agent.model_metadata import get_model_context_length
+    from models.metadata.context import get_model_context_length
 
     pool = concurrent.futures.ThreadPoolExecutor(max_workers=1, thread_name_prefix="model-info-probe")
     try:

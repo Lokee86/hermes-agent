@@ -917,7 +917,7 @@ def _endpoint_probe_client(url: str, timeout: float):
     system proxy (Clash on Windows, corporate) answered the ``127.0.0.1`` probe with its own error
     page and the GUI reported "advertised no models" while the CLI saw the model (#63472)."""
     import httpx
-    from agent.model_metadata import is_local_endpoint
+    from models.metadata.context import is_local_endpoint
     return httpx.AsyncClient(timeout=httpx.Timeout(timeout), trust_env=not is_local_endpoint(url))
 
 

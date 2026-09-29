@@ -55,7 +55,7 @@ def _managed(ref: ModelRef, context: ModelMetadataContext) -> ModelMetadataPatch
 
 def _models_dev(ref: ModelRef, context: ModelMetadataContext) -> ModelMetadataPatch | None:
     from agent.models_dev import query_model_metadata
-    from agent.model_metadata import strip_codex_context_variant_suffix
+    from models.metadata.context import strip_codex_context_variant_suffix
 
     provider = context.route_provider or ref.provider
     model = strip_codex_context_variant_suffix(ref.model) if provider == "openai-codex" else ref.model
@@ -80,13 +80,13 @@ def _should_probe_ollama_vision(provider: str, base_url: str, api_key: str = "")
         return True
     if not base_url:
         return False
-    from agent.model_metadata import detect_local_server_type, is_local_endpoint
+    from models.metadata.context import detect_local_server_type, is_local_endpoint
 
     return bool(is_local_endpoint(base_url)) and detect_local_server_type(base_url, api_key=api_key) == "ollama"
 
 
 def _ollama(ref: ModelRef, context: ModelMetadataContext) -> ModelMetadataPatch | None:
-    from agent.model_metadata import (
+    from models.metadata.context import (
         query_ollama_supports_vision,
         strip_codex_context_variant_suffix,
     )

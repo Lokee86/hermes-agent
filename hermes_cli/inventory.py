@@ -191,7 +191,7 @@ def _strip_aggregator_overlaps(rows: list[dict]) -> None:
         )
         if slug_suffix and slug_suffix in builtin_aggregators:
             return True
-        from agent.model_metadata import _infer_provider_from_url
+        from models.metadata.context import _infer_provider_from_url
 
         inferred = _infer_provider_from_url(str(row.get("api_url") or ""))
         return inferred is not None and inferred in builtin_aggregators

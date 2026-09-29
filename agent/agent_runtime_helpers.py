@@ -1707,7 +1707,7 @@ def anthropic_prompt_cache_policy(
         or base_url_host_matches(eff_base_url, "api.minimaxi.com")
     )
     if is_anthropic_wire and is_minimax_route:
-        from agent.model_metadata import _model_name_suggests_minimax_m3
+        from models.metadata.context import _model_name_suggests_minimax_m3
         if _model_name_suggests_minimax_m3(eff_model):
             return False, False
     if is_native_anthropic:
@@ -2199,7 +2199,7 @@ def _resolve_switch_context_length(agent, snapshot):
 
 def _update_switch_compressor(agent, custom_providers, effective_context_length, snapshot) -> None:
     """Point the context compressor at the new model (rolls back the switch on failure)."""
-    from agent.model_metadata import get_model_context_length
+    from models.metadata.context import get_model_context_length
     if custom_providers is None:
         try:
             from hermes_cli.config import get_compatible_custom_providers, load_config

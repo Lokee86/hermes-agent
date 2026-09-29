@@ -300,7 +300,7 @@ def _resolve_reasoning(model: str, params: dict[str, Any]) -> tuple[Any, bool]:
     # repeatedly leaked internal levels like "ultra" to the wire (#89503 class) or clamped one rung below a
     # model's real ceiling (#87279).
     if params.get("is_xai_responses", False):
-        from agent.model_metadata import is_grok_46_family
+        from models.metadata.context import is_grok_46_family
 
         # Grok 4.6 accepts xhigh; older Grok tops out at high.
         supported = XAI_GROK46_EFFORTS if is_grok_46_family(model) else XAI_LEGACY_EFFORTS
@@ -383,7 +383,7 @@ def _codex_efforts_for_route(model: Any, base_url: Any, *, is_codex_backend: boo
     key (#76255). Only the exact OpenAI origin is judged: a relay serving those ids may translate.
     """
     if not is_codex_backend and _is_openai_api_origin(base_url):
-        from agent.model_metadata import openai_model_rejects_reasoning
+        from models.metadata.context import openai_model_rejects_reasoning
 
         if openai_model_rejects_reasoning(str(model or "")):
             return ()
@@ -451,7 +451,7 @@ def _profile_declared_efforts(provider: Any, model: Optional[str], base_url: Any
         name = str(provider or "").strip().lower()
         declared = None
         if base_url:
-            from agent.model_metadata import _infer_provider_from_url
+            from models.metadata.context import _infer_provider_from_url
 
             inferred = _infer_provider_from_url(str(base_url))
             if inferred and inferred != name:
@@ -583,7 +583,7 @@ def _reasoning_fields(
     include = ["reasoning.encrypted_content"] if replay_encrypted_reasoning else []
     fields: dict[str, Any] = {}
     if enabled and is_xai_responses:
-        from agent.model_metadata import grok_supports_reasoning_effort
+        from models.metadata.context import grok_supports_reasoning_effort
 
         fields["include"] = include
         if grok_supports_reasoning_effort(model):
@@ -705,7 +705,7 @@ class ResponsesApiTransport(ProviderTransport):
         )
 
         # Lazy: provider plugins import this transport during model_metadata init.
-        from agent.model_metadata import strip_codex_context_variant_suffix as _strip_ctx_variant
+        from models.metadata.context import strip_codex_context_variant_suffix as _strip_ctx_variant
         request_overrides = params.get("request_overrides") or {}
         # An override may rewrite the wire model; provenance must be stamped with what actually goes out.
         wire_model = _strip_ctx_variant(request_overrides.get("model", model))
@@ -777,7 +777,7 @@ class ResponsesApiTransport(ProviderTransport):
         # Grok 4.6 accepts Priority Processing, but continue stripping stale or unsupported tier values on
         # every other xAI path. See #28490 and #84799.
         if is_xai_responses:
-            from agent.model_metadata import is_grok_46_family
+            from models.metadata.context import is_grok_46_family
 
             if not (is_grok_46_family(model) and kwargs.get("service_tier") == "priority"):
                 kwargs.pop("service_tier", None)

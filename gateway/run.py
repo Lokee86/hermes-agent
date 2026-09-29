@@ -2390,8 +2390,7 @@ def _resolve_gateway_model_context(
     ``context_source`` is ``"default"`` only for a model unknown to the catalog that fell through to
     ``DEFAULT_FALLBACK_CONTEXT`` — a catalog-listed 256K model is ``"detected"``.
     """
-    from agent.model_metadata import (
-        DEFAULT_CONTEXT_LENGTHS, DEFAULT_FALLBACK_CONTEXT, _longest_key_match, get_model_context_length)
+    from models.metadata.context import DEFAULT_CONTEXT_LENGTHS, DEFAULT_FALLBACK_CONTEXT, _longest_key_match, get_model_context_length
     resolved_model = model or _resolve_gateway_model()
     config_context_length = provider = base_url = api_key = custom_providers = None
     configured_model = configured_provider = configured_base_url = None

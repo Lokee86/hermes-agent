@@ -77,7 +77,7 @@ def provider_owns_route(provider: Any, base_url: Any, config: Any = None) -> Opt
         return True
     if pdef is None and user_pdef is None:
         return True
-    from agent.model_metadata import _infer_provider_from_url
+    from models.metadata.context import _infer_provider_from_url
     inferred = _infer_provider_from_url(str(base_url))
     if inferred is None:
         return None

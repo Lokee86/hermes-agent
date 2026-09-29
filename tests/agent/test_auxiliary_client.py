@@ -4642,7 +4642,7 @@ class TestCompressionFallbackContextFilter:
         so the runtime fallback stays consistent with the startup feasibility
         check in agent/conversation_compression.py."""
         from agent.auxiliary_client import _task_minimum_context_length
-        from agent.model_metadata import MINIMUM_CONTEXT_LENGTH
+        from models.metadata.context import MINIMUM_CONTEXT_LENGTH
 
         assert _task_minimum_context_length("compression") == MINIMUM_CONTEXT_LENGTH
         # Non-compression tasks have no minimum (None)
