@@ -11,7 +11,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Callable, Iterable, Mapping
 
-from models.metadata.types import ModelMetadata, ModelMetadataContext, ModelMetadataPatch, ReasoningMetadata
+from models.metadata.merge import merge_metadata
+from models.metadata.types import ModelMetadata, ModelMetadataContext, ModelMetadataPatch
 from models.identity import ModelRef
 
 CapabilitySource = Callable[[ModelRef, ModelMetadataContext], ModelMetadataPatch | None]
@@ -56,59 +57,28 @@ def _patch_mapping(value: object) -> ModelMetadataPatch | None:
     return ModelMetadataPatch(**fields)
 
 
-def _apply_patch(
-    values: dict[str, object],
-    provenance: dict[str, str],
-    patch: ModelMetadataPatch,
-    source: str,
-) -> None:
-    for field_name in ModelMetadataPatch.__dataclass_fields__:
-        value = getattr(patch, field_name)
-        if value is not None and values[field_name] is None:
-            values[field_name] = value
-            provenance[field_name] = source
-
-
 def resolve_model_metadata(
     ref: ModelRef,
     *,
     context: ModelMetadataContext | None = None,
     sources: CapabilitySources | Iterable[tuple[str, CapabilitySource]] = CapabilitySources(),
 ) -> ModelMetadata:
-    """Resolve sparse capability facts without collapsing ``False`` into unknown.
-
-    Explicit route-bound facts win over configured facts. Remaining fields use
-    the supplied source order; a source returning ``None`` means it has no
-    opinion and resolution continues.
-    """
+    """Resolve sparse capability facts through the canonical precedence reducer."""
     context = context or ModelMetadataContext()
-    values = {
-        field_name: None
-        for field_name in ModelMetadataPatch.__dataclass_fields__
-    }
-    provenance: dict[str, str] = {}
+    patches: list[tuple[str, ModelMetadataPatch]] = []
 
     if context.explicit is not None:
-        _apply_patch(values, provenance, context.explicit, "explicit")
+        patches.append(("explicit", context.explicit))
     if context.configured is not None:
-        _apply_patch(values, provenance, context.configured, "configured")
+        patches.append(("configured", context.configured))
 
     ordered = sources.ordered() if isinstance(sources, CapabilitySources) else tuple(sources)
     for source_name, source in ordered:
         patch = _patch_mapping(source(ref, context))
         if patch is not None:
-            _apply_patch(values, provenance, patch, source_name)
+            patches.append((source_name, patch))
 
-    metadata_values = dict(values)
-    metadata_values["input_modalities"] = tuple(values["input_modalities"] or ())
-    metadata_values["output_modalities"] = tuple(values["output_modalities"] or ())
-    metadata_values["reasoning"] = values["reasoning"] or ReasoningMetadata()
-    return ModelMetadata(
-        ref=ref,
-        **metadata_values,
-        provenance=provenance,
-    )
-
+    return merge_metadata(ref, patches)
 
 def resolve_supports_vision(
     ref: ModelRef,

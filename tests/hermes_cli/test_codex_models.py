@@ -307,7 +307,8 @@ def test_catalog_requests_ask_as_the_newest_client(monkeypatch):
     import sys
     from urllib.parse import parse_qs, urlparse
 
-    from agent import model_metadata as _runtime_hooks  # installs context metadata hooks
+    from agent.model_metadata import install_context_metadata_hooks
+    install_context_metadata_hooks()
     from models.metadata import context as model_metadata
     from hermes_cli import codex_models
 

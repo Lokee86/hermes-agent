@@ -33,3 +33,23 @@ These failures are outside the Phase 5.5 ownership migration and are not accepta
 - No new failures relative to this focused baseline.
 - Capability/metadata ownership must move to `models.metadata`.
 - Existing known failures are not repaired opportunistically in this phase.
+
+## Integrated Phase 5.5 result
+
+Post-integration focused gate:
+
+```text
+292 passed, 2 failed
+```
+
+The MoA aggregator context case now passes. The only remaining failures are the two
+pre-existing Windows image-path extraction cases listed above; their failure mode is unchanged.
+
+### Closeout verification
+
+- `tests/models`: **76 passed**
+- model-metadata ownership guard: **7 passed**
+- reasoning/context/catalog integration shard: **130 passed**
+- Codex/Astra/Bedrock/MoA ownership-focused shard: **106 passed**
+- Bedrock provider-confirmed restart persistence: **4 passed**
+- `git diff --check`: clean

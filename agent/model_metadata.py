@@ -1,6 +1,6 @@
 """Token estimation and provider-error parsing utilities.
 
-Context-window metadata is owned by :mod:."""
+Context-window metadata is owned by :mod:`models.metadata.context`."""
 
 import json
 import logging
@@ -12,7 +12,7 @@ from agent.message_metadata import PERSISTENCE_ONLY_MESSAGE_FIELDS
 logger = logging.getLogger(__name__)
 
 
-def _install_context_metadata_hooks() -> None:
+def install_context_metadata_hooks() -> None:
     """Bridge runtime-owned route/config integrations into models.metadata."""
     from models.metadata.context import configure_context_metadata_hooks
 
@@ -122,7 +122,7 @@ def _install_context_metadata_hooks() -> None:
     )
 
 
-_install_context_metadata_hooks()
+install_context_metadata_hooks()
 
 def parse_context_limit_from_error(error_msg: str) -> Optional[int]:
     """Context limit quoted in a provider error ("maximum context length is 32768 tokens"), if any.
