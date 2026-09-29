@@ -235,13 +235,20 @@ class TestNormalizeModelForProvider:
         assert cli.model == "gpt-5.4"
 
 
-    def test_opencode_zen_claude_sets_messages_mode(self):
+    def test_opencode_zen_claude_normalizes_model_without_owning_route_policy(self):
+        from providers.routing import InvocationRequest, resolve_invocation_route
+
         cli = _make_cli(model="opencode-zen/claude-sonnet-4-6")
         cli.api_mode = "chat_completions"
         changed = cli._normalize_model_for_provider("opencode-zen")
         assert changed is True
         assert cli.model == "claude-sonnet-4-6"
-        assert cli.api_mode == "anthropic_messages"
+        assert cli.api_mode == "chat_completions"
+
+        route = resolve_invocation_route(
+            InvocationRequest(provider="opencode-zen", model=cli.model)
+        )
+        assert route.api_mode == "anthropic_messages"
 
     def test_default_model_replaced(self):
         """No model configured (empty default) gets swapped for codex."""
