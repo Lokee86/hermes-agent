@@ -142,7 +142,7 @@ class TestKillStaleDashboardProcesses:
 
     def test_foreign_pid_reported_not_killed(self):
         with self._patch_find(), mock.patch(
-            "gateway.status.get_process_start_time", return_value=123
+            "runtime.process_identity.get_process_start_time", return_value=123
         ), mock.patch(
             "hermes_cli._subprocess_compat.pid_is_hermes", return_value=False
         ), mock.patch.object(dashboard_procs.subprocess, "run") as run:
@@ -155,7 +155,7 @@ class TestKillStaleDashboardProcesses:
 
     def test_hermes_pid_killed(self):
         with self._patch_find(), mock.patch(
-            "gateway.status.get_process_start_time", return_value=123
+            "runtime.process_identity.get_process_start_time", return_value=123
         ), mock.patch(
             "hermes_cli._subprocess_compat.pid_is_hermes", return_value=True
         ), mock.patch.object(

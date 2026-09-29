@@ -506,7 +506,7 @@ def _escalate_wedged_gateway(pid: int, *, term_grace: float = 5.0, kill_wait: fl
 
     See #86684.
     """
-    from gateway.status import get_process_start_time
+    from runtime.process_identity import get_process_start_time
     expected_start_time = get_process_start_time(pid)
     try:
         terminate_pid(pid, force=False)
@@ -1732,7 +1732,7 @@ def kill_gateway_processes(force: bool = False, exclude_pids: set | None = None,
                 # anything that no longer looks like a gateway — refuse those.
                 if _capture_gateway_argv(pid) is None:
                     continue
-                from gateway.status import get_process_start_time
+                from runtime.process_identity import get_process_start_time
                 expected_start_time = get_process_start_time(pid)
             terminate_pid(pid, force=force, expected_start_time=expected_start_time)
             killed += 1
@@ -1816,7 +1816,8 @@ def _reap_unsupervised_gateway_orphans(
         if _windows_scheduled_task_supervises(_task_name):
             return False
 
-    from gateway.status import _pid_exists, get_process_start_time, write_planned_stop_marker
+    from gateway.status import _pid_exists, write_planned_stop_marker
+    from runtime.process_identity import get_process_start_time
     own = _reaper_exclusion_pids(extra_exclude)
     try:
         # On Windows also drop Task Scheduler-owned candidates (the pidfile-less gap).
@@ -1995,7 +1996,7 @@ def stop_profile_gateway() -> bool:
         # Windows maps SIGTERM to TerminateProcess. The marker watcher is the
         # gateway's graceful-stop IPC, so wait for it before force-killing a
         # wedged process.
-        from gateway.status import get_process_start_time
+        from runtime.process_identity import get_process_start_time
         from hermes_cli.gateway_windows import (
             _drain_gateway_pid,
             _force_terminate_known_gateway_pids,
@@ -3954,7 +3955,8 @@ _resolved_launchd_domain: str | None = None
 def _wait_for_gateway_exit(timeout: float = 10.0, force_after: float | None = 5.0) -> bool:
     """Wait up to ``timeout`` s for the gateway (by gateway.pid, not launchd labels, so multiple
     HERMES_HOMEs work) to exit; SIGKILL it after ``force_after`` s of graceful waiting."""
-    from gateway.status import get_process_start_time, get_running_pid
+    from gateway.status import get_running_pid
+    from runtime.process_identity import get_process_start_time
     deadline = time.monotonic() + timeout
     force_deadline = (time.monotonic() + force_after) if force_after is not None else None
     force_sent = False

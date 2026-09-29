@@ -308,7 +308,7 @@ def _terminate_verified_daemon(daemon_pid: int, session_name: str, log) -> bool:
     """Tree-kill ``daemon_pid`` if it has a start-time fingerprint (so a PID swapped
     between check and kill is refused); False (logged via ``log``) when no fingerprint.
     Raises on OS errors."""
-    from gateway.status import get_process_start_time
+    from runtime.process_identity import get_process_start_time
     from tools.process_registry import ProcessRegistry
     daemon_start = get_process_start_time(daemon_pid)
     if daemon_start is None:
