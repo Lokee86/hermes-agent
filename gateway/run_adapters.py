@@ -1053,7 +1053,7 @@ class GatewayAdapterLifecycleMixin:
                 owner_home = None
         else:
             try:
-                from hermes_cli.profiles import get_profile_dir
+                from profiles.paths import get_profile_dir
                 owner_home = get_profile_dir(owner)
             except Exception:
                 owner_home = None
