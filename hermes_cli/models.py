@@ -27,8 +27,8 @@ from typing import Any, Optional, TYPE_CHECKING
 if TYPE_CHECKING:
     from typing import TypeGuard
 
-from models import AmbiguousModelAliasError, MODEL_ALIASES, resolve_model_alias
-from providers import normalize_provider as _normalize_provider
+from models import AmbiguousModelAliasError, MODEL_ALIASES, normalize_model_id, resolve_model_alias
+from providers import get_provider_profile, is_aggregator, list_providers, normalize_provider as _normalize_provider
 from hermes_cli.route_identity import normalize_route_base_url
 from hermes_cli.urllib_security import open_credentialed_url
 from hermes_cli.version_info import get_version_info
@@ -36,16 +36,12 @@ from hermes_cli.models_catalog_static import (
     OPENROUTER_MODELS,
     PREFERRED_SILENT_DEFAULT_MODEL,
     VERCEL_AI_GATEWAY_MODELS,
-    _AGGREGATOR_PROVIDERS,
     _AZURE_FOUNDRY_RESPONSES_PREFIXES,
     _BORROWED_MODEL_PROVIDERS,
-    _COPILOT_MODEL_ALIASES,
     _LIVE_FIRST_PICKER_PROVIDERS,
     _MODELS_DEV_PREFERRED,
     _OPENAI_FAST_MODE_PREFIXES,
-    _PROVIDER_ALIASES,
     _PROVIDER_MODELS,
-    _PROVIDER_RETIRED_ALIASES,
     _SILENT_DEFAULT_PROVIDERS,
     _xai_finalize_catalog)
 from hermes_cli.models_reasoning_caps import (
@@ -709,11 +705,10 @@ def ai_gateway_model_ids(*, force_refresh: bool = False) -> list[str]:
 
 def _known_provider_names() -> set[str]:
     """Provider IDs and aliases currently valid left of ``provider:model``."""
-    from providers import list_providers
-
-    names = set(_PROVIDER_ALIASES) | set(_PROVIDER_ALIASES.values()) | {"openrouter", "custom"}
+    names = {"custom"}
     for profile in list_providers():
         names.add(str(profile.name or "").strip().lower())
+        names.update(str(alias or "").strip().lower() for alias in profile.aliases)
     names.discard("")
     return names
 
@@ -760,16 +755,13 @@ def _provider_has_credentials(pid: str) -> bool:
 def list_available_providers() -> list[dict[str, str]]:
     """``{id, label, aliases, authenticated}`` for every provider usable with ``provider:model``,
     derived from the live provider catalog shared with ``hermes model`` and ``/model``."""
-    aliases_for: dict[str, list[str]] = {}
-    for alias, canonical in _PROVIDER_ALIASES.items():
-        aliases_for.setdefault(canonical, []).append(alias)
     from hermes_cli.provider_catalog import provider_catalog
 
     return [
         {
             "id": descriptor.slug,
             "label": descriptor.label,
-            "aliases": aliases_for.get(descriptor.slug, []),
+            "aliases": list(getattr(get_provider_profile(descriptor.slug), "aliases", ()) or ()),
             "authenticated": _provider_has_credentials(descriptor.slug),
         }
         for descriptor in provider_catalog()
@@ -876,15 +868,21 @@ def _provider_keys(provider: str) -> set[str]:
 
 
 def _provider_catalog_names(provider: str) -> tuple[str, ...]:
-    """Active picker models plus retired aliases recognized for detection."""
-    return tuple(_PROVIDER_MODELS.get(provider, [])) + _PROVIDER_RETIRED_ALIASES.get(provider, ())
+    """Static picker models for *provider*."""
+    return tuple(_PROVIDER_MODELS.get(provider, ()))
 
 
 def _model_in_provider_catalog(name_lower: str, providers: set[str]) -> bool:
-    return any(
-        name_lower == model.lower()
-        for provider in providers
-        for model in _provider_catalog_names(provider))
+    for provider in providers:
+        catalog = _provider_catalog_names(provider)
+        if any(name_lower == model.lower() for model in catalog):
+            return True
+        normalized = normalize_model_id(provider, name_lower, known_ids=catalog)
+        if normalized.lower() != name_lower and any(
+            normalized.lower() == model.lower() for model in catalog
+        ):
+            return True
+    return False
 
 
 def _resolve_static_model_alias(
@@ -905,10 +903,11 @@ def _resolve_static_model_alias(
 
     # Current provider first, then native vendors, then aggregators / borrow-list providers the user
     # is already on — so `sonnet` resolves to anthropic before any re-exposing provider.
-    skip = current_keys | _AGGREGATOR_PROVIDERS | _BORROWED_MODEL_PROVIDERS
+    aggregators = {p for p in _PROVIDER_MODELS if is_aggregator(p)}
+    skip = current_keys | aggregators | _BORROWED_MODEL_PROVIDERS
     candidates = [
         *current_keys, *(p for p in _PROVIDER_MODELS if p not in skip),
-        *(p for p in _AGGREGATOR_PROVIDERS if p in current_keys),
+        *(p for p in aggregators if p in current_keys),
         *(p for p in _BORROWED_MODEL_PROVIDERS if p in current_keys)]
     for provider in candidates:
         if matched := _match(provider):
@@ -933,7 +932,7 @@ def detect_static_provider_for_model(
 
     # Step 0: a bare provider name typed as the model (`/model nous`) is a provider switch to that
     # provider's default. Skip "custom" (no catalog) and "openrouter" (needs an explicit model).
-    resolved_provider = _PROVIDER_ALIASES.get(name_lower, name_lower)
+    resolved_provider = _normalize_provider(name_lower)
     if resolved_provider not in {"custom", "openrouter"}:
         default_models = _PROVIDER_MODELS.get(resolved_provider, [])
         if resolved_provider in _known_provider_names() and default_models and resolved_provider not in current_keys:
@@ -961,7 +960,7 @@ def _static_catalog_matches(name: str, current_provider: str):
     # from: the user configured it deliberately and may serve the same model name there.
     if current_provider != "custom" and not current_provider.startswith("custom:"):
         for pid in _PROVIDER_MODELS:
-            if pid in current_keys or pid in _AGGREGATOR_PROVIDERS or pid in _BORROWED_MODEL_PROVIDERS:
+            if pid in current_keys or is_aggregator(pid) or pid in _BORROWED_MODEL_PROVIDERS:
                 continue
             if _model_in_provider_catalog(name_lower, {pid}):
                 yield (pid, name)
@@ -1003,7 +1002,7 @@ def _resolve_provider_prefix(model_name: str) -> Optional[tuple[str, str]]:
     configured = _configured_provider_ids()
     # An explicitly named provider block (``ollama:``) wins over the alias table, which may
     # canonicalize the same name elsewhere (``ollama`` → ``custom``).
-    for candidate in (vendor, _PROVIDER_ALIASES.get(vendor, vendor)):
+    for candidate in dict.fromkeys((vendor, _normalize_provider(vendor))):
         if candidate in configured:
             return (candidate, model)
     return None
@@ -1044,7 +1043,7 @@ def detect_provider_for_model(
             return None  # the current catalog owns this name
         if candidate[0] == current_provider or provider_has_credentials(candidate[0]):
             return candidate
-        if _PROVIDER_ALIASES.get(name.lower(), name.lower()) == candidate[0]:
+        if _normalize_provider(name.lower()) == candidate[0]:
             return candidate  # explicitly named provider: let the credential step report it
         first_guess = first_guess or candidate
         logger.debug("Skipping auto-switch of '%s' to %s: no credentials configured", name, candidate[0])
@@ -2301,36 +2300,11 @@ def normalize_copilot_model_id(
     raw = str(model_id or "").strip()
     if not raw:
         return ""
-
-    catalog_ids = _copilot_catalog_ids(catalog=catalog, api_key=api_key)
-    alias = _COPILOT_MODEL_ALIASES.get(raw)
-    if alias:
-        return alias
-
-    candidates = [raw]
-    if "/" in raw:
-        candidates.append(raw.split("/", 1)[1].strip())
-    if raw.endswith(("-mini", "-nano", "-chat")):
-        candidates.append(raw[:-5])
-
-    seen: set[str] = set()
-    for candidate in candidates:
-        if not candidate or candidate in seen:
-            continue
-        seen.add(candidate)
-        if candidate in _COPILOT_MODEL_ALIASES:
-            return _COPILOT_MODEL_ALIASES[candidate]
-        if candidate in catalog_ids:
-            return candidate
-
-    if "/" in raw:
-        stripped = raw.split("/", 1)[1].strip()
-        # Enterprise BYOK custom models expose ``owner/sub/model`` ids (two
-        # slashes). A strip guess that still contains "/" cannot be a Copilot
-        # id, so pass the input through untouched instead of corrupting it.
-        if stripped and "/" not in stripped:
-            return stripped
-    return raw
+    return normalize_model_id(
+        "copilot",
+        raw,
+        known_ids=_copilot_catalog_ids(catalog=catalog, api_key=api_key),
+    )
 
 
 def _github_reasoning_efforts_for_model_id(model_id: str) -> list[str]:

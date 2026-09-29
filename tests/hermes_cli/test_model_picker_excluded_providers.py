@@ -76,11 +76,9 @@ def test_cli_picker_hides_excluded_provider_by_alias(config_home):
     """Exclusion by an alias (not the canonical slug) must also hide the
     provider, matching ``list_authenticated_providers``' matching against
     hermes_id / alias names."""
-    # 'openai' is an alias-style hermes id; ensure excluding it hides the
-    # canonical openai provider row if present. Use the canonical slug's
-    # alias from _PROVIDER_ALIASES to stay robust to renames.
-    from hermes_cli.models import _PROVIDER_ALIASES
+    from hermes_cli.models_catalog_static import provider_group_for_slug
     from hermes_cli.provider_catalog import provider_catalog_by_slug
+    from providers import list_providers
 
     # Find a canonical provider that has at least one alias and is a leaf
     # row (not folded into a multi-member group) so its label appears
@@ -88,10 +86,11 @@ def test_cli_picker_hides_excluded_provider_by_alias(config_home):
     target_slug = None
     target_alias = None
     catalog = provider_catalog_by_slug()
-    for alias, canon in _PROVIDER_ALIASES.items():
-        if canon and canon in catalog:
-            target_slug = canon
-            target_alias = alias
+    for profile in list_providers():
+        aliases = tuple(str(alias or "").strip() for alias in profile.aliases if str(alias or "").strip())
+        if profile.name in catalog and aliases and not provider_group_for_slug(profile.name):
+            target_slug = profile.name
+            target_alias = aliases[0]
             break
     if target_slug is None:
         pytest.skip("no aliased canonical provider available to test")

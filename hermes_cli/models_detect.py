@@ -68,7 +68,7 @@ def current_provider_owns_vendor(model_name: str, current_provider: str) -> bool
         return False
     # An id the classifier cannot place (Bedrock ``us.anthropic.claude-…``) is evidence the
     # provider is NOT single-vendor; only a fully classified, single-vendor catalog owns the name.
-    native = {detect_vendor(mid) for mid in _PROVIDER_MODELS.get(normalized, ())}
+    native = {vendor_for_model(mid) for mid in _PROVIDER_MODELS.get(normalized, ())}
     return native == {vendor}
 
 

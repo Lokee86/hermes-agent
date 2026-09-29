@@ -47,7 +47,8 @@ class TestVendorPrefixRouting:
         """A user-named ``ollama`` block must not be rewritten to ``custom``."""
         monkeypatch.setattr(models, "_find_openrouter_slug", lambda _name: None)
         monkeypatch.setattr(models, "_configured_provider_ids", lambda: {"ollama"})
-        assert models._PROVIDER_ALIASES.get("ollama") == "custom"  # precondition
+        from providers import normalize_provider
+        assert normalize_provider("ollama") == "custom"  # precondition
         detected = models.detect_provider_for_model("ollama/qwen3.5:4b", "anthropic")
         assert detected == ("ollama", "qwen3.5:4b")
 
@@ -74,12 +75,12 @@ class TestVendorPrefixRouting:
         detected = models.detect_provider_for_model("deepseek/deepseek-chat", "anthropic")
         assert detected == ("openrouter", "deepseek/deepseek-chat")
 
-    def test_bare_model_detection_unchanged(self, monkeypatch):
+    def test_retired_model_id_uses_canonical_deepseek_identity(self, monkeypatch):
         from hermes_cli import models_detect
         monkeypatch.setattr(models_detect, "provider_has_credentials", lambda p: p == "deepseek")
         monkeypatch.setattr(models, "_find_openrouter_slug", lambda _name: None)
         detected = models.detect_provider_for_model("deepseek-chat", "anthropic")
-        assert detected == ("deepseek", "deepseek-chat")
+        assert detected == ("deepseek", "deepseek-flash")
 
 
 class TestDictModelAliases:

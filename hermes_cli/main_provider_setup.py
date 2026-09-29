@@ -881,9 +881,9 @@ def _build_provider_picker_rows(config: dict, active: str, provider_labels: dict
     fold into display groups (PROVIDER_GROUPS): a group row's ``members`` drive a sub-picker, leaf
     rows have ``members == []``; saved custom providers and trailing actions stay flat. Honors
     ``model_catalog.excluded_providers`` (slug or alias, case-insensitive) like the gateway/TUI."""
-    from hermes_cli.models import _PROVIDER_ALIASES
     from hermes_cli.models_catalog_static import group_providers, provider_group_for_slug
     from hermes_cli.provider_catalog import provider_entries
+    from providers import get_provider_profile
     entries = provider_entries()
     canonical_descs = {p.slug: p.tui_desc for p in entries}
     _cli_excluded = {
@@ -892,9 +892,13 @@ def _build_provider_picker_rows(config: dict, active: str, provider_labels: dict
         if p}
     if _cli_excluded:
         # A canonical provider is hidden if its slug OR any alias is excluded.
-        _names_for: dict[str, set[str]] = {_p.slug: {_p.slug.lower()} for _p in entries}
-        for _alias, _canon in _PROVIDER_ALIASES.items():
-            _names_for.setdefault(_canon, {_canon.lower()}).add(_alias.lower())
+        _names_for: dict[str, set[str]] = {}
+        for _p in entries:
+            profile = get_provider_profile(_p.slug)
+            _names_for[_p.slug] = {
+                _p.slug.lower(),
+                *(str(alias or "").strip().lower() for alias in getattr(profile, "aliases", ()) or ()),
+            }
         _visible_slugs = [p.slug for p in entries if not _names_for.get(p.slug, {p.slug.lower()}) & _cli_excluded]
     else:
         _visible_slugs = [p.slug for p in entries]

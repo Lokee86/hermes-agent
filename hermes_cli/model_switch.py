@@ -1026,12 +1026,11 @@ def _aggregator_alias_error(
     """Guard against silent aggregator hops: a vendor alias like bare "openai" resolves to an
     aggregator ("openrouter"); if that aggregator has no credentials, refuse instead of switching
     the user onto an unauthed endpoint (HTTP 401) and point at the real direct provider."""
-    from hermes_cli.models import _AGGREGATOR_PROVIDERS
     explicit_norm = explicit_provider.strip().lower()
     alias_target = normalize_provider(explicit_norm)
     if not (
         alias_target and alias_target == target_provider and target_provider != explicit_norm
-        and target_provider in _AGGREGATOR_PROVIDERS):
+        and is_aggregator(target_provider)):
         return ""
     authed = get_authenticated_provider_slugs(
         current_provider=current_provider, user_providers=user_providers, custom_providers=custom_providers)

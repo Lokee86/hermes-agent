@@ -367,44 +367,6 @@ def group_providers(slugs):
     return rows
 
 
-_PROVIDER_ALIASES = dict((
-    ("glm", "zai"), ("z-ai", "zai"), ("z.ai", "zai"), ("zhipu", "zai"), ("github", "copilot"),
-    ("github-copilot", "copilot"), ("github-models", "copilot"), ("github-model", "copilot"),
-    ("github-copilot-acp", "copilot-acp"), ("copilot-acp-agent", "copilot-acp"), ("google", "gemini"),
-    ("google-gemini", "gemini"), ("google-ai-studio", "gemini"), ("google-vertex", "vertex"), ("vertex-ai", "vertex"),
-    ("gcp-vertex", "vertex"), ("vertexai", "vertex"), ("kimi", "kimi-coding"), ("moonshot", "kimi-coding"),
-    ("kimi-cn", "kimi-coding-cn"), ("moonshot-cn", "kimi-coding-cn"), ("step", "stepfun"),
-    ("stepfun-coding-plan", "stepfun"), ("arcee-ai", "arcee"), ("arceeai", "arcee"), ("gmi-cloud", "gmi"),
-    ("gmicloud", "gmi"), ("fireworks-ai", "fireworks"), ("fw", "fireworks"), ("actual-computer", "actual"),
-    ("actualcomputer", "actual"), ("aci", "actual"), ("nebius", "nebius-token-factory"),
-    ("nebius-tokenfactory", "nebius-token-factory"), ("nebius-tf", "nebius-token-factory"),
-    ("token-factory", "nebius-token-factory"), ("tokenfactory", "nebius-token-factory"),
-    ("minimax-china", "minimax-cn"), ("minimax_cn", "minimax-cn"), ("minimax-portal", "minimax-oauth"),
-    ("minimax-global", "minimax-oauth"), ("minimax_oauth", "minimax-oauth"), ("claude", "anthropic"),
-    ("claude-code", "anthropic"), ("deep-seek", "deepseek"), ("opencode", "opencode-zen"), ("zen", "opencode-zen"),
-    ("go", "opencode-go"), ("opencode-go-sub", "opencode-go"), ("aigateway", "ai-gateway"), ("vercel", "ai-gateway"),
-    ("vercel-ai-gateway", "ai-gateway"), ("kilo", "kilocode"), ("kilo-code", "kilocode"),
-    ("kilo-gateway", "kilocode"), ("dashscope", "alibaba"), ("aliyun", "alibaba"), ("qwen", "alibaba"),
-    ("alibaba-cloud", "alibaba"), ("qwen-portal", "qwen-oauth"), ("hf", "huggingface"),
-    ("hugging-face", "huggingface"), ("huggingface-hub", "huggingface"), ("novita-ai", "novita"),
-    ("novitaai", "novita"), ("mimo", "xiaomi"), ("xiaomi-mimo", "xiaomi"), ("tencent", "tencent-tokenhub"),
-    ("tokenhub", "tencent-tokenhub"), ("tencent-cloud", "tencent-tokenhub"), ("tencentmaas", "tencent-tokenhub"),
-    ("tokenplan", "tencent-tokenplan"), ("tencent-lkeap", "tencent-tokenplan"), ("aws", "bedrock"),
-    ("aws-bedrock", "bedrock"), ("amazon-bedrock", "bedrock"), ("amazon", "bedrock"), ("grok", "xai"),
-    ("grok-oauth", "xai-oauth"), ("xai-oauth", "xai-oauth"), ("x-ai-oauth", "xai-oauth"),
-    ("xai-grok-oauth", "xai-oauth"), ("x-ai", "xai"), ("x.ai", "xai"), ("nim", "nvidia"), ("nvidia-nim", "nvidia"),
-    ("build-nvidia", "nvidia"), ("nemotron", "nvidia"), ("lmstudio", "lmstudio"), ("lm-studio", "lmstudio"),
-    ("lm_studio", "lmstudio"), ("chatgpt", "openai-codex"), ("chatgpt-codex", "openai-codex"),
-    ("ollama", "custom"),  # bare "ollama" = local; use "ollama-cloud" for cloud
-    ("ollama_cloud", "ollama-cloud"),
-    # Local OpenAI-compatible servers route through the generic "custom" provider
-    # (parity with hermes_cli.auth and hermes_cli.providers). Issue #62213. The llamacpp
-    # aliases stay unmapped: they are the managed local runtime's picker id, and the model
-    # validator must reach its staged-library branch before the custom one.
-    ("local", "custom"), ("vllm", "custom"),
-))
-
-
 # Offline/fresh-install fallback for the model Hermes silently lands on when the user never picked
 # one (GUI onboarding confirm card, empty ``model.default``, provider-set-but-model-missing). The
 # AUTHORITATIVE source is the remote catalog manifest, which labels exactly one entry per provider
@@ -423,16 +385,6 @@ PREFERRED_SILENT_DEFAULT_MODEL = "z-ai/glm-5.2"
 # (GUI onboarding / ``hermes model``) uses the tier-aware ``get_recommended_default_model`` in
 # hermes_cli/web_server.py + ``partition_nous_models_by_tier``, which may hit the Portal.
 _SILENT_DEFAULT_PROVIDERS: frozenset[str] = frozenset({"nous", "openrouter"})
-
-
-# Retired model IDs kept for /model auto-detect only — not shown in pickers. DeepSeek cut these
-# off; model_normalize remaps them on the wire.
-_PROVIDER_RETIRED_ALIASES: dict[str, tuple[str, ...]] = {
-    "deepseek": ("deepseek-chat", "deepseek-reasoner"),
-}
-
-
-_AGGREGATOR_PROVIDERS = frozenset({"nous", "openrouter", "ai-gateway", "copilot", "kilocode"})
 
 
 def static_provider_model_ids(provider: str) -> tuple[str, ...]:
@@ -473,27 +425,6 @@ _MODELS_DEV_PREFERRED: frozenset[str] = frozenset({
     "opencode-go", "opencode-zen", "kilocode", "fireworks", "mistral", "togetherai", "cohere",
     "perplexity", "groq", "nvidia", "huggingface", "zai", "gemini", "google", "xai", "xai-oauth",
 })
-
-
-# OpenRouter-style ids -> Copilot ids. Dash-notation Claude ids are accepted too: Hermes' default
-# Claude IDs use hyphens (Anthropic native) but Copilot's API only accepts dot-notation, so a
-# copilot + hyphenated default would otherwise hit HTTP 400 "model_not_supported".
-_COPILOT_MODEL_ALIASES = dict((
-    ("openai/gpt-5", "gpt-5-mini"), ("openai/gpt-5-chat", "gpt-5-mini"), ("openai/gpt-5-mini", "gpt-5-mini"),
-    ("openai/gpt-5-nano", "gpt-5-mini"), ("openai/gpt-4.1", "gpt-4.1"), ("openai/gpt-4.1-mini", "gpt-4.1"),
-    ("openai/gpt-4.1-nano", "gpt-4.1"), ("openai/gpt-4o", "gpt-4o"), ("openai/gpt-4o-mini", "gpt-4o-mini"),
-    ("openai/o1", "gpt-5.2"), ("openai/o1-mini", "gpt-5-mini"), ("openai/o1-preview", "gpt-5.2"),
-    ("openai/o3", "gpt-5.3-codex"), ("openai/o3-mini", "gpt-5-mini"), ("openai/o4-mini", "gpt-5-mini"),
-    ("anthropic/claude-opus-4.6", "claude-opus-4.6"), ("anthropic/claude-sonnet-5", "claude-sonnet-5"),
-    ("anthropic/claude-sonnet-4.6", "claude-sonnet-4.6"), ("anthropic/claude-sonnet-4", "claude-sonnet-4"),
-    ("anthropic/claude-sonnet-4.5", "claude-sonnet-4.5"), ("anthropic/claude-haiku-4.5", "claude-haiku-4.5"),
-    ("claude-sonnet-5", "claude-sonnet-5"), ("claude-opus-4-6", "claude-opus-4.6"),
-    ("claude-sonnet-4-6", "claude-sonnet-4.6"), ("claude-sonnet-4-0", "claude-sonnet-4"),
-    ("claude-sonnet-4-5", "claude-sonnet-4.5"), ("claude-haiku-4-5", "claude-haiku-4.5"),
-    ("anthropic/claude-opus-4-6", "claude-opus-4.6"), ("anthropic/claude-sonnet-4-6", "claude-sonnet-4.6"),
-    ("anthropic/claude-sonnet-4-0", "claude-sonnet-4"), ("anthropic/claude-sonnet-4-5", "claude-sonnet-4.5"),
-    ("anthropic/claude-haiku-4-5", "claude-haiku-4.5"),
-))
 
 
 # Azure Foundry model families that require the Responses API: Azure rejects /chat/completions
