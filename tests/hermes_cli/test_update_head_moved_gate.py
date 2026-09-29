@@ -8,7 +8,7 @@ reinstalled deps + rebuilt the desktop app against the stale tree — no
 error, no warning. The gate compares the pre-pull and post-pull HEAD SHA
 and fails loudly when the update was a no-op.
 """
-from gateway import systemd_runtime
+from gateway import process_discovery, systemd_runtime
 
 from types import SimpleNamespace
 
@@ -95,7 +95,7 @@ def _patch_update_deps(monkeypatch, tmp_path, run_side_effect):
         systemd_runtime, "supports_services", lambda: False
     )
     monkeypatch.setattr(
-        hermes_gateway, "find_profile_gateway_processes", lambda *a, **k: []
+        process_discovery, "find_profile_gateway_processes", lambda *a, **k: []
     )
 
 def test_update_fails_loudly_when_head_pinned(monkeypatch, tmp_path, capsys):

@@ -1546,10 +1546,9 @@ def _restart_manual_gateways(out: _GatewayRestartOutcome, _drain_budget) -> None
     Mutates ``out`` in place; raises so the caller's abort recovery fires.
     """
     import signal as _signal
+    from gateway.process_discovery import _get_service_pids, find_profile_gateway_processes
     from gateway.restart import _wait_for_gateway_exit
-    from hermes_cli.gateway import (
-        find_gateway_pids, find_profile_gateway_processes, _prepare_profile_gateway_update_restart, _get_service_pids,
-    )
+    from hermes_cli.gateway import find_gateway_pids, _prepare_profile_gateway_update_restart
     # Exclude just-restarted service PIDs so we don't kill what systemd/launchd spawned.
     service_pids = _get_service_pids(all_profiles=True)
     manual_pids = find_gateway_pids(exclude_pids=service_pids, all_profiles=True)
@@ -1626,7 +1625,8 @@ def _force_kill_stuck_gateways(killed_pids) -> None:
     exit, so the watcher never respawns and ImportErrors persist. Give graceful paths a
     moment, then SIGKILL remaining pre-update PIDs."""
     with _best_effort('Post-restart survivor sweep failed: %s'):
-        from hermes_cli.gateway import find_gateway_pids, _get_service_pids
+        from gateway.process_discovery import _get_service_pids
+        from hermes_cli.gateway import find_gateway_pids
         # --- Post-restart survivor sweep ----------------------------- Issue #17648: some gateways ignore
         # SIGTERM (stuck drain, blocked I/O, PID dead but zombie). The detached profile watchers wait 120s
         # for the old PID to exit — if it never does, no respawn happens and the user keeps hitting
@@ -1762,12 +1762,14 @@ def _restart_gateway_fleet_after_update(_pre_update_plan, gateway_mode: bool):
         # Every gateway helper the phase needs is imported up front so a broken gateway
         # module aborts into recovery BEFORE any unit is touched.
         from gateway.restart import _wait_for_gateway_exit  # noqa: F401
+        from gateway.process_discovery import (  # noqa: F401
+            _get_service_pids,
+            find_profile_gateway_processes,
+        )
         from hermes_cli.gateway import (  # noqa: F401
             is_macos,
             find_gateway_pids,
-            find_profile_gateway_processes,
             _prepare_profile_gateway_update_restart,
-            _get_service_pids,
         )
         # Drain budget covers ``restart_after_turn_timeout`` and stop()'s
         # ``restart_drain_timeout`` so a gateway waiting on a turn isn't hard-killed;
