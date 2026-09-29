@@ -1,7 +1,6 @@
 """Systemd restart state machine and recovery."""
 from __future__ import annotations
 
-import os
 import subprocess
 import time
 
@@ -15,7 +14,6 @@ from gateway import (
     systemd_restart_state,
     systemd_unit_state,
 )
-from hermes_cli.config import read_raw_config
 
 
 def _systemd_scope_preamble(action: str, system: bool, *, preflight_user: bool = False) -> bool:
@@ -30,28 +28,9 @@ def _systemd_scope_preamble(action: str, system: bool, *, preflight_user: bool =
         raise SystemExit(1)
     return system
 
-def _agent_timeout_setting(env_var: str, key: str, parse) -> float:
-    """Parse an agent timeout from environment first, then config."""
-    env_raw = os.getenv(env_var)
-    if env_raw is not None and str(env_raw).strip() != "":
-        return parse(env_raw)
-    cfg = read_raw_config()
-    agent_cfg = cfg.get("agent", {}) if isinstance(cfg, dict) else {}
-    if isinstance(agent_cfg, dict) and key in agent_cfg:
-        return parse(agent_cfg.get(key))
-    return parse(None)
-
-
 def _get_restart_exit_wait_budget() -> float:
     """CLI wait for gateway exit after SIGUSR1 / self-restart (#77184)."""
-    return restart.resolve_restart_exit_wait_budget(
-        restart.get_restart_drain_timeout(),
-        _agent_timeout_setting(
-            "HERMES_RESTART_AFTER_TURN_TIMEOUT",
-            "restart_after_turn_timeout",
-            restart.parse_restart_after_turn_timeout,
-        ),
-    )
+    return restart.get_restart_exit_wait_budget()
 
 
 def systemd_restart(system: bool = False):

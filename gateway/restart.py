@@ -347,10 +347,11 @@ def get_restart_after_turn_timeout() -> float:
 
 
 def get_restart_exit_wait_budget() -> float:
-    """CLI wait budget for a SIGUSR1 handoff: turn wait + drain + headroom."""
+    """CLI wait budget for a SIGUSR1 handoff: turn wait + supervisor stop envelope + headroom."""
     return resolve_restart_exit_wait_budget(
         get_restart_drain_timeout(),
         get_restart_after_turn_timeout(),
+        get_cron_drain_timeout(),
     )
 
 
