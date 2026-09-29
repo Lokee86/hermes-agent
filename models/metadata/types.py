@@ -62,6 +62,9 @@ class ModelMetadataContext:
 
     base_url: str = ""
     api_key: str = ""
+    # Unnormalized route identity supplied by the caller when ModelRef has
+    # canonicalized aliases (for example the managed llama.cpp aliases).
+    route_provider: str = ""
     allow_network: bool = False
     explicit: ModelMetadataPatch | None = None
     configured: ModelMetadataPatch | None = None

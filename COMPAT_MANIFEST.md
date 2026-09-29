@@ -1381,13 +1381,6 @@ to the public equivalent or the new module. Test monkeypatch seams are likewise 
 |---|---|---|
 | `get_hermes_home` | moved-lazy | `hermes_constants` |
 
-### `hermes_cli.local_runtime.capabilities`
-
-| name | kind | new location |
-|---|---|---|
-| `json` | import | `json` |
-| `urllib` | import | `urllib.request` |
-
 ### `hermes_cli.local_runtime.catalog`
 
 | name | kind | new location |

@@ -1,5 +1,11 @@
 """Canonical model capability/metadata domain."""
 
+from models.metadata.capabilities import (
+    CapabilitySource,
+    CapabilitySources,
+    resolve_model_metadata,
+    resolve_supports_vision,
+)
 from models.metadata.interpretation import (
     UNKNOWN_MODEL_BASE,
     builtin_model_metadata,
@@ -36,6 +42,8 @@ from models.metadata.types import (
 )
 
 __all__ = [
+    "CapabilitySource",
+    "CapabilitySources",
     "ModelInfo",
     "ModelMetadata",
     "ModelMetadataContext",
@@ -61,6 +69,8 @@ __all__ = [
     "parse_openrouter_reasoning_capabilities",
     "provider_info_from_entry",
     "refresh_reasoning_caps_async",
+    "resolve_model_metadata",
+    "resolve_supports_vision",
     "vision_marker_metadata",
     "warm_nous_reasoning_caps_async",
     "warm_openrouter_reasoning_caps_async",

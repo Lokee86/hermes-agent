@@ -7,16 +7,18 @@ from pathlib import Path
 from unittest.mock import patch
 
 
+from agent.model_capability_sources import _models_dev, _should_probe_ollama_vision
 from agent.image_routing import (
     _coerce_capability_bool,
     _coerce_mode,
     _lookup_supports_vision,
-    _should_probe_ollama_vision,
     _supports_vision_override,
     build_native_content_parts,
     decide_image_input_mode,
     extract_image_refs,
 )
+from models import ModelRef
+from models.metadata.types import ModelMetadataContext
 
 
 # ─── _coerce_mode ────────────────────────────────────────────────────────────
@@ -160,7 +162,7 @@ class TestLookupSupportsVisionOverride:
     def test_ollama_probe_when_models_dev_missing(self):
         cfg = {"model": {"base_url": "http://localhost:11434/v1"}}
         with patch("agent.models_dev.query_model_metadata", return_value=None), \
-             patch("agent.image_routing._should_probe_ollama_vision", return_value=True), \
+             patch("agent.model_capability_sources._should_probe_ollama_vision", return_value=True), \
              patch("agent.model_metadata.query_ollama_supports_vision", return_value=True):
             assert _lookup_supports_vision("ollama", "gemma4:e2b", cfg) is True
 
@@ -665,8 +667,15 @@ class TestCodexContextVariantVisionLookup:
             return SimpleNamespace(supports_vision=True) if model == "gpt-5.6-sol" else None
 
         monkeypatch.setattr(models_dev, "query_model_metadata", fake_caps)
-        assert image_routing._probe_models_dev("openai-codex", "gpt-5.6-sol-900k", {}) is True
+        from agent.model_capability_sources import _models_dev
+        assert _models_dev(
+            ModelRef("openai-codex", "gpt-5.6-sol-900k"),
+            ModelMetadataContext(route_provider="openai-codex", allow_network=True),
+        ).supports_vision is True
         assert seen == ["gpt-5.6-sol"]
         # Ineligible alias: looked up verbatim, no capability gained.
-        assert image_routing._probe_models_dev("openai-codex", "gpt-5.5-900k", {}) is None
+        assert _models_dev(
+            ModelRef("openai-codex", "gpt-5.5-900k"),
+            ModelMetadataContext(route_provider="openai-codex", allow_network=True),
+        ) is None
         assert seen[-1] == "gpt-5.5-900k"

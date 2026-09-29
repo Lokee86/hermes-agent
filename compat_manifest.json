@@ -3741,18 +3741,6 @@
    "target": "hermes_constants"
   },
   {
-   "facade": "hermes_cli.local_runtime.capabilities",
-   "name": "json",
-   "kind": "import",
-   "target": "json"
-  },
-  {
-   "facade": "hermes_cli.local_runtime.capabilities",
-   "name": "urllib",
-   "kind": "import",
-   "target": "urllib.request"
-  },
-  {
    "facade": "hermes_cli.local_runtime.catalog",
    "name": "find_variant",
    "kind": "restored-def",
