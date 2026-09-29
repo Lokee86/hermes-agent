@@ -109,7 +109,7 @@ class TestDeclarationParsing:
         self, monkeypatch
     ):
         """Installed plugins can declare consent metadata in dist entry points."""
-        from hermes_cli import plugins as plugins_mod
+        from plugin_runtime import discovery as runtime_discovery
         from plugin_runtime.manager import PluginManager
 
         load = MagicMock(side_effect=AssertionError("plugin code must not be imported"))
@@ -130,7 +130,7 @@ class TestDeclarationParsing:
             load=load,
         )
         monkeypatch.setattr(
-            plugins_mod.importlib.metadata,
+            runtime_discovery.importlib.metadata,
             "entry_points",
             lambda: [plugin_ep, capability_ep],
         )

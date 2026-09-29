@@ -551,7 +551,7 @@ def test_real_fixture_plugins_thread_prompt_in_registration_order(
     old_manager = plugin_lifecycle._plugin_manager
     plugin_lifecycle._plugin_manager = PluginManager()
     try:
-        plugins_mod.discover_plugins()
+        plugin_lifecycle.discover_plugins()
 
         audio = _make_audio(tmp_path)
         mock_segment = MagicMock()

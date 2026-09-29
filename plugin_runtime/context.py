@@ -222,10 +222,18 @@ class PluginContext:
         derived from ``HERMES_HOME`` — not ``_cli_ref``, which is None outside the interactive CLI —
         so gateway and kanban workers get it too."""
         try:
-            from profiles.current import get_active_profile_name
-            return get_active_profile_name()
-        except Exception:
-            return "default"
+            from hermes_constants import get_default_hermes_root
+
+            home = self._manager.home_path.resolve()
+            default_home = get_default_hermes_root().resolve()
+            if home == default_home:
+                return "default"
+            parts = home.relative_to(default_home / "profiles").parts
+            if len(parts) == 1 and parts[0]:
+                return parts[0]
+            return "custom"
+        except (OSError, RuntimeError, ValueError):
+            return "custom"
 
     def on_unload(self, callback: Callable[[], None]) -> PluginRegistration:
         """Register a cleanup callback for unload: runs in reverse acquisition order interleaved
