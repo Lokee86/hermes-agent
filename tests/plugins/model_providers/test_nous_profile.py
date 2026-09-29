@@ -137,3 +137,11 @@ class TestNousReasoningWireShape:
             model="deepseek/deepseek-v4-pro",
         )
         assert cfg == {"enabled": False}
+
+
+class TestNousRoutePolicy:
+    def test_anthropic_models_select_the_messages_wire(self, nous_profile):
+        assert nous_profile.resolve_route_policy("anthropic/claude-opus-4.8") == "anthropic_messages"
+
+    def test_non_anthropic_models_leave_the_profile_default_in_charge(self, nous_profile):
+        assert nous_profile.resolve_route_policy("hermes-4-405b") is None

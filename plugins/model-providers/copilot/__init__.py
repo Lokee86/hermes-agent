@@ -5,6 +5,7 @@ this profile covers the chat_completions remainder: editor attribution headers
 (copilot_default_headers()) and catalog-gated GitHub Models reasoning.
 """
 
+import re
 from typing import Any
 
 from providers import register_provider
@@ -14,6 +15,15 @@ from providers.model_normalizers import normalize_copilot_id
 
 class CopilotProfile(ProviderProfile):
     """GitHub Copilot / GitHub Models — editor headers + reasoning."""
+
+    def resolve_route_policy(self, model: str, base_url: str = "") -> str | None:
+        """Use Responses for Copilot's GPT-5+ models, except the chat-only mini tier."""
+        del base_url
+        normalized = normalize_copilot_id(model, ())
+        match = re.match(r"^gpt-(\d+)", normalized.lower())
+        if match and int(match.group(1)) >= 5 and not normalized.lower().startswith("gpt-5-mini"):
+            return "codex_responses"
+        return None
 
     def normalize_model_id(self, model: str, *, known_ids=()) -> str:
         return normalize_copilot_id(model, known_ids)
