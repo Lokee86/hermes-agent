@@ -504,10 +504,14 @@ def _validated_main_model_selection(
         # wire protocol it mandates: ``model.base_url`` and ``model.api_mode`` are persisted
         # together, so a mode derived from the displaced host would route the submitted endpoint
         # over the wrong wire.
-        from hermes_cli.providers import determine_api_mode
+        from providers.routing import InvocationRequest, resolve_invocation_route
         url = base_url.strip()
-        result = replace(result, base_url=url,
-                         api_mode=determine_api_mode(result.target_provider, url))
+        route = resolve_invocation_route(InvocationRequest(
+            provider=result.target_provider,
+            model=result.model or "",
+            base_url=url,
+        ))
+        result = replace(result, base_url=url, api_mode=route.api_mode)
     return result
 
 

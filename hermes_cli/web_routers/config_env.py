@@ -880,10 +880,12 @@ _TRANSPORT_LABELS = {"chat_completions": "Chat Completions", "codex_responses": 
 
 
 def _auto_api_mode(base_url: str) -> str:
-    """The transport the runtime falls back to for an endpoint without a pinned ``api_mode``
-    (same resolver as ``runtime_provider_custom._custom_runtime``)."""
-    from hermes_cli.runtime_provider import _detect_api_mode_for_url
-    return _detect_api_mode_for_url(base_url) or "chat_completions"
+    """Canonical transport for an otherwise unpinned custom endpoint."""
+    from providers.routing import InvocationRequest, resolve_invocation_route
+
+    return resolve_invocation_route(
+        InvocationRequest(provider="custom", base_url=base_url or "")
+    ).api_mode
 
 
 async def _probe_transport_route(client, base_url: str, mode: str, model: str, headers: Dict[str, str]) -> str:

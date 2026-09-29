@@ -917,7 +917,7 @@ def _api_key_provider_model_list(provider_id: str, pconfig, existing_key: str, k
 def _model_flow_api_key_provider(config, provider_id, current_model=""):
     """Generic flow for API-key providers (z.ai, MiniMax, OpenCode, etc.)."""
     from hermes_cli.config import save_env_value, load_config
-    from hermes_cli.models import opencode_model_api_mode, normalize_opencode_model_id
+    from hermes_cli.models import normalize_opencode_model_id
     pconfig = get_provider_config(provider_id)
     key_env = pconfig.api_key_env_vars[0] if pconfig.api_key_env_vars else ""
     base_url_env = pconfig.base_url_env_var or ""
@@ -976,11 +976,16 @@ def _model_flow_api_key_provider(config, provider_id, current_model=""):
         confirm_base_url=effective_base, confirm_api_key=existing_key)
     if selected and is_opencode:
         selected = normalize_opencode_model_id(provider_id, selected)
-    # OpenCode pins its api_mode; everyone else drops it so the runtime auto-detects.
+    # OpenCode persists its model-dependent route; everyone else lets runtime resolve it.
+    selected_api_mode = None
+    if selected and is_opencode:
+        from providers.routing import InvocationRequest, resolve_invocation_route
+        selected_api_mode = resolve_invocation_route(InvocationRequest(
+            provider=provider_id, model=selected, base_url=effective_base or "",
+        )).api_mode
     _finish_model(
         selected, provider_id, f"Default model set to: {selected} (via {pconfig.name})", base_url=effective_base,
-        api_mode=opencode_model_api_mode(provider_id, selected) if selected and is_opencode else None,
-        drop_api_mode=not is_opencode)
+        api_mode=selected_api_mode, drop_api_mode=not is_opencode)
 
 
 def _anthropic_authenticate() -> bool:
