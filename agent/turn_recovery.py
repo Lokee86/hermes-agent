@@ -714,7 +714,7 @@ def recover_after_classification(
         from agent.error_classifier import is_reasoning_required_rejection
         agent._reasoning_floor_required = is_reasoning_required_rejection(str(api_error))
         try:
-            from hermes_cli.models_reasoning_caps import refresh_reasoning_caps_async
+            from models.metadata.reasoning import refresh_reasoning_caps_async
             refresh_reasoning_caps_async(agent.provider)
         except Exception:
             pass

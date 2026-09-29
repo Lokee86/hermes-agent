@@ -109,14 +109,14 @@ class ReasoningParamsMixin:
         # Live-catalog metadata first (OpenRouter /v1/models supported_parameters) — the static prefix
         # allowlist repeatedly went stale one vendor at a time. Unknown falls back to the static list.
         try:
-            from hermes_cli.models_reasoning_caps import openrouter_model_reasoning_capabilities, warm_openrouter_reasoning_caps_async
+            from models.metadata.reasoning import openrouter_model_reasoning_capabilities, warm_openrouter_reasoning_caps_async
             caps = openrouter_model_reasoning_capabilities(self.model)
             if caps is None:
                 warm_openrouter_reasoning_caps_async()  # cache cold — warm in the background, never block
         except Exception:
             caps = None
         if caps is not None:
-            return bool(caps.get("supports_reasoning"))
+            return bool(caps.supported)
         model = (self.model or "").lower()
         return any(model.startswith(prefix) for prefix in _OPENROUTER_REASONING_PREFIXES)
 

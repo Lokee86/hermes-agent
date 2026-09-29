@@ -16,6 +16,16 @@ from models.metadata.interpretation import (
     provider_info_from_entry,
     vision_marker_metadata,
 )
+from models.metadata.reasoning import (
+    configure_reasoning_metadata_sources,
+    nous_catalog_url,
+    nous_model_reasoning_capabilities,
+    openrouter_model_reasoning_capabilities,
+    parse_openrouter_reasoning_capabilities,
+    refresh_reasoning_caps_async,
+    warm_nous_reasoning_caps_async,
+    warm_openrouter_reasoning_caps_async,
+)
 from models.metadata.types import (
     ModelInfo,
     ModelMetadata,
@@ -34,6 +44,7 @@ __all__ = [
     "ReasoningMetadata",
     "UNKNOWN_MODEL_BASE",
     "builtin_model_metadata",
+    "configure_reasoning_metadata_sources",
     "dict_or_empty",
     "entry_supports_vision",
     "extract_context",
@@ -42,8 +53,15 @@ __all__ = [
     "model_info_from_entry",
     "model_metadata_from_entry",
     "model_metadata_patch_from_entry",
+    "nous_catalog_url",
+    "nous_model_reasoning_capabilities",
+    "openrouter_model_reasoning_capabilities",
     "override_int",
     "override_to_catalog_shape",
+    "parse_openrouter_reasoning_capabilities",
     "provider_info_from_entry",
+    "refresh_reasoning_caps_async",
     "vision_marker_metadata",
+    "warm_nous_reasoning_caps_async",
+    "warm_openrouter_reasoning_caps_async",
 ]

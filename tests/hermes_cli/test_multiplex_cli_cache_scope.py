@@ -104,11 +104,11 @@ def test_nous_reasoning_caps_follow_each_profiles_portal(homes, monkeypatch):
     (a / ".env").write_text("NOUS_INFERENCE_BASE_URL=https://portal-a.example/v1\n", encoding="utf-8")
     (b / ".env").write_text("NOUS_INFERENCE_BASE_URL=https://portal-b.example/v1\n", encoding="utf-8")
     import hermes_cli.models as models
-    import hermes_cli.models_reasoning_caps as caps
+    import models.metadata.reasoning as caps
 
     for attr, value in (("_nous_reasoning_caps_cache", None), ("_nous_reasoning_caps_failed_at", None),
                         ("_nous_caps_disk_checked", False), ("_nous_caps_warm_started", False)):
-        monkeypatch.setattr(models, attr, value)
+        monkeypatch.setattr(caps, attr, value)
 
     def transport(req, *, timeout, **kw):
         effort = "low" if "portal-a" in req.full_url else "high"
@@ -117,9 +117,9 @@ def test_nous_reasoning_caps_follow_each_profiles_portal(homes, monkeypatch):
 
     monkeypatch.setattr(models, "_urlopen_model_catalog_request", transport)
     with _Scoped(a):
-        assert caps.nous_model_reasoning_capabilities("nous/m", allow_fetch=True)["supported_efforts"] == ["low"]
+        assert caps.nous_model_reasoning_capabilities("nous/m", allow_fetch=True).supported_efforts == ("low",)
     with _Scoped(b):
-        assert caps.nous_model_reasoning_capabilities("nous/m", allow_fetch=True)["supported_efforts"] == ["high"]
+        assert caps.nous_model_reasoning_capabilities("nous/m", allow_fetch=True).supported_efforts == ("high",)
 
 
 def test_swr_refresh_runs_as_the_profile_that_spawned_it(homes):

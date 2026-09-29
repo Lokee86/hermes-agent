@@ -2,7 +2,7 @@
 
 Origin module; cohesive clusters live in siblings and are re-imported here so
 ``hermes_cli.models.<name>`` stays the stable import/monkeypatch surface:
-``models_catalog_static`` (curated model/presentation tables, aliases), ``models_reasoning_caps``,
+``models_catalog_static`` (curated model/presentation tables, aliases),
 ``models_local`` (Ollama / LM Studio), ``models_pricing``, ``models_validate``.
 """
 
@@ -44,9 +44,11 @@ from hermes_cli.models_catalog_static import (
     _PROVIDER_MODELS,
     _SILENT_DEFAULT_PROVIDERS,
     _xai_finalize_catalog)
-from hermes_cli.models_reasoning_caps import (
+from models.metadata.reasoning import (
     _OPENROUTER_CATALOG_URL,
-    _seed_reasoning_caps)
+    _seed_reasoning_caps,
+    configure_reasoning_metadata_sources,
+)
 from hermes_cli.models_local import (
     _OLLAMA_LOCAL_MODELS_CACHE,
     _OLLAMA_LOCAL_MODELS_CACHE_TTL,
@@ -74,6 +76,14 @@ COPILOT_REASONING_EFFORTS_O_SERIES = ["low", "medium", "high"]
 def _urlopen_model_catalog_request(req: urllib.request.Request, *, timeout: float, ssl_context=None):
     """Open catalog requests without forwarding headers across origins."""
     return open_credentialed_url(req, timeout=timeout, ssl_context=ssl_context)
+
+
+def _reasoning_catalog_request(req: urllib.request.Request, *, timeout: float):
+    """Late-bound guarded opener for the lower metadata source seam."""
+    return _urlopen_model_catalog_request(req, timeout=timeout)
+
+
+configure_reasoning_metadata_sources(request=_reasoning_catalog_request, user_agent=_HERMES_USER_AGENT, nous_url=None)
 
 
 def _get_json(
@@ -516,20 +526,6 @@ def _openrouter_model_supports_tools(item: Any) -> bool:
     return "tools" in params if isinstance(params, list) else True
 
 
-# Reasoning-capability cache slots, one set per catalog (OpenRouter, Nous Portal). The logic
-# lives in models_reasoning_caps and reads/writes these by name so tests can reset them here.
-# ``*_cache``: model id → parsed caps for the process lifetime; ``*_failed_at``: monotonic time
-# of the last failed fetch (60s re-fetch suppression); the flags are once-per-process guards.
-_openrouter_reasoning_caps_cache: dict[str, Optional[dict[str, Any]]] | None = None
-_openrouter_reasoning_caps_failed_at: float | None = None
-_openrouter_caps_disk_checked = False
-_openrouter_caps_warm_started = False
-_nous_reasoning_caps_cache: dict[str, Optional[dict[str, Any]]] | None = None
-_nous_reasoning_caps_failed_at: float | None = None
-_nous_caps_disk_checked = False
-_nous_caps_warm_started = False
-
-
 from agent.reasoning_effort import CODEX_ASTRA_EFFORTS, clamp_effort as _clamp_effort, is_astra_model
 
 
@@ -609,10 +605,7 @@ def fetch_openrouter_models(
     live_items, live_by_id = live
 
     # Free warm-up for the reasoning-capability cache: same payload the caps fetch would pull.
-    global _openrouter_reasoning_caps_cache
-    seeded = _seed_reasoning_caps(_OPENROUTER_CATALOG_URL, live_items)
-    if _openrouter_reasoning_caps_cache is None and seeded is not None:
-        _openrouter_reasoning_caps_cache = seeded
+    _seed_reasoning_caps(_OPENROUTER_CATALOG_URL, live_items)
 
     curated: list[tuple[str, str]] = []
     silent_default = get_preferred_silent_default_model("openrouter")
@@ -2893,24 +2886,17 @@ _PLUGIN_COMPAT_LAZY = {
     'get_pricing_for_provider': ('hermes_cli.models_pricing', 'get_pricing_for_provider'),
     'group_providers': ('hermes_cli.models_catalog_static', 'group_providers'),
     'lmstudio_model_reasoning_options': ('hermes_cli.models_local', 'lmstudio_model_reasoning_options'),
-    'nous_catalog_url': ('hermes_cli.models_reasoning_caps', 'nous_catalog_url'),
-    'nous_model_reasoning_capabilities': ('hermes_cli.models_reasoning_caps', 'nous_model_reasoning_capabilities'),
     'nous_policy_allowed_ids': ('hermes_cli.models_pricing', 'nous_policy_allowed_ids'),
     'ollama_model_supports_thinking': ('hermes_cli.models_local', 'ollama_model_supports_thinking'),
-    'openrouter_model_reasoning_capabilities': ('hermes_cli.models_reasoning_caps', 'openrouter_model_reasoning_capabilities'),
-    'parse_openrouter_reasoning_capabilities': ('hermes_cli.models_reasoning_caps', 'parse_openrouter_reasoning_capabilities'),
     'peek_cached_pricing': ('hermes_cli.models_pricing', 'peek_cached_pricing'),
     'pricing_cache_scope': ('hermes_cli.models_pricing', 'pricing_cache_scope'),
     'probe_lmstudio_models': ('hermes_cli.models_local', 'probe_lmstudio_models'),
     'probe_ollama_local_models': ('hermes_cli.models_local', 'probe_ollama_local_models'),
     'provider_group_for_slug': ('hermes_cli.models_catalog_static', 'provider_group_for_slug'),
-    'refresh_reasoning_caps_async': ('hermes_cli.models_reasoning_caps', 'refresh_reasoning_caps_async'),
     'restrict_to_nous_policy': ('hermes_cli.models_pricing', 'restrict_to_nous_policy'),
     'should_use_ollama_native_catalog': ('hermes_cli.models_local', 'should_use_ollama_native_catalog'),
     'url_origin': ('hermes_cli.urllib_security', 'url_origin'),
     'validate_requested_model': ('hermes_cli.models_validate', 'validate_requested_model'),
-    'warm_nous_reasoning_caps_async': ('hermes_cli.models_reasoning_caps', 'warm_nous_reasoning_caps_async'),
-    'warm_openrouter_reasoning_caps_async': ('hermes_cli.models_reasoning_caps', 'warm_openrouter_reasoning_caps_async'),
 }
 
 

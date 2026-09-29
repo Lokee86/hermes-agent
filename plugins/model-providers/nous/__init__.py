@@ -41,7 +41,7 @@ class NousProfile(VendorQualifiedModelIdsMixin, ProviderProfile):
         """True when ``reasoning: {enabled: false}`` would 400 on *model*. Cache-only catalog
         lookup; unknown/cold (warmer kicked) and no-reasoning routes both answer True (omit > 400)."""
         try:
-            from hermes_cli.models_reasoning_caps import nous_model_reasoning_capabilities, warm_nous_reasoning_caps_async
+            from models.metadata.reasoning import nous_model_reasoning_capabilities, warm_nous_reasoning_caps_async
 
             caps = nous_model_reasoning_capabilities(model)
             if caps is None:
@@ -49,7 +49,7 @@ class NousProfile(VendorQualifiedModelIdsMixin, ProviderProfile):
                 return True
         except Exception:
             return True
-        return not caps.get("supports_reasoning") or bool(caps.get("mandatory"))
+        return not caps.supported or bool(caps.mandatory)
 
     def build_api_kwargs_extras(
         self, *, reasoning_config: dict | None = None, supports_reasoning: bool = False,

@@ -14,7 +14,7 @@ import os
 import time
 import urllib.request
 from typing import Any, Optional
-from hermes_cli.models_reasoning_caps import _seed_reasoning_caps
+from models.metadata.reasoning import _seed_reasoning_caps, configure_reasoning_metadata_sources
 
 
 # Cache: maps model_id → {"prompt": str, "completion": str} per endpoint
@@ -320,6 +320,14 @@ def _resolve_nous_pricing_credentials() -> tuple[str, str]:
     if base_url.endswith("/v1"):
         base_url = base_url[:-3]
     return (api_key, base_url)
+
+
+def _nous_reasoning_catalog_url() -> str:
+    """Inject only the resolved endpoint name; credentials remain pricing-owned."""
+    return f"{_resolve_nous_pricing_credentials()[1]}/v1/models"
+
+
+configure_reasoning_metadata_sources(nous_url=_nous_reasoning_catalog_url)
 
 
 # How long a Nous catalog stays trusted. Its contents depend on the org's policy, which an admin

@@ -294,7 +294,7 @@ def _reasoning_catalog_reader(slug: str):
     """Per-model reasoning-capability reader for aggregators that publish one. Cache-only — the picker
     must never block on HTTP; a cold cache warms in the background and reports no restriction until then."""
     try:
-        from hermes_cli.models_reasoning_caps import (
+        from models.metadata.reasoning import (
             nous_model_reasoning_capabilities,
             openrouter_model_reasoning_capabilities,
             warm_nous_reasoning_caps_async,
@@ -348,12 +348,12 @@ def _apply_capabilities(rows: list[dict], *, metadata_config: dict | None = None
                     detail = read_reasoning_catalog(model)
                 except Exception:
                     detail = None
-                if detail and not detail.get("supports_reasoning"):
+                if detail and not detail.supported:
                     # Aggregator catalog beats models.dev for a route it serves: no reasoning param
                     # means no reasoning controls, so no disable to describe either.
                     entry["reasoning"] = False
                 elif detail:
-                    entry["can_disable_reasoning"] = not detail.get("mandatory")
+                    entry["can_disable_reasoning"] = not detail.mandatory
 
             caps[model] = entry
 
