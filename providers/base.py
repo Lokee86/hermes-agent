@@ -153,6 +153,17 @@ class ProviderProfile:
 
     # ── Hooks (override in subclass for complex providers) ───
 
+    def resolve_route_policy(self, model: str, base_url: str = "") -> str | None:
+        """Return a pure provider/model-specific API-mode requirement, if any.
+
+        This hook runs during invocation-route selection and must not perform
+        network or configuration I/O. ``None`` leaves the shared routing
+        precedence to continue to the configured mode and profile default.
+        ``api_mode`` remains the profile-wide default; this hook is for a
+        stricter requirement that depends on the model or endpoint.
+        """
+        return None
+
     def __post_init__(self) -> None:
         if self.base_url_env_var and self.base_url_env_var in self.env_vars:
             raise ValueError(

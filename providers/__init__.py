@@ -29,6 +29,14 @@ from providers.identity import (
     is_routing_aggregator,
     normalize_provider,
 )
+from providers.routing import (
+    InvocationRequest,
+    InvocationRoute,
+    RuntimeKind,
+    canonicalize_api_mode,
+    endpoint_api_mode,
+    resolve_invocation_route,
+)
 
 # Load the internal discovery module so registry calls and package submodule
 # identity are stable; discovery itself remains lazy and performs no scan here.
@@ -50,6 +58,12 @@ __all__ = [
     "custom_provider_slug",
     "custom_provider_aliases",
     "vendor_for_model",
+    "InvocationRequest",
+    "InvocationRoute",
+    "RuntimeKind",
+    "canonicalize_api_mode",
+    "endpoint_api_mode",
+    "resolve_invocation_route",
 ]
 
 
