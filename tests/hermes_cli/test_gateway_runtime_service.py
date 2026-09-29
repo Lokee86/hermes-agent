@@ -149,7 +149,7 @@ def test_task_xml_binds_actual_action_and_principal(case, reason, tmp_path):
     home.mkdir()
     script = home / 'gateway.vbs'
     configured = str(home if case != 'wrong_home' else tmp_path / 'other')
-    # The current installed launcher grammar; no script is executed.
+    # The pre-PM persisted launcher grammar; compatibility only, no script is executed.
     script.write_text("\n".join([
         "' Hermes Agent Gateway", "Option Explicit", "Dim sh, env, existing_pp",
         'Set sh = CreateObject("WScript.Shell")', 'Set env = sh.Environment("PROCESS")',

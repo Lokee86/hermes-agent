@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import logging
 import os
+import shlex
 from pathlib import Path
 
 from gateway.config import coerce_systemd_watchdog_seconds, load_gateway_config
@@ -64,12 +65,24 @@ def systemd_watchdog_seconds(hermes_home: str | Path | None = None) -> int:
             reset_home_override(override_token)
 
 
+def systemd_command(argv: list[str]) -> str:
+    """Quote argv for systemd, including its non-shell specifier expansion."""
+    return " ".join(
+        '"' + part.replace("\\", "\\\\").replace('"', '\\"')
+        .replace("%", "%%").replace("$", "$$") + '"'
+        for part in argv
+    )
+
+
 def generate_systemd_unit(
     system: bool = False,
     run_as_user: str | None = None,
 ) -> str:
+    from hermes_cli._launchers import installation_command
+
     executable = service_process.python_path()
     working_dir = service_process.stable_working_dir()
+    project_root = service_process.PROJECT_ROOT
     path_entries = service_process.service_path_dirs()
 
     if not system:
@@ -91,6 +104,7 @@ def generate_systemd_unit(
             profile = service_identity.profile_arg(hermes_home)
 
         executable = service_process.remap_path_for_user(executable, home_dir)
+        project_root = Path(service_process.remap_path_for_user(str(project_root), home_dir))
         working_dir = (
             str(hermes_home)
             if hermes_home
@@ -134,7 +148,19 @@ def generate_systemd_unit(
         "/usr/bin", "/sbin", "/bin",
     ])
     sane_path = ":".join(path_entries)
-    profile_fragment = f" {profile}" if profile else ""
+    profile_args = shlex.split(profile) if profile else []
+    start = installation_command(
+        project_root, [*profile_args, "gateway", "run"],
+        python=executable, home=hermes_home,
+    )
+    stop_mark = installation_command(
+        project_root, module="gateway.systemd_stop_mark",
+        python=executable, home=hermes_home,
+    )
+    cleanup = installation_command(
+        project_root, module="gateway.cgroup_cleanup",
+        python=executable, home=hermes_home,
+    )
 
     return f"""[Unit]
 Description={SERVICE_DESCRIPTION}
@@ -144,7 +170,7 @@ Wants=network-online.target
 
 [Service]
 Type={systemd_type}
-{watchdog_directives}{identity_lines}ExecStart={executable} -m hermes_cli.main{profile_fragment} gateway run
+{watchdog_directives}{identity_lines}ExecStart={systemd_command(start)}
 WorkingDirectory={working_dir}
 {env_lines}Environment="PATH={sane_path}"
 Environment="HERMES_HOME={hermes_home}"
@@ -157,8 +183,8 @@ RestartPreventExitStatus={GATEWAY_FATAL_CONFIG_EXIT_CODE}
 KillMode=mixed
 KillSignal=SIGTERM
 ExecReload=/bin/kill -USR1 $MAINPID
-ExecStop=-{executable} -m gateway.systemd_stop_mark
-ExecStopPost=-{executable} -m gateway.cgroup_cleanup
+ExecStop=-{systemd_command(stop_mark)}
+ExecStopPost=-{systemd_command(cleanup)}
 TimeoutStopSec={restart_timeout}
 StandardOutput=journal
 StandardError=journal

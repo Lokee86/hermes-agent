@@ -352,7 +352,7 @@ def _launchd_unsupported_marker_exists() -> bool:
 def _gateway_run_command() -> list[str]:
     from hermes_cli._launchers import runtime_command
     return runtime_command(service_process.PROJECT_ROOT, [*shlex.split(service_identity.profile_arg()), "gateway", "run", "--replace"],
-                           python=service_process.python_path())
+                           python=service_process.python_path(), home=get_hermes_home())
 
 
 def launchd_program_arguments(command: list[str], stdout_log: Path, stderr_log: Path) -> list[str]:
@@ -406,14 +406,15 @@ def _timestamped_stderr_gateway_command(error_log: Path, *, external_supervisor:
     from hermes_cli._launchers import installation_command, runtime_command
     inner = _gateway_run_command()
     if external_supervisor:
-        inner = installation_command(_gw().PROJECT_ROOT, [*shlex.split(_gw()._profile_arg()), "gateway", "run"],
-                                     python=_gw().get_python_path())
+        inner = installation_command(service_process.PROJECT_ROOT, [*shlex.split(service_identity.profile_arg()), "gateway", "run"],
+                                     python=service_process.python_path(), home=get_hermes_home())
         inner = [part for part in inner if part != "--replace"]
         if "--external-supervisor" not in inner:
             inner.append("--external-supervisor")
     command = installation_command if external_supervisor else runtime_command
     return command(service_process.PROJECT_ROOT, ["--error-log", str(error_log), "--", *inner],
-                   module="hermes_cli.stderr_timestamp", python=service_process.python_path())
+                   module="hermes_cli.stderr_timestamp", python=service_process.python_path(),
+                   home=get_hermes_home())
 
 
 def _spawn_detached_gateway() -> bool:
@@ -686,7 +687,7 @@ def refresh_launchd_plist_if_needed() -> bool:
     if refuse_temp_home_write(new_plist, "launchd plist"):
         return False
 
-    _gw()._prepare_service_launcher()
+    service_process.prepare_installation_launcher(home=get_hermes_home())
     plist_path.write_text(new_plist, encoding="utf-8")
     label = get_launchd_label()
     domain = _launchd_domain()
@@ -773,7 +774,7 @@ def launchd_install(force: bool = False, *, start_now: bool = True):
     if refuse_temp_home_write(new_plist, "launchd plist"):
         return
     print(f"Installing launchd service to: {plist_path}")
-    _gw()._prepare_service_launcher()
+    service_process.prepare_installation_launcher(home=get_hermes_home())
     plist_path.write_text(new_plist, encoding="utf-8")
 
     if not load:
@@ -829,7 +830,7 @@ def launchd_start():
             sys.exit(1)
         print("↻ launchd plist missing; regenerating service definition")
         plist_path.parent.mkdir(parents=True, exist_ok=True)
-        _gw()._prepare_service_launcher()
+        service_process.prepare_installation_launcher(home=get_hermes_home())
         plist_path.write_text(new_plist, encoding="utf-8")
         if _launchd_bootstrap_and_kickstart(plist_path, label):
             _launchd_ok("✓ Service started")

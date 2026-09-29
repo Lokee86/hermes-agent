@@ -505,7 +505,7 @@ def _check_windows_gateway_autostart(should_fix: bool, f: Finding) -> None:
     Startup-folder entry side by side launch it twice (#80569)."""
     if sys.platform != "win32":
         return
-    from hermes_cli import gateway_windows
+    from gateway import windows_service as gateway_windows
     redundant = gateway_windows.redundant_autostart_entries()
     if not redundant:
         return

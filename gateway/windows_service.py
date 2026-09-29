@@ -346,13 +346,16 @@ def _stable_gateway_working_dir(project_root: Path) -> str:
 
 # ── Script rendering
 
-def _gateway_run_argv(python_exe: str, profile_arg: str) -> list[str]:
-    """``python -m hermes_cli.main [--profile X] gateway run`` — shared by every launcher renderer."""
-    argv = [python_exe, "-m", "hermes_cli.main"]
-    if profile_arg:
-        argv.extend(profile_arg.split())
-    argv.extend(["gateway", "run"])
-    return argv
+def _gateway_run_argv(
+    python_exe: str, profile_arg: str, hermes_home: str, *, persistent: bool,
+) -> list[str]:
+    """Gateway argv through the PM-aware bootstrap/installation launcher."""
+    from hermes_cli._launchers import installation_command, runtime_command
+    args = [*profile_arg.split(), "gateway", "run"] if profile_arg else ["gateway", "run"]
+    command = installation_command if persistent else runtime_command
+    return command(
+        _service_process.PROJECT_ROOT, args, python=python_exe, home=hermes_home,
+    )
 
 
 def _launcher_settings(home: Path | None = None) -> tuple[str, str, str, str]:
@@ -367,74 +370,36 @@ def _launcher_settings(home: Path | None = None) -> tuple[str, str, str, str]:
     )
 
 
-def _launcher_pythonpath_entries(extra_pythonpath: list[str]) -> list[str]:
-    return [
-        _preserve_hermes_home_path(Path(__file__).resolve().parent.parent),
-        *[_preserve_hermes_home_path(entry) for entry in extra_pythonpath],
-    ]
-
-
 def _build_gateway_cmd_script(python_path: str, working_dir: str, hermes_home: str, profile_arg: str) -> str:
-    """Build the ``gateway.cmd`` wrapper (CRLF-terminated). No PATH overrides (rewriting PATH breaks
-    Homebrew/nvm-style installs), no ``start`` (extra wrapper process muddles lifecycle/status), no
-    ``--replace`` (repeated /Run calls must be idempotent, not takeover loops)."""
-    python_exe_path, venv_dir, extra_pythonpath = _resolve_detached_python(python_path)
-    pythonpath = ";".join([*_launcher_pythonpath_entries(extra_pythonpath), "%PYTHONPATH%"])
+    """Build the compatibility cmd wrapper around the stable installation launcher."""
+    command = _gateway_run_argv(python_path, profile_arg, hermes_home, persistent=True)
     lines = [
         "@echo off",
         f"rem {_TASK_DESCRIPTION}",
         f"cd /d {_quote_cmd_script_arg(working_dir)}",
         f'set "HERMES_HOME={hermes_home}"',
         *[f'set "{k}={v}"' for k, v in _GATEWAY_ENV],
-        # VIRTUAL_ENV lets the gateway's own python detection find the venv.
-        f'set "VIRTUAL_ENV={_preserve_hermes_home_path(venv_dir)}"',
-        f'set "PYTHONPATH={pythonpath}"',
-        " ".join(_quote_cmd_script_arg(a) for a in _gateway_run_argv(python_exe_path, profile_arg)),
+        " ".join(_quote_cmd_script_arg(arg) for arg in command),
         "exit /b 0",
     ]
     return "\r\n".join(lines) + "\r\n"
 
 
 def _build_gateway_vbs_script(python_path: str, working_dir: str, hermes_home: str, profile_arg: str) -> str:
-    """Build the hidden-console ``gateway.vbs`` launcher (CRLF-terminated).
-
-    Run via ``wscript.exe``, not ``cmd.exe``: at logon Windows broadcasts CTRL_CLOSE_EVENT to console
-    groups, killing a cmd-hosted gateway with STATUS_CONTROL_C_EXIT, which Task Scheduler treats as a
-    user cancel (``RestartOnFailure`` never fires). wscript has no console; python.exe runs with window
-    style 0 so descendants inherit one hidden console instead of flashing their own (#54220/#56747).
-
-    Why: issue #45599 root cause #1.
-    ``wscript.exe`` is a GUI-subsystem executable with no console, so this launcher receives no console
-    control events. It ``Run``s the console ``python.exe`` with window style 0 (hidden): the gateway owns a
-    single hidden console — never shown, never CTRL_CLOSE'd at logon, and inherited by every
-    console-subsystem descendant (git, gh, node, …) so none of them allocate a visible flashing conhost
-    (#54220/#56747; the previous console-less pythonw.exe gateway forced exactly that per-descendant flash).
-    No cmd.exe anywhere in the chain. Mirrors ``_build_gateway_cmd_script`` (same env + argv via
-    ``_resolve_detached_python``).
-    """
-    python_exe_path, venv_dir, extra_pythonpath = _resolve_detached_python(python_path)
-    # list2cmdline gives CreateProcess-correct quoting for WScript.Shell.Run.
-    command_line = subprocess.list2cmdline(_gateway_run_argv(python_exe_path, profile_arg))
-    static_pythonpath = os.pathsep.join(_launcher_pythonpath_entries(extra_pythonpath))
+    """Build the hidden-console launcher around the stable installation command."""
+    command_line = subprocess.list2cmdline(
+        _gateway_run_argv(python_path, profile_arg, hermes_home, persistent=True)
+    )
     q = _quote_vbs_string
     lines = [
         f"' {_TASK_DESCRIPTION}",
         "Option Explicit",
-        "Dim sh, env, existing_pp",
+        "Dim sh, env",
         'Set sh = CreateObject("WScript.Shell")',
         'Set env = sh.Environment("PROCESS")',
         f"env.Item({q('HERMES_HOME')}) = {q(hermes_home)}",
         *[f"env.Item({q(k)}) = {q(v)}" for k, v in _GATEWAY_ENV],
-        f"env.Item({q('VIRTUAL_ENV')}) = {q(_preserve_hermes_home_path(venv_dir))}",
-        # Mirror the cmd wrapper's ``PYTHONPATH=<static>;%PYTHONPATH%`` at runtime.
-        f"existing_pp = env.Item({q('PYTHONPATH')})",
-        "If Len(existing_pp) > 0 Then",
-        f"  env.Item({q('PYTHONPATH')}) = {q(static_pythonpath + os.pathsep)} & existing_pp",
-        "Else",
-        f"  env.Item({q('PYTHONPATH')}) = {q(static_pythonpath)}",
-        "End If",
         f"sh.CurrentDirectory = {q(working_dir)}",
-        # Window style 0 = hidden; bWaitOnReturn False = detached/async.
         f"sh.Run {q(command_line)}, 0, False",
     ]
     return "\r\n".join(lines) + "\r\n"
@@ -463,6 +428,7 @@ def _write_task_script() -> Path:
     launcher used by the Scheduled Task and Startup fallback. Return the .cmd path."""
     _assert_windows()
     settings = _launcher_settings()
+    _service_process.prepare_installation_launcher(home=settings[2])
     script_path = get_task_script_path()
     _atomic_write(script_path, _build_gateway_cmd_script(*settings), script_path.with_suffix(".tmp"))
     # Also render the console-less .vbs launcher used by Scheduled Task and the Startup-folder fallback via
@@ -707,13 +673,12 @@ def _build_gateway_argv(home: Path | None = None) -> tuple[list[str], str, dict[
     as gateway.cmd, assembled as a native argv so no cmd.exe layer sits in between."""
     _assert_windows()
     python_path, working_dir, hermes_home, profile_arg = _launcher_settings(home)
-    python_exe, venv_dir, extra_pythonpath = _resolve_detached_python(python_path)
-    env_overlay = {"HERMES_HOME": hermes_home, **dict(_GATEWAY_ENV), "VIRTUAL_ENV": _preserve_hermes_home_path(venv_dir)}
-    _prepend_pythonpath(
+    env_overlay = {"HERMES_HOME": hermes_home, **dict(_GATEWAY_ENV)}
+    return (
+        _gateway_run_argv(python_path, profile_arg, hermes_home, persistent=False),
+        working_dir,
         env_overlay,
-        [_preserve_hermes_home_path(p) for p in (_service_process.PROJECT_ROOT, *extra_pythonpath)],
     )
-    return _gateway_run_argv(python_exe, profile_arg), working_dir, env_overlay
 
 
 def windowless_gateway_restart_spec(run_argv: list[str]) -> tuple[list[str], str, dict[str, str]]:
@@ -725,8 +690,9 @@ def windowless_gateway_restart_spec(run_argv: list[str]) -> tuple[list[str], str
     flags, so the respawned gateway owns a single hidden console that all of its descendants inherit —
     nothing flashes (#54220/#56747; the old pythonw.exe rewrite here produced a console-less gateway whose
     every console-subsystem child allocated a visible conhost). This helper now only normalizes the
-    interpreter via ``_resolve_detached_python`` and supplies the stable cwd + env overlay (HERMES_HOME,
-    VIRTUAL_ENV, PYTHONPATH) so the respawn doesn't depend on the watcher's transient working directory.
+    interpreter via ``_resolve_detached_python`` and supplies the legacy
+    ``VIRTUAL_ENV``/``PYTHONPATH`` overlay only for that captured pre-cutover argv.
+    Newly generated launchers never persist those variables.
     """
     if not run_argv or sys.platform != "win32":
         return run_argv, "", {}

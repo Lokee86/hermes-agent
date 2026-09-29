@@ -93,4 +93,120 @@ def test_systemd_unit_does_not_persist_virtual_env(tmp_path, monkeypatch):
 
     unit = systemd_unit_render.generate_systemd_unit(system=False)
 
-    assert "VIRTUAL_ENV" not in unit
+    assert 'Environment="VIRTUAL_ENV=' not in unit
+
+def test_systemd_uses_stable_installation_commands(tmp_path, monkeypatch):
+    from gateway import systemd_unit_render
+    from hermes_cli import _launchers
+
+    calls = []
+    def fake_install(root, args=(), *, module="hermes_cli.main", **kwargs):
+        calls.append((Path(root), list(args), module, kwargs))
+        prefix = ["/stable/hermes"] if module == "hermes_cli.main" else ["/stable/hermes", "--run-module", module]
+        return [*prefix, *args]
+
+    monkeypatch.setattr(_launchers, "installation_command", fake_install)
+    monkeypatch.setattr(service_process, "PROJECT_ROOT", tmp_path / "repo")
+    monkeypatch.setattr(service_process, "python_path", lambda: "/store/python/bin/python3")
+    monkeypatch.setattr(service_process, "stable_working_dir", lambda: str(tmp_path))
+    monkeypatch.setattr(service_process, "service_path_dirs", lambda: [])
+    monkeypatch.setattr(service_process, "append_node_dir", lambda entries, hermes_root=None: None)
+    monkeypatch.setattr(service_process, "build_user_local_paths", lambda home, entries: [])
+    monkeypatch.setattr(service_process, "build_wsl_interop_paths", lambda entries: [])
+    monkeypatch.setattr(systemd_unit_render, "get_hermes_home", lambda: tmp_path)
+    monkeypatch.setattr(systemd_unit_render.service_identity, "profile_arg", lambda *a, **k: "")
+    monkeypatch.setattr(systemd_unit_render, "ld_library_path_line", lambda *a, **k: "")
+    monkeypatch.setattr(systemd_unit_render, "systemd_watchdog_seconds", lambda home=None: 0)
+    monkeypatch.setattr(systemd_unit_render, "get_restart_drain_timeout", lambda: 0.0)
+    monkeypatch.setattr(systemd_unit_render, "get_cron_drain_timeout", lambda: 0.0)
+
+    unit = systemd_unit_render.generate_systemd_unit(system=False)
+
+    assert 'ExecStart="/stable/hermes" "gateway" "run"' in unit
+    assert 'ExecStop=-"/stable/hermes" "--run-module" "gateway.systemd_stop_mark"' in unit
+    assert 'ExecStopPost=-"/stable/hermes" "--run-module" "gateway.cgroup_cleanup"' in unit
+    assert "hermes_cli.main" not in unit
+    assert [call[2] for call in calls] == [
+        "hermes_cli.main", "gateway.systemd_stop_mark", "gateway.cgroup_cleanup"
+    ]
+
+
+def test_launchd_supervised_command_uses_extracted_installation_launcher(tmp_path, monkeypatch):
+    from gateway import launchd_service
+    from hermes_cli import _launchers
+
+    calls = []
+    def fake_install(root, args=(), *, module="hermes_cli.main", **kwargs):
+        calls.append((Path(root), list(args), module, kwargs))
+        prefix = ["/stable/hermes"] if module == "hermes_cli.main" else ["/stable/hermes", "--run-module", module]
+        return [*prefix, *args]
+
+    monkeypatch.setattr(_launchers, "installation_command", fake_install)
+    monkeypatch.setattr(_launchers, "runtime_command", lambda *a, **k: ["/runtime/hermes"])
+    monkeypatch.setattr(service_process, "PROJECT_ROOT", tmp_path / "repo")
+    monkeypatch.setattr(service_process, "python_path", lambda: "/store/python")
+    monkeypatch.setattr(launchd_service, "get_hermes_home", lambda: tmp_path / ".hermes")
+    monkeypatch.setattr(launchd_service.service_identity, "profile_arg", lambda: "--profile work")
+
+    command = launchd_service._timestamped_stderr_gateway_command(
+        tmp_path / "gateway.error.log", external_supervisor=True
+    )
+
+    assert calls[0][1] == ["--profile", "work", "gateway", "run"]
+    assert calls[0][3]["home"] == tmp_path / ".hermes"
+    assert "--external-supervisor" in calls[1][1]
+    assert calls[1][2] == "hermes_cli.stderr_timestamp"
+    assert command[0] == "/stable/hermes"
+
+def test_prepare_installation_launcher_publishes_managed_source_launcher(tmp_path, monkeypatch):
+    from hermes_cli import _launchers
+
+    project = tmp_path / "repo"
+    home = tmp_path / "home"
+    selected = home / "tools" / "python-v1" / "bin" / "python3"
+    selected.parent.mkdir(parents=True)
+    selected.write_text("", encoding="utf-8")
+    calls = []
+
+    monkeypatch.setattr(_launchers, "resolve_store_python", lambda root: selected)
+    monkeypatch.setattr(_launchers, "ENTRY_POINTS", {"hermes": object(), "hermes-acp": object()})
+
+    def fake_publish(root, out_dir):
+        calls.append((Path(root), Path(out_dir)))
+        return [Path(out_dir) / "hermes", Path(out_dir) / "hermes-acp"]
+
+    monkeypatch.setattr(_launchers, "ensure_install_launchers", fake_publish)
+
+    service_process.prepare_installation_launcher(project, home)
+
+    assert calls == [(project, project / ".hermes" / "bin")]
+
+def test_service_identity_accepts_runtime_bootstrap(tmp_path):
+    from gateway.runtime_service_identity import verify_gateway_argv
+    from hermes_cli._launchers import runtime_command
+
+    root = tmp_path / "repo"
+    home = tmp_path / ".hermes"
+    argv = runtime_command(
+        root, ["gateway", "run"], python=sys.executable, home=home,
+    )
+
+    verify_gateway_argv(argv, home)
+
+
+def test_service_identity_accepts_runtime_timestamp_wrapper(tmp_path):
+    from gateway.runtime_service_identity import verify_gateway_argv
+    from hermes_cli._launchers import runtime_command
+
+    root = tmp_path / "repo"
+    home = tmp_path / ".hermes"
+    inner = runtime_command(
+        root, ["gateway", "run", "--external-supervisor"],
+        python=sys.executable, home=home,
+    )
+    argv = runtime_command(
+        root, ["--error-log", str(tmp_path / "gateway.err"), "--", *inner],
+        module="hermes_cli.stderr_timestamp", python=sys.executable, home=home,
+    )
+
+    verify_gateway_argv(argv, home)

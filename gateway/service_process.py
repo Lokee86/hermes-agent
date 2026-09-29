@@ -152,6 +152,35 @@ def append_node_dir(path_entries: list[str], hermes_root: Path | None = None) ->
             path_entries.append(node_dir)
 
 
+def prepare_installation_launcher(
+    project_root: Path | None = None,
+    home: str | Path | None = None,
+    owner: tuple[int, str] | None = None,
+) -> None:
+    """Publish the stable source-install launcher before a service persists it."""
+    from hermes_cli._launchers import ENTRY_POINTS, ensure_install_launchers, resolve_store_python
+    from hermes_constants import reset_hermes_home_override, set_hermes_home_override
+
+    project_root = Path(project_root or PROJECT_ROOT)
+    target_home = Path(home) if home is not None else Path(get_hermes_home())
+    token = set_hermes_home_override(target_home)
+    try:
+        if resolve_store_python(project_root) is None:
+            return
+        local = project_root / ".hermes" / "bin"
+        paths = ensure_install_launchers(project_root, local)
+        if len(paths) != len(ENTRY_POINTS):
+            raise RuntimeError("Could not publish the gateway installation launcher")
+        if owner is not None:
+            import os as _os
+            import pwd
+            uid, username = owner
+            gid = pwd.getpwnam(username).pw_gid
+            for path in (local.parent, local, *map(Path, paths)):
+                _os.chown(path, uid, gid)
+    finally:
+        reset_hermes_home_override(token)
+
 
 def hermes_home_for_target_user(target_home_dir: str) -> str:
     raw = os.environ.get("HERMES_HOME", "").strip()

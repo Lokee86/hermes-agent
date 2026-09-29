@@ -80,6 +80,7 @@ def install(
     definition = systemd_unit_render.generate_systemd_unit(system=system, run_as_user=run_as_user)
     if systemd_unit_state.refuse_temp_home_write(definition, "systemd unit"):
         return
+    systemd_unit_state.prepare_installation_launcher(system, run_as_user)
     path.write_text(definition, encoding="utf-8")
     systemd_runtime.run_systemctl(["daemon-reload"], system=system, check=True, timeout=30)
     if enable_on_startup:

@@ -3,12 +3,26 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from gateway import systemd_identity, systemd_runtime, systemd_unit_render
+from hermes_constants import get_hermes_home
+
+from gateway import service_process, systemd_identity, systemd_runtime, systemd_unit_render
 from gateway.service_definition import (
     normalize_service_definition,
     refuse_temp_home_write,
     temp_home_in_definition,
 )
+
+
+def prepare_installation_launcher(system: bool = False, run_as_user: str | None = None) -> None:
+    project_root = service_process.PROJECT_ROOT
+    home: str | Path = get_hermes_home()
+    owner: tuple[int, str] | None = None
+    if system:
+        username, _group, home_dir, uid = systemd_identity.system_service_identity(run_as_user)
+        project_root = Path(service_process.remap_path_for_user(str(project_root), home_dir))
+        home = service_process.hermes_home_for_target_user(home_dir)
+        owner = (uid, username)
+    service_process.prepare_installation_launcher(project_root, home, owner)
 
 
 def unit_is_current(system: bool = False) -> bool:
@@ -76,6 +90,7 @@ def refresh_if_needed(system: bool = False) -> bool:
     if refuse_temp_home_write(new_unit, "systemd unit"):
         return False
 
+    prepare_installation_launcher(system, expected_user)
     path.write_text(new_unit, encoding="utf-8")
     systemd_runtime.run_systemctl(["daemon-reload"], system=system, check=True, timeout=30)
     print(
