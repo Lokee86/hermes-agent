@@ -20,6 +20,11 @@ from providers.registry import (
     routed_model_rejects_vision_tool_messages,
 )
 from providers.model_normalizers import vendor_for_model
+from providers.opencode import (
+    normalize_opencode_base_url,
+    normalize_opencode_model_id,
+    opencode_provider_family,
+)
 from providers.identity import (
     ResolvedProvider,
     custom_provider_aliases,
@@ -58,6 +63,9 @@ __all__ = [
     "custom_provider_slug",
     "custom_provider_aliases",
     "vendor_for_model",
+    "opencode_provider_family",
+    "normalize_opencode_model_id",
+    "normalize_opencode_base_url",
     "InvocationRequest",
     "InvocationRoute",
     "RuntimeKind",
