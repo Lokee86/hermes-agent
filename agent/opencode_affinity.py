@@ -32,7 +32,7 @@ OPENCODE_SESSION_HEADER = "x-opencode-session"
 
 def opencode_transport(provider: Optional[str], model: Optional[str], base_url: Optional[str]) -> tuple[Optional[str], str]:
     """Resolve an OpenCode target through the canonical provider route policy."""
-    from hermes_cli.models import (
+    from providers import (
         normalize_opencode_base_url,
         normalize_opencode_model_id,
         opencode_provider_family,
@@ -68,7 +68,7 @@ def is_opencode_target(provider: Optional[str], base_url: Optional[str]) -> bool
     ``opencode-<family>-*`` providers, and any base_url hosted on opencode.ai.
     """
     try:
-        from hermes_cli.models import opencode_provider_family
+        from providers import opencode_provider_family
 
         if opencode_provider_family(provider) is not None:
             return True

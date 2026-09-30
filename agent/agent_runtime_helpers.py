@@ -2009,7 +2009,7 @@ def _resolve_switch_destination(
 ):
     """Resolve the canonical invocation route and destination capabilities for a switch."""
     from agent.native_compaction import resolve_native_compaction_capabilities
-    from hermes_cli.models import opencode_provider_family
+    from providers import opencode_provider_family
     # Same-provider switches may omit base_url (e.g. credential refresh); resolve capabilities from
     # the endpoint the normalization below retains.
     effective_base_url = base_url or (getattr(agent, "base_url", "") if old_norm == new_norm else "")
