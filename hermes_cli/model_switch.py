@@ -1421,9 +1421,9 @@ def _creds_for_switched_provider(st: _Switch) -> Optional[ModelSwitchResult]:
         # one. A built-in label (anthropic, openai, …) must NOT get the alias URL: its resolver
         # would pair the vendor key with the foreign host, and _apply_direct_alias_endpoint then
         # sees a same-origin credential and keeps it (#28660).
-        from hermes_cli.runtime_provider import _resolves_to_custom
+        from providers import resolves_to_custom_provider
         da = DIRECT_ALIASES.get(st.resolved_alias) if st.resolved_alias else None
-        alias_url = da.base_url if da is not None and _resolves_to_custom(st.target_provider) else None
+        alias_url = da.base_url if da is not None and resolves_to_custom_provider(st.target_provider) else None
         try:
             st.resolve_runtime(requested=st.target_provider, explicit_base_url=alias_url or None)
         except Exception as e:

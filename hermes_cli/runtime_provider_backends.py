@@ -127,7 +127,8 @@ def _resolve_openrouter_runtime(
     cfg_api_key = next((v.strip() for v in (model_cfg.get("api_key"), model_cfg.get("api")) if isinstance(v, str) and v.strip()), "")
     requested_norm = (requested_provider or "").strip().lower()
     # Aliases resolving to "custom" (ollama, vllm, …) follow bare-custom trust + routing rules.
-    if requested_norm and requested_norm != "custom" and rp._resolves_to_custom(requested_norm):
+    from providers import resolves_to_custom_provider
+    if requested_norm and requested_norm != "custom" and resolves_to_custom_provider(requested_norm):
         requested_norm = "custom"
     env_openrouter_base_url = get_secret_str("OPENROUTER_BASE_URL", "").strip()
     env_custom_base_url = get_secret_str("CUSTOM_BASE_URL", "").strip()

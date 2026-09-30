@@ -18,6 +18,7 @@ LOWER_QUERY_FILES = (
     ROOT / "models" / "metadata" / "local.py",
     ROOT / "providers" / "opencode.py",
     ROOT / "providers" / "github.py",
+    ROOT / "providers" / "configured.py",
     ROOT / "providers" / "route_identity.py",
     ROOT / "providers" / "routing.py",
 )
@@ -148,6 +149,47 @@ def test_auxiliary_model_resolution_is_not_cli_owned():
     assert "hermes_cli.model_selection_auxiliary" not in (
         ROOT / "agent" / "auxiliary_client.py"
     ).read_text(encoding="utf-8")
+
+
+def test_configured_provider_semantics_have_final_owner():
+    lower_defs = _definitions(ROOT / "providers" / "configured.py")
+    assert {
+        "match_configured_provider",
+        "resolves_to_custom_provider",
+        "expand_direct_api_alias",
+    } <= lower_defs
+
+    assert "_resolves_to_custom" not in _definitions(
+        ROOT / "hermes_cli" / "runtime_provider.py"
+    )
+    old_custom_defs = _definitions(ROOT / "hermes_cli" / "runtime_provider_custom.py")
+    assert {
+        "_shadowed_by_builtin",
+        "_match_new_style_provider",
+        "_match_legacy_custom_provider",
+        "expand_direct_api_alias",
+    }.isdisjoint(old_custom_defs)
+
+    paths = (
+        ROOT / "agent" / "auxiliary_client.py",
+        ROOT / "agent" / "auxiliary_health.py",
+        ROOT / "agent" / "chat_completion_helpers.py",
+        ROOT / "agent" / "client_lifecycle.py",
+        ROOT / "agent" / "opencode_affinity.py",
+    )
+    forbidden = (
+        "runtime_provider import _get_named_custom_provider",
+        "runtime_provider_custom import _get_named_custom_provider",
+        "runtime_provider_custom import expand_direct_api_alias",
+        "_resolves_to_custom",
+    )
+    offenders = []
+    for path in paths:
+        source = path.read_text(encoding="utf-8")
+        for dependency in forbidden:
+            if dependency in source:
+                offenders.append(f"{path.relative_to(ROOT)} -> {dependency}")
+    assert offenders == []
 
 
 def test_models_dev_persistence_is_lower_owned():

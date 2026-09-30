@@ -21,6 +21,12 @@ from providers.registry import (
 )
 from providers.model_normalizers import vendor_for_model
 from providers.github import COPILOT_EDITOR_VERSION, copilot_request_headers
+from providers.configured import (
+    ConfiguredProvider,
+    expand_direct_api_alias,
+    match_configured_provider,
+    resolves_to_custom_provider,
+)
 from providers.route_identity import is_actual_route, normalize_route_base_url
 from providers.opencode import (
     normalize_opencode_base_url,
@@ -54,6 +60,7 @@ from providers import discovery as _discovery  # noqa: E402,F401
 __all__ = [
     "ProviderProfile",
     "ResolvedProvider",
+    "ConfiguredProvider",
     "register_provider",
     "get_provider_profile",
     "list_providers",
@@ -65,6 +72,9 @@ __all__ = [
     "is_routing_aggregator",
     "custom_provider_slug",
     "custom_provider_aliases",
+    "match_configured_provider",
+    "resolves_to_custom_provider",
+    "expand_direct_api_alias",
     "vendor_for_model",
     "COPILOT_EDITOR_VERSION",
     "copilot_request_headers",

@@ -113,7 +113,7 @@ def test_auto_provider_with_loopback_base_url_resolves_without_recursing(isolate
     def unexpected_provider_resolution(_name):
         raise AssertionError("the bare custom trust check must not resolve model.provider=auto")
 
-    monkeypatch.setattr(runtime_provider, "_resolves_to_custom", unexpected_provider_resolution)
+    monkeypatch.setattr(runtime_provider, "resolves_to_custom_provider", unexpected_provider_resolution)
 
     assert resolve_provider("auto") == "custom"
 

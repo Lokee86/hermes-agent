@@ -31,7 +31,12 @@ from hermes_cli import config as _config_mod
 from hermes_cli import models as _models  # retained for non-routing model helpers and patch seams
 
 from hermes_constants import OPENROUTER_BASE_URL
-from providers import is_external_process_provider, normalize_provider
+from providers import (
+    expand_direct_api_alias,
+    is_external_process_provider,
+    normalize_provider,
+    resolves_to_custom_provider,
+)
 from utils import base_url_host_matches, base_url_hostname, base_url_path, env_int
 
 
@@ -60,14 +65,6 @@ def _loopback_hostname(host: str) -> bool:
     return (host or "").lower().rstrip(".") in {"localhost", "127.0.0.1", "::1", "0.0.0.0"}
 
 
-def _resolves_to_custom(name: str) -> bool:
-    """True when a provider alias (ollama, vllm, llamacpp, …) resolves to ``custom``."""
-    try:
-        return auth_mod.resolve_provider(name) == "custom"
-    except Exception:
-        return False
-
-
 def _config_base_url_trustworthy_for_bare_custom(cfg_base_url: str, cfg_provider: str) -> bool:
     """Whether ``model.base_url`` may back bare ``custom`` runtime resolution. The picker can select
     Custom while ``model.provider`` still names a previous provider, so non-loopback URLs are rejected
@@ -82,7 +79,7 @@ def _config_base_url_trustworthy_for_bare_custom(cfg_base_url: str, cfg_provider
     # A bare or ``auto`` provider is the caller currently resolving auto. Asking
     # ``resolve_provider`` whether it aliases custom re-enters that same path.
     return bool(bu) and (cfg_provider_norm == "custom" or (
-        cfg_provider_norm not in {"", "auto"} and _resolves_to_custom(cfg_provider_norm)
+        cfg_provider_norm not in {"", "auto"} and resolves_to_custom_provider(cfg_provider_norm)
     )
                          or (not base_url_host_matches(bu, "openrouter.ai") and _loopback_hostname(base_url_hostname(bu))))
 
@@ -352,7 +349,7 @@ from hermes_cli.runtime_provider_custom import (  # noqa: E402,F401
     _LLAMACPP_ALIASES, _apply_custom_provider_extras, _custom_provider_request_overrides, _filter_capabilities, _find_custom_identity,
     _get_named_custom_provider, _lift_common_custom_fields, _lift_extra_headers,
     _lift_model_capabilities, _normalize_base_url_for_match, _normalize_custom_provider_name, _resolve_named_custom_runtime,
-    _try_resolve_from_custom_pool, canonical_custom_identity, codex_model_provider_id, expand_direct_api_alias,
+    _try_resolve_from_custom_pool, canonical_custom_identity, codex_model_provider_id,
     find_custom_provider_identity,
     find_custom_provider_identity_by_model, has_named_custom_provider, is_routable_provider,
 )
@@ -726,7 +723,7 @@ def _raise_if_local_alias_missing_endpoint(requested_provider: str, explicit_bas
     alias's own server. ``llamacpp`` fails fast on its own managed-server rung."""
     requested_norm = (requested_provider or "").strip().lower()
     if (requested_norm in ("", "custom") or requested_norm in _LLAMACPP_ALIASES
-            or not _resolves_to_custom(requested_norm)):
+            or not resolves_to_custom_provider(requested_norm)):
         return
     if str(explicit_base_url or "").strip() or get_secret_str("CUSTOM_BASE_URL", "").strip():
         return
@@ -844,7 +841,12 @@ def resolve_runtime_provider(*, requested: Optional[str] = None, explicit_api_ke
     _raise_if_provider_disabled(requested_provider)
     # Same alias expansion the auxiliary client applies, so ``provider: openai`` means one thing on
     # every path (background review, curator, MoA slots, delegation) instead of "Unknown provider".
-    requested_provider, explicit_base_url = expand_direct_api_alias(requested_provider, explicit_base_url)
+    requested_provider, explicit_base_url = expand_direct_api_alias(
+        requested_provider,
+        explicit_base_url,
+        configured_provider=_get_named_custom_provider(requested_provider) is not None,
+        preferred_base_url=get_secret_str("OPENAI_BASE_URL", "").strip(),
+    )
     _raise_if_local_alias_missing_endpoint(requested_provider, explicit_base_url)
     runtime = next(r for r in _ladder_rungs(requested_provider, explicit_api_key, explicit_base_url, target_model) if r)
     _raise_for_credentialless_bare_custom(requested_provider, runtime)

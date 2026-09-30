@@ -122,6 +122,7 @@ from models.selection import auxiliary_task_prefers_fast_model
 from hermes_cli.config import get_hermes_home
 from providers.routing import canonicalize_api_mode
 from hermes_cli.provider_auth import get_provider_config, iter_provider_configs
+from agent.configured_provider_resolution import get_configured_provider_entry
 from agent.auxiliary_model_resolution import (
     is_declared_vision_default,
     provider_rejects_vision_input,
@@ -4395,10 +4396,7 @@ def _try_main_provider_route(
         explicit_api_key = runtime_api_key or None
     elif main_provider.startswith("custom:"):
         # Named custom provider (custom_providers / providers dict entry).
-        _has_named_entry = False
-        with contextlib.suppress(ImportError):
-            from hermes_cli.runtime_provider import _get_named_custom_provider
-            _has_named_entry = _get_named_custom_provider(main_provider) is not None
+        _has_named_entry = get_configured_provider_entry(main_provider) is not None
         if _has_named_entry:
             # KEEP the full ``custom:<name>`` so the named arm honours the entry's api_mode
             # (collapsing to "custom" strips /anthropic → 404s). base_url/api_key come from the entry.
@@ -4965,16 +4963,15 @@ def _named_custom_openai_wire_client(custom_base: str, custom_key: Any, extra_he
 
 def _resolve_named_custom_branch(req: _ResolveRequest) -> Optional[_ResolveResult]:
     """Named custom provider (config.yaml providers dict / custom_providers list); None if no entry matches."""
-    from hermes_cli.runtime_provider import _get_named_custom_provider
     provider = req.provider
     # If the raw name is an alias (``kimi`` → ``kimi-coding``) and a custom_providers entry exists
     # under it, the custom entry wins over alias rewriting. Only for aliases, so entries matching a
     # canonical name (e.g. ``nous``) still defer to the built-in.
     custom_entry = None
     if req.original_provider and req.original_provider != provider:
-        custom_entry = _get_named_custom_provider(req.original_provider)
+        custom_entry = get_configured_provider_entry(req.original_provider)
     if custom_entry is None:
-        custom_entry = _get_named_custom_provider(provider)
+        custom_entry = get_configured_provider_entry(provider)
     if not custom_entry:
         return None
     # A per-task/explicit base_url or api_key composes OVER the named entry's defaults: the entry supplies
@@ -5977,11 +5974,19 @@ def _resolve_task_provider_model(
             cfg_api_key = None
     # One shared alias table with resolve_runtime_provider(): ``provider: openai`` routes the same
     # way here (compression/vision/title) and on the runtime path (background review, curator, MoA).
-    from hermes_cli.runtime_provider_custom import expand_direct_api_alias
+    from providers import expand_direct_api_alias
     if provider:
-        provider, base_url = expand_direct_api_alias(provider, base_url)
+        provider, base_url = expand_direct_api_alias(
+            provider, base_url,
+            configured_provider=get_configured_provider_entry(provider) is not None,
+            preferred_base_url=_scoped_key_env("OPENAI_BASE_URL"),
+        )
     if cfg_provider:
-        cfg_provider, cfg_base_url = expand_direct_api_alias(cfg_provider, cfg_base_url)
+        cfg_provider, cfg_base_url = expand_direct_api_alias(
+            cfg_provider, cfg_base_url,
+            configured_provider=get_configured_provider_entry(cfg_provider) is not None,
+            preferred_base_url=_scoped_key_env("OPENAI_BASE_URL"),
+        )
     # An explicit provider without base_url adopts the task's configured endpoint (same or
     # unnamed provider) so the early return below carries it. Explicit "auto" is excluded — it
     # must keep flowing through auto-resolution.
@@ -6407,8 +6412,7 @@ def _routes_to_custom_endpoint(provider_norm: str) -> bool:
     name = _normalize_aux_provider(provider_norm)
     if name == "custom":
         return True
-    from hermes_cli.runtime_provider import _get_named_custom_provider
-    return _get_named_custom_provider(name) is not None
+    return get_configured_provider_entry(name) is not None
 
 
 def _project_provider_profile(

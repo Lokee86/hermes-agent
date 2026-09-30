@@ -711,10 +711,10 @@ class ClientLifecycleMixin:
         elif self.provider == "custom":
             # Named custom provider: identity in config, credential in key_env; no key_env → nothing to watch.
             try:
-                from hermes_cli.runtime_provider import _get_named_custom_provider
+                from agent.configured_provider_resolution import get_configured_provider_entry
             except ImportError:
                 return None
-            custom_provider = _get_named_custom_provider(getattr(self, "requested_provider", "") or "")
+            custom_provider = get_configured_provider_entry(getattr(self, "requested_provider", "") or "")
             key_env = str((custom_provider or {}).get("key_env") or "").strip()
             api_key = get_env_prefer_dotenv(key_env).strip() if key_env else ""
             if not custom_provider or not api_key:

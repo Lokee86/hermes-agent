@@ -1,8 +1,8 @@
 """Endpoint identity for auxiliary custom-provider health checks."""
-import contextlib
 from typing import Any, Optional
 
-from providers import normalize_route_base_url
+from agent.configured_provider_resolution import get_configured_provider_entry
+from providers import normalize_route_base_url, resolves_to_custom_provider
 
 def _unhealthy_cache_key(provider: str, base_url: Optional[str] = None) -> Any:
     """Provider-wide key, or endpoint-specific key for an explicit custom endpoint — prefixed with the
@@ -28,13 +28,11 @@ def _custom_health_base_url(provider: str, explicit_base_url: Optional[str] = No
         return explicit or _current_custom_base_url()
     if label.startswith("custom:") and explicit:
         return explicit
-    with contextlib.suppress(ImportError):
-        from hermes_cli.runtime_provider import _get_named_custom_provider, _resolves_to_custom
-        if _resolves_to_custom(label):
-            return explicit or _current_custom_base_url()
-        entry = _get_named_custom_provider(provider)
-        if entry:
-            return explicit or str(entry.get("base_url") or "").strip()
+    if resolves_to_custom_provider(label):
+        return explicit or _current_custom_base_url()
+    entry = get_configured_provider_entry(provider)
+    if entry:
+        return explicit or str(entry.get("base_url") or "").strip()
     return ""
 
 

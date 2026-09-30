@@ -37,7 +37,7 @@ def opencode_transport(provider: Optional[str], model: Optional[str], base_url: 
         normalize_opencode_model_id,
         opencode_provider_family,
     )
-    from hermes_cli.runtime_provider_custom import _get_named_custom_provider
+    from agent.configured_provider_resolution import get_configured_provider_entry
     from providers.routing import InvocationRequest, resolve_invocation_route
     from utils import base_url_hostname, base_url_path
 
@@ -49,7 +49,7 @@ def opencode_transport(provider: Optional[str], model: Optional[str], base_url: 
         return None, url
 
     # A named custom entry with an explicit wire keeps that explicit declaration.
-    if (_get_named_custom_provider(str(provider or "")) or {}).get("api_mode"):
+    if (get_configured_provider_entry(str(provider or "")) or {}).get("api_mode"):
         return None, url
 
     normalized_model = normalize_opencode_model_id(family, model)
