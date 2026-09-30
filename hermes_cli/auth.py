@@ -2043,6 +2043,41 @@ _API_KEY_BASE_URL_RESOLVERS: Dict[str, Callable[[str, str, str], str]] = {
     "actual": lambda *a: normalize_actual_base_url(_default_api_key_base_url(*a))}
 
 
+def resolve_copilot_provider_credentials() -> Dict[str, Any]:
+    """Resolve Copilot API token and endpoint through the dedicated auth flow."""
+    provider_id = "copilot"
+    pconfig = get_provider_config(provider_id)
+    if not pconfig or pconfig.auth_type != "copilot":
+        raise AuthError(
+            "Provider 'copilot' is not configured for Copilot authentication.",
+            provider=provider_id, code="invalid_provider")
+
+    api_key = ""
+    key_source = ""
+    exchange_base_url = ""
+    try:
+        from hermes_cli.copilot_auth import get_copilot_api_token, resolve_copilot_token
+        raw_token, key_source = resolve_copilot_token()
+        if raw_token:
+            api_key, exchanged_base = get_copilot_api_token(raw_token)
+            exchange_base_url = str(exchanged_base or "").strip().rstrip("/")
+    except ValueError as exc:
+        logger.warning("Copilot token validation failed: %s", exc)
+    except Exception as exc:
+        logger.debug("Copilot credential resolution failed: %s", exc)
+
+    env_url = _provider_env_base_url(pconfig)
+    base_url = exchange_base_url or (
+        env_url.rstrip("/") if env_url else pconfig.inference_base_url.rstrip("/")
+    )
+    return {
+        "provider": provider_id,
+        "api_key": str(api_key or "").strip(),
+        "base_url": base_url,
+        "source": key_source or "default",
+    }
+
+
 def resolve_api_key_provider_credentials(provider_id: str) -> Dict[str, Any]:
     """Resolve API key and base URL for an API-key provider."""
     pconfig = get_provider_config(provider_id)

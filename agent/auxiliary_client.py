@@ -5138,6 +5138,29 @@ def _resolve_api_key_branch(req: _ResolveRequest, pconfig: Any, resolve_creds: C
     return _route_client(req, client, final_model)
 
 
+def _resolve_copilot_branch(req: _ResolveRequest) -> _ResolveResult:
+    """GitHub Copilot auxiliary route; token exchange remains application-owned."""
+    try:
+        from hermes_cli.auth import resolve_copilot_provider_credentials
+    except ImportError:
+        logger.debug("hermes_cli.auth not available for Copilot auxiliary routing")
+        return None, None
+    pconfig = get_provider_config("copilot")
+    if pconfig is None:
+        logger.debug("resolve_provider_client: Copilot provider config unavailable")
+        return None, None
+
+    def _credentials(_provider: str) -> Dict[str, Any]:
+        if _normalize_api_key(req.explicit_api_key):
+            return {
+                "api_key": "",
+                "base_url": (req.explicit_base_url or pconfig.inference_base_url).rstrip("/"),
+            }
+        return resolve_copilot_provider_credentials()
+
+    return _resolve_api_key_branch(req, pconfig, _credentials)
+
+
 def _resolve_external_process_branch(req: _ResolveRequest, creds: Dict[str, Any]) -> _ResolveResult:
     """canonical provider projection ``external_process`` providers, served via their registered profile."""
     provider = req.provider
@@ -5226,6 +5249,7 @@ _EXPLICIT_PROVIDER_BRANCHES: Dict[str, Callable[[_ResolveRequest], _ResolveResul
     "nous": _resolve_nous_branch,
     "openai-codex": _resolve_openai_codex_branch,
     "xai-oauth": _resolve_xai_oauth_branch,
+    "copilot": _resolve_copilot_branch,
     "custom": _resolve_custom_branch,
 }
 

@@ -159,3 +159,30 @@ class TestEnvVarOrder:
         # COPILOT_GITHUB_TOKEN should be first
         assert copilot.api_key_env_vars[0] == "COPILOT_GITHUB_TOKEN"
 
+
+class TestRuntimeCredentials:
+    """Copilot's application-owned runtime credential projection."""
+
+    def test_exchanged_token_and_account_endpoint(self, monkeypatch):
+        from hermes_cli import auth
+        from hermes_cli import copilot_auth
+
+        monkeypatch.setattr(
+            copilot_auth,
+            "resolve_copilot_token",
+            lambda: ("ghu_raw_token", "COPILOT_GITHUB_TOKEN"),
+        )
+        monkeypatch.setattr(
+            copilot_auth,
+            "get_copilot_api_token",
+            lambda raw: ("copilot-api-token", "https://enterprise.githubcopilot.example"),
+        )
+
+        creds = auth.resolve_copilot_provider_credentials()
+
+        assert creds == {
+            "provider": "copilot",
+            "api_key": "copilot-api-token",
+            "base_url": "https://enterprise.githubcopilot.example",
+            "source": "COPILOT_GITHUB_TOKEN",
+        }
