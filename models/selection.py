@@ -160,6 +160,7 @@ from models.selection_auxiliary import (  # noqa: E402
 )
 from models.selection_detection import ExplicitDetectionFacts, select_detected_model  # noqa: E402
 from models.selection_defaults import select_default_model, select_nous_default_model  # noqa: E402
+from models.selection_picker import list_picker_candidates, picker_model_ids  # noqa: E402
 
 from models.selection_explicit import (  # noqa: E402
     ExplicitAlias,
@@ -194,5 +195,7 @@ __all__ = [
     "select_nous_default_model",
     "select_detected_model",
     "select_explicit_model",
+    "list_picker_candidates",
+    "picker_model_ids",
     "select_model",
 ]

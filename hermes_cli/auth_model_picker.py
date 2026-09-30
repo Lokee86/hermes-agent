@@ -184,10 +184,13 @@ def _prompt_model_selection(
             return None
         return _confirmed_selection(custom) if custom else None
 
-    # Reorder: current model first, then the rest (deduplicated)
-    ordered = list(dict.fromkeys(
-        ([current_model] if current_model and current_model in model_ids else []) + list(model_ids)
-    ))
+    from hermes_cli.model_selection_picker import picker_model_ids
+    ordered = picker_model_ids(
+        confirm_provider,
+        model_ids,
+        base_url=confirm_base_url,
+        current_model=current_model,
+    )
 
     # All models for column-width computation (selectable + unavailable)
     rows = _ModelPickerRows(ordered + list(_unavailable), pricing, current_model=current_model, sale_chrome=sale_chrome, notes=notes)

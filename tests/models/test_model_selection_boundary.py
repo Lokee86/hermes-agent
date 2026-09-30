@@ -14,6 +14,7 @@ SELECTION_FILES = (
     ROOT / "models" / "selection_detection.py",
     ROOT / "models" / "selection_defaults.py",
     ROOT / "models" / "selection_auxiliary.py",
+    ROOT / "models" / "selection_picker.py",
 )
 METADATA_ROOT = ROOT / "models" / "metadata"
 
@@ -127,6 +128,8 @@ def test_selection_public_definitions_are_owned_once():
         "select_fast_auxiliary_model",
         "select_vision_auxiliary_model",
         "selected_auxiliary_model_id",
+        "list_picker_candidates",
+        "picker_model_ids",
         "select_nous_default_model",
         "select_detected_model",
         "select_explicit_model",
@@ -201,3 +204,19 @@ def test_auxiliary_client_has_no_model_selection_authority():
     assert "select_provider_auxiliary_model" in source
     assert "select_provider_auxiliary_fallback" in source
     assert "provider_vision_default" in source
+
+
+def test_picker_and_setup_surfaces_consume_selection_candidate_projection():
+    for relative in (
+        "hermes_cli/auth_model_picker.py",
+        "hermes_cli/cli_model_switch_mixin.py",
+        "hermes_cli/inventory.py",
+        "hermes_cli/model_switch_providers.py",
+    ):
+        source = (ROOT / relative).read_text(encoding="utf-8")
+        assert "model_selection_picker" in source
+
+    validate = ROOT / "hermes_cli" / "models_validate.py"
+    assert _definitions(validate).isdisjoint(
+        {"offered_model_ids", "drop_unofferable_model_ids"}
+    )

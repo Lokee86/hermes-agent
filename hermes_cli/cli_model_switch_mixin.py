@@ -709,20 +709,8 @@ class CLIModelSwitchMixin:
                 self._close_model_picker()
                 return
             provider_data = providers[selected]
-            # Curated list (same as `hermes model` / gateway pickers); live catalog only when
-            # it is empty (user-defined endpoints, per-resource providers such as azure-foundry).
-            # Disk-cached like the gateway pickers: the live probe can walk several api-version
-            # fallbacks with a 6 s timeout each, which must not block the REPL on every select.
-            model_list = provider_data.get("models", [])
-            if not model_list:
-                try:
-                    from hermes_cli.models import cached_provider_model_ids
-                    model_list = cached_provider_model_ids(provider_data["slug"]) or model_list
-                except Exception:
-                    pass
-            from hermes_cli.models_validate import offered_model_ids
-            model_list = offered_model_ids(
-                model_list, provider_data.get("slug"), provider_data.get("api_url"))
+            from hermes_cli.model_selection_picker import picker_model_ids_for_provider_data
+            model_list = picker_model_ids_for_provider_data(provider_data)
             state.update(
                 stage="model", provider_data=provider_data, model_list=model_list,
                 selected=0, filter="", _filtered_pairs=None)

@@ -230,35 +230,6 @@ def _whitespace_allowed(req: _Request) -> bool:
     return provider_allows_model_whitespace(req.provider or req.normalized, req.base_url)
 
 
-def offered_model_ids(models, provider: Optional[str], base_url: Optional[str] = None) -> list:
-    """Ids a picker may show. Drops whitespace the validator will refuse; keeps the rest."""
-    ids = list(models or [])
-    if provider_allows_model_whitespace(provider, base_url):
-        return ids
-    return [model_id for model_id in ids if not (isinstance(model_id, str) and any(ch.isspace() for ch in model_id))]
-
-
-def drop_unofferable_model_ids(rows: list) -> None:
-    """In-place: picker rows must not offer an id ``validate_requested_model`` will refuse for whitespace."""
-    for row in rows:
-        if not isinstance(row, dict):
-            continue
-        provider = row.get("slug")
-        base_url = row.get("api_url") or row.get("base_url")
-        models = row.get("models")
-        if isinstance(models, list):
-            filtered = offered_model_ids(models, provider, base_url)
-            removed = len(models) - len(filtered)
-            if removed:
-                row["models"] = filtered
-                total = row.get("total_models")
-                if isinstance(total, int):
-                    row["total_models"] = max(0, total - removed)
-        featured = row.get("featured_models")
-        if isinstance(featured, list):
-            row["featured_models"] = offered_model_ids(featured, provider, base_url)
-
-
 def _parse_openrouter_preset(req: _Request) -> Optional[dict[str, Any]]:
     """OpenRouter presets are account-scoped, so ``@preset/<slug>`` never appears in the public
     /v1/models listing. A bare preset is accepted unverified; ``<model>@preset/<slug>`` validates

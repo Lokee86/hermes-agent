@@ -39,6 +39,8 @@ from models.selection import (
     select_nous_default_model,
     select_detected_model,
     select_explicit_model,
+    list_picker_candidates,
+    picker_model_ids,
     select_model,
 )
 
@@ -79,5 +81,7 @@ __all__ = [
     "select_nous_default_model",
     "select_detected_model",
     "select_explicit_model",
+    "list_picker_candidates",
+    "picker_model_ids",
     "select_model",
 ]
