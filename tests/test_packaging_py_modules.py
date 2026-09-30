@@ -17,7 +17,7 @@ import tomllib
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-PACKAGES = ("agent", "tools", "hermes_cli", "runtime", "gateway", "tui_gateway", "cron", "acp_adapter", "plugins", "providers")
+PACKAGES = ("agent", "tools", "hermes_cli", "runtime", "storage", "gateway", "tui_gateway", "cron", "acp_adapter", "plugins", "providers")
 
 
 def _root_py_modules() -> set[str]:
@@ -63,12 +63,13 @@ def test_pyproject_has_no_static_py_modules_list():
     )
 
 
-def test_runtime_package_is_in_wheel_discovery():
+def test_extracted_packages_are_in_wheel_discovery():
     cfg = tomllib.loads((REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8"))
     includes = set(cfg["tool"]["setuptools"]["packages"]["find"]["include"])
-    assert {"runtime", "runtime.*"} <= includes, (
-        "runtime must be included in setuptools package discovery so installed wheels ship it"
-    )
+    for package in ("runtime", "storage"):
+        assert {package, f"{package}.*"} <= includes, (
+            f"{package} must be included in setuptools package discovery so installed wheels ship it"
+        )
 
 
 def test_every_root_module_imported_by_packaged_code_is_shipped():
