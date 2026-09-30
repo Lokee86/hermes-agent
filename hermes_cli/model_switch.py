@@ -1340,7 +1340,18 @@ def _select_switch_target(st: _Switch) -> Optional[ModelSwitchResult]:
     if selection.selected is None:
         return st.fail(f"Could not resolve model '{raw}'.")
     selected = selection.selected
-    st.target_provider = selected.ref.provider
+    route_provider = selected.ref.provider
+    if selection.matched_alias:
+        # ModelRef carries canonical provider identity. A direct alias can additionally name a
+        # concrete configured route key (for example custom:ollama -> providers.ollama); restore
+        # that application-owned key only while applying the selection so credentials/endpoints
+        # still resolve against the route the alias actually named.
+        direct_alias = DIRECT_ALIASES.get(selection.matched_alias.lower())
+        if direct_alias is not None:
+            route_provider = _provider_identity(
+                direct_alias.ref.provider, st.user_providers, st.custom_providers
+            )
+    st.target_provider = route_provider
     st.new_model = selected.ref.model
     st.resolved_alias = selection.matched_alias
     target_identity = _provider_identity(

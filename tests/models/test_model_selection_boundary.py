@@ -59,6 +59,18 @@ def test_selection_domain_exists_and_has_no_upward_imports():
     assert violations == []
 
 
+def test_selection_local_imports_stay_in_model_and_provider_domains():
+    violations = []
+    for path in SELECTION_FILES:
+        for module in sorted(_imports(path)):
+            root = module.split(".", 1)[0]
+            if root in {"models", "providers"}:
+                continue
+            if (ROOT / root).exists() or (ROOT / f"{root}.py").exists():
+                violations.append(f"{path.name} -> {module}")
+    assert violations == []
+
+
 def test_selection_uses_existing_identity_metadata_and_route_owners():
     imports = set().union(*(_imports(path) for path in SELECTION_FILES))
     assert "models.identity" in imports
@@ -207,6 +219,19 @@ def test_auxiliary_client_has_no_model_selection_authority():
     assert "select_provider_auxiliary_model" in source
     assert "select_provider_auxiliary_fallback" in source
     assert "provider_vision_default" in source
+
+
+def test_application_selection_adapters_consume_canonical_domain():
+    for relative in (
+        "hermes_cli/model_switch.py",
+        "hermes_cli/model_selection_facts.py",
+        "hermes_cli/model_selection_defaults.py",
+        "hermes_cli/model_selection_auxiliary.py",
+        "hermes_cli/model_selection_picker.py",
+        "agent/auxiliary_client.py",
+    ):
+        imports = _imports(ROOT / relative)
+        assert "models.selection" in imports, relative
 
 
 def test_picker_and_setup_surfaces_consume_selection_candidate_projection():

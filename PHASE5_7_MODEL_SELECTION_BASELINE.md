@@ -160,3 +160,65 @@ its expectation is updated in the same sub-phase.
 - No production selection ownership moves in this sub-phase.
 - Phase 5.7.2 may establish the canonical selection contract without reopening
   ownership discovery.
+
+
+## Phase 5.7.8 integration closeout
+
+Phase 5.7 closes with one canonical model-selection policy domain under
+``models.selection*``.
+
+Final ownership:
+
+- ``models.selection*`` owns pure model-choice policy for explicit, default,
+  auxiliary/fast/vision and picker candidate selection.
+- Its repository-local dependencies are restricted to ``models`` and
+  ``providers``; CLI, auth, credential, client and agent runtime layers are
+  forbidden dependencies.
+- ``hermes_cli/model_selection_*.py`` acquires configuration, catalogue,
+  account/auth and availability facts and delegates decisions to
+  ``models.selection``.
+- ``hermes_cli/model_switch.py`` and ``agent/auxiliary_client.py`` remain
+  downstream application/runtime consumers. Credential resolution, client
+  construction, validation, persistence, health and runtime fallback remain
+  outside the selection domain.
+- Picker/setup surfaces consume the canonical candidate projection rather than
+  rebuilding model eligibility.
+- The Phase 5.7 deletion pass found no surviving second implementation,
+  compatibility selection registry, dual-read path or old/new parity shim.
+
+The closeout added architecture guards for both dependency directions: selection
+may depend only on model/provider domain owners, and the application-side
+selection adapters must import the canonical ``models.selection`` seam.
+
+The integration gate also found and repaired one Phase 5.7 regression in direct
+alias application. Canonical ``ModelRef`` identity intentionally reduces a
+configured ``custom:ollama`` alias to the canonical ``custom`` provider, but
+the runtime application still needs the concrete ``providers.ollama`` route
+key to resolve the endpoint-scoped credential. The fix keeps canonical selection
+unchanged and restores that concrete route key only when applying a matched
+direct alias. The matching-origin and different-origin Ollama credential tests
+both pass after the repair.
+
+Closeout checks:
+
+- Canonical selection + boundary suites: **89 passed**.
+- Model/provider lower-owner suites (identity, aliases and routing):
+  **35 passed, 2 warnings**.
+- Alias/credential suite: **56 passed**.
+- Direct Ollama route-key regression checks: **2 passed**.
+- Focused picker/runtime consumer gate: **48 passed, 4 inherited failures**.
+  The four failures are the gateway picker ``get_label`` import defect already
+  present on the Phase 5.6 base ``e2cb59b136``; it is not selection ownership
+  work.
+- Original Phase 5.7 baseline rerun after the repair:
+  **537 passed, 31 failed in 322.04s**. The 31 failures exactly match the
+  inherited Phase 5.6 failure categories recorded above; no new Phase 5.7
+  failure remains.
+
+The Copilot same-provider API-mode test also fails unchanged on the Phase 5.6
+base ``e2cb59b136``; it is a pre-existing routing issue and is outside the
+Phase 5.7 selection boundary.
+
+Phase 5.7 is closed with a stable selection contract ready for the Phase 5.8
+runtime-consumer migration. The final baseline rerun introduced no failure
+category beyond the inherited Phase 5.6 set.
