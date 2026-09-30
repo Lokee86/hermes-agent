@@ -13,7 +13,7 @@ import time
 import urllib.request
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
-from hermes_cli._subprocess_compat import windows_detach_flags
+from runtime.subprocess_compat import windows_detach_flags
 from hermes_cli.config import get_hermes_home
 
 # Same logger the code used before extraction (record parity).

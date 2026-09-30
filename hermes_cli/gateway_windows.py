@@ -24,8 +24,8 @@ from pathlib import Path
 from xml.etree import ElementTree
 from xml.sax.saxutils import escape
 
-from hermes_cli._subprocess_compat import (
-    _WINDOWS_GATEWAY_BREAKAWAY_ENV,
+from gateway.windows_launch import _WINDOWS_GATEWAY_BREAKAWAY_ENV
+from runtime.subprocess_compat import (
     windows_detach_flags,
     windows_detach_flags_without_breakaway,
     windows_hide_flags,

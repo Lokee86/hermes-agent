@@ -702,7 +702,7 @@ def _windows_process_listing() -> str | None:
     # slow-WMI machines where the full Win32_Process scan exceeds its budget (#87134). bounded_probe_run
     # also hides the console window: this scan runs inside the windowless pythonw.exe gateway/desktop
     # backend, so a bare wmic/powershell spawn would flash a conhost window on every watchdog probe.
-    from hermes_cli._subprocess_compat import bounded_probe_run
+    from runtime.subprocess_compat import bounded_probe_run
     wmic_path = shutil.which("wmic")
     result = None
     if wmic_path is not None:
@@ -1060,7 +1060,7 @@ def _spawn_gateway_restart_watcher(old_pid: int, run_argv: list[str], *, host: b
     (the watcher would die with the CLI console), so ``windows_detach_popen_kwargs()`` supplies flags."""
     if old_pid <= 0 or not run_argv:
         return False
-    from hermes_cli._subprocess_compat import windows_detach_flags_without_breakaway, windows_detach_popen_kwargs
+    from runtime.subprocess_compat import windows_detach_flags_without_breakaway, windows_detach_popen_kwargs
 
     # Windows: ``run_argv`` leads with the venv's console ``python.exe`` — the interpreter we want:
     # the watcher respawns it under CREATE_NO_WINDOW detach flags so the gateway owns one hidden
@@ -1090,8 +1090,10 @@ def _spawn_gateway_restart_watcher(old_pid: int, run_argv: list[str], *, host: b
         # package-manager handoff is the bare store Python without the dependency environment.
         # ``-c`` only puts the cwd on sys.path, so name the checkout explicitly.
         sys.path.insert(0, {project_root_literal})
-        from hermes_cli._subprocess_compat import (
-            _WINDOWS_GATEWAY_BREAKAWAY_ENV, pid_exists_stdlib, windows_detach_flags,
+        from gateway.windows_launch import _WINDOWS_GATEWAY_BREAKAWAY_ENV
+        from runtime.process_identity import pid_exists_stdlib
+        from runtime.subprocess_compat import (
+            windows_detach_flags,
             windows_detach_flags_without_breakaway,
         )
 
@@ -2179,7 +2181,7 @@ def _windows_gateway_breakaway_state() -> bool | None:
     """Consume private spawn metadata without guessing for older launchers."""
     if not is_windows():
         return None
-    from hermes_cli._subprocess_compat import _WINDOWS_GATEWAY_BREAKAWAY_ENV
+    from gateway.windows_launch import _WINDOWS_GATEWAY_BREAKAWAY_ENV
     return {"1": True, "0": False}.get(os.environ.pop(_WINDOWS_GATEWAY_BREAKAWAY_ENV, None))
 
 

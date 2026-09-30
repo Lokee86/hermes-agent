@@ -11,6 +11,7 @@ import json
 import logging
 import os
 import platform
+import re
 import threading
 import time
 from dataclasses import asdict, dataclass
@@ -30,6 +31,7 @@ LEDGER_FILENAME = "spawn-ledger.json"
 REAPABLE_PURPOSES = frozenset({"serve", "dashboard", "gateway", "mcp-helper"})
 
 _IS_WINDOWS = platform.system() == "Windows"
+IS_WINDOWS = _IS_WINDOWS
 
 _LEDGER_LOCK = threading.Lock()
 
@@ -80,6 +82,127 @@ def get_process_start_time(pid: int) -> Optional[int]:
         return int(round(psutil.Process(pid).create_time() * 100))
     except Exception:
         return None
+
+
+def _process_start_time(pid: int) -> int | None:
+    """The repository's stable process-start fingerprint, if available."""
+    try:
+        return get_process_start_time(pid)
+    except Exception:
+        return None
+
+
+def _text_names_hermes(text: str) -> bool:
+    r"""True when *text* names Hermes at a path-segment / token boundary."""
+    return any(
+        token.startswith(("hermes", ".hermes"))
+        for token in re.split(r"[\\/\s=,;\"']+", text.lower())
+    )
+
+
+def _process_command_is_hermes(pid: int) -> bool:
+    """Best-effort check that *pid* currently runs Hermes code."""
+    try:
+        import psutil
+
+        process = psutil.Process(pid)
+        command = " ".join(process.cmdline() or [])
+        executable = process.exe() or ""
+        return _text_names_hermes(f"{command} {executable}")
+    except Exception:
+        return False
+
+
+def pid_is_hermes(pid: int, *, expected_start_time: int | None = None) -> bool:
+    """Whether destructive process-tree termination is safe for *pid*.
+
+    Windows requires both a live incarnation and a Hermes command identity. On other
+    hosts, an optional start-time fingerprint still guards against PID reuse.
+    """
+    if not isinstance(pid, int) or isinstance(pid, bool) or pid <= 0:
+        return False
+    if not IS_WINDOWS:
+        if expected_start_time is None:
+            return True
+        try:
+            return _process_start_time(pid) == expected_start_time
+        except Exception:
+            return False
+    try:
+        current_start_time = _process_start_time(pid)
+    except Exception:
+        return False
+    if current_start_time is None:
+        return False
+    if expected_start_time is not None and current_start_time != expected_start_time:
+        return False
+    try:
+        return _process_command_is_hermes(pid)
+    except Exception:
+        return False
+
+
+def posix_is_zombie(pid: int) -> bool:
+    """Whether *pid* is a zombie, using /proc or a bounded ps fallback."""
+    try:
+        with open(f"/proc/{pid}/stat", encoding="utf-8") as fh:
+            fields = fh.read().split()
+        return len(fields) > 2 and fields[2] == "Z"
+    except FileNotFoundError:
+        try:
+            import subprocess
+
+            result = subprocess.run(
+                ["ps", "-o", "state=", "-p", str(pid)],
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=5,
+            )
+            return result.returncode == 0 and result.stdout.strip().startswith("Z")
+        except Exception:
+            return False
+    except (IndexError, PermissionError, OSError):
+        return False
+
+
+def win32_pid_exists(pid: int) -> bool:
+    """psutil-free Windows liveness probe via OpenProcess/WaitForSingleObject."""
+    try:
+        import ctypes
+
+        kernel32 = ctypes.windll.kernel32  # type: ignore[attr-defined]
+        kernel32.OpenProcess.restype = ctypes.c_void_p
+        kernel32.WaitForSingleObject.restype = ctypes.c_uint
+        kernel32.GetLastError.restype = ctypes.c_uint
+        query_limited, synchronize = 0x1000, 0x100000
+        wait_timeout, access_denied = 0x00000102, 5
+        handle = kernel32.OpenProcess(query_limited | synchronize, False, pid)
+        if not handle:
+            return kernel32.GetLastError() == access_denied
+        try:
+            return kernel32.WaitForSingleObject(handle, 0) == wait_timeout
+        finally:
+            kernel32.CloseHandle(handle)
+    except (OSError, AttributeError):
+        return False
+
+
+def pid_exists_stdlib(pid: int) -> bool:
+    """Stdlib-only process liveness check; zombies report dead."""
+    pid = int(pid)
+    if IS_WINDOWS:
+        return win32_pid_exists(pid)
+    if posix_is_zombie(pid):
+        return False
+    try:
+        os.kill(pid, 0)
+    except PermissionError:
+        return True
+    except OSError:
+        return False
+    return True
 
 
 def start_time_fingerprints_match(
