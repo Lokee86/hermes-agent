@@ -183,8 +183,10 @@ class TestFallbackChainAdvancement:
         Anthropic client — otherwise the turn POSTs /chat/completions. The wire
         is opt-in since 2026-09-06 (``nous.anthropic_wire``, see ``nous_api_mode``).
         """
-        from hermes_cli import providers as _providers
-        monkeypatch.setattr(_providers, "_nous_anthropic_wire", lambda: "native")
+        monkeypatch.setattr(
+            "hermes_cli.config.load_config_readonly",
+            lambda: {"nous": {"anthropic_wire": "native"}},
+        )
         portal = "https://inference-api.nousresearch.com/v1"
         fbs = [
             {

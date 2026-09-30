@@ -2,15 +2,22 @@
 from typing import Any, Optional
 
 from agent.configured_provider_resolution import get_configured_provider_entry
-from providers import normalize_route_base_url, resolves_to_custom_provider
+from providers import normalize_provider, normalize_route_base_url, resolves_to_custom_provider
+
+def _canonical_health_provider(provider: str) -> str:
+    raw = str(provider or "").strip().lower()
+    if raw in {"custom", "local/custom"}:
+        return "custom"
+    if raw == "codex":
+        raw = "openai-codex"
+    return normalize_provider(raw)
+
 
 def _unhealthy_cache_key(provider: str, base_url: Optional[str] = None) -> Any:
-    """Provider-wide key, or endpoint-specific key for an explicit custom endpoint — prefixed with the
-    active profile home: a 402 on profile A's account must not hide the provider from profile B's
-    (differently funded) account in the same multiplexed process."""
-    from agent.auxiliary_client import _normalize_chain_label
+    """Canonical provider key, or endpoint-specific key for a custom route, scoped to profile home."""
     from hermes_constants import hermes_home_key
-    label = _normalize_chain_label(provider)
+
+    label = _canonical_health_provider(provider)
     endpoint = normalize_route_base_url(_custom_health_base_url(provider, base_url))
     home_key = hermes_home_key()
     if endpoint:
@@ -21,14 +28,15 @@ def _unhealthy_cache_key(provider: str, base_url: Optional[str] = None) -> Any:
 def _custom_health_base_url(provider: str, explicit_base_url: Optional[str] = None) -> str:
     """Return the concrete custom endpoint used to scope health and failed-route checks."""
     from agent.auxiliary_client import _current_custom_base_url
+
     explicit = str(explicit_base_url or "").strip()
-    from agent.auxiliary_client import _normalize_chain_label
-    label = _normalize_chain_label(provider)
-    if label == "local/custom":
+    raw = str(provider or "").strip().lower()
+    label = _canonical_health_provider(provider)
+    if raw in {"custom", "local/custom"}:
         return explicit or _current_custom_base_url()
     if label.startswith("custom:") and explicit:
         return explicit
-    if resolves_to_custom_provider(label):
+    if resolves_to_custom_provider(raw):
         return explicit or _current_custom_base_url()
     entry = get_configured_provider_entry(provider)
     if entry:

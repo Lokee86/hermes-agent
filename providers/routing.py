@@ -15,6 +15,7 @@ from urllib.parse import urlparse, urlunparse
 
 from providers.base import ProviderProfile
 from providers.identity import normalize_provider
+from providers.route_identity import is_actual_route
 
 
 RuntimeKind = Literal["http", "external_process", "app_server", "provider_client"]
@@ -347,7 +348,9 @@ def resolve_invocation_route(request: InvocationRequest) -> InvocationRoute:
     base_url = str(request.base_url or "").strip() or str(getattr(profile, "base_url", "") or "").strip()
 
     explicit = canonicalize_api_mode(request.explicit_api_mode)
-    if explicit:
+    if is_actual_route(provider, base_url):
+        api_mode, source = "chat_completions", "provider_mandate"
+    elif explicit:
         api_mode, source = explicit, "explicit"
     else:
         bedrock_branch = provider == "bedrock" and any(

@@ -129,6 +129,7 @@ from models.selection import (
 from hermes_cli.config import get_hermes_home
 from providers import get_provider_profile
 from providers.routing import canonicalize_api_mode
+from agent.fallback_routing import resolve_fallback_invocation_route
 from hermes_cli.provider_auth import get_provider_config, iter_provider_configs
 from agent.configured_provider_resolution import get_configured_provider_entry
 from agent.auxiliary_model_resolution import (
@@ -3771,17 +3772,12 @@ class _FallbackDestination(NamedTuple):
 def _complete_fallback_destination(
     provider: str, base_url: str, api_mode: Optional[str], model: Optional[str]
 ) -> _FallbackDestination:
-    if not api_mode:
-        if _endpoint_speaks_anthropic_messages(base_url):
-            api_mode = "anthropic_messages"
-        else:
-            with contextlib.suppress(Exception):
-                from hermes_cli.runtime_provider import resolve_runtime_provider
-                runtime = resolve_runtime_provider(
-                    requested=provider, explicit_base_url=base_url or None, target_model=model or ""
-                )
-                api_mode = str(runtime.get("api_mode") or "").strip() or None
-    return _FallbackDestination(provider, base_url, api_mode, model)
+    route = resolve_fallback_invocation_route(
+        provider, model or "", base_url, explicit_api_mode=api_mode,
+    )
+    return _FallbackDestination(
+        route.provider, route.base_url, route.api_mode or None, route.model or model,
+    )
 
 
 def _fallback_destination_from_entry(
@@ -4286,19 +4282,27 @@ def _fallback_entry_api_key(entry: Dict[str, Any]) -> Optional[str]:
 
 
 def _resolve_fallback_entry(entry: Dict[str, Any]) -> Tuple[Optional[Any], Optional[str]]:
-    """Resolve one fallback entry through the central provider router."""
+    """Resolve one fallback entry through canonical provider routing, then build its client."""
     provider = str(entry.get("provider") or "").strip()
-    model = str(entry.get("model") or "").strip() or None
+    model = str(entry.get("model") or "").strip()
     if not provider or not model:
         return None, None
+    explicit_mode = str(entry.get("api_mode") or entry.get("transport") or "").strip() or None
+    route = resolve_fallback_invocation_route(
+        provider, model, str(entry.get("base_url") or "").strip(),
+        explicit_api_mode=explicit_mode,
+    )
     client, resolved_model = resolve_provider_client(
-        provider, model=model, explicit_base_url=str(entry.get("base_url") or "").strip() or None,
+        route.provider, model=route.model or model,
+        explicit_base_url=route.base_url or None,
         explicit_api_key=_fallback_entry_api_key(entry),
-        api_mode=str(entry.get("api_mode") or entry.get("transport") or "").strip() or None,
+        api_mode=route.api_mode or None,
     )
     if client is not None:
         with contextlib.suppress(Exception):
-            client._hermes_fallback_destination = _fallback_destination_from_entry(entry, client, resolved_model)
+            client._hermes_fallback_destination = _FallbackDestination(
+                route.provider, route.base_url, route.api_mode or None, resolved_model or route.model or model,
+            )
     return client, resolved_model
 
 

@@ -234,3 +234,35 @@ def test_production_code_has_no_old_static_catalogue_imports():
             if "hermes_cli.models_catalog_static" in path.read_text(encoding="utf-8"):
                 offenders.append(str(path.relative_to(ROOT)))
     assert offenders == []
+
+
+def test_auxiliary_fallback_routing_has_one_canonical_route_owner():
+    fallback = ROOT / "agent" / "fallback_routing.py"
+    assert fallback.exists()
+    fallback_source = fallback.read_text(encoding="utf-8")
+    assert "resolve_invocation_route" in fallback_source
+    assert "hermes_cli.runtime_provider" not in fallback_source
+
+    auxiliary = ROOT / "agent" / "auxiliary_client.py"
+    tree = _tree(auxiliary)
+    complete = next(
+        node for node in tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == "_complete_fallback_destination"
+    )
+    complete_source = ast.get_source_segment(auxiliary.read_text(encoding="utf-8"), complete) or ""
+    assert "resolve_fallback_invocation_route" in complete_source
+    assert "hermes_cli.runtime_provider" not in complete_source
+
+    helpers = ROOT / "agent" / "chat_completion_helpers.py"
+    helper_defs = _definitions(helpers)
+    assert {
+        "_fallback_invocation_route",
+        "_fallback_api_mode_hint",
+        "_fallback_api_mode_resolved",
+        "_is_anthropic_wire_url",
+    }.isdisjoint(helper_defs)
+    assert "agent.fallback_routing" in _imports(helpers)
+
+    health_source = (ROOT / "agent" / "auxiliary_health.py").read_text(encoding="utf-8")
+    assert "normalize_provider" in health_source
+    assert "_normalize_chain_label" not in health_source

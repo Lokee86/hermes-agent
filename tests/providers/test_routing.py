@@ -47,6 +47,20 @@ def test_endpoint_policy_is_exact_and_spoof_resistant():
         assert route.api_mode == expected, base_url
 
 
+
+def test_actual_route_mandate_overrides_stale_explicit_mode():
+    route = resolve_invocation_route(
+        InvocationRequest(
+            provider="custom",
+            model="test-model",
+            base_url="https://api.actual.inc/v1",
+            explicit_api_mode="codex_responses",
+        )
+    )
+    assert route.api_mode == "chat_completions"
+    assert route.source == "provider_mandate"
+
+
 def test_route_precedence_is_explicit_then_endpoint_then_policy_then_config_then_profile(monkeypatch):
     class PolicyProfile(ProviderProfile):
         def resolve_route_policy(self, model: str, base_url: str = "", *, options=None) -> str | None:

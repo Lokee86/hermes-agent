@@ -34,6 +34,7 @@ from agent.errors import EmptyStreamError
 from agent.chat_completion_stream_monitor import StreamingWaitMonitor
 from agent.transports.chat_completions import is_router_timeout_shim, router_timeout_shim_may_follow
 from agent.fast_mode import effective_request_overrides
+from agent.fallback_routing import resolve_fallback_invocation_route as _fallback_invocation_route
 from agent.turn_context import substitute_api_content
 from agent.gemini_native_adapter import is_native_gemini_base_url
 # Remote endpoints must never be fingerprinted: the probe waterfall is only valid for local/LM-Studio/Ollama
@@ -1832,71 +1833,6 @@ def _fallback_reason_text(reason: "FailoverReason | None") -> str:
     return label or str(getattr(reason, "value", None) or reason or "provider failure").replace("_", " ")
 
 
-def _is_anthropic_wire_url(url: str) -> bool:
-    """True when the canonical endpoint policy mandates the Messages wire."""
-    from providers.routing import endpoint_api_mode
-    return endpoint_api_mode(url) == "anthropic_messages"
-
-
-def _fallback_api_mode_hint(fb: dict, fb_provider: str, fb_base_url_hint: Optional[str]) -> tuple[bool, str]:
-    """(explicit, api_mode) for a fallback entry from its ORIGINAL base_url: resolve_provider_client()
-    rewrites a dual-surface /anthropic base to /v1, losing the Anthropic wire signal. An explicit
-    ``api_mode`` always wins (even "chat_completions") and suppresses later re-detection;
-    ``provider: anthropic`` without a base_url still resolves to anthropic_messages."""
-    from agent.configured_provider_resolution import get_configured_provider_entry
-    from providers.routing import canonicalize_api_mode
-    # Entries accept the same ``api_mode`` / ``transport`` spellings as ``providers.<name>``.
-    explicit = canonicalize_api_mode(fb.get("api_mode") or fb.get("transport"))
-    if explicit:
-        return True, explicit
-    # A named ``providers.<name>`` block declares its wire once (``api_mode``/``transport``); a
-    # fallback entry naming that provider inherits it instead of being re-detected from the host
-    # (#33062, #81932: an Anthropic-Messages or Responses-only relay on a plain host was downgraded
-    # to chat_completions while resolve_provider_client had already built the declared client).
-    if fb_provider and fb_provider not in {"custom", "moa"}:
-        declared = (get_configured_provider_entry(fb_provider) or {}).get("api_mode")
-        if declared:
-            return True, declared
-    if fb_provider == "anthropic" or (fb_base_url_hint and _is_anthropic_wire_url(fb_base_url_hint)):
-        return False, "anthropic_messages"
-    return False, "chat_completions"
-
-
-def _fallback_invocation_route(
-    fb_provider: str,
-    fb_model: str,
-    fb_base_url: str,
-    *,
-    explicit_api_mode: str | None = None,
-):
-    """Resolve the fallback's complete invocation route, not only its wire protocol."""
-    from agent.opencode_affinity import opencode_transport
-    from providers.routing import InvocationRequest, resolve_invocation_route
-
-    opencode_mode, _ = opencode_transport(fb_provider, fb_model, fb_base_url)
-    route_options = {}
-    if fb_provider in {"nous", "nous-portal", "nousresearch"}:
-        try:
-            from hermes_cli.config import load_config_readonly
-            nous_cfg = (load_config_readonly().get("nous") or {})
-            route_options["anthropic_wire"] = str(nous_cfg.get("anthropic_wire") or "chat")
-        except Exception:
-            route_options["anthropic_wire"] = "chat"
-
-    return resolve_invocation_route(InvocationRequest(
-        provider=fb_provider,
-        model=fb_model,
-        base_url=fb_base_url,
-        explicit_api_mode=explicit_api_mode or opencode_mode or None,
-        route_options=route_options,
-    ))
-
-
-def _fallback_api_mode_resolved(agent, fb_provider: str, fb_model: str, fb_base_url: str) -> str:
-    """Compatibility test seam: project the canonical fallback route to its wire protocol."""
-    del agent
-    return _fallback_invocation_route(fb_provider, fb_model, fb_base_url).api_mode
-
 
 def _rebind_fallback_credential_pool(agent, fb_provider: str, fb_model: str) -> None:
     """Rebind the credential pool when the provider changes (else rate_limit/billing/auth recovery
@@ -2105,7 +2041,18 @@ def try_activate_fallback(agent, reason: "FailoverReason | None" = None, reset_a
             # of falling through to OpenRouter defaults.
             fb_base_url_hint = (fb.get("base_url") or "").strip() or None
             fb_api_key_hint = resolve_entry_api_key(fb)
-            fb_api_mode_explicit, fb_api_mode = _fallback_api_mode_hint(fb, fb_provider, fb_base_url_hint)
+            entry_api_mode = str(fb.get("api_mode") or fb.get("transport") or "").strip() or None
+            initial_route = _fallback_invocation_route(
+                fb_provider,
+                fb_model,
+                fb_base_url_hint or "",
+                explicit_api_mode=entry_api_mode,
+                route_base_url_hint=fb_base_url_hint or "",
+            )
+            fb_provider = initial_route.provider or fb_provider
+            fb_model = initial_route.model or fb_model
+            fb_api_mode = initial_route.api_mode
+            fb_base_url_for_client = initial_route.base_url or fb_base_url_hint
             # Ollama Cloud: OLLAMA_API_KEY from env when the entry has no key. Host match, not
             # substring — GHSA-76xc-57q6-vm5m.
             if fb_base_url_hint and base_url_host_matches(fb_base_url_hint, "ollama.com") and not fb_api_key_hint:
@@ -2113,7 +2060,9 @@ def try_activate_fallback(agent, reason: "FailoverReason | None" = None, reset_a
                 fb_api_key_hint = get_secret("OLLAMA_API_KEY") or None
             # raw_codex=True: the main agent needs direct responses.stream() access for Codex providers.
             fb_client, _resolved_fb_model = resolve_provider_client(
-                fb_provider, model=fb_model, raw_codex=True, explicit_base_url=fb_base_url_hint, explicit_api_key=fb_api_key_hint, api_mode=fb_api_mode)
+                fb_provider, model=fb_model, raw_codex=True,
+                explicit_base_url=fb_base_url_for_client, explicit_api_key=fb_api_key_hint,
+                api_mode=fb_api_mode)
             if fb_client is None:
                 logger.warning("Fallback to %s failed: provider not configured", fb_provider)
                 unavailable.add(fb_key)
@@ -2141,16 +2090,16 @@ def try_activate_fallback(agent, reason: "FailoverReason | None" = None, reset_a
                     logger.warning("Could not normalize fallback model %r for provider %r: %s", fb_model, fb_provider, _norm_err)
 
                 fb_base_url = str(fb_client.base_url)
-                from providers import is_actual_route
-                explicit_route_mode = fb_api_mode if fb_api_mode_explicit else None
-                if is_actual_route(fb_provider, fb_base_url):
-                    explicit_route_mode = "chat_completions"
                 route = _fallback_invocation_route(
                     fb_provider,
                     fb_model,
                     fb_base_url,
-                    explicit_api_mode=explicit_route_mode,
+                    explicit_api_mode=entry_api_mode,
+                    route_base_url_hint=fb_base_url_hint or "",
                 )
+                fb_provider = route.provider or fb_provider
+                fb_model = route.model or fb_model
+                fb_base_url = route.base_url or fb_base_url
                 fb_api_mode = route.api_mode
                 fb_runtime_kind = route.runtime_kind
 
