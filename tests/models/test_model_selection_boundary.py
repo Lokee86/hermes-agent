@@ -128,6 +128,7 @@ def test_selection_public_definitions_are_owned_once():
         "select_fast_auxiliary_model",
         "select_vision_auxiliary_model",
         "selected_auxiliary_model_id",
+        "auxiliary_task_prefers_fast_model",
         "list_picker_candidates",
         "picker_model_ids",
         "select_nous_default_model",
@@ -187,6 +188,7 @@ def test_auxiliary_client_has_no_model_selection_authority():
         "_fast_model_from_catalog",
         "_get_aux_model_for_provider",
         "_resolve_provider_vision_default",
+        "_task_prefers_fast_model",
     }
     assert _definitions(path).isdisjoint(obsolete_defs)
     source = path.read_text(encoding="utf-8")
@@ -199,6 +201,7 @@ def test_auxiliary_client_has_no_model_selection_authority():
         "_PROVIDERS_WITHOUT_VISION",
         "_OPENROUTER_MODEL",
         "_NOUS_MODEL",
+        "_FAST_MODEL_TASKS",
     ):
         assert obsolete not in source
     assert "select_provider_auxiliary_model" in source

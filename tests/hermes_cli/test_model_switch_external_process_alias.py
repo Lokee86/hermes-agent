@@ -17,7 +17,6 @@ def _switch(raw_input, profile):
          patch("providers.get_provider_profile", return_value=profile), \
          patch("hermes_cli.model_switch.get_authenticated_provider_slugs", return_value=["copilot", "anthropic"]), \
          patch("hermes_cli.models_validate.validate_requested_model", return_value=_ACCEPTED), \
-         patch("hermes_cli.models.detect_provider_for_model", return_value=("copilot", "claude-haiku-4.5")), \
          patch("hermes_cli.model_switch.get_model_info", return_value=None), \
          patch("hermes_cli.model_switch.query_model_metadata", return_value=None), \
          patch("hermes_cli.runtime_provider.resolve_runtime_provider",

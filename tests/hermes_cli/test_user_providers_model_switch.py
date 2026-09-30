@@ -484,7 +484,6 @@ def _run_user_provider_override_case(
 
     with patch("hermes_cli.model_switch.list_provider_models", return_value=[]), \
          patch("hermes_cli.models_validate.validate_requested_model", return_value=_REJECTED_VALIDATION), \
-         patch("hermes_cli.models.detect_provider_for_model", return_value=None), \
          patch("hermes_cli.model_switch.get_model_info", return_value=None), \
          patch("hermes_cli.model_switch.query_model_metadata", return_value=None), \
          patch("hermes_cli.runtime_provider.resolve_runtime_provider", return_value={"api_key": "***", "base_url": base_url, "api_mode": "anthropic_messages"}):

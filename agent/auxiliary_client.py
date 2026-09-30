@@ -118,6 +118,7 @@ def aux_probe_mode():
 
 from agent.credential_pool import load_pool
 from models.metadata.context import MINIMUM_CONTEXT_LENGTH, get_model_context_length
+from models.selection import auxiliary_task_prefers_fast_model
 from hermes_cli.config import get_hermes_home
 from providers.routing import canonicalize_api_mode
 from hermes_cli.provider_auth import get_provider_config, iter_provider_configs
@@ -678,14 +679,14 @@ def _compression_threshold_for_model(
     return None
 
 
-# Tasks that may opt into ``auxiliary.<task>.prefer_fast_model``.
-_FAST_MODEL_TASKS: frozenset = frozenset({"title_generation"})
+def _task_fast_preference_enabled(task: Optional[str]) -> bool:
+    """Read the caller-configured fast-model preference; eligibility is domain policy."""
 
-
-def _task_prefers_fast_model(task: Optional[str]) -> bool:
-    """Return whether an eligible task explicitly opts into fast-model routing."""
-    return task in _FAST_MODEL_TASKS and is_truthy_value(
-        _get_auxiliary_task_config(task).get("prefer_fast_model"), default=False)
+    if not task:
+        return False
+    return is_truthy_value(
+        _get_auxiliary_task_config(task).get("prefer_fast_model"), default=False
+    )
 
 
 # OpenRouter app attribution (always sent). `X-Title` is what the dashboard reads.
@@ -4357,7 +4358,11 @@ def _main_route_target(runtime: Dict[str, Any], task: Optional[str]) -> Tuple[st
     runtime_api_mode = str(runtime.get("api_mode") or "")
     # Latency-critical tasks (titling only) opt in to the provider's fast model. Opt-in only:
     # every settings surface defines "auto" as the main model.
-    if _task_prefers_fast_model(task) and main_provider and main_provider not in {"auto", ""}:
+    if (
+        auxiliary_task_prefers_fast_model(task, _task_fast_preference_enabled(task))
+        and main_provider
+        and main_provider not in {"auto", ""}
+    ):
         fast_model = select_provider_auxiliary_model(
             main_provider, main_model=main_model, prefer_fast=True
         )
@@ -5625,7 +5630,10 @@ def _client_cache_key(
     runtime = _normalize_main_runtime(main_runtime)
     # `auto` resolves through the main runtime and task-specific policy, so both join the key.
     runtime_key = tuple(_runtime_cache_discriminator(f, runtime.get(f, "")) for f in _MAIN_RUNTIME_FIELDS) if provider == "auto" else ()
-    task_key = (task or "", _task_prefers_fast_model(task)) if provider == "auto" else ""
+    task_key = (
+        task or "",
+        auxiliary_task_prefers_fast_model(task, _task_fast_preference_enabled(task)),
+    ) if provider == "auto" else ""
     pool_hint = _pool_cache_hint(provider, main_runtime=main_runtime)
     # Model MUST be in the key: concurrent calls to the same endpoint with different models would
     # share an entry, and the second builder's _store_cached_client would close the first's client.

@@ -152,6 +152,7 @@ def select_model(request: SelectionRequest) -> ModelSelection:
 
 
 from models.selection_auxiliary import (  # noqa: E402
+    auxiliary_task_prefers_fast_model,
     select_auxiliary_fallback_model,
     select_auxiliary_model,
     select_fast_auxiliary_model,
@@ -187,6 +188,7 @@ __all__ = [
     "SelectionRequest",
     "build_selection_candidate",
     "select_auxiliary_fallback_model",
+    "auxiliary_task_prefers_fast_model",
     "select_auxiliary_model",
     "select_fast_auxiliary_model",
     "select_vision_auxiliary_model",

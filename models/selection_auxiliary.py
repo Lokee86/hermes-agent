@@ -22,6 +22,17 @@ _FAST_MODEL_EXCLUDES = (
     "-tts", "-transcribe", "-realtime", "-image", "-search-preview",
 )
 
+_FAST_AUXILIARY_TASKS = frozenset({"title_generation"})
+
+
+def auxiliary_task_prefers_fast_model(
+    task: str | None,
+    preference_enabled: bool,
+) -> bool:
+    """Whether a task may apply an explicitly enabled fast-model preference."""
+
+    return bool(preference_enabled and task in _FAST_AUXILIARY_TASKS)
+
 
 def _ordered_ids(values: Iterable[str]) -> tuple[str, ...]:
     seen: set[str] = set()
@@ -174,6 +185,7 @@ def selected_auxiliary_model_id(selection: ModelSelection) -> str:
 
 
 __all__ = [
+    "auxiliary_task_prefers_fast_model",
     "select_auxiliary_fallback_model",
     "select_auxiliary_model",
     "select_fast_auxiliary_model",

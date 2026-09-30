@@ -5144,11 +5144,11 @@ class TestFastModelTier:
         """Changing the routing preference must not reuse the old auto client."""
         from agent import auxiliary_client as ac
 
-        with patch.object(ac, "_task_prefers_fast_model", return_value=False):
+        with patch.object(ac, "_task_fast_preference_enabled", return_value=False):
             main_key = ac._client_cache_key(
                 "auto", async_mode=False, task="title_generation"
             )
-        with patch.object(ac, "_task_prefers_fast_model", return_value=True):
+        with patch.object(ac, "_task_fast_preference_enabled", return_value=True):
             fast_key = ac._client_cache_key(
                 "auto", async_mode=False, task="title_generation"
             )
@@ -5188,13 +5188,3 @@ class TestFastModelTier:
         with patch.object(selection_aux, "_fast_catalog_ids") as spy:
             selection_aux.select_provider_auxiliary_model("anthropic")
         spy.assert_not_called()
-
-    def test_only_titling_is_in_the_fast_tier(self):
-        """Compression/vision/search keep 'auto means my chat model'."""
-        from agent.auxiliary_client import _FAST_MODEL_TASKS
-
-        assert "title_generation" in _FAST_MODEL_TASKS
-        overlap = {"compression", "vision", "web_extract"}.intersection(
-            _FAST_MODEL_TASKS
-        )
-        assert not overlap

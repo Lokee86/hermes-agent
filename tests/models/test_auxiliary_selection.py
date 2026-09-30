@@ -1,5 +1,6 @@
 from models import ModelRef
 from models.selection import (
+    auxiliary_task_prefers_fast_model,
     select_auxiliary_fallback_model,
     select_auxiliary_model,
     select_fast_auxiliary_model,
@@ -9,6 +10,14 @@ from models.selection import (
 
 def _selected(selection):
     return selection.selected.ref if selection.selected is not None else None
+
+
+def test_fast_task_policy_is_owned_by_selection_domain():
+    assert auxiliary_task_prefers_fast_model("title_generation", True) is True
+    assert auxiliary_task_prefers_fast_model("title_generation", False) is False
+    assert auxiliary_task_prefers_fast_model("compression", True) is False
+    assert auxiliary_task_prefers_fast_model("vision", True) is False
+    assert auxiliary_task_prefers_fast_model(None, True) is False
 
 
 def test_fast_selection_prefers_rolling_alias():
