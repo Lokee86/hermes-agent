@@ -54,18 +54,18 @@ class TestMinimaxAuxModelM3:
 
 
     def test_consumer_api_returns_non_empty_for_each_provider(self, minimax_profile):
-        from agent.auxiliary_client import _get_aux_model_for_provider
+        from hermes_cli.model_selection_auxiliary import select_provider_auxiliary_model
 
         profile, provider_id = minimax_profile
-        resolved = _get_aux_model_for_provider(provider_id)
+        resolved = select_provider_auxiliary_model(provider_id)
         assert resolved != "", (
-            f"_get_aux_model_for_provider({provider_id!r}) returned empty — "
+            f"select_provider_auxiliary_model({provider_id!r}) returned empty — "
             "the 'No auxiliary LLM provider configured' warning will fire on "
             f"every {provider_id} session even though the profile advertises "
             f"default_aux_model={profile.default_aux_model!r}"
         )
         assert resolved == profile.default_aux_model, (
-            f"_get_aux_model_for_provider({provider_id!r}) returned "
+            f"select_provider_auxiliary_model({provider_id!r}) returned "
             f"{resolved!r} but profile advertises {profile.default_aux_model!r} "
             "— the consumer API and the profile have drifted out of sync"
         )

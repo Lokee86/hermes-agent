@@ -26,7 +26,7 @@ class TestResolveAutoMainFirst:
         mock_client = MagicMock()
 
         with patch(
-            "agent.auxiliary_client._get_aux_model_for_provider",
+            "agent.auxiliary_client.select_provider_auxiliary_model",
             return_value="gemini-3-flash",
         ), patch(
             "agent.auxiliary_client.resolve_provider_client",
@@ -60,7 +60,7 @@ class TestResolveAutoMainFirst:
             "agent.auxiliary_client._get_auxiliary_task_config",
             return_value={"prefer_fast_model": True},
         ), patch(
-            "agent.auxiliary_client._get_aux_model_for_provider",
+            "agent.auxiliary_client.select_provider_auxiliary_model",
             return_value=fast_model,
         ), patch(
             "agent.auxiliary_client.resolve_provider_client",

@@ -11,6 +11,7 @@ tencent_tokenhub = ProviderProfile(
     env_vars=("TOKENHUB_API_KEY",),
     base_url="https://tokenhub.tencentmaas.com/v1",
     base_url_env_var="TOKENHUB_BASE_URL",
+    default_aux_model="hy4-preview",
 )
 
 register_provider(tencent_tokenhub)

@@ -82,6 +82,7 @@ nous = NousProfile(
     display_name="Nous Portal", description="Nous Research — Hermes model family",
     signup_url="https://nousresearch.com/", fallback_models=("hermes-3-405b", "hermes-3-70b"),
     base_url="https://inference-api.nousresearch.com/v1", auth_type="oauth_device_code",
+    fallback_aux_model="google/gemini-3.6-flash",
 )
 
 register_provider(nous)

@@ -9,8 +9,12 @@ from unittest.mock import patch, MagicMock, AsyncMock
 
 import pytest
 
+from providers import get_provider_profile
+
+OPENROUTER_FALLBACK_MODEL = get_provider_profile("openrouter").fallback_aux_model
+NOUS_FALLBACK_MODEL = get_provider_profile("nous").fallback_aux_model
+
 from agent.auxiliary_client import (
-    _NOUS_MODEL,
     CodexAuxiliaryClient,
     get_text_auxiliary_client,
     get_available_vision_backends,
@@ -30,7 +34,6 @@ from agent.auxiliary_client import (
     _normalize_aux_provider,
     _try_payment_fallback,
     _try_openrouter,
-    _OPENROUTER_MODEL,
     OPENROUTER_BASE_URL,
     _resolve_task_provider_model,
     _resolve_xai_oauth_for_aux,
@@ -830,9 +833,9 @@ class TestResolveProviderClientUniversalModelFallback:
                 return_value="gpt-5.4",
             ),
             patch(
-                "agent.auxiliary_client._get_aux_model_for_provider",
-                return_value="",  # openai-codex has no catalog default either
-            ),
+                "agent.auxiliary_client.select_provider_auxiliary_model",
+                return_value="gpt-5.4",
+            ) as mock_select,
             patch(
                 "agent.auxiliary_client._build_codex_client",
                 return_value=(MagicMock(), "gpt-5.4"),
@@ -846,6 +849,7 @@ class TestResolveProviderClientUniversalModelFallback:
 
         assert client is not None
         assert model == "gpt-5.4"
+        mock_select.assert_called_once_with("openai-codex", main_model="gpt-5.4")
         assert mock_build.call_args.args[0] == "gpt-5.4"
 
 
@@ -860,9 +864,8 @@ class TestResolveProviderClientUniversalModelFallback:
         with (
             patch("agent.auxiliary_client._read_main_model") as mock_read_main,
             patch(
-                "agent.auxiliary_client._get_aux_model_for_provider",
-                return_value="catalog-default-should-not-be-used",
-            ),
+                "agent.auxiliary_client.select_provider_auxiliary_model",
+            ) as mock_select,
             patch(
                 "agent.auxiliary_client._build_xai_oauth_aux_client",
                 return_value=(MagicMock(), "grok-4.20-multi-agent"),
@@ -875,6 +878,7 @@ class TestResolveProviderClientUniversalModelFallback:
         assert client is not None
         assert model == "grok-4.20-multi-agent"
         mock_read_main.assert_not_called()
+        mock_select.assert_not_called()
         assert mock_build.call_args.args[0] == "grok-4.20-multi-agent"
 
 
@@ -970,7 +974,7 @@ class TestExplicitProviderRouting:
             client, model = _try_openrouter()
 
         assert client is mock_client
-        assert model == _OPENROUTER_MODEL
+        assert model == OPENROUTER_FALLBACK_MODEL
         mock_openai.assert_called_once()
         assert mock_openai.call_args.kwargs["api_key"] == "sk-or-env-fallback"
         assert mock_openai.call_args.kwargs["base_url"] == OPENROUTER_BASE_URL
@@ -996,7 +1000,7 @@ class TestOpenRouterPaidLaneGuard:
             mock_openai.return_value = mock_client
             client, model = _try_openrouter()
         assert client is mock_client
-        assert model == _OPENROUTER_MODEL
+        assert model == OPENROUTER_FALLBACK_MODEL
 
     def test_free_only_skips_paid_configured_model(self, monkeypatch):
         """free_only=true + user-configured PAID model → OpenRouter skipped."""
@@ -1026,7 +1030,7 @@ class TestOpenRouterPaidLaneGuard:
         assert model == "nvidia/nemotron-3-ultra-550b-a55b:free"
 
     def test_configured_model_overrides_hardcoded_default(self, monkeypatch):
-        """auxiliary.openrouter_model replaces _OPENROUTER_MODEL."""
+        """auxiliary.openrouter_model overrides the provider fallback model."""
         monkeypatch.setenv("OPENROUTER_API_KEY", "or-key")
         with patch("agent.auxiliary_client._select_pool_entry", return_value=(False, None)), \
              patch("hermes_cli.config.load_config_readonly",
@@ -1275,7 +1279,7 @@ class TestAuxiliaryPoolAwareness:
 
         assert pool.refreshed is True
         assert client is not None
-        assert model == _NOUS_MODEL
+        assert model == NOUS_FALLBACK_MODEL
         assert mock_openai.call_args.kwargs["api_key"] == fresh_token
         assert mock_openai.call_args.kwargs["base_url"] == "https://inference.pool.example/v1"
 
@@ -1481,17 +1485,17 @@ class TestRefreshNousRecommendedModel:
             "hermes_cli.models.get_nous_recommended_aux_model", _boom)
         out = _refresh_nous_recommended_model(
             vision=False, stale_model="some/dead-model")
-        assert out == _NOUS_MODEL
+        assert out == NOUS_FALLBACK_MODEL
 
     def test_returns_none_when_no_distinct_alternative(self, monkeypatch):
         """When the failed model IS the default and the Portal has nothing
         else, there's no usable alternative."""
         monkeypatch.setattr(
             "hermes_cli.models.get_nous_recommended_aux_model",
-            lambda **kw: _NOUS_MODEL,
+            lambda **kw: NOUS_FALLBACK_MODEL,
         )
         out = _refresh_nous_recommended_model(
-            vision=False, stale_model=_NOUS_MODEL)
+            vision=False, stale_model=NOUS_FALLBACK_MODEL)
         assert out is None
 
 
@@ -5151,98 +5155,38 @@ class TestFastModelTier:
 
         assert main_key != fast_key
 
-    def test_catalog_match_prefers_rolling_alias_over_pinned_id(self):
-        """A "-latest" alias wins: it is the only id that cannot go stale."""
-        from agent import auxiliary_client as ac
-
-        catalog = {
-            "z-ai/glm-5.2": {},
-            "openai/gpt-5.4-mini": {},
-            "~openai/gpt-mini-latest": {},
-            "stepfun/step-3.7-flash:free": {},
-        }
-        with patch("hermes_cli.models_pricing.fetch_models_with_pricing", return_value=catalog):
-            assert ac._fast_model_from_catalog("nous") == "~openai/gpt-mini-latest"
-
-    def test_catalog_match_skips_reasoning_batch_and_embedding_lookalikes(self):
-        """Substring matching must not pick a thinker, a queue, or an encoder."""
-        from agent import auxiliary_client as ac
-
-        catalog = {
-            "openai/o3-mini": {},
-            "openai/gpt-5.4-mini:batch": {},
-            "sentence-transformers/all-minilm-l6-v2": {},
-            "google/gemini-3.6-flash": {},
-        }
-        with patch("hermes_cli.models_pricing.fetch_models_with_pricing", return_value=catalog):
-            assert ac._fast_model_from_catalog("nous") == "google/gemini-3.6-flash"
-
-    def test_catalog_match_skips_the_non_chat_siblings_of_a_chat_model(self):
-        """A provider names its speech and image endpoints after the chat model
-        they're paired with, so they satisfy the family rungs and can't answer."""
-        from agent import auxiliary_client as ac
-
-        catalog = {
-            "openai/gpt-4o-mini-tts": {},
-            "openai/gpt-4o-mini-transcribe": {},
-            "openai/gpt-4o-mini-search-preview": {},
-            "openai/gpt-4o-mini": {},
-        }
-        with patch("hermes_cli.models_pricing.fetch_models_with_pricing", return_value=catalog):
-            assert ac._fast_model_from_catalog("nous") == "openai/gpt-4o-mini"
-
-    def test_catalog_match_takes_the_newest_of_a_family(self):
-        """The bare family rungs must land on the current generation.
-
-        A provider serves every generation of its small tier it hasn't retired,
-        and compared as strings the oldest sorts first — so the rung meant to
-        keep the titler current was pinning it to the most obsolete member.
-        """
-        from agent import auxiliary_client as ac
-
-        catalog = {
-            "openai/gpt-3.5-mini": {},
-            "openai/gpt-9-mini": {},
-            "openai/gpt-10-mini": {},
-        }
-        with patch("hermes_cli.models_pricing.fetch_models_with_pricing", return_value=catalog):
-            assert ac._fast_model_from_catalog("nous") == "openai/gpt-10-mini"
-
-    def test_catalog_fetch_is_authenticated(self):
-        """Most /v1/models endpoints need a key; anonymously they 401.
-
-        A 401 reads as "this provider serves no small model", so the titler
-        would fall back to the curated default and never notice.
-        """
-        from agent import auxiliary_client as ac
+    def test_fast_catalog_fetch_is_authenticated(self):
+        """Fact acquisition authenticates the catalog without choosing the model."""
+        from hermes_cli import model_selection_auxiliary as selection_aux
 
         with patch(
             "hermes_cli.auth.resolve_api_key_provider_credentials",
             return_value={"api_key": "sk-test", "base_url": "https://api.example.com/v1"},
         ), patch(
-            "hermes_cli.models_pricing.fetch_models_with_pricing", return_value={}
+            "hermes_cli.models_pricing.fetch_models_with_pricing",
+            return_value={"openai/gpt-5.4-mini": {}},
         ) as fetch:
-            ac._fast_model_from_catalog("openai")
+            assert selection_aux._fast_catalog_ids("openai") == ("openai/gpt-5.4-mini",)
 
         assert fetch.call_args.kwargs["api_key"] == "sk-test"
         assert fetch.call_args.kwargs["base_url"] == "https://api.example.com"
 
-    def test_falls_back_to_curated_default_when_catalog_unavailable(self):
-        """An offline catalog degrades to the provider's pinned default."""
-        from agent import auxiliary_client as ac
+    def test_fast_tier_falls_back_to_profile_default_when_catalog_unavailable(self):
+        from hermes_cli import model_selection_auxiliary as selection_aux
 
-        with patch.object(ac, "_fast_model_from_catalog", return_value=""):
-            assert (
-                ac._get_aux_model_for_provider("anthropic", prefer_fast=True)
-                == ac._get_aux_model_for_provider("anthropic")
+        with patch.object(selection_aux, "_fast_catalog_ids", return_value=()):
+            fast = selection_aux.select_provider_auxiliary_model(
+                "anthropic", prefer_fast=True
             )
+            ordinary = selection_aux.select_provider_auxiliary_model("anthropic")
+        assert fast == ordinary
 
     def test_fast_tier_is_opt_in(self):
         """Without prefer_fast the resolver must not touch the live catalog."""
-        from agent import auxiliary_client as ac
+        from hermes_cli import model_selection_auxiliary as selection_aux
 
-        with patch.object(ac, "_fast_model_from_catalog") as spy:
-            ac._get_aux_model_for_provider("nous")
+        with patch.object(selection_aux, "_fast_catalog_ids") as spy:
+            selection_aux.select_provider_auxiliary_model("anthropic")
         spy.assert_not_called()
 
     def test_only_titling_is_in_the_fast_tier(self):

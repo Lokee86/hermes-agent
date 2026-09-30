@@ -121,6 +121,14 @@ from models.metadata.context import MINIMUM_CONTEXT_LENGTH, get_model_context_le
 from hermes_cli.config import get_hermes_home
 from providers.routing import canonicalize_api_mode
 from hermes_cli.provider_auth import get_provider_config, iter_provider_configs
+from hermes_cli.model_selection_auxiliary import (
+    is_declared_vision_default,
+    provider_rejects_vision_input,
+    provider_vision_default,
+    select_provider_auxiliary_fallback,
+    select_provider_auxiliary_model,
+    select_provider_vision_model,
+)
 from agent.auxiliary_health import (
     _custom_health_base_url, _unhealthy_cache_key, fallback_candidate_quarantine_ttl,
     fallback_candidate_unavailable_reason,
@@ -670,146 +678,6 @@ def _compression_threshold_for_model(
     return None
 
 
-# Aux "fast tier" families, fastest first (measured p50 titling latency). Matched as substrings
-# against the LIVE /v1/models catalog because pinned ids rot; rolling "-latest" aliases lead.
-_FAST_MODEL_FAMILIES: tuple = (
-    "gpt-mini-latest", "gpt-nano-latest", "claude-haiku-latest", "gemini-flash-latest",
-    "gpt-5.4-nano", "gpt-5.4-mini", "gpt-5-mini", "haiku-4.5", "gemini-3.6-flash", "flash-lite",
-    "-nano", "-mini", "-flash", "haiku",
-)
-
-# Disqualifiers: reasoning variants think before answering; ":batch" is a queue; ":free" tiers
-# are rate-limited and slowest; embedders/modality endpoints match a rung but cannot answer.
-_FAST_MODEL_EXCLUDE: tuple = (
-    "thinking", "reason", "-r1", "minilm", ":batch", ":free",
-    "o1-", "o3-", "o4-", "codex", "audio", "-vl", "embed",
-    "-tts", "-transcribe", "-realtime", "-image", "-search-preview",
-)
-
-
-def _model_recency_key(model_id: str) -> tuple:
-    """Sort key putting a family's newest release first: digit runs compare numerically (plain
-    string order picks ``gpt-3.5-mini`` over ``gpt-5.4-mini`` and breaks at 9 vs 10)."""
-    # re.split with one capturing group alternates text, number, text, …
-    return tuple(
-        (1, float(part), "") if index % 2 else (0, 0.0, part)
-        for index, part in enumerate(re.split(r"(\d+(?:\.\d+)?)", model_id.lower())) if part)
-
-
-def _fast_model_from_catalog(provider_id: str) -> str:
-    """Newest ``_FAST_MODEL_FAMILIES`` match from the provider's live (cached) catalog.
-
-    "" when the catalog is unavailable or holds no small model (caller falls through to the
-    curated default). Never raises; the fetch is memory+disk cached.
-    """
-    is_nous = provider_id.strip().lower() == "nous"
-    try:
-        from hermes_cli.auth import resolve_api_key_provider_credentials
-        from hermes_cli.models_pricing import fetch_models_with_pricing
-        from providers import get_provider_profile
-        # Most /v1/models endpoints are authenticated; an anonymous 401 would read as "no small
-        # model" and pin the curated default forever.
-        api_key, base_url = "", ""
-        try:
-            creds = resolve_api_key_provider_credentials(provider_id) or {}
-            api_key = str(creds.get("api_key", "")).strip()
-            base_url = str(creds.get("base_url", "")).strip()
-        except Exception:
-            # Not an API-key provider, or nothing configured; anonymous fetch may still work.
-            logger.debug("No credentials for %s catalog", provider_id, exc_info=True)
-        if not api_key and is_nous:
-            # Nous is OAuth (resolver raises); anonymous reads return the full catalog.
-            try:
-                from hermes_cli.models_pricing import _resolve_nous_pricing_credentials
-                api_key, base_url = _resolve_nous_pricing_credentials()
-            except Exception:
-                logger.debug("No Nous credentials for catalog", exc_info=True)
-        if not base_url:
-            base_url = str(getattr(get_provider_profile(provider_id), "base_url", "") or "")
-        base_url = base_url.rstrip("/")
-        if not base_url:
-            return ""
-        if base_url.endswith("/v1"):  # fetch_models_with_pricing appends /v1/models
-            base_url = base_url[:-3]
-        # Nous-only args must match the pickers' or the seeded cache loses sale chrome and
-        # policy-catalog expiry.
-        _nous_kwargs = {}
-        if is_nous:
-            from hermes_cli.models_pricing import _NOUS_CATALOG_TTL_SECONDS
-            _nous_kwargs = {"include_sale_original": True, "cache_ttl_seconds": _NOUS_CATALOG_TTL_SECONDS}
-        catalog = fetch_models_with_pricing(
-            api_key=api_key or None, base_url=base_url, timeout=3.0, **_nous_kwargs) or {}
-    except Exception:
-        logger.debug("Fast-model catalog lookup failed for %s", provider_id, exc_info=True)
-        return ""
-    ids = sorted((str(m) for m in catalog), key=_model_recency_key, reverse=True)
-    if is_nous:
-        # Narrow catalog ids by org policy, as the pickers do.
-        try:
-            from hermes_cli.models_pricing import nous_policy_allowed_ids, restrict_to_nous_policy
-            ids = restrict_to_nous_policy(ids, nous_policy_allowed_ids())
-        except Exception:
-            logger.debug("Nous policy filter unavailable", exc_info=True)
-    for family in _FAST_MODEL_FAMILIES:
-        for model_id in ids:
-            lowered = model_id.lower()
-            if family in lowered and not any(x in lowered for x in _FAST_MODEL_EXCLUDE):
-                return model_id
-    return ""
-
-
-# Default auxiliary models for direct API-key providers (cheap/fast for side tasks)
-def _get_aux_model_for_provider(provider_id: str, *, prefer_fast: bool = False) -> str:
-    """Cheap auxiliary model for a provider.
-
-    Ladder: (``prefer_fast`` only) live-catalog family match, then ``ProviderProfile.resolve_aux_model``;
-    then ``default_aux_model`` (curated); then the legacy dict. ``prefer_fast`` is opt-in (titling)
-    so other callers keep their static behaviour and cache keys.
-    """
-    profile = None
-    with contextlib.suppress(Exception):
-        from providers import get_provider_profile
-        profile = get_provider_profile(provider_id)
-    picked = ""
-    if prefer_fast:
-        picked = _fast_model_from_catalog(provider_id)
-        if not picked and profile is not None:
-            try:
-                picked = profile.resolve_aux_model() or ""
-            except Exception:
-                logger.debug("resolve_aux_model failed for %s", provider_id, exc_info=True)
-    if not picked and profile is not None and profile.default_aux_model:
-        picked = profile.default_aux_model
-    if not picked:
-        picked = _API_KEY_PROVIDER_AUX_MODELS_FALLBACK.get(provider_id, "")
-    # Rungs 2-4 are policy-blind; a blocked pick is refused at request time, so drop it and
-    # let the caller keep the main model.
-    if picked and provider_id.strip().lower() == "nous":
-        try:
-            from hermes_cli.models_pricing import nous_policy_allowed_ids, restrict_to_nous_policy
-            allowed = nous_policy_allowed_ids()
-            if allowed and not restrict_to_nous_policy([picked], allowed):
-                return ""
-        except Exception:
-            logger.debug("Nous policy check unavailable", exc_info=True)
-    return picked
-
-
-# Fallback for providers without ProviderProfile.default_aux_model (plus some pinned here).
-# New providers should set default_aux_model instead.
-_API_KEY_PROVIDER_AUX_MODELS_FALLBACK: Dict[str, str] = {
-    "gemini": "gemini-3.6-flash", "zai": "glm-4.5-flash", "kimi-coding": "kimi-k2-turbo-preview",
-    "stepfun": "step-3.5-flash", "kimi-coding-cn": "kimi-k2-turbo-preview",
-    "gmi": "google/gemini-3.1-flash-lite-preview", "anthropic": "claude-haiku-4-5-20251001",
-    "ai-gateway": "google/gemini-3-flash", "opencode-zen": "gemini-3-flash", "opencode-go": "glm-5",
-    "kilocode": "google/gemini-3.6-flash", "ollama-cloud": "nemotron-3-nano:30b",
-    "tencent-tokenhub": "hy4-preview", "tencent-tokenplan": "hy4-preview",
-    # No "deepinfra": its aux model lives on the ProviderProfile (read first).
-}
-
-# Legacy alias for callers not yet using _get_aux_model_for_provider().
-_API_KEY_PROVIDER_AUX_MODELS: Dict[str, str] = _API_KEY_PROVIDER_AUX_MODELS_FALLBACK
-
 # Tasks that may opt into ``auxiliary.<task>.prefer_fast_model``.
 _FAST_MODEL_TASKS: frozenset = frozenset({"title_generation"})
 
@@ -819,32 +687,6 @@ def _task_prefers_fast_model(task: Optional[str]) -> bool:
     return task in _FAST_MODEL_TASKS and is_truthy_value(
         _get_auxiliary_task_config(task).get("prefer_fast_model"), default=False)
 
-
-# Dedicated vision models for direct providers whose main chat model differs. zai: glm-5.3-flash
-# is the only image-capable GLM id served on every Z.AI surface (pay-as-you-go and Coding Plan,
-# global and CN); the former glm-5v-turbo pin 404s / 1211 "Unknown Model" on the coding endpoints
-# (#111429). ZaiProfile has no default_vision_model(), so dropping the pin would route vision to
-# the user's text-only chat model and skip Z.AI entirely.
-_PROVIDER_VISION_MODELS: Dict[str, str] = {"xiaomi": "mimo-v2.5", "zai": "glm-5.3-flash"}
-
-
-def _resolve_provider_vision_default(provider: str) -> Optional[str]:
-    """Provider default vision model id, or None: static ``_PROVIDER_VISION_MODELS`` (vision-only
-    names absent from any catalog) win, else ``ProviderProfile.default_vision_model()``."""
-    static = _PROVIDER_VISION_MODELS.get(provider)
-    if static:
-        return static
-    try:
-        from providers import get_provider_profile
-        profile = get_provider_profile(provider)
-        return profile.default_vision_model() if profile is not None else None
-    except Exception:
-        return None
-
-
-# Endpoints that reject image input: vision auto-detect skips these to the aggregator chain
-# instead of returning a client that 404s (Kimi Coding Plan Anthropic wire has no image_in).
-_PROVIDERS_WITHOUT_VISION: frozenset = frozenset({"kimi-coding", "kimi-coding-cn"})
 
 # OpenRouter app attribution (always sent). `X-Title` is what the dashboard reads.
 _OR_HEADERS_BASE = {
@@ -934,11 +776,6 @@ def _nous_extra_body() -> dict:
 # Set at resolve time — True if the auxiliary client points to Nous Portal
 auxiliary_is_nous: bool = False
 
-# _OPENROUTER_MODEL MUST stay a :free SKU (matching the free_only warning): this lane engages
-# silently, and a paid default meant spend the user never opted into. User-configured values
-# are honored untouched (_warn_paid_lane_once fires).
-_OPENROUTER_MODEL = "nvidia/nemotron-3-ultra-550b-a55b:free"
-_NOUS_MODEL = "google/gemini-3.6-flash"
 _NOUS_DEFAULT_BASE_URL = "https://inference-api.nousresearch.com/v1"
 _ANTHROPIC_DEFAULT_BASE_URL = "https://api.anthropic.com"
 _AUTH_JSON_PATH = get_hermes_home() / "auth.json"
@@ -2149,7 +1986,7 @@ def _resolve_api_key_provider() -> Tuple[Optional[OpenAI], Optional[str]]:
                 from hermes_cli.auth import is_provider_explicitly_configured
                 if not is_provider_explicitly_configured("copilot"):
                     continue
-        model = _get_aux_model_for_provider(provider_id) or None
+        model = select_provider_auxiliary_model(provider_id) or None
         if model is None:
             continue  # skip provider if we don't know a valid aux model
         pool_present, entry = _select_pool_entry(provider_id)
@@ -2249,16 +2086,18 @@ def _is_free_model(model: Optional[str]) -> bool:
 
 
 def _aux_openrouter_settings() -> Tuple[bool, str]:
-    """Read (free_only, openrouter_model) from config; (False, _OPENROUTER_MODEL) on failure."""
+    """Read OpenRouter fallback policy; model choice is owned by the selection seam."""
     try:
         from hermes_cli.config import cfg_get, load_config_readonly
         cfg = load_config_readonly()
         free_only = bool(cfg_get(cfg, "auxiliary", "free_only", default=False))
         val = cfg_get(cfg, "auxiliary", "openrouter_model")
-        model = val.strip() if isinstance(val, str) and val.strip() else _OPENROUTER_MODEL
-        return free_only, model
+        preferred = val.strip() if isinstance(val, str) and val.strip() else ""
+        return free_only, select_provider_auxiliary_fallback(
+            "openrouter", preferred_model=preferred
+        )
     except Exception:
-        return False, _OPENROUTER_MODEL
+        return False, select_provider_auxiliary_fallback("openrouter")
 
 
 def _warn_paid_lane_once(model: str) -> None:
@@ -2382,42 +2221,38 @@ def _try_nous(vision: bool = False) -> Tuple[Optional[OpenAI], Optional[str]]:
         return _create_openai_client(api_key=api_key, base_url=base_url), GUEST_MODEL
     auxiliary_is_nous = True
     logger.debug("Auxiliary client: Nous Portal")
-    # Portal recommended-models is authoritative (tier-aware); _NOUS_MODEL when unreachable/null.
+    # Portal recommendation is authoritative; provider-declared fallback handles misses.
     # Probes skip the lookup: exact model is irrelevant and it hits the network.
-    model = _NOUS_MODEL
+    recommended = ""
     if not _aux_probe_active():
         try:
             from hermes_cli.models import get_nous_recommended_aux_model
-            recommended = get_nous_recommended_aux_model(vision=vision)
-            if recommended:
-                model = recommended
-                logger.debug("Auxiliary/%s: using Portal-recommended model %s", lane, model)
-            else:
-                logger.debug("Auxiliary/%s: no Portal recommendation, falling back to %s", lane, model)
+            recommended = get_nous_recommended_aux_model(vision=vision) or ""
         except Exception as exc:
-            logger.debug(
-                "Auxiliary/%s: recommended-models lookup failed (%s); "
-                "falling back to %s",
-                lane, exc, model,
-            )
+            logger.debug("Auxiliary/%s: recommended-models lookup failed (%s)", lane, exc)
+    model = select_provider_auxiliary_fallback("nous", preferred_model=recommended)
+    if not model:
+        return None, None
+    if recommended and model == recommended:
+        logger.debug("Auxiliary/%s: using Portal-recommended model %s", lane, model)
+    else:
+        logger.debug("Auxiliary/%s: using provider fallback model %s", lane, model)
     return _create_openai_client(api_key=api_key, base_url=base_url), model
 
 
 def _refresh_nous_recommended_model(*, vision: bool, stale_model: Optional[str]) -> Optional[str]:
-    """Fresh Portal recommended model after a stale-model 404 (long-lived processes pin dropped models).
+    """Fresh Portal recommendation, else provider fallback, excluding the stale model."""
 
-    Returns the fresh recommendation, else ``_NOUS_MODEL``, whichever differs from ``stale_model``; None if neither.
-    """
     stale = (stale_model or "").strip().lower()
     fresh: Optional[str] = None
     try:
         from hermes_cli.models import get_nous_recommended_aux_model
         fresh = get_nous_recommended_aux_model(vision=vision, force_refresh=True)
     except Exception as exc:
-        logger.debug("Nous recommended-model refresh failed (%s); using default %s", exc, _NOUS_MODEL)
-    if fresh and fresh.strip().lower() != stale:
-        return fresh
-    return _NOUS_MODEL if _NOUS_MODEL.strip().lower() != stale else None
+        logger.debug("Nous recommended-model refresh failed (%s)", exc)
+    return select_provider_auxiliary_fallback(
+        "nous", preferred_model=fresh or "", excluded_model=stale
+    ) or None
 
 
 def _read_main_field(field: str, *, readonly: bool, lower: bool = False) -> str:
@@ -3036,7 +2871,7 @@ def _try_anthropic(explicit_api_key: Optional[Union[str, Callable[[], str]]] = N
         base_url = override_url
     from agent.anthropic_credentials import _is_oauth_token
     is_oauth = _is_oauth_token(token)
-    model = _get_aux_model_for_provider("anthropic") or "claude-haiku-4-5-20251001"
+    model = select_provider_auxiliary_model("anthropic")
     if _aux_probe_active():
         # Probe: token + adapter import resolved; skip real client construction.
         return _AuxProbeClientStub(api_key="", base_url=base_url), model
@@ -4271,7 +4106,7 @@ def _try_main_agent_model_fallback(
     if not main_provider or not main_model or main_provider.lower() in {"auto", ""}:
         return None, None, ""
     if task == "vision" and (
-            main_provider in _PROVIDERS_WITHOUT_VISION or not _main_model_supports_vision(main_provider, main_model)):
+            provider_rejects_vision_input(main_provider) or not _main_model_supports_vision(main_provider, main_model)):
         # Same capability gate as the auto-route (_vision_main_provider_client): handing an image to a
         # text-only main model turns a transient 429 into a guaranteed 400 (#108349).
         logger.info("Auxiliary vision: %s on %s — main agent provider %s accepts no image input, not falling back",
@@ -4523,7 +4358,9 @@ def _main_route_target(runtime: Dict[str, Any], task: Optional[str]) -> Tuple[st
     # Latency-critical tasks (titling only) opt in to the provider's fast model. Opt-in only:
     # every settings surface defines "auto" as the main model.
     if _task_prefers_fast_model(task) and main_provider and main_provider not in {"auto", ""}:
-        fast_model = _get_aux_model_for_provider(main_provider, prefer_fast=True)
+        fast_model = select_provider_auxiliary_model(
+            main_provider, main_model=main_model, prefer_fast=True
+        )
         if fast_model and fast_model != main_model:
             logger.debug("Auxiliary task %s: preferring fast model %s over main model %s",
                          task, fast_model, main_model)
@@ -4985,9 +4822,12 @@ def _resolve_openrouter_branch(req: _ResolveRequest) -> _ResolveResult:
 def _resolve_nous_branch(req: _ResolveRequest) -> _ResolveResult:
     """Nous Portal (OAuth)."""
     model = req.model
-    # Vision: caller flag, _PROVIDER_VISION_MODELS override, or a known vision id.
-    client, default = _try_nous(vision=(req.is_vision or model in _PROVIDER_VISION_MODELS.values()
-                                        or (model or "").strip().lower() == "mimo-v2-omni"))
+    # Vision: caller flag, a provider-declared vision default, or a known vision id.
+    client, default = _try_nous(vision=(
+        req.is_vision
+        or is_declared_vision_default(model)
+        or (model or "").strip().lower() == "mimo-v2-omni"
+    ))
     if client is None:
         logger.warning("resolve_provider_client: nous requested but Nous Portal not configured (run: hermes auth)")
         return None, None
@@ -5264,7 +5104,7 @@ def _resolve_api_key_branch(req: _ResolveRequest, pconfig: Any, resolve_creds: C
     # Explicit base_url override: a fallback_model/custom_providers entry pointing a built-in name elsewhere.
     if req.explicit_base_url and provider != "actual":
         base_url = _to_openai_base_url(req.explicit_base_url.strip().rstrip("/"))
-    final_model = _normalize_resolved_model(req.model or _get_aux_model_for_provider(provider), provider)
+    final_model = _normalize_resolved_model(req.model or select_provider_auxiliary_model(provider), provider)
     # Consulted before the built-in gemini/OpenAI ladder so a registered native transport wins (#112384).
     profile_client = _api_key_profile_supplied_client(provider, api_key=api_key, base_url=base_url)
     if profile_client is not None:
@@ -5429,8 +5269,8 @@ def resolve_provider_client(
         # leak a stale process-global runtime into a different provider (for example Claude model slug on
         # Codex OAuth) and override that correctly resolved model. 1. ``model`` argument (caller knew what
         # they wanted) 2. Provider's catalog default — cheap/fast model the provider registered via
-        # ``ProviderProfile.default_aux_model`` or the legacy ``_API_KEY_PROVIDER_AUX_MODELS_FALLBACK``
-        # dict. 3. User's main model from ``model.model`` in config.yaml. This is the load-bearing step for
+        # ``ProviderProfile.default_aux_model``. 3. User's main model from
+        # ``model.model`` in config.yaml. This is the load-bearing step for
         # OAuth providers: an xai-oauth user with grok-4.3 configured gets grok-4.3 for title generation
         # instead of silently dropping to whatever Step-2 fallback (#31845). When the main provider is MoA,
         # ``_read_main_model_for_aux()`` substitutes the preset's aggregator model — the preset NAME is
@@ -5447,7 +5287,9 @@ def resolve_provider_client(
         # here wins over that. The main chat model is routinely text-only (e.g. a ``:free`` chat SKU), so
         # pre-filling it sends the image to a model that cannot accept one and the Portal 404s. Leave
         # ``model`` unset and let the Portal slot through; only an explicit caller model may override it.
-        model = _get_aux_model_for_provider(provider) or _read_main_model_for_aux() or model
+        model = select_provider_auxiliary_model(
+            provider, main_model=_read_main_model_for_aux()
+        ) or model
     req = _ResolveRequest(
         provider, original_provider, model, async_mode, raw_codex,
         explicit_base_url, explicit_api_key, api_mode, main_runtime, is_vision, task,
@@ -5505,7 +5347,9 @@ def _normalize_vision_provider(provider: Optional[str]) -> str:
 
 def _deepinfra_strict_vision_backend(model: Optional[str]) -> Tuple[Optional[Any], Optional[str]]:
     """DeepInfra vision: default model is discovered live via default_vision_model() so no hardcoded id can rot."""
-    vision_model = model or _resolve_provider_vision_default("deepinfra")
+    vision_model = select_provider_vision_model(
+        "deepinfra", explicit_model=model or ""
+    )
     if not vision_model:
         logger.debug("Vision auto-detect: deepinfra catalog unreachable or returned no vision-tagged models — skipping")
         return None, None
@@ -5570,25 +5414,48 @@ def _vision_main_provider_client(
     resolved_api_mode: Optional[str],
 ) -> Tuple[Optional[Any], Optional[str]]:
     """Auto-detect step 1: try the main provider; (None, None) falls through to the aggregator chain."""
-    # A provider vision default (static override or catalog discovery) is a *known* multimodal
-    # model; the pinned chat model usually isn't, so only fall back to it when no default exists.
-    provider_vision_default = _resolve_provider_vision_default(main_provider)
-    vision_model = provider_vision_default or main_model
     if main_provider == "nous":
-        # Nous picks its vision model from Portal tier-aware slots inside _try_nous(vision=True);
-        # passing the chat model would override that and 404. Only auxiliary.vision.model may.
-        sync_client, default_model = _resolve_strict_vision_backend(main_provider, resolved_model or provider_vision_default)
+        # Nous selects its tier-aware vision slot when no explicit vision model exists;
+        # the text chat model is deliberately not a vision fallback.
+        vision_model = select_provider_vision_model(
+            main_provider,
+            explicit_model=resolved_model or "",
+            main_model="",
+        )
+        sync_client, default_model = _resolve_strict_vision_backend(
+            main_provider, vision_model or None
+        )
         if sync_client is None:
             return None, None
-        logger.info("Vision auto-detect: using main provider %s (%s)", main_provider, default_model or resolved_model or main_model)
+        logger.info(
+            "Vision auto-detect: using main provider %s (%s)",
+            main_provider,
+            default_model or vision_model or main_model,
+        )
         return sync_client, default_model
-    if main_provider in _PROVIDERS_WITHOUT_VISION:  # endpoint rejects image input entirely
-        logger.debug("Vision auto-detect: skipping main provider %s (no vision support) — falling through to aggregator chain", main_provider)
+    if provider_rejects_vision_input(main_provider):
+        logger.debug(
+            "Vision auto-detect: skipping main provider %s (no vision support) — "
+            "falling through to aggregator chain",
+            main_provider,
+        )
+        return None, None
+    main_supports_vision = (
+        _main_model_supports_vision(main_provider, main_model) if main_model else None
+    )
+    vision_model = select_provider_vision_model(
+        main_provider,
+        explicit_model=resolved_model or "",
+        main_model=main_model,
+        main_supports_vision=main_supports_vision,
+    )
+    if not vision_model:
         return None, None
     if not _main_model_supports_vision(main_provider, vision_model):
         # Known text-only model. Log only the provider name (CodeQL clear-text-logging FPs).
         logger.debug(
-            "Vision auto-detect: skipping main provider %s (reports no vision capability) — falling through to aggregator chain",
+            "Vision auto-detect: skipping main provider %s (reports no vision capability) — "
+            "falling through to aggregator chain",
             main_provider,
         )
         return None, None

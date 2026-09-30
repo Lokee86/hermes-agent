@@ -72,6 +72,7 @@ zai = ZaiProfile(
     fallback_models=("glm-5.2", "glm-5", "glm-4-9b"), base_url="https://api.z.ai/api/paas/v4",
     base_url_env_var="GLM_BASE_URL",
     default_aux_model="glm-4.5-flash",
+    default_vision_model_id="glm-5.3-flash",
 )
 
 register_provider(zai)

@@ -146,6 +146,9 @@ class ProviderProfile:
         ""  # cheap model for auxiliary tasks (compression, vision, etc.)
     )
     # empty = use main model
+    fallback_aux_model: str = ""  # model used only by a provider fallback lane
+    default_vision_model_id: str = ""
+    rejects_vision_input: bool = False
 
     # Per-model metadata in the canonical model_overrides schema. Partial entries
     # patch catalog metadata; explicit user overrides still win. Exact model IDs.
@@ -285,10 +288,10 @@ class ProviderProfile:
         Keeps provider-specific vision discovery inside the provider's plugin
         instead of a name-check branch in shared vision resolution.
 
-        Default: None (no provider-specific vision model — the caller falls
-        back to the user's chat model or the aggregator chain).
+        Default: the declarative default_vision_model_id when configured,
+        otherwise None so the caller falls back to the user's chat model or aggregator chain.
         """
-        return None
+        return self.default_vision_model_id or None
 
     def get_model_context_length(self, model: str) -> int | None:
         """Provider-qualified context bound; explicit user overrides take precedence."""

@@ -13,6 +13,7 @@ SELECTION_FILES = (
     ROOT / "models" / "selection_explicit.py",
     ROOT / "models" / "selection_detection.py",
     ROOT / "models" / "selection_defaults.py",
+    ROOT / "models" / "selection_auxiliary.py",
 )
 METADATA_ROOT = ROOT / "models" / "metadata"
 
@@ -121,6 +122,11 @@ def test_selection_public_definitions_are_owned_once():
         "build_selection_candidate",
         "explicit_provider_hint",
         "select_default_model",
+        "select_auxiliary_fallback_model",
+        "select_auxiliary_model",
+        "select_fast_auxiliary_model",
+        "select_vision_auxiliary_model",
+        "selected_auxiliary_model_id",
         "select_nous_default_model",
         "select_detected_model",
         "select_explicit_model",
@@ -169,3 +175,29 @@ def test_legacy_default_selection_owners_are_deleted():
         "get_default_model_for_provider",
     }
     assert _definitions(path).isdisjoint(obsolete)
+
+
+def test_auxiliary_client_has_no_model_selection_authority():
+    path = ROOT / "agent" / "auxiliary_client.py"
+    obsolete_defs = {
+        "_model_recency_key",
+        "_fast_model_from_catalog",
+        "_get_aux_model_for_provider",
+        "_resolve_provider_vision_default",
+    }
+    assert _definitions(path).isdisjoint(obsolete_defs)
+    source = path.read_text(encoding="utf-8")
+    for obsolete in (
+        "_FAST_MODEL_FAMILIES",
+        "_FAST_MODEL_EXCLUDE",
+        "_API_KEY_PROVIDER_AUX_MODELS_FALLBACK",
+        "_API_KEY_PROVIDER_AUX_MODELS",
+        "_PROVIDER_VISION_MODELS",
+        "_PROVIDERS_WITHOUT_VISION",
+        "_OPENROUTER_MODEL",
+        "_NOUS_MODEL",
+    ):
+        assert obsolete not in source
+    assert "select_provider_auxiliary_model" in source
+    assert "select_provider_auxiliary_fallback" in source
+    assert "provider_vision_default" in source

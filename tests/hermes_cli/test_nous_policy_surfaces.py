@@ -167,10 +167,10 @@ class TestRecommendedDefaultEndpoint:
         assert self._call(monkeypatch)["model"] == "vendor/blocked"
 
 class TestAuxiliaryFastModel:
-    """``_fast_model_from_catalog`` uses the catalog's keys as a source of ids."""
+    """Fast auxiliary selection uses the fetched catalog keys as candidate ids."""
 
     def _pick(self, monkeypatch, *, catalog):
-        import agent.auxiliary_client as aux
+        from hermes_cli import model_selection_auxiliary as aux
 
         seen: dict = {}
 
@@ -183,21 +183,18 @@ class TestAuxiliaryFastModel:
             lambda: ("sk-nous", "https://inference.example.com"),
         )
         monkeypatch.setattr(models_pricing, "fetch_models_with_pricing", _fake_fetch)
-        picked = aux._fast_model_from_catalog("nous")
+        picked = aux.select_provider_auxiliary_model("nous", prefer_fast=True)
         return picked, seen
 
     def test_hidden_model_is_not_selected(self, monkeypatch, policy):
-        import agent.auxiliary_client as aux
-
         monkeypatch.setattr(
-            models_pricing, "nous_policy_allowed_ids", lambda **_k: {"vendor/allowed"}
+            models_pricing, "nous_policy_allowed_ids",
+            lambda **_k: {"vendor/gemini-3.6-flash"},
         )
-        monkeypatch.setattr(aux, "_FAST_MODEL_FAMILIES", ("vendor/",))
-        monkeypatch.setattr(aux, "_FAST_MODEL_EXCLUDE", ())
         picked, _ = self._pick(
-            monkeypatch, catalog=["vendor/blocked", "vendor/allowed"]
+            monkeypatch, catalog=["vendor/gpt-5.4-mini", "vendor/gemini-3.6-flash"]
         )
-        assert picked == "vendor/allowed"
+        assert picked == "vendor/gemini-3.6-flash"
 
 class TestNousPrefetch:
     """The nous disk-cache entry is write-only, so prefetching it is a round
@@ -217,7 +214,7 @@ class TestAuxFallbackRespectsPolicy:
     a public recommendation and the rest are hardcoded."""
 
     def _patch(self, monkeypatch, *, allowed, recommended):
-        import agent.auxiliary_client as aux
+        from hermes_cli import model_selection_auxiliary as aux
         import providers
 
         monkeypatch.setattr(models_pricing, "nous_policy_allowed_ids", lambda **_k: allowed)
@@ -232,6 +229,7 @@ class TestAuxFallbackRespectsPolicy:
         )
 
         class _Profile:
+            name = "nous"
             default_aux_model = ""
 
             def resolve_aux_model(self, **_k):
@@ -245,7 +243,7 @@ class TestAuxFallbackRespectsPolicy:
             monkeypatch, allowed={"vendor/allowed-large"},
             recommended="vendor/blocked-haiku",
         )
-        assert aux._get_aux_model_for_provider("nous", prefer_fast=True) == ""
+        assert aux.select_provider_auxiliary_model("nous", prefer_fast=True) == ""
 
     def test_allowed_recommendation_still_used(self, monkeypatch):
         aux = self._patch(
@@ -253,7 +251,7 @@ class TestAuxFallbackRespectsPolicy:
             recommended="vendor/ok-haiku",
         )
         assert (
-            aux._get_aux_model_for_provider("nous", prefer_fast=True)
+            aux.select_provider_auxiliary_model("nous", prefer_fast=True)
             == "vendor/ok-haiku"
         )
 
@@ -262,6 +260,6 @@ class TestAuxFallbackRespectsPolicy:
             monkeypatch, allowed=None, recommended="vendor/anything"
         )
         assert (
-            aux._get_aux_model_for_provider("nous", prefer_fast=True)
+            aux.select_provider_auxiliary_model("nous", prefer_fast=True)
             == "vendor/anything"
         )

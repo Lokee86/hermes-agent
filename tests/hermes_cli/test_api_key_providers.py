@@ -752,10 +752,8 @@ class TestMinimaxOAuthProvider:
     def test_minimax_oauth_aux_model_registered(self):
         # Aux model for the minimax-oauth provider now lives on the
         # ProviderProfile (plugins/model-providers/minimax/__init__.py),
-        # not the legacy _API_KEY_PROVIDER_AUX_MODELS dict in
-        # agent/auxiliary_client.py. The profile layer is the source
-        # of truth; _get_aux_model_for_provider() reads from it first
-        # and only falls back to the dict when no profile is registered.
+        # not a shared auxiliary-client fallback table. The profile layer is
+        # the source of truth consumed by select_provider_auxiliary_model().
         import model_tools  # noqa: F401  -- triggers plugin discovery
         import providers
 
@@ -974,7 +972,7 @@ class TestDeepInfraProviderProfile:
 
     def test_profile_registered_with_alias_and_aux(self):
         from providers import get_provider_profile
-        from agent.auxiliary_client import _get_aux_model_for_provider
+        from hermes_cli.model_selection_auxiliary import select_provider_auxiliary_model
         from hermes_cli.auth import resolve_provider
         from hermes_cli.config import OPTIONAL_ENV_VARS
         from hermes_cli.provider_catalog import provider_catalog_by_slug
@@ -991,10 +989,8 @@ class TestDeepInfraProviderProfile:
         assert "deepinfra" in provider_catalog_by_slug()
         assert OPTIONAL_ENV_VARS["DEEPINFRA_API_KEY"]["password"] is True
         assert OPTIONAL_ENV_VARS["DEEPINFRA_BASE_URL"]["password"] is False
-        # Aux model is resolved via the profile (not via the legacy
-        # _API_KEY_PROVIDER_AUX_MODELS_FALLBACK dict, which has no
-        # deepinfra entry).
-        assert _get_aux_model_for_provider("deepinfra")
+        # Aux model is resolved directly from the DeepInfra provider profile.
+        assert select_provider_auxiliary_model("deepinfra")
         # Fallback list intentionally empty — live catalog is the source
         # of truth. Pin the shape only, not contents.
         assert isinstance(profile.fallback_models, tuple)

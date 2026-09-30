@@ -12,6 +12,7 @@ tencent_tokenplan = ProviderProfile(
     env_vars=("TOKENPLAN_API_KEY",),
     base_url="https://api.lkeap.cloud.tencent.com/plan/anthropic",
     base_url_env_var="TOKENPLAN_BASE_URL",
+    default_aux_model="hy4-preview",
 )
 
 register_provider(tencent_tokenplan)

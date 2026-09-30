@@ -151,6 +151,13 @@ def select_model(request: SelectionRequest) -> ModelSelection:
     )
 
 
+from models.selection_auxiliary import (  # noqa: E402
+    select_auxiliary_fallback_model,
+    select_auxiliary_model,
+    select_fast_auxiliary_model,
+    select_vision_auxiliary_model,
+    selected_auxiliary_model_id,
+)
 from models.selection_detection import ExplicitDetectionFacts, select_detected_model  # noqa: E402
 from models.selection_defaults import select_default_model, select_nous_default_model  # noqa: E402
 
@@ -178,6 +185,11 @@ __all__ = [
     "SelectionReason",
     "SelectionRequest",
     "build_selection_candidate",
+    "select_auxiliary_fallback_model",
+    "select_auxiliary_model",
+    "select_fast_auxiliary_model",
+    "select_vision_auxiliary_model",
+    "selected_auxiliary_model_id",
     "select_default_model",
     "select_nous_default_model",
     "select_detected_model",
