@@ -27,14 +27,6 @@ TRANSPORT_TO_API_MODE: Dict[str, str] = {
 
 # -- Helper functions ---------------------------------------------------------
 
-def is_actual_route(provider: str = "", base_url: str = "") -> bool:
-    """Identify Actual by provider/alias or its hosted endpoint, including custom routes."""
-    return (
-        _normalize_provider(provider or "") == "actual"
-        or base_url_hostname(base_url) == "api.actual.inc"
-    )
-
-
 def _models_dev_info(canonical: str, allow_network: bool = True):
     """models.dev entry or None. Single-arg call on the default path: test sites monkeypatch
     ``get_provider_info`` with single-arg lambdas."""

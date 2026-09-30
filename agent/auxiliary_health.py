@@ -2,7 +2,7 @@
 import contextlib
 from typing import Any, Optional
 
-from hermes_cli.route_identity import normalize_route_base_url
+from providers import normalize_route_base_url
 
 def _unhealthy_cache_key(provider: str, base_url: Optional[str] = None) -> Any:
     """Provider-wide key, or endpoint-specific key for an explicit custom endpoint — prefixed with the

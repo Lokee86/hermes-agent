@@ -81,22 +81,22 @@ def test_deepinfra_catalog_is_fetched_with_each_profiles_key(homes, monkeypatch)
 
 
 def test_copilot_context_cache_hit_requires_same_api_key(homes, monkeypatch):
-    import hermes_cli.models as models
+    import models.catalog_github as catalog
+    import models.metadata.github as github
 
-    monkeypatch.setattr(models, "_copilot_context_cache", {})
-    monkeypatch.setattr(models, "_copilot_context_cache_time", 0.0)
-    monkeypatch.setattr(models, "_github_model_catalog_cache", None)
+    catalog.reset_github_model_catalog_cache()
+    github.reset_github_context_cache()
 
-    def transport(req, *, timeout, **kw):
-        limit = 111 if req.headers.get("Authorization", "").endswith("copilot-A") else 222
-        return _json_resp({"data": [{"id": "gpt-x", "model_picker_enabled": True,
-                                     "supported_endpoints": ["/chat/completions"],
-                                     "capabilities": {"type": "chat", "limits": {"max_prompt_tokens": limit}}}]})
+    def transport(_url, *, timeout, headers):
+        limit = 111 if headers.get("Authorization", "").endswith("copilot-A") else 222
+        return {"data": [{"id": "gpt-x", "model_picker_enabled": True,
+                          "supported_endpoints": ["/chat/completions"],
+                          "capabilities": {"type": "chat", "limits": {"max_prompt_tokens": limit}}}]}
 
-    monkeypatch.setattr(models, "_urlopen_model_catalog_request", transport)
-    assert models.get_copilot_model_context("gpt-x", api_key="copilot-A") == 111
-    assert models.get_copilot_model_context("gpt-x", api_key="copilot-B") == 222
-    assert models.get_copilot_model_context("gpt-x", api_key="copilot-A") == 111
+    monkeypatch.setattr(catalog, "_fetch_json", transport)
+    assert github.github_model_context_length("gpt-x", api_key="copilot-A") == 111
+    assert github.github_model_context_length("gpt-x", api_key="copilot-B") == 222
+    assert github.github_model_context_length("gpt-x", api_key="copilot-A") == 111
 
 
 def test_nous_reasoning_caps_follow_each_profiles_portal(homes, monkeypatch):

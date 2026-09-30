@@ -31,7 +31,7 @@ from hermes_cli import config as _config_mod
 from hermes_cli import models as _models  # retained for non-routing model helpers and patch seams
 
 from hermes_constants import OPENROUTER_BASE_URL
-from providers import normalize_provider
+from providers import is_external_process_provider, normalize_provider
 from utils import base_url_host_matches, base_url_hostname, base_url_path, env_int
 
 
@@ -357,7 +357,7 @@ from hermes_cli.runtime_provider_custom import (  # noqa: E402,F401
     find_custom_provider_identity_by_model, has_named_custom_provider, is_routable_provider,
 )
 from hermes_cli.runtime_provider_backends import (  # noqa: E402,F401
-    _is_external_process_provider, _resolve_azure_foundry_runtime, _resolve_bedrock_runtime,
+    _resolve_azure_foundry_runtime, _resolve_bedrock_runtime,
     _resolve_external_process_runtime, _resolve_openrouter_runtime,
 )
 
@@ -901,7 +901,7 @@ def _ladder_rungs(requested_provider, explicit_api_key, explicit_base_url, targe
             swallowed_auth_error = exc
     if provider == "minimax-oauth":
         yield _minimax_oauth_runtime(provider, requested_provider)
-    if _is_external_process_provider(provider):
+    if is_external_process_provider(provider):
         yield _resolve_external_process_runtime(provider, requested_provider)
     if provider == "anthropic":
         yield _anthropic_env_runtime(requested_provider, model_cfg, target_model)

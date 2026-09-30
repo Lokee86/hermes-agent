@@ -2071,7 +2071,7 @@ def _lower_threshold_to_aux_context(
 
 def _aux_inherits_main_route(agent: Any, aux_model: str, aux_base_url: str) -> bool:
     """True when the auxiliary compression client is the main model on the main endpoint."""
-    from hermes_cli.route_identity import normalize_route_base_url
+    from providers import normalize_route_base_url
     if str(aux_model or "").strip().lower() != str(getattr(agent, "model", "") or "").strip().lower():
         return False
     main_base = normalize_route_base_url(str(getattr(agent, "base_url", "") or ""))

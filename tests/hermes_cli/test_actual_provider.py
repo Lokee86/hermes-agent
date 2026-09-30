@@ -160,7 +160,7 @@ def test_actual_runtime_ignores_legacy_mode_environment(monkeypatch):
     assert resolved["api_mode"] == "chat_completions"
 
 def test_actual_hostname_detection_repairs_custom_responses_route():
-    from hermes_cli.providers import is_actual_route
+    from providers import is_actual_route
 
     base_url = "https://api.actual.inc/v1"
 

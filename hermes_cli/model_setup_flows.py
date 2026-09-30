@@ -493,7 +493,8 @@ def _copilot_model_list(live_ids) -> list:
 def _copilot_catalog(api_key: str):
     """``(catalog, catalog_ids, normalize)`` for a GitHub token; *normalize* canonicalizes a
     model id against the catalog (identity when unknown)."""
-    from hermes_cli.models import fetch_github_model_catalog, normalize_copilot_model_id
+    from models.catalog_github import fetch_github_model_catalog
+    from hermes_cli.models import normalize_copilot_model_id
     catalog = fetch_github_model_catalog(api_key)
     ids = [item.get("id", "") for item in catalog if item.get("id")] if catalog else []
 

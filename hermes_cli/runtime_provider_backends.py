@@ -243,28 +243,6 @@ def _resolve_bedrock_runtime(requested_provider: str, model_cfg: Dict[str, Any],
 # ── External-process (agent CLI over stdio, e.g. ACP) ──────────────────────────────────────
 
 
-def _is_external_process_provider(provider: str) -> bool:
-    """Keyed on the registered provider's auth_type (CLI registry first, then the profile registry
-    so the check works before the CLI registry has been extended)."""
-    name = (provider or "").strip().lower()
-    if not name:
-        return False
-    try:
-        from hermes_cli.provider_auth import get_provider_config
-        pconfig = get_provider_config(name)
-        if pconfig is not None:
-            return pconfig.auth_type == "external_process"
-    except Exception:
-        pass
-    try:
-        from providers import get_provider_profile
-
-        profile = get_provider_profile(name)
-    except Exception:
-        return False
-    return profile is not None and getattr(profile, "auth_type", "") == "external_process"
-
-
 def _resolve_external_process_runtime(provider: str, requested_provider: str) -> Dict[str, Any]:
     rp = _rp()
     creds = rp.resolve_external_process_provider_credentials(provider)

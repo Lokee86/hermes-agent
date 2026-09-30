@@ -20,6 +20,8 @@ from providers.registry import (
     routed_model_rejects_vision_tool_messages,
 )
 from providers.model_normalizers import vendor_for_model
+from providers.github import COPILOT_EDITOR_VERSION, copilot_request_headers
+from providers.route_identity import is_actual_route, normalize_route_base_url
 from providers.opencode import (
     normalize_opencode_base_url,
     normalize_opencode_model_id,
@@ -40,6 +42,7 @@ from providers.routing import (
     RuntimeKind,
     canonicalize_api_mode,
     endpoint_api_mode,
+    is_external_process_provider,
     resolve_invocation_route,
 )
 
@@ -63,6 +66,10 @@ __all__ = [
     "custom_provider_slug",
     "custom_provider_aliases",
     "vendor_for_model",
+    "COPILOT_EDITOR_VERSION",
+    "copilot_request_headers",
+    "is_actual_route",
+    "normalize_route_base_url",
     "opencode_provider_family",
     "normalize_opencode_model_id",
     "normalize_opencode_base_url",
@@ -71,6 +78,7 @@ __all__ = [
     "RuntimeKind",
     "canonicalize_api_mode",
     "endpoint_api_mode",
+    "is_external_process_provider",
     "resolve_invocation_route",
 ]
 

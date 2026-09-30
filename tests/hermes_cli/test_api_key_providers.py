@@ -276,7 +276,7 @@ class TestRuntimeProviderResolution:
             lambda: {"provider": "copilot", "default": "gpt-5.4"},
         )
         monkeypatch.setattr(
-            "hermes_cli.models.fetch_github_model_catalog",
+            "models.catalog_github.fetch_github_model_catalog",
             lambda api_key=None, timeout=5.0: [
                 {
                     "id": "gpt-5.4",

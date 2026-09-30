@@ -1610,7 +1610,7 @@ def _route_may_be_custom(agent, eff_provider: str, provider_lower: str, eff_base
         # Same semantics as the capability helper (normalize_route_base_url +
         # custom_provider_aliases) so spelling differences don't drop declarations.
         from providers import custom_provider_aliases
-        from hermes_cli.route_identity import normalize_route_base_url
+        from providers import normalize_route_base_url
         provider_ids = {provider_lower, provider_lower.removeprefix("custom:")}
         eff_url_normalized = normalize_route_base_url(eff_base_url)
         return any(
@@ -1623,13 +1623,29 @@ def _route_may_be_custom(agent, eff_provider: str, provider_lower: str, eff_base
     # None = list not attached yet (early init or blank stub). Avoid rebuilding the list for
     # ordinary built-in routes.
     try:
-        from hermes_cli.providers import get_provider
-        # allow_network=False: never trigger a registry fetch from the send path; a catalog miss
-        # degrades to the conservative capability lookup.
-        provider_def = get_provider(eff_provider, allow_network=False)
-        return provider_def is None or (
-            bool(provider_def.base_url)
-            and base_url_hostname(provider_def.base_url) != base_url_hostname(eff_base_url)
+        from agent.models_dev import get_provider_info
+        from providers import get_provider_profile
+
+        # Cache-only models.dev + canonical profile facts replace the CLI resolver here.
+        profile = get_provider_profile(eff_provider)
+        mdev = get_provider_info(eff_provider, allow_network=False)
+        profile_base = str(getattr(profile, "base_url", "") or "")
+        mdev_base = str(getattr(mdev, "api", "") or "")
+        known = bool(
+            mdev is not None
+            or profile_base
+            or (
+                profile is not None
+                and getattr(profile, "auth_type", "") == "api_key"
+                and getattr(profile, "env_vars", ())
+                and getattr(profile, "base_url_env_var", "")
+            )
+        )
+        if not known:
+            return True
+        provider_base = profile_base or mdev_base
+        return bool(provider_base) and (
+            base_url_hostname(provider_base) != base_url_hostname(eff_base_url)
         )
     except Exception as _pd_exc:
         logger.debug("provider lookup failed during cache-policy pre-gate: %s", _pd_exc)
@@ -1805,10 +1821,10 @@ def _ensure_copilot_headers(client_kwargs: dict) -> None:
     Only ADD missing keys, never override."""
     try:
         if base_url_host_matches(str(client_kwargs.get("base_url", "")), "githubcopilot.com"):
-            from hermes_cli.models import copilot_default_headers
+            from providers import copilot_request_headers
             existing = dict(client_kwargs.get("default_headers") or {})
             existing_lower = {k.lower() for k in existing}
-            for hk, hv in copilot_default_headers().items():
+            for hk, hv in copilot_request_headers().items():
                 if hk.lower() not in existing_lower:
                     existing[hk] = hv
             client_kwargs["default_headers"] = existing

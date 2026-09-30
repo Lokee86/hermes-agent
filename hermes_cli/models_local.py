@@ -506,58 +506,6 @@ def ensure_lmstudio_model_loaded(
     return _result(_lmstudio_loaded_context(_lmstudio_entry_for(refreshed_models, model)), load_attempted=True)
 
 
-def lmstudio_model_reasoning_options(
-    model: str,
-    base_url: Optional[str],
-    api_key: Optional[str] = None,
-    timeout: float = 5.0,
-) -> list[str]:
-    """Reasoning ``allowed_options`` LM Studio publishes for ``model`` under
-    ``capabilities.reasoning`` in ``/api/v1/models``; ``[]`` when unknown, unreachable, or absent."""
-    raw = _lmstudio_entry_for(_lmstudio_raw_models_or_none(api_key, base_url, timeout) or [], model)
-    if raw is None:
-        return []
-    caps = raw.get("capabilities")
-    reasoning = caps.get("reasoning") if isinstance(caps, dict) else None
-    opts = reasoning.get("allowed_options") if isinstance(reasoning, dict) else None
-    if isinstance(opts, list):
-        return [str(o).strip().lower() for o in opts if isinstance(o, str)]
-    return []
-
-
-def ollama_model_supports_thinking(
-    model: str,
-    base_url: Optional[str],
-    api_key: Optional[str] = None,
-    timeout: float = 5.0,
-) -> Optional[bool]:
-    """Tri-state: True if an Ollama (Cloud or local) model advertises ``thinking`` in native
-    ``/api/show`` ``capabilities`` (authoritative; OpenAI-compat ``/v1/models`` omits it), False
-    when the probe succeeded without it, None when it failed (caller treats as "don't emit")."""
-    import httpx
-
-    server_url = (base_url or "").strip().rstrip("/")
-    if server_url.endswith("/v1"):
-        server_url = server_url[:-3]
-    bare_model = _strip_ollama_cloud_suffix((model or "").strip())
-    if not server_url or not bare_model:
-        return None
-
-    from agent.command_token_source import materialize_probe_api_key
-    token = materialize_probe_api_key(api_key)
-    try:
-        with httpx.Client(timeout=timeout, headers={"Authorization": f"Bearer {token}"} if token else {}) as client:
-            resp = client.post(f"{server_url}/api/show", json={"name": bare_model})
-            if resp.status_code != 200:
-                return None
-            caps = resp.json().get("capabilities")
-            if isinstance(caps, list):
-                return "thinking" in caps
-    except Exception:
-        return None
-    return None
-
-
 _OLLAMA_CLOUD_CACHE_TTL = 3600  # 1 hour
 
 

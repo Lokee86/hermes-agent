@@ -10,11 +10,16 @@ ROOT = Path(__file__).resolve().parents[2]
 LOWER_QUERY_FILES = (
     ROOT / "models" / "catalog_static.py",
     ROOT / "models" / "catalog_local.py",
+    ROOT / "models" / "catalog_github.py",
     ROOT / "models" / "codex_catalog.py",
     ROOT / "models" / "models_dev_cache.py",
     ROOT / "models" / "metadata" / "fast_mode.py",
     ROOT / "models" / "metadata" / "github.py",
+    ROOT / "models" / "metadata" / "local.py",
     ROOT / "providers" / "opencode.py",
+    ROOT / "providers" / "github.py",
+    ROOT / "providers" / "route_identity.py",
+    ROOT / "providers" / "routing.py",
 )
 
 
@@ -69,8 +74,67 @@ def test_cli_models_no_longer_owns_moved_runtime_queries():
         "model_supports_fast_mode",
         "resolve_fast_mode_overrides",
         "github_model_reasoning_efforts",
+        "copilot_default_headers",
     }
     assert definitions.isdisjoint(moved)
+
+
+def test_primary_agent_runtime_has_no_cli_model_semantic_dependencies():
+    paths = (
+        ROOT / "agent" / "agent_init.py",
+        ROOT / "agent" / "agent_runtime_helpers.py",
+        ROOT / "agent" / "client_lifecycle.py",
+        ROOT / "agent" / "chat_completion_helpers.py",
+        ROOT / "agent" / "fast_mode.py",
+        ROOT / "agent" / "reasoning_params.py",
+        ROOT / "agent" / "model_metadata.py",
+        ROOT / "agent" / "models_dev.py",
+        ROOT / "agent" / "opencode_affinity.py",
+        *(ROOT / "agent" / "transports").glob("*.py"),
+    )
+    forbidden = (
+        "hermes_cli.models",
+        "hermes_cli.model_switch",
+        "hermes_cli.model_selection",
+        "hermes_cli.models_validate",
+        "hermes_cli.model_catalog",
+    )
+    offenders = []
+    for path in paths:
+        source = path.read_text(encoding="utf-8")
+        for dependency in forbidden:
+            if dependency in source:
+                offenders.append(f"{path.relative_to(ROOT)} -> {dependency}")
+    assert offenders == []
+
+
+def test_agent_warning_and_copilot_headers_have_final_owners():
+    switch_definitions = _definitions(ROOT / "hermes_cli" / "model_switch.py")
+    assert "is_nous_hermes_non_agentic" not in switch_definitions
+    assert "_check_hermes_model_warning" not in switch_definitions
+    assert "copilot_default_headers" not in _definitions(ROOT / "hermes_cli" / "models.py")
+    assert "fetch_github_model_catalog" not in _definitions(ROOT / "hermes_cli" / "models.py")
+    assert "get_copilot_model_context" not in _definitions(ROOT / "hermes_cli" / "models.py")
+    assert "copilot_request_headers" not in _definitions(ROOT / "hermes_cli" / "copilot_auth.py")
+    assert "nous_hermes_non_agentic_warning" in _definitions(ROOT / "agent" / "model_warnings.py")
+    assert "copilot_request_headers" in _definitions(ROOT / "providers" / "github.py")
+    assert "fetch_github_model_catalog" in _definitions(ROOT / "models" / "catalog_github.py")
+    assert "github_model_context_length" in _definitions(ROOT / "models" / "metadata" / "github.py")
+    local_defs = _definitions(ROOT / "models" / "metadata" / "local.py")
+    assert {"lmstudio_model_reasoning_options", "ollama_model_supports_thinking"} <= local_defs
+    old_local_defs = _definitions(ROOT / "hermes_cli" / "models_local.py")
+    assert {"lmstudio_model_reasoning_options", "ollama_model_supports_thinking"}.isdisjoint(old_local_defs)
+
+
+def test_route_identity_and_runtime_kind_have_lower_owners():
+    assert "normalize_route_base_url" not in _definitions(ROOT / "hermes_cli" / "route_identity.py")
+    assert "is_actual_route" not in _definitions(ROOT / "hermes_cli" / "providers.py")
+    assert "_is_external_process_provider" not in _definitions(
+        ROOT / "hermes_cli" / "runtime_provider_backends.py"
+    )
+    assert "normalize_route_base_url" in _definitions(ROOT / "providers" / "route_identity.py")
+    assert "is_actual_route" in _definitions(ROOT / "providers" / "route_identity.py")
+    assert "is_external_process_provider" in _definitions(ROOT / "providers" / "routing.py")
 
 
 def test_static_catalogue_old_owner_is_deleted():

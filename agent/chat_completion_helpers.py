@@ -2141,7 +2141,7 @@ def try_activate_fallback(agent, reason: "FailoverReason | None" = None, reset_a
                     logger.warning("Could not normalize fallback model %r for provider %r: %s", fb_model, fb_provider, _norm_err)
 
                 fb_base_url = str(fb_client.base_url)
-                from hermes_cli.providers import is_actual_route
+                from providers import is_actual_route
                 explicit_route_mode = fb_api_mode if fb_api_mode_explicit else None
                 if is_actual_route(fb_provider, fb_base_url):
                     explicit_route_mode = "chat_completions"

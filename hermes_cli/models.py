@@ -28,8 +28,16 @@ if TYPE_CHECKING:
     from typing import TypeGuard
 
 from models import AmbiguousModelAliasError, MODEL_ALIASES, normalize_model_id, resolve_model_alias
-from providers import get_provider_profile, is_aggregator, list_providers, normalize_provider as _normalize_provider
-from hermes_cli.route_identity import normalize_route_base_url
+from models.catalog_github import fetch_github_model_catalog as _fetch_github_model_catalog
+
+from providers import (
+    copilot_request_headers,
+    get_provider_profile,
+    is_aggregator,
+    list_providers,
+    normalize_provider as _normalize_provider,
+)
+from providers import normalize_route_base_url
 from hermes_cli.urllib_security import open_credentialed_url
 from hermes_cli.version_info import get_version_info
 from models.catalog_static import (
@@ -65,7 +73,6 @@ _HERMES_USER_AGENT = f"hermes-cli/{get_version_info().base_version}"
 
 COPILOT_BASE_URL = "https://api.githubcopilot.com"
 COPILOT_MODELS_URL = f"{COPILOT_BASE_URL}/models"
-COPILOT_EDITOR_VERSION = "vscode/1.104.1"
 
 def _urlopen_model_catalog_request(req: urllib.request.Request, *, timeout: float, ssl_context=None):
     """Open catalog requests without forwarding headers across origins."""
@@ -1992,145 +1999,6 @@ def _fetch_anthropic_models(
         return None
 
 
-def _payload_items(payload: Any) -> list[dict[str, Any]]:
-    data = payload.get("data", []) if isinstance(payload, dict) else payload
-    return [item for item in data if isinstance(item, dict)] if isinstance(data, list) else []
-
-
-def copilot_default_headers(*, is_agent_turn: bool = True) -> dict[str, str]:
-    """Standard headers for Copilot API requests."""
-    try:
-        from hermes_cli.copilot_auth import copilot_request_headers
-        return copilot_request_headers(is_agent_turn=is_agent_turn)
-    except ImportError:
-        return {
-            "Editor-Version": COPILOT_EDITOR_VERSION,
-            "User-Agent": "HermesAgent/1.0",
-            "Openai-Intent": "conversation-edits",
-            "x-initiator": "agent" if is_agent_turn else "user"}
-
-
-_COPILOT_CHAT_ENDPOINTS = {"/chat/completions", "/responses", "/v1/messages"}
-
-
-def _copilot_catalog_item_is_text_model(
-    item: dict[str, Any], *, ignore_picker_flag: bool = False) -> bool:
-    if not str(item.get("id") or "").strip():
-        return False
-    if not ignore_picker_flag and item.get("model_picker_enabled") is False:
-        return False
-    capabilities = item.get("capabilities")
-    if isinstance(capabilities, dict):
-        model_type = str(capabilities.get("type") or "").strip().lower()
-        if model_type and model_type != "chat":
-            return False
-    supported_endpoints = item.get("supported_endpoints")
-    if isinstance(supported_endpoints, list):
-        endpoints = {e for endpoint in supported_endpoints if (e := str(endpoint).strip())}
-        if endpoints and not endpoints & _COPILOT_CHAT_ENDPOINTS:
-            return False
-    return True
-
-
-def _copilot_text_models(items: list[dict[str, Any]], *, ignore_picker_flag: bool = False) -> list[dict[str, Any]]:
-    """Chat-capable catalog rows, deduped by id, in catalog order."""
-    models: list[dict[str, Any]] = []
-    seen_ids: set[str] = set()
-    for item in items:
-        model_id = str(item.get("id") or "").strip()
-        if model_id in seen_ids:
-            continue
-        if not _copilot_catalog_item_is_text_model(item, ignore_picker_flag=ignore_picker_flag):
-            continue
-        seen_ids.add(model_id)
-        models.append(item)
-    return models
-
-
-# Short-TTL cache of the filtered GitHub Copilot /models catalog (picker + context/normalize helpers
-# share it). Keyed by the api_key of the successful fetch so a credential swap never serves the
-# previous account's catalog; monotonic clock; lock-free (a race at worst duplicates one fetch).
-_github_model_catalog_cache: Optional[list[dict[str, Any]]] = None
-_github_model_catalog_cache_key: Optional[str] = None
-_github_model_catalog_cache_time: float = 0.0
-_GITHUB_MODEL_CATALOG_CACHE_TTL = 300  # 5 minutes
-
-
-def fetch_github_model_catalog(
-    api_key: Optional[str] = None, timeout: float = 5.0) -> Optional[list[dict[str, Any]]]:
-    """Fetch the live GitHub Copilot model catalog for this account."""
-    global _github_model_catalog_cache, _github_model_catalog_cache_key
-    global _github_model_catalog_cache_time
-
-    if (
-        _github_model_catalog_cache is not None
-        and _github_model_catalog_cache_key == api_key
-        and (time.monotonic() - _github_model_catalog_cache_time) < _GITHUB_MODEL_CATALOG_CACHE_TTL
-    ):
-        return copy.deepcopy(_github_model_catalog_cache)  # deep: callers must not mutate cached dicts
-
-    attempts: list[dict[str, str]] = []
-    if api_key:
-        attempts.append({**copilot_default_headers(), "Authorization": f"Bearer {api_key}"})
-    attempts.append(copilot_default_headers())
-
-    for headers in attempts:
-        try:
-            items = _payload_items(_get_json(COPILOT_MODELS_URL, timeout=timeout, headers=headers))
-        except Exception:
-            continue
-        models = _copilot_text_models(items)
-        if not models and items:
-            # GitHub has been observed returning ``model_picker_enabled: false`` for EVERY model on
-            # some accounts, which would strand the picker on the stale curated fallback. The flag
-            # is a display hint, not an availability contract — retry without it (chat/endpoint
-            # checks still apply).
-            models = _copilot_text_models(items, ignore_picker_flag=True)
-        if models:
-            _github_model_catalog_cache = copy.deepcopy(models)
-            _github_model_catalog_cache_key = api_key
-            _github_model_catalog_cache_time = time.monotonic()
-            return models
-    return None
-
-
-# ─── Copilot catalog context-window helpers ───
-
-# Module-level cache: {model_id: max_prompt_tokens}
-_copilot_context_cache: dict[str, int] = {}
-_copilot_context_cache_time: float = 0.0
-_copilot_context_cache_key: Optional[str] = None  # fingerprint of the api_key the entry was fetched with
-_COPILOT_CONTEXT_CACHE_TTL = 3600  # 1 hour
-
-
-def get_copilot_model_context(model_id: str, api_key: Optional[str] = None) -> Optional[int]:
-    """``max_prompt_tokens`` for a Copilot model from the live /models API (cached in-process 1h; a
-    miss on a fresh cache does not re-fetch), or None."""
-    global _copilot_context_cache, _copilot_context_cache_time, _copilot_context_cache_key
-
-    # Keyed on the credential like fetch_github_model_catalog: the catalog (and its limits) is
-    # per-account, so another profile's token must not be served this entry.
-    from agent.credential_persistence import fingerprint_secret_value
-    key_fp = fingerprint_secret_value(api_key)
-    if (_copilot_context_cache and _copilot_context_cache_key == key_fp
-            and (time.time() - _copilot_context_cache_time < _COPILOT_CONTEXT_CACHE_TTL)):
-        return _copilot_context_cache.get(model_id)
-
-    catalog = fetch_github_model_catalog(api_key=api_key)
-    if not catalog:
-        return None
-    cache: dict[str, int] = {}
-    for item in catalog:
-        mid = str(item.get("id") or "").strip()
-        max_prompt = ((item.get("capabilities") or {}).get("limits") or {}).get("max_prompt_tokens")
-        if mid and isinstance(max_prompt, int) and max_prompt > 0:
-            cache[mid] = max_prompt
-    _copilot_context_cache = cache
-    _copilot_context_cache_time = time.time()
-    _copilot_context_cache_key = key_fp
-    return cache.get(model_id)
-
-
 def _is_github_models_base_url(base_url: Optional[str]) -> bool:
     return (base_url or "").strip().rstrip("/").lower().startswith(
         (COPILOT_BASE_URL, "https://models.github.ai/inference", "https://models.inference.ai.azure.com")
@@ -2138,14 +2006,14 @@ def _is_github_models_base_url(base_url: Optional[str]) -> bool:
 
 
 def _fetch_github_models(api_key: Optional[str] = None, timeout: float = 5.0) -> Optional[list[str]]:
-    catalog = fetch_github_model_catalog(api_key=api_key, timeout=timeout)
+    catalog = _fetch_github_model_catalog(api_key=api_key, timeout=timeout)
     return [item.get("id", "") for item in catalog if item.get("id")] if catalog else None
 
 
 def _copilot_catalog_ids(
     catalog: Optional[list[dict[str, Any]]] = None, api_key: Optional[str] = None) -> set[str]:
     if catalog is None and api_key:
-        catalog = fetch_github_model_catalog(api_key=api_key)
+        catalog = _fetch_github_model_catalog(api_key=api_key)
     return {mid for item in (catalog or []) if (mid := str(item.get("id") or "").strip())}
 
 
@@ -2241,7 +2109,7 @@ def probe_api_models(
     elif api_key:
         headers["Authorization"] = f"Bearer {api_key}"
     if normalized.startswith(COPILOT_BASE_URL):
-        headers.update(copilot_default_headers())
+        headers.update(copilot_request_headers())
     if isinstance(request_headers, dict):
         # Per-provider custom headers can contain secrets: merge last so endpoint config wins; never log.
         from hermes_cli.config import normalize_extra_headers
@@ -2604,9 +2472,9 @@ _PLUGIN_COMPAT_LAZY = {
     'get_cached_nous_inference_base_url': ('hermes_cli.models_pricing', 'get_cached_nous_inference_base_url'),
     'get_pricing_for_provider': ('hermes_cli.models_pricing', 'get_pricing_for_provider'),
     'group_providers': ('hermes_cli.provider_groups', 'group_providers'),
-    'lmstudio_model_reasoning_options': ('hermes_cli.models_local', 'lmstudio_model_reasoning_options'),
+    'lmstudio_model_reasoning_options': ('models.metadata.local', 'lmstudio_model_reasoning_options'),
     'nous_policy_allowed_ids': ('hermes_cli.models_pricing', 'nous_policy_allowed_ids'),
-    'ollama_model_supports_thinking': ('hermes_cli.models_local', 'ollama_model_supports_thinking'),
+    'ollama_model_supports_thinking': ('models.metadata.local', 'ollama_model_supports_thinking'),
     'peek_cached_pricing': ('hermes_cli.models_pricing', 'peek_cached_pricing'),
     'pricing_cache_scope': ('hermes_cli.models_pricing', 'pricing_cache_scope'),
     'probe_lmstudio_models': ('hermes_cli.models_local', 'probe_lmstudio_models'),

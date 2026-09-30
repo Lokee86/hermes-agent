@@ -1375,7 +1375,7 @@ class _CodexCompletionsAdapter:
         return resp_kwargs, model, timeout
 
     def create(self, **kwargs) -> Any:
-        from hermes_cli.providers import is_actual_route
+        from providers import is_actual_route
 
         if is_actual_route(
             getattr(self._client, "_hermes_aux_effective_provider", ""),
@@ -2022,8 +2022,8 @@ def _resolve_api_key_provider() -> Tuple[Optional[OpenAI], Optional[str]]:
         if base_url_host_matches(base_url, "api.kimi.com"):
             headers = {"User-Agent": "claude-code/0.1.0"}
         elif base_url_host_matches(base_url, "githubcopilot.com"):
-            from hermes_cli.models import copilot_default_headers
-            headers = copilot_default_headers()
+            from providers import copilot_request_headers
+            headers = copilot_request_headers()
         elif base_url_host_matches(base_url, "integrate.api.nvidia.com"):
             headers = build_nvidia_nim_headers(base_url)
         else:
@@ -2049,7 +2049,7 @@ def _endpoint_default_headers(
     if base_url_host_matches(base_url, "api.kimi.com"):
         headers: dict = {"User-Agent": "claude-code/0.1.0"}
     elif base_url_host_matches(base_url, "githubcopilot.com"):
-        from hermes_cli.copilot_auth import copilot_request_headers
+        from providers import copilot_request_headers
         headers = dict(copilot_request_headers(is_agent_turn=True, is_vision=is_vision))
     elif base_url_host_matches(base_url, "integrate.api.nvidia.com"):
         headers = dict(build_nvidia_nim_headers(base_url))
@@ -4712,8 +4712,7 @@ def _log_once_debug(seen: set, key: Any, msg: str, *args: Any) -> None:
 
 def _is_actual_auxiliary_route(req: _ResolveRequest, base_url: str) -> bool:
     from hermes_cli.auth import normalize_actual_base_url
-    from hermes_cli.providers import is_actual_route
-    from hermes_cli.route_identity import normalize_route_base_url
+    from providers import is_actual_route, normalize_route_base_url
 
     if is_actual_route(req.provider, base_url):
         return True

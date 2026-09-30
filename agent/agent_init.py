@@ -36,7 +36,7 @@ from agent.tool_guardrails import (
     ToolCallGuardrailConfig, ToolCallGuardrailController
 )
 from hermes_cli.config import DEFAULT_CONFIG, cfg_get
-from hermes_cli.route_identity import normalize_route_base_url
+from providers import normalize_route_base_url
 from hermes_cli.timeouts import get_provider_request_timeout
 from hermes_constants import get_hermes_home
 from hermes_state_ids import new_session_id
@@ -81,13 +81,12 @@ def _provider_default_routes(provider: str) -> set[str]:
             routes.add(route)
 
     with suppress(Exception):
-        from hermes_cli.providers import get_provider
-        provider_def = get_provider(provider, allow_network=False)
-        add(getattr(provider_def, "base_url", ""))
-
-    with suppress(Exception):
         from providers import get_provider_profile
         add(getattr(get_provider_profile(provider), "base_url", ""))
+
+    with suppress(Exception):
+        from agent.models_dev import get_provider_info
+        add(getattr(get_provider_info(provider, allow_network=False), "api", ""))
 
     with suppress(Exception):
         from hermes_cli.provider_auth import iter_provider_configs
@@ -715,9 +714,9 @@ def _explicit_client_kwargs(agent, api_key, base_url, _provider_timeout) -> Dict
     # ACP/subprocess providers take launch kwargs instead of HTTP credentials. Keyed on the
     # provider profile's auth_type, not one vendor slug, so out-of-tree external_process
     # plugin providers get the same launch path as the built-in copilot-acp (#102421).
-    from hermes_cli.runtime_provider_backends import _is_external_process_provider
+    from providers import is_external_process_provider
 
-    if _is_external_process_provider(agent.provider):
+    if is_external_process_provider(agent.provider, base_url):
         client_kwargs["command"] = agent.acp_command
         client_kwargs["args"] = agent.acp_args
     _headers_for = _host_default_headers_factory(base_url)
@@ -745,8 +744,7 @@ def _routed_client_kwargs(agent, fallback_model, _provider_timeout) -> Optional[
     _routed_client, _ = resolve_provider_client(
         agent.provider or "auto", model=agent.model, raw_codex=True)
     if _routed_client is not None:
-        from hermes_cli.providers import is_actual_route
-        from providers import normalize_provider
+        from providers import is_actual_route, normalize_provider
         effective_provider = getattr(_routed_client, "_hermes_aux_effective_provider", "")
         if is_actual_route(effective_provider):
             agent.provider = normalize_provider(effective_provider)
@@ -884,7 +882,7 @@ def _init_openai_client(agent, api_key, base_url, fallback_model, _provider_time
             if not agent.quiet_mode:
                 print(f"🤖 AI Agent initialized with MoA preset: {agent.model}")
             return
-    from hermes_cli.providers import is_actual_route
+    from providers import is_actual_route
     if is_actual_route(agent.provider, client_kwargs.get("base_url", "")):
         agent.api_mode = "chat_completions"
         if hasattr(agent, "_transport_cache"):
@@ -948,7 +946,7 @@ _HOST_DEFAULT_HEADERS: List[tuple[str, Callable[[Any, str], Dict[str, str]]]] = 
     ("integrate.api.nvidia.com",
      _lazy_headers("agent.auxiliary_client", "build_nvidia_nim_headers", pass_base=True)),
     ("api.routermint.com", _lazy_headers("agent.client_lifecycle", "_routermint_headers")),
-    ("githubcopilot.com", _lazy_headers("hermes_cli.models", "copilot_default_headers")),
+    ("githubcopilot.com", _lazy_headers("providers.github", "copilot_request_headers")),
     ("api.kimi.com", lambda _k, _b: {"User-Agent": "claude-code/0.1.0"}),
     ("portal.qwen.ai", _lazy_headers("agent.client_lifecycle", "_qwen_portal_headers")),
     ("chatgpt.com", _lazy_headers("agent.codex_headers", "codex_cloudflare_headers", pass_key=True)),
@@ -2017,8 +2015,8 @@ def _warn_nonagentic_hermes_model(agent):
     if agent.quiet_mode or (agent.platform or "cli") == "cli":
         return
     with suppress(Exception):
-        from hermes_cli.model_switch import _check_hermes_model_warning
-        _hermes_warn = _check_hermes_model_warning(agent.model or "")
+        from agent.model_warnings import nous_hermes_non_agentic_warning
+        _hermes_warn = nous_hermes_non_agentic_warning(agent.model or "")
         if _hermes_warn:
             _user_msg = (
                 "⚠ Nous Research Hermes 3 & 4 models are NOT agentic — they "

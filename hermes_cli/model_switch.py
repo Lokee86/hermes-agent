@@ -31,6 +31,7 @@ from models.selection import (
     explicit_provider_hint,
     select_explicit_model,
 )
+from agent.model_warnings import nous_hermes_non_agentic_warning
 from hermes_cli.providers import (
     LLAMACPP_ALIASES, resolve_provider_full,
 )
@@ -113,21 +114,6 @@ def _bare_custom_provider_def(current_base_url: str) -> Optional[ResolvedProvide
         base_url=base_url, is_aggregator=False, auth_type="api_key", source="model-config")
 
 
-# --- Non-agentic model warning
-
-_HERMES_MODEL_WARNING = (
-    "Nous Research Hermes 3 & 4 models are NOT agentic and are not designed "
-    "for use with Hermes Agent. They lack the tool-calling capabilities "
-    "required for agent workflows. Consider using an agentic model instead "
-    "(Claude, GPT, Gemini, DeepSeek, etc.).")
-
-# Match only the real Nous Research Hermes 3 / 4 chat families; a bare substring check
-# false-positived on tool-capable local Modelfiles like ``hermes-brain:qwen3-14b-ctx16k``.
-#   match:    NousResearch/Hermes-3-Llama-3.1-70B, hermes-4-405b, openrouter/hermes3:70b
-#   no match: hermes-brain:qwen3-14b-ctx16k, qwen3:14b, claude-opus-4-6
-_NOUS_HERMES_NON_AGENTIC_RE = re.compile(r"(?:^|[/:])hermes[-_ ]?[34](?:[-_.:]|$)", re.IGNORECASE)
-
-
 # Opaque proxy model IDs (Palantir Foundry: ``ri.language-model-service..language-model.<slug>``)
 # are noise in status output; the provider_label already carries the routing context. Stripped
 # for DISPLAY ONLY — never for wire-side comparison, persistence, config writes or alias lookup.
@@ -140,16 +126,6 @@ def format_model_for_display(model_name: str) -> str:
         if model_name and model_name.startswith(prefix):
             return model_name[len(prefix):] or model_name
     return model_name
-
-
-def is_nous_hermes_non_agentic(model_name: str) -> bool:
-    """True if *model_name* is a real Nous Hermes 3/4 chat model (single owner; cli.py uses it too)."""
-    return bool(model_name and _NOUS_HERMES_NON_AGENTIC_RE.search(model_name))
-
-
-def _check_hermes_model_warning(model_name: str) -> str:
-    """Warning string if *model_name* is a Nous Hermes 3/4 chat model, else ""."""
-    return _HERMES_MODEL_WARNING if is_nous_hermes_non_agentic(model_name) else ""
 
 
 # --- Direct aliases — exact model+provider+base_url for endpoints outside the
@@ -1648,7 +1624,7 @@ def _build_switch_result(st: _Switch) -> ModelSwitchResult:
         is_codex_backend=st.target_provider.strip().lower() == "openai-codex")
     model_info = get_model_info(st.target_provider, st.new_model, allow_network=True)
 
-    warnings = [w for w in (st.validation.get("message"), _check_hermes_model_warning(st.new_model)) if w]
+    warnings = [w for w in (st.validation.get("message"), nous_hermes_non_agentic_warning(st.new_model)) if w]
 
     # Carry the switched provider's request_overrides (custom_providers ``extra_body`` such as
     # chat_template_kwargs) so the gateway applies them like the default-provider path does.
@@ -1734,7 +1710,7 @@ def model_selection_config_updates(result: ModelSwitchResult, current_model_cfg:
 
 def _route_changed(model_cfg: dict, result: ModelSwitchResult) -> bool:
     """Provider or endpoint differs between the on-disk ``model:`` block and the switch target."""
-    from hermes_cli.route_identity import normalize_route_base_url
+    from providers import normalize_route_base_url
     if str(model_cfg.get("provider") or "").strip().lower() != str(result.target_provider or "").strip().lower():
         return True
     return normalize_route_base_url(model_cfg.get("base_url")) != normalize_route_base_url(result.base_url)

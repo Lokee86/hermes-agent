@@ -174,12 +174,18 @@ def endpoint_api_mode(base_url: str) -> str | None:
 
 
 def _get_profile(provider: str) -> ProviderProfile | None:
-    """Resolve a profile through the canonical provider registry only."""
+    """Resolve the provider profile used for invocation routing.
 
-    from providers.registry import get_provider_profile
+    ``openai`` is the historical runtime identity for direct OpenAI traffic;
+    its canonical registry profile is ``openai-api``. Preserve the runtime
+    identity while sourcing endpoint/API-mode facts from that profile.
+    """
 
+    from providers import get_provider_profile
+
+    lookup = "openai-api" if normalize_provider(provider) == "openai" else provider
     try:
-        return get_provider_profile(provider)
+        return get_provider_profile(lookup)
     except Exception:
         return None
 
@@ -250,6 +256,12 @@ def _is_external_process_route(profile: ProviderProfile | None, base_url: str) -
     parsed = _parsed_url(base_url)
     scheme = (parsed.scheme or "").lower() if parsed is not None else ""
     return scheme in {"acp", "acp+tcp", "stdio", "process"}
+
+
+def is_external_process_provider(provider: str, base_url: str = "") -> bool:
+    """Whether the canonical provider route uses an external process."""
+    profile = _get_profile(normalize_provider(provider))
+    return _is_external_process_route(profile, base_url)
 
 
 def _generic_model_policy(
@@ -394,6 +406,7 @@ __all__ = [
     "RuntimeKind",
     "canonicalize_api_mode",
     "endpoint_api_mode",
+    "is_external_process_provider",
     "normalize_provider_base_url",
     "resolve_invocation_route",
 ]

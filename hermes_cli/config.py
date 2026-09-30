@@ -4094,7 +4094,7 @@ def stamp_install_method(method: str, project_root: Optional[Path] = None) -> No
 
 
 _PLUGIN_COMPAT_LAZY = {
-    'normalize_route_base_url': ('hermes_cli.route_identity', 'normalize_route_base_url'),
+    'normalize_route_base_url': ('providers.route_identity', 'normalize_route_base_url'),
 }
 
 

@@ -43,7 +43,7 @@ _ROUTE_DEFAULT_HEADERS = (
     ("ai-gateway.vercel.sh", lambda self, url: dict(_lazy_attr("agent.auxiliary_client", "_AI_GATEWAY_HEADERS"))),
     ("integrate.api.nvidia.com", lambda self, url: _lazy_attr("agent.auxiliary_client", "build_nvidia_nim_headers")(url)),
     ("api.routermint.com", lambda self, url: _routermint_headers()),
-    ("githubcopilot.com", lambda self, url: _lazy_attr("hermes_cli.models", "copilot_default_headers")()),
+    ("githubcopilot.com", lambda self, url: _lazy_attr("providers.github", "copilot_request_headers")()),
     ("api.kimi.com", lambda self, url: dict(_lazy_attr("agent.auxiliary_client", "_AI_GATEWAY_HEADERS"))),
     ("portal.qwen.ai", lambda self, url: _qwen_portal_headers()),
     ("chatgpt.com", lambda self, url: _lazy_attr("agent.codex_headers", "codex_cloudflare_headers")(
@@ -451,7 +451,7 @@ class ClientLifecycleMixin:
         request_kwargs["max_retries"] = 0
         is_copilot = base_url_host_matches(str(request_kwargs.get("base_url", "")), "githubcopilot.com")
         if is_copilot and self._api_kwargs_have_image_parts(api_kwargs or {}):
-            from hermes_cli.copilot_auth import copilot_request_headers
+            from providers import copilot_request_headers
             request_kwargs["default_headers"] = copilot_request_headers(is_agent_turn=True, is_vision=True)
         cached, stale = self._checkout_request_slot(_OPENAI_SLOT, request_kwargs)
         if cached is not None:
@@ -761,7 +761,7 @@ class ClientLifecycleMixin:
         if not self._should_adopt_env_credentials(api_key, base_url, default_base):
             self._env_creds_seen = (base_url, api_key)
             return False
-        from hermes_cli.route_identity import normalize_route_base_url
+        from providers import normalize_route_base_url
         route_changed = normalize_route_base_url(self.base_url) != normalize_route_base_url(base_url)
         prior_api_key, prior_base_url = self.api_key, self.base_url
         prior_client_kwargs = dict(self._client_kwargs)
@@ -954,7 +954,7 @@ class ClientLifecycleMixin:
         rotation; the caller treats a refused swap as "no entry")."""
         runtime_key = getattr(entry, "runtime_api_key", None) or getattr(entry, "access_token", "")
         runtime_base = getattr(entry, "runtime_base_url", None) or getattr(entry, "base_url", None) or self.base_url
-        from hermes_cli.providers import is_actual_route
+        from providers import is_actual_route
         actual_route = is_actual_route(getattr(self, "provider", ""), runtime_base)
         if actual_route:
             from hermes_cli.auth import normalize_actual_base_url
@@ -970,7 +970,7 @@ class ClientLifecycleMixin:
             if hasattr(self, "_transport_cache"):
                 self._transport_cache.clear()
         self._credential_pool_entry_id = getattr(entry, "id", None)
-        from hermes_cli.route_identity import normalize_route_base_url
+        from providers import normalize_route_base_url
         route_changed = normalize_route_base_url(self.base_url) != normalize_route_base_url(runtime_base)
         if self.api_mode == "anthropic_messages":
             with suppress(Exception):

@@ -198,6 +198,13 @@ def test_app_server_runtime_is_an_openai_runtime_overlay(monkeypatch):
     assert route.source in {"provider_policy", "profile"}
 
 
+def test_historical_openai_runtime_identity_uses_direct_api_profile():
+    route = resolve_invocation_route(InvocationRequest(provider="openai", model="gpt-5.6"))
+    assert route.provider == "openai"
+    assert route.base_url == "https://api.openai.com/v1"
+    assert route.api_mode == "codex_responses"
+
+
 def test_hard_endpoint_mandate_beats_app_server_overlay():
     route = resolve_invocation_route(
         InvocationRequest(

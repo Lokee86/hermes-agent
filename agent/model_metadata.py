@@ -102,8 +102,8 @@ def install_context_metadata_hooks() -> None:
         return get_custom_provider_context_length(model=model, base_url=base_url, custom_providers=custom_providers)
 
     def copilot_context_length(model: str, *, api_key: str):
-        from hermes_cli.models import get_copilot_model_context
-        return get_copilot_model_context(model, api_key=api_key)
+        from models.metadata.github import github_model_context_length
+        return github_model_context_length(model, api_key=api_key)
 
     def models_dev_context_length(provider: str, model: str):
         from agent.models_dev import lookup_models_dev_context

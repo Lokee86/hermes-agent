@@ -2,7 +2,7 @@
 
 Core routes GPT-5+/Codex -> codex_responses and Claude -> anthropic_messages;
 this profile covers the chat_completions remainder: editor attribution headers
-(copilot_default_headers()) and catalog-gated GitHub Models reasoning.
+(providers.github.copilot_request_headers) and catalog-gated GitHub Models reasoning.
 """
 
 import re

@@ -222,3 +222,57 @@ Verification:
 The remaining upward dependencies in the Phase 5.8 manifest are consumer
 migration work for 5.8.3-5.8.7, not duplicate owners for the shared query
 surfaces closed here.
+
+## Phase 5.8.3 closeout — agent init and primary client lifecycle
+
+Phase 5.8.3 hard-cuts the primary agent/runtime path away from CLI-owned
+provider/model semantics. Configuration loading, authentication, persistence,
+plugin dispatch, and other application mechanics remain application-owned;
+provider/model interpretation now flows through the canonical lower domains.
+
+Ownership changes:
+
+- Canonical route URL normalization and Actual-route identity moved to
+  `providers.route_identity`; primary runtime and client-lifecycle consumers
+  no longer import those facts from `hermes_cli`.
+- External-process runtime classification is owned by `providers.routing`.
+  Agent initialization consumes that query directly rather than the CLI runtime
+  backend helper.
+- GitHub Copilot transport-header policy moved to `providers.github`.
+  Authentication/token exchange remains in `hermes_cli.copilot_auth`.
+- The Nous Hermes 3/4 suitability warning moved to
+  `agent.model_warnings`, separating application warning/presentation policy
+  from the CLI model-switch coordinator.
+- GitHub Copilot live catalogue acquisition moved to
+  `models.catalog_github`; account-scoped context-window interpretation moved
+  to `models.metadata.github`.
+- LM Studio reasoning-option and Ollama thinking-capability probes moved to
+  `models.metadata.local`; runtime reasoning consumers no longer depend on
+  `hermes_cli.models_local` for capability truth.
+- The historical runtime identity `openai` now obtains direct-API endpoint and
+  API-mode facts from the canonical `openai-api` provider profile without
+  rewriting the runtime identity.
+- Primary runtime consumers in `agent_init.py`,
+  `agent_runtime_helpers.py`, `client_lifecycle.py`,
+  `chat_completion_helpers.py`, `fast_mode.py`, `reasoning_params.py`,
+  `model_metadata.py`, `models_dev.py`, `opencode_affinity.py`, and
+  `agent/transports/*.py` have no dependency on
+  `hermes_cli.models*`, `hermes_cli.model_switch*`,
+  `hermes_cli.model_selection*`, `hermes_cli.models_validate`, or
+  `hermes_cli.model_catalog`.
+- No forwarding façade was retained for the newly moved GitHub catalogue/context
+  surfaces; remaining application consumers import their lower owner directly.
+
+Verification:
+
+- Targeted `py_compile`, `ruff check`, and `git diff --check`: clean.
+- Primary runtime ownership grep: zero scoped upward model-semantic references.
+- Focused runtime/ownership gate before final façade cleanup:
+  **137 passed, 2 skipped, 2 failed**. Both failures are the already-recorded
+  Copilot cases in the inherited **Auxiliary main-first routing** category; no
+  new focused failure remained.
+- Provider-routing regression for historical `openai` identity:
+  **11 passed** including the previously failing cross-provider switch case.
+
+Phase 5.8.3 does not claim auxiliary runtime ownership; the inherited Copilot
+auxiliary failures and the broader auxiliary migration remain Phase 5.8.4 work.

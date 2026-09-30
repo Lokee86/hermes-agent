@@ -11,7 +11,7 @@ import re
 from typing import Any, Dict, Iterator, List, Optional, Tuple
 from urllib.parse import urlparse
 
-from hermes_cli.route_identity import normalize_route_base_url
+from providers import normalize_route_base_url
 from providers.routing import canonicalize_api_mode
 
 # Log-record parity with the origin module.

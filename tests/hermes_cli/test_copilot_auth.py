@@ -121,7 +121,7 @@ class TestRequestHeaders:
     """Copilot API header generation."""
 
     def test_default_headers_include_openai_intent(self):
-        from hermes_cli.copilot_auth import copilot_request_headers
+        from providers import copilot_request_headers
         headers = copilot_request_headers()
         assert headers["Openai-Intent"] == "conversation-edits"
         assert headers["User-Agent"] == "HermesAgent/1.0"
@@ -129,20 +129,20 @@ class TestRequestHeaders:
 
 
     def test_no_vision_header_by_default(self):
-        from hermes_cli.copilot_auth import copilot_request_headers
+        from providers import copilot_request_headers
         headers = copilot_request_headers()
         assert "Copilot-Vision-Request" not in headers
 
 
 class TestCopilotDefaultHeaders:
-    """The models.py copilot_default_headers uses copilot_auth."""
+    """Copilot transport headers are provider-owned."""
 
 
     def test_param_passthrough_both_values(self):
         """is_agent_turn param correctly maps to x-initiator for both True and False."""
-        from hermes_cli.models import copilot_default_headers
+        from providers import copilot_request_headers
         for is_agent, expected in [(True, "agent"), (False, "user")]:
-            headers = copilot_default_headers(is_agent_turn=is_agent)
+            headers = copilot_request_headers(is_agent_turn=is_agent)
             assert headers["x-initiator"] == expected, (
                 f"is_agent_turn={is_agent} should produce x-initiator={expected!r}, "
                 f"got {headers['x-initiator']!r}"

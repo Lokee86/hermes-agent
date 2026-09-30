@@ -200,7 +200,7 @@ class CLIInfoMixin:
                 fix = "Fix: Set model.context_length in config.yaml, or increase your server's context setting"
             self._console_print(f"[dim]   {fix}[/]")
 
-        from hermes_cli.model_switch import is_nous_hermes_non_agentic
+        from agent.model_warnings import is_nous_hermes_non_agentic
         if is_nous_hermes_non_agentic(getattr(self, "model", "") or ""):
             self._console_print()
             self._console_print(
