@@ -122,7 +122,7 @@ from models.selection import auxiliary_task_prefers_fast_model
 from hermes_cli.config import get_hermes_home
 from providers.routing import canonicalize_api_mode
 from hermes_cli.provider_auth import get_provider_config, iter_provider_configs
-from hermes_cli.model_selection_auxiliary import (
+from agent.auxiliary_model_resolution import (
     is_declared_vision_default,
     provider_rejects_vision_input,
     provider_vision_default,

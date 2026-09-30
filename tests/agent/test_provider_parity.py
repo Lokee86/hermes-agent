@@ -712,7 +712,7 @@ class TestAuxiliaryClientProviderPriority:
     def test_openrouter_always_wins(self, monkeypatch):
         monkeypatch.setenv("OPENROUTER_API_KEY", "or-key")
         from agent.auxiliary_client import get_text_auxiliary_client
-        from hermes_cli.model_selection_auxiliary import select_provider_auxiliary_fallback
+        from agent.auxiliary_model_resolution import select_provider_auxiliary_fallback
         with patch("agent.auxiliary_client.OpenAI") as mock:
             client, model = get_text_auxiliary_client()
         assert model == select_provider_auxiliary_fallback("openrouter")
@@ -721,7 +721,7 @@ class TestAuxiliaryClientProviderPriority:
     def test_nous_when_no_openrouter(self, monkeypatch):
         monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
         from agent.auxiliary_client import get_text_auxiliary_client
-        from hermes_cli.model_selection_auxiliary import select_provider_auxiliary_fallback
+        from agent.auxiliary_model_resolution import select_provider_auxiliary_fallback
         nous_auth = {
             "access_token": _fake_invoke_jwt(),
             "scope": "inference:invoke",

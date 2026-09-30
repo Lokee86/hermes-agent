@@ -1,4 +1,4 @@
-"""Application-side fact acquisition for canonical auxiliary-model selection."""
+"""Runtime fact acquisition for canonical auxiliary-model selection."""
 
 from __future__ import annotations
 

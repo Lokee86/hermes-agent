@@ -1,6 +1,6 @@
 from types import SimpleNamespace
 
-from hermes_cli import model_selection_auxiliary as auxiliary
+from agent import auxiliary_model_resolution as auxiliary
 
 
 def test_profile_default_is_the_provider_auxiliary_source(monkeypatch):

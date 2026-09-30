@@ -17,7 +17,7 @@ import logging
 class TestAuxiliaryOpenrouterDefaultIsFree:
     def test_builtin_openrouter_default_is_free_sku(self):
         from agent import auxiliary_client as ac
-        from hermes_cli.model_selection_auxiliary import select_provider_auxiliary_fallback
+        from agent.auxiliary_model_resolution import select_provider_auxiliary_fallback
 
         model = select_provider_auxiliary_fallback("openrouter")
         assert ac._is_free_model(model), (

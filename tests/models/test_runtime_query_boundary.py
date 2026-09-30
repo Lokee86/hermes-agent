@@ -141,6 +141,15 @@ def test_static_catalogue_old_owner_is_deleted():
     assert not (ROOT / "hermes_cli" / "models_catalog_static.py").exists()
 
 
+def test_auxiliary_model_resolution_is_not_cli_owned():
+    runtime = ROOT / "agent" / "auxiliary_model_resolution.py"
+    assert runtime.exists()
+    assert not (ROOT / "hermes_cli" / "model_selection_auxiliary.py").exists()
+    assert "hermes_cli.model_selection_auxiliary" not in (
+        ROOT / "agent" / "auxiliary_client.py"
+    ).read_text(encoding="utf-8")
+
+
 def test_models_dev_persistence_is_lower_owned():
     definitions = _definitions(ROOT / "agent" / "models_dev.py")
     obsolete = {

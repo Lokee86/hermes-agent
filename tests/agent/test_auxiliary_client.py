@@ -5157,7 +5157,7 @@ class TestFastModelTier:
 
     def test_fast_catalog_fetch_is_authenticated(self):
         """Fact acquisition authenticates the catalog without choosing the model."""
-        from hermes_cli import model_selection_auxiliary as selection_aux
+        from agent import auxiliary_model_resolution as selection_aux
 
         with patch(
             "hermes_cli.auth.resolve_api_key_provider_credentials",
@@ -5172,7 +5172,7 @@ class TestFastModelTier:
         assert fetch.call_args.kwargs["base_url"] == "https://api.example.com"
 
     def test_fast_tier_falls_back_to_profile_default_when_catalog_unavailable(self):
-        from hermes_cli import model_selection_auxiliary as selection_aux
+        from agent import auxiliary_model_resolution as selection_aux
 
         with patch.object(selection_aux, "_fast_catalog_ids", return_value=()):
             fast = selection_aux.select_provider_auxiliary_model(
@@ -5183,7 +5183,7 @@ class TestFastModelTier:
 
     def test_fast_tier_is_opt_in(self):
         """Without prefer_fast the resolver must not touch the live catalog."""
-        from hermes_cli import model_selection_auxiliary as selection_aux
+        from agent import auxiliary_model_resolution as selection_aux
 
         with patch.object(selection_aux, "_fast_catalog_ids") as spy:
             selection_aux.select_provider_auxiliary_model("anthropic")

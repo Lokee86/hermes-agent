@@ -972,7 +972,7 @@ class TestDeepInfraProviderProfile:
 
     def test_profile_registered_with_alias_and_aux(self):
         from providers import get_provider_profile
-        from hermes_cli.model_selection_auxiliary import select_provider_auxiliary_model
+        from agent.auxiliary_model_resolution import select_provider_auxiliary_model
         from hermes_cli.auth import resolve_provider
         from hermes_cli.config import OPTIONAL_ENV_VARS
         from hermes_cli.provider_catalog import provider_catalog_by_slug
