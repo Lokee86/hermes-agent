@@ -728,7 +728,7 @@ class TestAuxiliaryClientProviderPriority:
         }
         with patch("agent.auxiliary_client._read_nous_auth", return_value=nous_auth), \
              patch("agent.auxiliary_client.OpenAI") as mock, \
-             patch("hermes_cli.models.get_nous_recommended_aux_model", return_value=None):
+             patch("agent.auxiliary_client.get_provider_profile", return_value=SimpleNamespace(resolve_aux_model=lambda **_kw: "")):
             client, model = get_text_auxiliary_client()
         assert model == select_provider_auxiliary_fallback("nous")
 

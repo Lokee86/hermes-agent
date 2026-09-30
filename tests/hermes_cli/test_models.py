@@ -341,7 +341,7 @@ class TestCheckNousFreeTierCache:
 
 
 class TestNousRecommendedModels:
-    """Tests for fetch_nous_recommended_models + get_nous_recommended_aux_model."""
+    """Tests for Portal recommendation acquisition and provider-owned selection."""
 
     _SAMPLE_PAYLOAD = {
         "paidRecommendedModels": [],
@@ -386,33 +386,35 @@ class TestNousRecommendedModels:
 
 
     def test_paid_tier_prefers_paid_recommendation(self):
-        """Paid-tier users should get the paid model when it's populated."""
-        from hermes_cli.models import get_nous_recommended_aux_model
+        """Provider-domain selection prefers paid recommendations when available."""
+        from providers.nous_recommendations import recommended_aux_model
         payload = {
             "paidRecommendedCompactionModel": {"modelName": "anthropic/claude-opus-4.7"},
             "freeRecommendedCompactionModel": {"modelName": "google/gemini-3-flash-preview"},
             "paidRecommendedVisionModel": {"modelName": "openai/gpt-5.4"},
             "freeRecommendedVisionModel": {"modelName": "google/gemini-3-flash-preview"},
         }
-        with patch("hermes_cli.models.fetch_nous_recommended_models", return_value=payload):
-            text = get_nous_recommended_aux_model(vision=False, free_tier=False)
-            vision = get_nous_recommended_aux_model(vision=True, free_tier=False)
+        text = recommended_aux_model(payload, vision=False, free_tier=False)
+        vision = recommended_aux_model(payload, vision=True, free_tier=False)
         assert text == "anthropic/claude-opus-4.7"
         assert vision == "openai/gpt-5.4"
 
 
     def test_tier_detection_error_defaults_to_paid(self):
-        """If tier detection raises, assume paid so we don't downgrade silently."""
-        from hermes_cli.models import get_nous_recommended_aux_model
+        """Nous provider defaults to paid semantics when tier acquisition fails."""
+        import model_tools  # noqa: F401 -- trigger provider discovery
+        from providers import get_provider_profile
+
         payload = {
             "paidRecommendedCompactionModel": {"modelName": "paid-model"},
             "freeRecommendedCompactionModel": {"modelName": "free-model"},
         }
         with (
             patch("hermes_cli.models.fetch_nous_recommended_models", return_value=payload),
+            patch("hermes_cli.models._resolve_nous_portal_url", return_value="https://portal.example.com"),
             patch("hermes_cli.models.check_nous_free_tier", side_effect=RuntimeError("boom")),
         ):
-            assert get_nous_recommended_aux_model(vision=False) == "paid-model"
+            assert get_provider_profile("nous").resolve_aux_model(vision=False) == "paid-model"
 
 
 class TestCodexSoftAcceptPlausibilityGate:

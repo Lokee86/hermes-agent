@@ -1,5 +1,6 @@
 """Regression coverage for authoritative auxiliary main-runtime routing."""
 
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 
@@ -57,14 +58,14 @@ def test_vision_named_custom_reuses_same_live_route():
         "agent.auxiliary_client.get_configured_provider_entry",
         return_value={"base_url": "https://configured.example/v1"},
     ), patch(
-        "agent.auxiliary_client.provider_rejects_vision_input",
-        return_value=False,
+        "agent.auxiliary_client.get_provider_profile",
+        return_value=SimpleNamespace(rejects_vision_input=False, default_vision_model=lambda: "vision-model"),
     ), patch(
-        "agent.auxiliary_client._main_model_supports_vision",
+        "agent.auxiliary_client.resolve_supports_vision",
         return_value=True,
     ), patch(
-        "agent.auxiliary_client.select_provider_vision_model",
-        return_value="vision-model",
+        "hermes_cli.config.load_config_readonly",
+        return_value={},
     ), patch(
         "agent.auxiliary_client.resolve_provider_client",
         return_value=(client, "vision-model"),
@@ -90,14 +91,14 @@ def test_vision_named_custom_reuses_same_live_route():
 def test_vision_without_live_endpoint_leaves_config_resolution_to_provider_branch():
     client = MagicMock()
     with patch(
-        "agent.auxiliary_client.provider_rejects_vision_input",
-        return_value=False,
+        "agent.auxiliary_client.get_provider_profile",
+        return_value=SimpleNamespace(rejects_vision_input=False, default_vision_model=lambda: "vision-model"),
     ), patch(
-        "agent.auxiliary_client._main_model_supports_vision",
+        "agent.auxiliary_client.resolve_supports_vision",
         return_value=True,
     ), patch(
-        "agent.auxiliary_client.select_provider_vision_model",
-        return_value="vision-model",
+        "hermes_cli.config.load_config_readonly",
+        return_value={},
     ), patch(
         "agent.auxiliary_client._resolve_custom_runtime",
     ) as legacy_resolve, patch(
@@ -118,8 +119,6 @@ def test_vision_without_live_endpoint_leaves_config_resolution_to_provider_branc
 
 
 def test_agent_runtime_snapshot_exports_requested_provider():
-    from types import SimpleNamespace
-
     from run_agent import AIAgent
 
     agent = SimpleNamespace(

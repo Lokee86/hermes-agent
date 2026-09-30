@@ -7,7 +7,6 @@ import logging
 from models.selection import (
     select_auxiliary_fallback_model,
     select_auxiliary_model,
-    select_vision_auxiliary_model,
     selected_auxiliary_model_id,
 )
 
@@ -137,63 +136,7 @@ def select_provider_auxiliary_fallback(
     return selected_auxiliary_model_id(selection)
 
 
-def provider_vision_default(provider: str) -> str:
-    """Provider-declared vision default; discovery remains provider-owned."""
-
-    try:
-        from providers import get_provider_profile
-        profile = get_provider_profile(str(provider or "").strip().lower())
-        return str(profile.default_vision_model() or "") if profile is not None else ""
-    except Exception:
-        logger.debug("Vision default lookup failed for %s", provider, exc_info=True)
-        return ""
-
-
-def is_declared_vision_default(model: str | None) -> bool:
-    """Whether a model id is declared as a static provider vision default."""
-
-    target = str(model or "").strip().lower()
-    if not target:
-        return False
-    try:
-        from providers import list_providers
-        return any(
-            str(getattr(profile, "default_vision_model_id", "") or "").strip().lower() == target
-            for profile in list_providers()
-        )
-    except Exception:
-        return False
-
-
-def provider_rejects_vision_input(provider: str) -> bool:
-    """Whether the provider profile explicitly rejects image input."""
-
-    try:
-        from providers import get_provider_profile
-        profile = get_provider_profile(str(provider or "").strip().lower())
-        return bool(profile is not None and profile.rejects_vision_input)
-    except Exception:
-        return False
-
-
-def select_provider_vision_model(
-    provider: str,
-    *,
-    explicit_model: str = "",
-    main_model: str = "",
-    main_supports_vision: bool | None = None,
-) -> str:
-    selection = select_vision_auxiliary_model(
-        provider,
-        explicit_model=explicit_model,
-        vision_default=provider_vision_default(provider),
-        main_model=main_model,
-        main_supports_vision=main_supports_vision,
-    )
-    return selected_auxiliary_model_id(selection)
-
-
 __all__ = [
-    "is_declared_vision_default", "provider_rejects_vision_input", "provider_vision_default",
-    "select_provider_auxiliary_fallback", "select_provider_auxiliary_model", "select_provider_vision_model",
+    "select_provider_auxiliary_fallback",
+    "select_provider_auxiliary_model",
 ]

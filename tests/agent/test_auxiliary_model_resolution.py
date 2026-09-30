@@ -42,12 +42,18 @@ def test_declarative_provider_aux_and_vision_defaults_are_registered():
     assert get_provider_profile("zai").default_vision_model() == "glm-5.3-flash"
 
 
-def test_kimi_profiles_declare_vision_rejection():
-    assert auxiliary.provider_rejects_vision_input("kimi-coding") is True
-    assert auxiliary.provider_rejects_vision_input("kimi-coding-cn") is True
+def test_provider_profiles_own_vision_rejection():
+    from providers import get_provider_profile
+
+    assert get_provider_profile("kimi-coding").rejects_vision_input is True
+    assert get_provider_profile("kimi-coding-cn").rejects_vision_input is True
 
 
-def test_declared_vision_default_lookup_does_not_need_live_discovery():
-    assert auxiliary.is_declared_vision_default("mimo-v2.5") is True
-    assert auxiliary.is_declared_vision_default("glm-5.3-flash") is True
-    assert auxiliary.is_declared_vision_default("not-a-default") is False
+def test_auxiliary_resolution_exports_no_vision_semantic_adapters():
+    for obsolete in (
+        "provider_rejects_vision_input",
+        "provider_vision_default",
+        "is_declared_vision_default",
+        "select_provider_vision_model",
+    ):
+        assert not hasattr(auxiliary, obsolete)

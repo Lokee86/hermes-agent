@@ -117,19 +117,23 @@ def aux_probe_mode():
 
 
 from agent.credential_pool import load_pool
+from agent.model_capability_sources import default_capability_sources
+from models import ModelRef
+from models.metadata import ModelMetadataContext, resolve_supports_vision
 from models.metadata.context import MINIMUM_CONTEXT_LENGTH, get_model_context_length
-from models.selection import auxiliary_task_prefers_fast_model
+from models.selection import (
+    auxiliary_task_prefers_fast_model,
+    select_vision_auxiliary_model,
+    selected_auxiliary_model_id,
+)
 from hermes_cli.config import get_hermes_home
+from providers import get_provider_profile
 from providers.routing import canonicalize_api_mode
 from hermes_cli.provider_auth import get_provider_config, iter_provider_configs
 from agent.configured_provider_resolution import get_configured_provider_entry
 from agent.auxiliary_model_resolution import (
-    is_declared_vision_default,
-    provider_rejects_vision_input,
-    provider_vision_default,
     select_provider_auxiliary_fallback,
     select_provider_auxiliary_model,
-    select_provider_vision_model,
 )
 from agent.auxiliary_health import (
     _custom_health_base_url, _unhealthy_cache_key, fallback_candidate_quarantine_ttl,
@@ -2223,15 +2227,15 @@ def _try_nous(vision: bool = False) -> Tuple[Optional[OpenAI], Optional[str]]:
         return _create_openai_client(api_key=api_key, base_url=base_url), GUEST_MODEL
     auxiliary_is_nous = True
     logger.debug("Auxiliary client: Nous Portal")
-    # Portal recommendation is authoritative; provider-declared fallback handles misses.
-    # Probes skip the lookup: exact model is irrelevant and it hits the network.
+    # Provider-owned recommendation is authoritative; provider-declared fallback handles misses.
+    # Probes skip the lookup: exact model is irrelevant and it may hit the network.
     recommended = ""
     if not _aux_probe_active():
         try:
-            from hermes_cli.models import get_nous_recommended_aux_model
-            recommended = get_nous_recommended_aux_model(vision=vision) or ""
+            profile = get_provider_profile("nous")
+            recommended = str(profile.resolve_aux_model(vision=vision) or "") if profile else ""
         except Exception as exc:
-            logger.debug("Auxiliary/%s: recommended-models lookup failed (%s)", lane, exc)
+            logger.debug("Auxiliary/%s: provider recommendation lookup failed (%s)", lane, exc)
     model = select_provider_auxiliary_fallback("nous", preferred_model=recommended)
     if not model:
         return None, None
@@ -2248,10 +2252,10 @@ def _refresh_nous_recommended_model(*, vision: bool, stale_model: Optional[str])
     stale = (stale_model or "").strip().lower()
     fresh: Optional[str] = None
     try:
-        from hermes_cli.models import get_nous_recommended_aux_model
-        fresh = get_nous_recommended_aux_model(vision=vision, force_refresh=True)
+        profile = get_provider_profile("nous")
+        fresh = profile.resolve_aux_model(vision=vision, force_refresh=True) if profile else None
     except Exception as exc:
-        logger.debug("Nous recommended-model refresh failed (%s)", exc)
+        logger.debug("Nous provider recommendation refresh failed (%s)", exc)
     return select_provider_auxiliary_fallback(
         "nous", preferred_model=fresh or "", excluded_model=stale
     ) or None
@@ -4107,13 +4111,39 @@ def _try_main_agent_model_fallback(
         main_provider, main_model = _agg_provider, _agg_model
     if not main_provider or not main_model or main_provider.lower() in {"auto", ""}:
         return None, None, ""
-    if task == "vision" and (
-            provider_rejects_vision_input(main_provider) or not _main_model_supports_vision(main_provider, main_model)):
-        # Same capability gate as the auto-route (_vision_main_provider_client): handing an image to a
-        # text-only main model turns a transient 429 into a guaranteed 400 (#108349).
-        logger.info("Auxiliary vision: %s on %s — main agent provider %s accepts no image input, not falling back",
-                    reason, failed_provider, main_provider)
-        return None, None, ""
+    if task == "vision":
+        profile = get_provider_profile(main_provider)
+        rejects_vision = bool(profile is not None and profile.rejects_vision_input)
+        supports_vision: Optional[bool] = None
+        if not rejects_vision:
+            try:
+                from agent.image_routing import _vision_override_patches
+                from hermes_cli.config import load_config_readonly
+
+                cfg = load_config_readonly()
+                explicit_fact, configured_fact = _vision_override_patches(
+                    cfg, main_provider, main_model,
+                )
+                supports_vision = resolve_supports_vision(
+                    ModelRef(main_provider, main_model),
+                    context=ModelMetadataContext(
+                        route_provider=main_provider,
+                        allow_network=True,
+                        explicit=explicit_fact,
+                        configured=configured_fact,
+                    ),
+                    sources=default_capability_sources(),
+                )
+            except Exception:
+                logger.debug("Main fallback vision capability lookup failed", exc_info=True)
+        if rejects_vision or supports_vision is False:
+            # Same capability gate as the auto-route: handing an image to a known text-only
+            # main model turns a transient 429 into a guaranteed 400 (#108349).
+            logger.info(
+                "Auxiliary vision: %s on %s — main agent provider %s accepts no image input, not falling back",
+                reason, failed_provider, main_provider,
+            )
+            return None, None, ""
     main_base_url = _custom_health_base_url(main_provider)
     if _failed_backend_skip(
             failed_provider, failed_model, failed_base_url=failed_base_url,
@@ -4865,12 +4895,26 @@ def _resolve_openrouter_branch(req: _ResolveRequest) -> _ResolveResult:
 def _resolve_nous_branch(req: _ResolveRequest) -> _ResolveResult:
     """Nous Portal (OAuth)."""
     model = req.model
-    # Vision: caller flag, a provider-declared vision default, or a known vision id.
-    client, default = _try_nous(vision=(
-        req.is_vision
-        or is_declared_vision_default(model)
-        or (model or "").strip().lower() == "mimo-v2-omni"
-    ))
+    vision = req.is_vision
+    if not vision and model:
+        try:
+            runtime = _normalize_main_runtime(req.main_runtime)
+            route_base = str(req.explicit_base_url or runtime.get("base_url") or "")
+            route_key = req.explicit_api_key or runtime.get("api_key") or ""
+            supports = resolve_supports_vision(
+                ModelRef("nous", model),
+                context=ModelMetadataContext(
+                    base_url=route_base,
+                    api_key=route_key if isinstance(route_key, str) else "",
+                    route_provider="nous",
+                    allow_network=True,
+                ),
+                sources=default_capability_sources(),
+            )
+            vision = supports is True
+        except Exception:
+            logger.debug("Nous model capability lookup failed", exc_info=True)
+    client, default = _try_nous(vision=vision)
     if client is None:
         logger.warning("resolve_provider_client: nous requested but Nous Portal not configured (run: hermes auth)")
         return None, None
@@ -5393,29 +5437,17 @@ def get_text_auxiliary_client(task: str = "", *, main_runtime: Optional[Dict[str
 _VISION_AUTO_PROVIDER_ORDER = ("openrouter", "nous", "deepinfra")
 
 
-def _main_model_supports_vision(provider: str, model: Optional[str]) -> bool:
-    """True when ``provider``/``model`` is known to accept image input; unknown capability → True (attempt the call)."""
-    try:
-        from agent.image_routing import _lookup_supports_vision
-        from hermes_cli.config import load_config_readonly
-    except ImportError:
-        return True
-    try:
-        supports = _lookup_supports_vision(provider, model, load_config_readonly())
-    except Exception:  # pragma: no cover - defensive
-        return True
-    return True if supports is None else bool(supports)
-
-
 def _normalize_vision_provider(provider: Optional[str]) -> str:
     return _normalize_aux_provider(provider)
 
 
 def _deepinfra_strict_vision_backend(model: Optional[str]) -> Tuple[Optional[Any], Optional[str]]:
-    """DeepInfra vision: default model is discovered live via default_vision_model() so no hardcoded id can rot."""
-    vision_model = select_provider_vision_model(
-        "deepinfra", explicit_model=model or ""
-    )
+    """DeepInfra vision: provider discovery supplies the default; selection owns precedence."""
+    profile = get_provider_profile("deepinfra")
+    vision_default = str(profile.default_vision_model() or "") if profile else ""
+    vision_model = selected_auxiliary_model_id(select_vision_auxiliary_model(
+        "deepinfra", explicit_model=model or "", vision_default=vision_default,
+    ))
     if not vision_model:
         logger.debug("Vision auto-detect: deepinfra catalog unreachable or returned no vision-tagged models — skipping")
         return None, None
@@ -5479,52 +5511,86 @@ def _vision_main_provider_client(
     main_route: _MainRuntimeRoute, runtime: Dict[str, Any], resolved_model: Optional[str],
     resolved_api_mode: Optional[str],
 ) -> Tuple[Optional[Any], Optional[str]]:
-    """Auto-detect step 1: reuse the authoritative main route for vision."""
+    """Auto-detect step 1: consume provider, metadata, and selection domain answers directly."""
     main_provider, main_model = main_route.provider, main_route.model
     resolver_provider = _main_route_resolver_provider(main_route)
     inherited_api_mode = resolved_api_mode or main_route.api_mode or None
     explicit_base_url = main_route.base_url or None
     explicit_api_key = main_route.api_key or None
-    if main_provider == "nous":
-        # Nous selects its tier-aware vision slot when no explicit vision model exists;
-        # the text chat model is deliberately not a vision fallback.
-        vision_model = select_provider_vision_model(
-            main_provider,
-            explicit_model=resolved_model or "",
-            main_model="",
-        )
-        sync_client, default_model = resolve_provider_client(
-            resolver_provider, vision_model or None,
-            explicit_base_url=explicit_base_url, explicit_api_key=explicit_api_key,
-            api_mode=inherited_api_mode, main_runtime=runtime, is_vision=True,
-        )
-        if sync_client is None:
-            return None, None
-        logger.info(
-            "Vision auto-detect: using main provider %s (%s)",
-            main_provider,
-            default_model or vision_model or main_model,
-        )
-        return sync_client, default_model
-    if provider_rejects_vision_input(main_provider):
+    profile = get_provider_profile(main_provider)
+    if profile is not None and profile.rejects_vision_input:
         logger.debug(
             "Vision auto-detect: skipping main provider %s (no vision support) — "
             "falling through to aggregator chain",
             main_provider,
         )
         return None, None
-    main_supports_vision = (
-        _main_model_supports_vision(main_provider, main_model) if main_model else None
-    )
-    vision_model = select_provider_vision_model(
+
+    try:
+        from agent.image_routing import _vision_override_patches
+        from hermes_cli.config import load_config_readonly
+
+        cfg = load_config_readonly()
+        explicit_fact, configured_fact = _vision_override_patches(
+            cfg, main_provider, main_model, requested_provider=main_route.requested_provider,
+        )
+        main_supports_vision = resolve_supports_vision(
+            ModelRef(main_provider, main_model),
+            context=ModelMetadataContext(
+                base_url=main_route.base_url,
+                api_key=main_route.api_key if isinstance(main_route.api_key, str) else "",
+                route_provider=main_provider,
+                allow_network=True,
+                explicit=explicit_fact,
+                configured=configured_fact,
+            ),
+            sources=default_capability_sources(),
+        ) if main_model else None
+    except Exception:
+        logger.debug("Vision capability lookup failed for main route", exc_info=True)
+        main_supports_vision = None
+
+    try:
+        vision_default = str(profile.default_vision_model() or "") if profile is not None else ""
+    except Exception:
+        logger.debug("Vision default lookup failed for %s", main_provider, exc_info=True)
+        vision_default = ""
+
+    vision_model = selected_auxiliary_model_id(select_vision_auxiliary_model(
         main_provider,
         explicit_model=resolved_model or "",
+        vision_default=vision_default,
         main_model=main_model,
         main_supports_vision=main_supports_vision,
-    )
+    ))
     if not vision_model:
         return None, None
-    if not _main_model_supports_vision(main_provider, vision_model):
+
+    try:
+        from agent.image_routing import _vision_override_patches
+        from hermes_cli.config import load_config_readonly
+
+        cfg = load_config_readonly()
+        explicit_fact, configured_fact = _vision_override_patches(
+            cfg, main_provider, vision_model, requested_provider=main_route.requested_provider,
+        )
+        selected_supports_vision = resolve_supports_vision(
+            ModelRef(main_provider, vision_model),
+            context=ModelMetadataContext(
+                base_url=main_route.base_url,
+                api_key=main_route.api_key if isinstance(main_route.api_key, str) else "",
+                route_provider=main_provider,
+                allow_network=True,
+                explicit=explicit_fact,
+                configured=configured_fact,
+            ),
+            sources=default_capability_sources(),
+        )
+    except Exception:
+        logger.debug("Vision capability lookup failed for selected model", exc_info=True)
+        selected_supports_vision = None
+
+    if selected_supports_vision is False:
         # Known text-only model. Log only the provider name (CodeQL clear-text-logging FPs).
         logger.debug(
             "Vision auto-detect: skipping main provider %s (reports no vision capability) — "
@@ -5532,6 +5598,7 @@ def _vision_main_provider_client(
             main_provider,
         )
         return None, None
+
     rpc_client, rpc_model = resolve_provider_client(
         resolver_provider, vision_model,
         api_mode=inherited_api_mode,
@@ -5981,9 +6048,8 @@ def _preserve_provider_with_base_url(prov: Optional[str]) -> bool:
     if normalized in _LOCAL_SERVER_ALIASES:
         return True  # the custom branch applies the /v1 tail only when it still sees the alias
     try:
-        from hermes_cli.providers import get_provider
-        return get_provider(normalized) is not None
-    except Exception:  # keep provider-backed routes safe when the catalog can't load
+        return get_provider_profile(normalized) is not None
+    except Exception:  # keep provider-backed routes safe when discovery cannot load
         return normalized in {
             "anthropic", "copilot", "copilot-acp", "minimax-oauth", "nous", "openai-codex", "qwen-oauth", "xai-oauth",
         }

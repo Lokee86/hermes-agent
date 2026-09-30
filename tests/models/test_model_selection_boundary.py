@@ -218,7 +218,10 @@ def test_auxiliary_client_has_no_model_selection_authority():
         assert obsolete not in source
     assert "select_provider_auxiliary_model" in source
     assert "select_provider_auxiliary_fallback" in source
-    assert "provider_vision_default" in source
+    assert "select_vision_auxiliary_model" in source
+    assert "resolve_supports_vision" in source
+    assert "get_provider_profile" in source
+    assert "provider_vision_default" not in source
 
 
 def test_application_selection_adapters_consume_canonical_domain():
@@ -226,7 +229,6 @@ def test_application_selection_adapters_consume_canonical_domain():
         "hermes_cli/model_switch.py",
         "hermes_cli/model_selection_facts.py",
         "hermes_cli/model_selection_defaults.py",
-        "hermes_cli/model_selection_auxiliary.py",
         "hermes_cli/model_selection_picker.py",
         "agent/auxiliary_client.py",
     ):

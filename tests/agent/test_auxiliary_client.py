@@ -1271,7 +1271,7 @@ class TestAuxiliaryPoolAwareness:
         with (
             patch("agent.auxiliary_client.load_pool", return_value=pool),
             patch("agent.auxiliary_client.OpenAI") as mock_openai,
-            patch("hermes_cli.models.get_nous_recommended_aux_model", return_value=None),
+            patch("agent.auxiliary_client.get_provider_profile", return_value=SimpleNamespace(resolve_aux_model=lambda **_kw: "")),
         ):
             from agent.auxiliary_client import _try_nous
 
@@ -1478,25 +1478,55 @@ class TestRefreshNousRecommendedModel:
 
 
 
-    def test_falls_back_to_default_when_portal_unavailable(self, monkeypatch):
+    def test_falls_back_to_canonical_selector_when_portal_unavailable(self, monkeypatch):
         def _boom(**kw):
             raise RuntimeError("portal down")
-        monkeypatch.setattr(
-            "hermes_cli.models.get_nous_recommended_aux_model", _boom)
+
+        monkeypatch.setitem(
+            _refresh_nous_recommended_model.__globals__,
+            "get_provider_profile",
+            lambda _provider: SimpleNamespace(resolve_aux_model=_boom),
+        )
+        selector = MagicMock(return_value=NOUS_FALLBACK_MODEL)
+        monkeypatch.setitem(
+            _refresh_nous_recommended_model.__globals__,
+            "select_provider_auxiliary_fallback",
+            selector,
+        )
+
         out = _refresh_nous_recommended_model(
             vision=False, stale_model="some/dead-model")
-        assert out == NOUS_FALLBACK_MODEL
 
-    def test_returns_none_when_no_distinct_alternative(self, monkeypatch):
-        """When the failed model IS the default and the Portal has nothing
-        else, there's no usable alternative."""
-        monkeypatch.setattr(
-            "hermes_cli.models.get_nous_recommended_aux_model",
-            lambda **kw: NOUS_FALLBACK_MODEL,
+        assert out == NOUS_FALLBACK_MODEL
+        selector.assert_called_once_with(
+            "nous", preferred_model="", excluded_model="some/dead-model",
         )
+
+    def test_returns_none_when_canonical_selector_has_no_distinct_alternative(self, monkeypatch):
+        """The refreshed recommendation is passed through the stale-model exclusion."""
+        monkeypatch.setitem(
+            _refresh_nous_recommended_model.__globals__,
+            "get_provider_profile",
+            lambda _provider: SimpleNamespace(
+                resolve_aux_model=lambda **_kw: NOUS_FALLBACK_MODEL,
+            ),
+        )
+        selector = MagicMock(return_value="")
+        monkeypatch.setitem(
+            _refresh_nous_recommended_model.__globals__,
+            "select_provider_auxiliary_fallback",
+            selector,
+        )
+
         out = _refresh_nous_recommended_model(
             vision=False, stale_model=NOUS_FALLBACK_MODEL)
+
         assert out is None
+        selector.assert_called_once_with(
+            "nous",
+            preferred_model=NOUS_FALLBACK_MODEL,
+            excluded_model=NOUS_FALLBACK_MODEL.lower(),
+        )
 
 
 class TestIsRateLimitError:

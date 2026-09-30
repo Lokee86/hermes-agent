@@ -211,9 +211,15 @@ model:
         cataloged as text-only are skipped.
         """
         _fresh_modules()
-        from agent.auxiliary_client import _main_model_supports_vision
-        # Bogus provider/model — capability lookup returns None → permissive.
-        assert _main_model_supports_vision("nonexistent-provider", "nonexistent-model") is True
+        from models.selection import select_vision_auxiliary_model, selected_auxiliary_model_id
+
+        # Unknown capability remains permissive: only an explicit False blocks the main model.
+        selection = select_vision_auxiliary_model(
+            "nonexistent-provider",
+            main_model="nonexistent-model",
+            main_supports_vision=None,
+        )
+        assert selected_auxiliary_model_id(selection) == "nonexistent-model"
 
 
 # ---------------------------------------------------------------------------

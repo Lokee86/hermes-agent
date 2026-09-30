@@ -95,3 +95,36 @@ def test_runtime_consumers_do_not_import_deleted_capability_owners():
                 if imported in forbidden:
                     offenders.append(f"{path.relative_to(ROOT)} -> {imported}")
     assert not offenders, "obsolete capability imports survive:\n" + "\n".join(offenders)
+
+
+def test_phase_5_8_4_5_runtime_consumers_use_canonical_semantic_owners():
+    auxiliary = ROOT / "agent" / "auxiliary_client.py"
+    imports = _imports(auxiliary)
+    assert "models.metadata" in imports
+    assert "models.selection" in imports
+    assert "providers" in imports
+
+    source = auxiliary.read_text(encoding="utf-8")
+    for obsolete in (
+        "provider_rejects_vision_input",
+        "provider_vision_default",
+        "select_provider_vision_model",
+        "_main_model_supports_vision",
+        "from hermes_cli.providers import get_provider",
+        "from hermes_cli.models import get_nous_recommended_aux_model",
+    ):
+        assert obsolete not in source
+
+    adapter = ROOT / "agent" / "auxiliary_model_resolution.py"
+    adapter_defs = _definitions(adapter)
+    for obsolete in (
+        "provider_rejects_vision_input",
+        "provider_vision_default",
+        "is_declared_vision_default",
+        "select_provider_vision_model",
+    ):
+        assert ("function", obsolete) not in adapter_defs
+
+    nous_profile = ROOT / "plugins" / "model-providers" / "nous" / "__init__.py"
+    assert "get_nous_recommended_aux_model" not in nous_profile.read_text(encoding="utf-8")
+    assert (ROOT / "providers" / "nous_recommendations.py").exists()

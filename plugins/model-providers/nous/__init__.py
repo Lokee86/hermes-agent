@@ -22,14 +22,32 @@ class NousProfile(VendorQualifiedModelIdsMixin, ProviderProfile):
         wire = str((options or {}).get("anthropic_wire") or "chat").strip().lower()
         return "anthropic_messages" if wire == "native" else "chat_completions"
 
-    def resolve_aux_model(self, *, vision: bool = False) -> str:
-        """Portal's tier-aware ``/api/nous/recommended-models`` pick (cached, offline-safe)."""
+    def resolve_aux_model(self, *, vision: bool = False, force_refresh: bool = False) -> str:
+        """Portal's tier-aware recommended auxiliary model (cached, offline-safe)."""
         try:
-            from hermes_cli.models import get_nous_recommended_aux_model
+            from hermes_cli.models import (
+                _resolve_nous_portal_url,
+                check_nous_free_tier,
+                fetch_nous_recommended_models,
+            )
+            from providers.nous_recommendations import recommended_aux_model
 
-            return get_nous_recommended_aux_model(vision=vision) or ""
+            payload = fetch_nous_recommended_models(
+                _resolve_nous_portal_url(), force_refresh=force_refresh,
+            )
+            try:
+                free_tier = check_nous_free_tier()
+            except Exception:
+                free_tier = False
+            return recommended_aux_model(
+                payload, vision=vision, free_tier=free_tier,
+            ) or ""
         except Exception:
             return ""
+
+    def default_vision_model(self) -> str | None:
+        """Provider-owned live vision default for auxiliary selection."""
+        return self.resolve_aux_model(vision=True) or None
 
     def build_extra_body(self, *, session_id: str | None = None, **context) -> dict[str, Any]:
         body: dict[str, Any] = {"tags": nous_portal_tags(session_id=session_id)}

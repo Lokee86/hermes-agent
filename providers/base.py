@@ -196,7 +196,7 @@ class ProviderProfile:
         """
         return None
 
-    def resolve_aux_model(self, *, vision: bool = False) -> str:
+    def resolve_aux_model(self, *, vision: bool = False, force_refresh: bool = False) -> str:
         """Return a LIVE cheap-model id for auxiliary tasks, or "".
 
         ``default_aux_model`` is a hardcoded id in source, so it rots: when the
@@ -208,8 +208,10 @@ class ProviderProfile:
 
         Contract: cheap to call (implementations must cache — this runs on
         client-resolution paths), never raises, and returns "" when it has no
-        answer so the caller falls through to ``default_aux_model``.
+        answer so the caller falls through to ``default_aux_model``. ``force_refresh``
+        requests fresh provider data when an implementation supports it.
         """
+        del vision, force_refresh
         return ""
 
     def get_hostname(self) -> str:
