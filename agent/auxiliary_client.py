@@ -4349,14 +4349,30 @@ def _warn_stale_openai_base_url(runtime_provider: str) -> None:
         _stale_base_url_warned = True
 
 
-def _main_route_target(runtime: Dict[str, Any], task: Optional[str]) -> Tuple[str, str, str, Any, str]:
-    """Step-1 target: (provider, model, base_url, api_key, api_mode) of the main runtime, after the
-    fast-model opt-in and the MoA aggregator substitution."""
-    main_provider = str(runtime.get("provider", "") or _read_main_provider() or "")
-    main_model = str(runtime.get("model") or _read_main_model() or "")
-    runtime_base_url = str(runtime.get("base_url") or "")
+class _MainRuntimeRoute(NamedTuple):
+    """One resolved main-session route consumed by auxiliary main-first paths."""
+
+    provider: str
+    requested_provider: str
+    model: str
+    base_url: str
+    api_key: Any
+    api_mode: str
+
+
+def _main_route_target(runtime: Dict[str, Any], task: Optional[str]) -> _MainRuntimeRoute:
+    """Resolve the main session's route through the lower provider-domain owner.
+
+    Non-empty runtime endpoint/mode facts are authoritative. Missing endpoint or API-mode
+    facts stay missing so the concrete provider branch may consult its configured route;
+    provider profile defaults must not silently replace a live session destination.
+    """
+    main_provider = str(runtime.get("provider", "") or _read_main_provider() or "").strip().lower()
+    requested_provider = str(runtime.get("requested_provider") or main_provider).strip().lower()
+    main_model = str(runtime.get("model") or _read_main_model() or "").strip()
+    runtime_base_url = str(runtime.get("base_url") or "").strip()
     runtime_api_key = runtime.get("api_key", "")
-    runtime_api_mode = str(runtime.get("api_mode") or "")
+    runtime_api_mode = str(runtime.get("api_mode") or "").strip()
     # Latency-critical tasks (titling only) opt in to the provider's fast model. Opt-in only:
     # every settings surface defines "auto" as the main model.
     if (
@@ -4368,61 +4384,86 @@ def _main_route_target(runtime: Dict[str, Any], task: Optional[str]) -> Tuple[st
             main_provider, main_model=main_model, prefer_fast=True
         )
         if fast_model and fast_model != main_model:
-            logger.debug("Auxiliary task %s: preferring fast model %s over main model %s",
-                         task, fast_model, main_model)
+            logger.debug(
+                "Auxiliary task %s: preferring fast model %s over main model %s",
+                task, fast_model, main_model,
+            )
             main_model = fast_model
-    # MoA virtual provider: the preset name is not a wire model; run aux on the aggregator and drop
-    # the facade's "moa://local" base_url / placeholder key so it uses its own credentials.
+    # MoA is orchestration, not a wire route. Aux work runs on the aggregator and must not inherit
+    # the facade's moa:// endpoint, placeholder key, or API mode.
     if main_provider == "moa":
-        _agg_provider, _agg_model = _resolve_moa_aggregator(main_model)
-        if _agg_provider and _agg_model:
-            main_provider, main_model = _agg_provider, _agg_model
+        agg_provider, agg_model = _resolve_moa_aggregator(main_model)
+        if agg_provider and agg_model:
+            main_provider = requested_provider = agg_provider
+            main_model = agg_model
             runtime_base_url = runtime_api_key = runtime_api_mode = ""
-    return main_provider, main_model, runtime_base_url, runtime_api_key, runtime_api_mode
+    from providers.routing import InvocationRequest, resolve_invocation_route
+
+    route = resolve_invocation_route(InvocationRequest(
+        provider=main_provider,
+        requested_provider=requested_provider,
+        model=main_model,
+        base_url=runtime_base_url,
+        explicit_api_mode=runtime_api_mode,
+    ))
+    # The lower resolver may project a profile default when no endpoint was supplied. Main-first
+    # forwards only endpoint/mode facts that the live runtime actually resolved; otherwise the
+    # concrete branch remains free to use its configured/pool destination.
+    base_url = route.base_url if runtime_base_url else ""
+    api_mode = route.api_mode if runtime_api_mode else ""
+    return _MainRuntimeRoute(
+        route.provider, requested_provider, route.model, base_url, runtime_api_key, api_mode
+    )
 
 
-def _try_main_provider_route(
-    main_provider: str, main_model: str, runtime_base_url: str, runtime_api_key: Any, runtime_api_mode: str,
-) -> Optional[Tuple[Any, str, str]]:
-    """Step 1: route aux onto the main provider + main model; None if unusable."""
+def _main_route_resolver_provider(target: _MainRuntimeRoute) -> str:
+    """Provider identity passed to the concrete aux resolver for one live main route."""
+    requested = target.requested_provider
+    if (
+        target.provider == "custom"
+        and requested not in {"", "auto", "custom"}
+        and get_configured_provider_entry(requested) is not None
+    ):
+        # Main runtime canonicalization intentionally collapses configured custom providers to
+        # ``custom``. Re-enter through the requested identity so entry-owned headers/capabilities
+        # survive while the live endpoint/key below remain explicit and authoritative.
+        return requested
+    if (
+        target.provider.startswith("custom:")
+        and target.base_url
+        and get_configured_provider_entry(target.provider) is None
+    ):
+        return "custom"
+    return target.provider
+
+
+def _try_main_provider_route(target: _MainRuntimeRoute) -> Optional[Tuple[Any, str, str]]:
+    """Step 1: reuse the main session's resolved route; None if unusable."""
+    main_provider, main_model = target.provider, target.model
     if not (main_provider and main_model and main_provider not in {"auto", ""}):
         return None
-    resolved_provider = main_provider
-    explicit_base_url = runtime_base_url or None
+    resolved_provider = _main_route_resolver_provider(target)
+    explicit_base_url = target.base_url or None
+    explicit_api_key = target.api_key or None
     health_base_url = _custom_health_base_url(main_provider, explicit_base_url)
-    explicit_api_key = None
-    if runtime_base_url and main_provider == "custom":
-        # Anonymous custom endpoint — pass through explicit base_url + api_key.
-        explicit_api_key = runtime_api_key or None
-    elif main_provider.startswith("custom:"):
-        # Named custom provider (custom_providers / providers dict entry).
-        _has_named_entry = get_configured_provider_entry(main_provider) is not None
-        if _has_named_entry:
-            # KEEP the full ``custom:<name>`` so the named arm honours the entry's api_mode
-            # (collapsing to "custom" strips /anthropic → 404s). base_url/api_key come from the entry.
-            explicit_base_url = None
-        elif runtime_base_url:
-            # Config-less named custom provider (live runtime only): anonymous custom arm + runtime key.
-            # See #34777.
-            resolved_provider = "custom"
-            explicit_api_key = runtime_api_key or None
-        elif runtime_api_key:
-            explicit_api_key = runtime_api_key
-    elif runtime_api_key:
-        # Pin aux to the main session's working key, not a re-selected (maybe exhausted) pool key.
-        explicit_api_key = runtime_api_key
     # Skip if the main provider was recently 402'd (unhealthy TTL bounds the bypass).
     main_chain_label = _normalize_chain_label(resolved_provider)
     if main_chain_label and _is_provider_unhealthy(main_chain_label, health_base_url):
         _log_skip_unhealthy(main_chain_label, base_url=health_base_url)
         return None
     client, resolved = resolve_provider_client(
-        resolved_provider, main_model, explicit_base_url=explicit_base_url,
-        explicit_api_key=explicit_api_key, api_mode=runtime_api_mode or None,
+        resolved_provider,
+        main_model,
+        explicit_base_url=explicit_base_url,
+        explicit_api_key=explicit_api_key,
+        api_mode=target.api_mode or None,
     )
     if client is None:
         return None
-    logger.info("Auxiliary auto-detect: using main provider %s (%s)", main_provider, resolved or main_model)
+    logger.info(
+        "Auxiliary auto-detect: using main provider %s (%s)",
+        main_provider, resolved or main_model,
+    )
     return client, resolved or main_model, resolved_provider
 
 
@@ -4477,20 +4518,20 @@ def _resolve_auto_route(
     auxiliary_is_nous = False  # Reset — _try_nous() will set True if it wins
     runtime = _normalize_main_runtime(main_runtime)
     _warn_stale_openai_base_url(runtime.get("provider", ""))
-    main_provider, main_model, base_url, api_key, api_mode = _main_route_target(runtime, task)
-    routed = _try_main_provider_route(main_provider, main_model, base_url, api_key, api_mode)
+    main_route = _main_route_target(runtime, task)
+    routed = _try_main_provider_route(main_route)
     if routed is not None:
         return routed
     if task:
         fb_client, fb_model, fb_label = _try_configured_fallback_chain(
-            task, main_provider or "auto", reason="main provider unavailable")
+            task, main_route.provider or "auto", reason="main provider unavailable")
         if fb_client is not None:
             return fb_client, fb_model, _fallback_provider_from_label(fb_label)
     fb_client, fb_model, fb_label = _try_main_fallback_chain(
-        task, main_provider or "auto", reason="main provider unavailable")
+        task, main_route.provider or "auto", reason="main provider unavailable")
     if fb_client is not None:
         return fb_client, fb_model, fb_label
-    if not _discovery_chain_allowed(main_provider, task):
+    if not _discovery_chain_allowed(main_route.provider, task):
         return None, None, ""
     return _try_discovery_chain()
 
@@ -5435,10 +5476,15 @@ def _finalize_vision_client(
 
 
 def _vision_main_provider_client(
-    main_provider: str, main_model: str, runtime: Dict[str, Any], resolved_model: Optional[str],
+    main_route: _MainRuntimeRoute, runtime: Dict[str, Any], resolved_model: Optional[str],
     resolved_api_mode: Optional[str],
 ) -> Tuple[Optional[Any], Optional[str]]:
-    """Auto-detect step 1: try the main provider; (None, None) falls through to the aggregator chain."""
+    """Auto-detect step 1: reuse the authoritative main route for vision."""
+    main_provider, main_model = main_route.provider, main_route.model
+    resolver_provider = _main_route_resolver_provider(main_route)
+    inherited_api_mode = resolved_api_mode or main_route.api_mode or None
+    explicit_base_url = main_route.base_url or None
+    explicit_api_key = main_route.api_key or None
     if main_provider == "nous":
         # Nous selects its tier-aware vision slot when no explicit vision model exists;
         # the text chat model is deliberately not a vision fallback.
@@ -5447,8 +5493,10 @@ def _vision_main_provider_client(
             explicit_model=resolved_model or "",
             main_model="",
         )
-        sync_client, default_model = _resolve_strict_vision_backend(
-            main_provider, vision_model or None
+        sync_client, default_model = resolve_provider_client(
+            resolver_provider, vision_model or None,
+            explicit_base_url=explicit_base_url, explicit_api_key=explicit_api_key,
+            api_mode=inherited_api_mode, main_runtime=runtime, is_vision=True,
         )
         if sync_client is None:
             return None, None
@@ -5484,21 +5532,14 @@ def _vision_main_provider_client(
             main_provider,
         )
         return None, None
-    # Custom endpoints carry no built-in base_url/api_key: recover the live main endpoint from
-    # set_runtime_main() or, with no live runtime recorded, the configured custom endpoint.
-    rpc_base_url = rpc_api_key = None
-    rpc_api_mode = resolved_api_mode
-    if main_provider == "custom" or main_provider.startswith("custom:"):
-        if runtime.get("base_url"):
-            custom_base, custom_key, custom_mode = runtime.get("base_url"), runtime.get("api_key") or None, runtime.get("api_mode")
-        else:
-            custom_base, custom_key, custom_mode = _resolve_custom_runtime()
-        if custom_base:
-            rpc_base_url, rpc_api_key = custom_base, custom_key
-            rpc_api_mode = resolved_api_mode or custom_mode or None
     rpc_client, rpc_model = resolve_provider_client(
-        main_provider, vision_model, api_mode=rpc_api_mode, explicit_base_url=rpc_base_url,
-        explicit_api_key=rpc_api_key, main_runtime=runtime, is_vision=True)
+        resolver_provider, vision_model,
+        api_mode=inherited_api_mode,
+        explicit_base_url=explicit_base_url,
+        explicit_api_key=explicit_api_key,
+        main_runtime=runtime,
+        is_vision=True,
+    )
     if rpc_client is None:
         return None, None
     logger.info("Vision auto-detect: using main provider %s (%s)", main_provider, rpc_model or vision_model)
@@ -5510,19 +5551,16 @@ def _vision_auto_route(
     async_mode: bool,
 ) -> Tuple[Optional[str], Optional[Any], Optional[str]]:
     """Auto-detect order: 1. main provider + model, 2. OpenRouter, 3. Nous Portal, 4. DeepInfra, 5. stop."""
-    main_provider = str(runtime.get("provider") or _read_main_provider())
-    main_model = str(runtime.get("model") or _read_main_model())
-    if main_provider.strip().lower() == "moa":
-        # MoA main_model is a preset NAME, not a wire model — unwrap to the preset's aggregator
-        # slot. The moa:// facade endpoint belongs to the virtual provider, not the real one.
-        _agg_provider, _agg_model = _resolve_moa_aggregator(main_model)
-        if _agg_provider and _agg_model:
-            main_provider, main_model = _agg_provider, _agg_model
-            runtime = dict(runtime, base_url="", api_key="", api_mode="")
+    main_route = _main_route_target(runtime, "vision")
+    main_provider = main_route.provider
     if main_provider and main_provider not in {"auto", "", "moa"}:
-        client, default_model = _vision_main_provider_client(main_provider, main_model, runtime, resolved_model, resolved_api_mode)
+        client, default_model = _vision_main_provider_client(
+            main_route, runtime, resolved_model, resolved_api_mode
+        )
         if client is not None:
-            return _finalize_vision_client(main_provider, client, default_model, resolved_model, async_mode)
+            return _finalize_vision_client(
+                main_provider, client, default_model, resolved_model, async_mode
+            )
     # Aggregators use their dedicated vision model, not the user's main model.
     for candidate in _VISION_AUTO_PROVIDER_ORDER:
         if candidate == main_provider:

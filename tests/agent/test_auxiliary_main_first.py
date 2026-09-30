@@ -578,8 +578,8 @@ class TestResolveVisionCustomProvider:
         assert kwargs.get("explicit_api_key") == "sk-named"
         assert kwargs.get("is_vision") is True
 
-    def test_custom_main_no_runtime_falls_back_to_configured_endpoint(self, monkeypatch):
-        """No recorded runtime endpoint → resolve the configured custom endpoint."""
+    def test_custom_main_without_runtime_endpoint_delegates_config_resolution(self, monkeypatch):
+        """Without a live endpoint, the concrete custom branch owns configured resolution."""
         import agent.auxiliary_client as aux
 
         monkeypatch.setattr(aux, "_RUNTIME_MAIN_BASE_URL", "")
@@ -595,8 +595,7 @@ class TestResolveVisionCustomProvider:
             return_value=("auto", None, None, None, None),
         ), patch(
             "agent.auxiliary_client._resolve_custom_runtime",
-            return_value=("https://configured.example/v1", "sk-configured", "chat_completions"),
-        ), patch(
+        ) as mock_custom_runtime, patch(
             "agent.auxiliary_client.resolve_provider_client"
         ) as mock_resolve:
             mock_client = MagicMock()
@@ -608,7 +607,8 @@ class TestResolveVisionCustomProvider:
 
         assert client is mock_client
         kwargs = mock_resolve.call_args.kwargs
-        assert kwargs.get("explicit_base_url") == "https://configured.example/v1"
-        assert kwargs.get("explicit_api_key") == "sk-configured"
+        assert kwargs.get("explicit_base_url") is None
+        assert kwargs.get("explicit_api_key") is None
+        mock_custom_runtime.assert_not_called()
 
 # ── Constant cleanup ────────────────────────────────────────────────────────

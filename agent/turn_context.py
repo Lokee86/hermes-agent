@@ -204,7 +204,7 @@ def _maybe_title_session_at_turn_start(agent: Any, messages: List[Any]) -> None:
         # same ``x-opencode-session`` affinity as the turn it belongs to (#112717).
         main_runtime = {
             k: getattr(agent, k, None)
-            for k in ("model", "provider", "base_url", "api_key", "api_mode", "session_id")
+            for k in ("model", "provider", "requested_provider", "base_url", "api_key", "api_mode", "session_id")
         }
         # See #19027.
         upgrade = maybe_auto_title(
