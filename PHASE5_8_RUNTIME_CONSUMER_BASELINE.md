@@ -176,3 +176,49 @@ Phase 5.8.1 failure category was introduced.
 - No compatibility layer is introduced.
 - Phase 5.8.2 may close the lower-domain API gaps without reopening ownership
   discovery.
+
+## Phase 5.8.2 closeout — runtime query ownership
+
+Phase 5.8.2 closes the shared lower-domain query gaps needed by the later
+consumer-migration sub-phases. It does not migrate the application coordinators
+scheduled for 5.8.3-5.8.7.
+
+Ownership changes:
+
+- Static model catalogue policy moved from `hermes_cli.models_catalog_static`
+  to `models.catalog_static`; the old owner is deleted.
+- Display-only provider grouping moved separately to
+  `hermes_cli.provider_groups`, keeping presentation out of the model domain.
+- Codex curated/forward-compatible catalogue policy moved to
+  `models.codex_catalog`; `hermes_cli.codex_models` retains live
+  credential/runtime discovery and consumes the lower policy.
+- models.dev disk-cache, ETag, validation and quarantine ownership moved to
+  `models.models_dev_cache`; `agent.models_dev` retains network refresh and
+  in-process lifecycle state.
+- Fast-mode capability/override queries moved to
+  `models.metadata.fast_mode`.
+- Shared reasoning-effort clamping and Astra identity moved to
+  `models.metadata.reasoning`; GitHub/Copilot reasoning capability queries
+  moved to `models.metadata.github`.
+- Pure Ollama catalogue classification moved to `models.catalog_local`;
+  configuration lookup and live probing remain application/runtime mechanics.
+- OpenCode family/model/base-URL interpretation is exposed from `providers`
+  and runtime consumers no longer require the CLI model module for it.
+- `tests/models/test_runtime_query_boundary.py` locks the lower modules
+  against upward imports, duplicate CLI ownership, and restoration of the old
+  static-catalogue owner.
+
+Verification:
+
+- Catalogue/Codex focused gate: **67 passed**.
+- Fast-mode/reasoning/runtime focused gate: **93 passed**.
+- models.dev cache gate: **76 passed**.
+- Runtime-query/provider/ACP boundary gate: **25 passed**, 2 inherited warnings.
+- Targeted `py_compile`, `ruff check`, and `git diff --check`: clean.
+- Original Phase 5.8 representative baseline: **537 passed, 31 failed in
+  214.95s**. The failure count and categories exactly match the 5.8.1 inherited
+  baseline; no new failure category was introduced.
+
+The remaining upward dependencies in the Phase 5.8 manifest are consumer
+migration work for 5.8.3-5.8.7, not duplicate owners for the shared query
+surfaces closed here.

@@ -34,7 +34,7 @@ from models.selection import (
 from hermes_cli.providers import (
     LLAMACPP_ALIASES, resolve_provider_full,
 )
-from hermes_cli.models_catalog_static import static_provider_model_ids
+from models.catalog_static import static_provider_model_ids
 from agent.models_dev import (
     ModelMetadata, ModelInfo, query_model_metadata, get_model_info, list_provider_models)
 from utils import base_url_host_matches, base_url_hostname, base_url_origin, file_signature
@@ -1637,7 +1637,7 @@ def _build_switch_result(st: _Switch) -> ModelSwitchResult:
     # OpenCode base URLs end with /v1 for OpenAI-compatible models but the Anthropic SDK prepends
     # its own /v1/messages: strip for anthropic_messages, re-append for
     # chat_completions/codex_responses (mirrors resolve_runtime_provider).
-    from hermes_cli.models import normalize_opencode_base_url, opencode_provider_family
+    from providers import normalize_opencode_base_url, opencode_provider_family
     if opencode_provider_family(st.target_provider) is not None and isinstance(st.base_url, str):
         st.base_url = normalize_opencode_base_url(st.target_provider, st.api_mode, st.base_url)
 

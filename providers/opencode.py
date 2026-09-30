@@ -16,10 +16,14 @@ def opencode_provider_family(provider_id: Optional[str]) -> Optional[str]:
     raw = str(provider_id or "").strip().lower()
     if not raw:
         return None
+    family_candidate = raw.removeprefix("custom:")
     canonical = normalize_provider(provider_id or "")
     if canonical in _OPENCODE_FAMILIES:
         return canonical
-    return next((family for family in _OPENCODE_FAMILIES if raw.startswith(family)), None)
+    return next(
+        (family for family in _OPENCODE_FAMILIES if family_candidate.startswith(family)),
+        None,
+    )
 
 
 def normalize_opencode_model_id(

@@ -530,7 +530,7 @@ class CLIAgentSetupMixin:
         """Effective model/runtime config for one turn — always the session's primary
         provider. With `/fast` on (service_tier == "priority") attach request_overrides;
         auto/cold tiers are applied per request by agent.fast_mode instead."""
-        from hermes_cli.models import resolve_fast_mode_overrides
+        from models.metadata.fast_mode import resolve_fast_mode_overrides
         runtime = _current_runtime(self)
         route = {"model": self.model, "runtime": runtime, "signature": _route_signature(self.model, runtime)}
         overrides = None

@@ -66,7 +66,7 @@ def test_catalog_is_presentation_projection_not_provider_authority():
     tree = _tree(CATALOG_PROJECTION)
     imports = _imports(CATALOG_PROJECTION)
     assert "providers" in imports
-    assert "hermes_cli.models_catalog_static" not in imports
+    assert "models.catalog_static" not in imports
     assert not any(isinstance(n, ast.Call) and isinstance(n.func, ast.Name)
                    and n.func.id == "register_provider" for n in ast.walk(tree))
 

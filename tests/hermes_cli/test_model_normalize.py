@@ -5,7 +5,7 @@ must NOT be mangled to hyphens (minimax-m2-7).
 """
 import pytest
 
-from hermes_cli.models_catalog_static import static_provider_model_ids
+from models.catalog_static import static_provider_model_ids
 from models import normalize_model_id
 
 

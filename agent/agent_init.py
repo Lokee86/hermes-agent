@@ -388,7 +388,7 @@ def _finalize_routing(agent, route, credential_pool):
             start_nous_auth_keepalive()
 
     with suppress(Exception):
-        from hermes_cli.models_catalog_static import static_provider_model_ids
+        from models.catalog_static import static_provider_model_ids
         from models import normalize_model_id
         from providers import is_aggregator
 
@@ -1636,7 +1636,7 @@ def _scope_context_length_to_default_runtime(
     _active_runtime_model = agent.model
     if _configured_default_model:
         with suppress(Exception):
-            from hermes_cli.models_catalog_static import static_provider_model_ids
+            from models.catalog_static import static_provider_model_ids
             from models import normalize_model_id
 
             _known_model_ids = static_provider_model_ids(agent.provider)

@@ -235,7 +235,7 @@ class CLIInfoMixin:
 
     def _fast_command_available(self) -> bool:
         try:
-            from hermes_cli.models import model_supports_fast_mode
+            from models.metadata.fast_mode import model_supports_fast_mode
         except Exception:
             return False
         agent = getattr(self, "agent", None)

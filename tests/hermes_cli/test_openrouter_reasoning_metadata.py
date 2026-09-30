@@ -10,7 +10,7 @@ Covers:
 
 import pytest
 
-from hermes_cli.models import clamp_reasoning_effort_to_supported
+from models.metadata.reasoning import clamp_reasoning_effort_to_supported
 from models.metadata.reasoning import parse_openrouter_reasoning_capabilities, openrouter_model_reasoning_capabilities
 from models.metadata.types import ReasoningMetadata
 

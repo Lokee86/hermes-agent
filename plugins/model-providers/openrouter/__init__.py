@@ -79,7 +79,7 @@ class OpenRouterProfile(VendorQualifiedModelIdsMixin, ProviderProfile):
         if not effort and not disabled:
             return cfg
         try:
-            from hermes_cli.models import clamp_reasoning_effort_to_supported
+            from models.metadata.reasoning import clamp_reasoning_effort_to_supported
             from models.metadata.reasoning import openrouter_model_reasoning_capabilities
 
             caps = openrouter_model_reasoning_capabilities(model)

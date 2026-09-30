@@ -6,12 +6,14 @@ from unittest.mock import MagicMock, patch
 from hermes_cli.models import (
     curated_models_for_provider,
     fetch_api_models,
-    normalize_opencode_model_id,
-    opencode_provider_family,
     probe_api_models,
     provider_model_ids,
 )
-from providers import normalize_provider
+from providers import (
+    normalize_opencode_model_id,
+    normalize_provider,
+    opencode_provider_family,
+)
 from providers.routing import InvocationRequest, resolve_invocation_route
 from hermes_cli.models_local import fetch_lmstudio_models
 from hermes_cli.models_validate import validate_requested_model
@@ -294,7 +296,7 @@ class TestNormalizeOpencodeBaseUrl:
     """
 
     def test_strips_v1_for_anthropic_messages(self):
-        from hermes_cli.models import normalize_opencode_base_url
+        from providers import normalize_opencode_base_url
         assert normalize_opencode_base_url(
             "opencode-go", "anthropic_messages", "https://opencode.ai/zen/go/v1"
         ) == "https://opencode.ai/zen/go"
@@ -304,7 +306,7 @@ class TestNormalizeOpencodeBaseUrl:
 
 
     def test_non_opencode_provider_untouched(self):
-        from hermes_cli.models import normalize_opencode_base_url
+        from providers import normalize_opencode_base_url
         assert normalize_opencode_base_url(
             "openrouter", "chat_completions", "https://openrouter.ai/api"
         ) == "https://openrouter.ai/api"
@@ -334,7 +336,7 @@ class TestNormalizeOpencodeBaseUrlFamilyPath:
         ("opencode-go", "anthropic_messages", "https://opencode.ai/zen/v1?x=1", "https://opencode.ai/zen/go?x=1"),
     ])
     def test_family_path_follows_the_resolved_provider(self, provider, api_mode, url, expected):
-        from hermes_cli.models import normalize_opencode_base_url
+        from providers import normalize_opencode_base_url
         assert normalize_opencode_base_url(provider, api_mode, url) == expected
 
 

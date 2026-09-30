@@ -35,6 +35,60 @@ Caps = dict[str, ReasoningMetadata | None]
 CatalogRequester = Callable[..., Any]
 UrlResolver = Callable[[], str]
 
+# Canonical low-to-high reasoning effort vocabulary. Provider-specific modules
+# consume this math; request formatting remains with the transport/application.
+EFFORT_LADDER: tuple[str, ...] = (
+    "none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra",
+)
+CODEX_ASTRA_EFFORTS: tuple[str, ...] = ("low", "medium", "high", "xhigh", "max")
+ASTRA_MODEL_IDS: frozenset[str] = frozenset({"gpt-6-astra", "gpt-6-astra-900k"})
+
+
+def is_astra_model(model: Optional[str]) -> bool:
+    return (model or "").strip().lower().rsplit("/", 1)[-1] in ASTRA_MODEL_IDS
+
+
+def clamp_effort(
+    effort: Optional[str],
+    supported,
+    overrides: Optional[dict[str, str]] = None,
+) -> Optional[str]:
+    """Clamp to the nearest weaker supported canonical effort without escalating cost."""
+    requested = str(effort or "").strip().lower()
+    if not requested or not supported:
+        return effort
+    supported_norm = [
+        level
+        for level in (str(item).strip().lower() for item in supported)
+        if level in EFFORT_LADDER
+    ]
+    if not supported_norm or requested in supported_norm:
+        return effort
+    if overrides and overrides.get(requested) in supported_norm:
+        return overrides[requested]
+    if requested not in EFFORT_LADDER:
+        return effort
+    candidates = [level for level in supported_norm if level != "none"]
+    if not candidates:
+        return effort
+    requested_idx = EFFORT_LADDER.index(requested)
+    below = [
+        level for level in candidates
+        if EFFORT_LADDER.index(level) < requested_idx
+    ]
+    return (
+        max(below, key=EFFORT_LADDER.index)
+        if below
+        else min(candidates, key=EFFORT_LADDER.index)
+    )
+
+
+def clamp_reasoning_effort_to_supported(
+    effort: Optional[str], supported_efforts
+) -> Optional[str]:
+    """Generic OpenAI-compatible effort clamp used by provider metadata adapters."""
+    return clamp_effort(effort, supported_efforts)
+
 _OPENROUTER_CATALOG_URL = "https://openrouter.ai/api/v1/models"
 _DEFAULT_NOUS_CATALOG_URL = "https://inference-api.nousresearch.com/v1/models"
 _REASONING_CAPS_DISK_TTL_SECONDS = 24 * 3600
@@ -362,6 +416,12 @@ def warm_nous_reasoning_caps_async() -> None:
 
 __all__ = [
     "ReasoningMetadata",
+    "EFFORT_LADDER",
+    "CODEX_ASTRA_EFFORTS",
+    "ASTRA_MODEL_IDS",
+    "is_astra_model",
+    "clamp_effort",
+    "clamp_reasoning_effort_to_supported",
     "_OPENROUTER_CATALOG_URL",
     "_reasoning_caps_disk_path",
     "_save_reasoning_caps_disk",

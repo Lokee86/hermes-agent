@@ -679,7 +679,7 @@ def test_picker_metadata_uses_one_config_read_for_real_models_dev_lookups(tmp_pa
             _list_auth_returning(_rows(model_ids)),
             patch("hermes_cli.inventory._local_runtime_row", return_value=None),
             patch("hermes_cli.inventory._moa_provider_row", return_value=None),
-            patch("hermes_cli.models.model_supports_fast_mode", return_value=False),
+            patch("models.metadata.fast_mode.model_supports_fast_mode", return_value=False),
             patch("hermes_cli.inventory._reasoning_catalog_reader", return_value=None),
             patch.object(models_dev, "_cfg_get", side_effect=counted_cfg_get),
             patch.object(

@@ -308,7 +308,7 @@ class CLIModelSwitchMixin:
                 changed = True
 
         try:
-            from hermes_cli.models_catalog_static import static_provider_model_ids
+            from models.catalog_static import static_provider_model_ids
             from models import normalize_model_id
             from providers import is_aggregator
 
@@ -331,9 +331,9 @@ class CLIModelSwitchMixin:
                 lambda new: f"Normalized Copilot model '{current_model}' to '{new}'.")
             return changed
 
-        from hermes_cli.models import opencode_provider_family
+        from providers import opencode_provider_family
         if opencode_provider_family(resolved_provider) is not None:
-            from hermes_cli.models import normalize_opencode_model_id
+            from providers import normalize_opencode_model_id
             _adopt(
                 normalize_opencode_model_id(resolved_provider, current_model),
                 lambda new: (
@@ -357,7 +357,8 @@ class CLIModelSwitchMixin:
 
         # 2. Replace untouched default with a Codex model
         if self._model_is_default:
-            from hermes_cli.codex_models import DEFAULT_CODEX_MODELS, get_codex_model_ids
+            from hermes_cli.codex_models import get_codex_model_ids
+            from models.codex_catalog import DEFAULT_CODEX_MODELS
 
             fallback_model = DEFAULT_CODEX_MODELS[0]
             try:

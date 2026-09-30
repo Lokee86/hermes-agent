@@ -38,6 +38,8 @@ from models.metadata import (
 )
 
 from models.metadata.interpretation import _OVERRIDE_WARNED_KEYS
+import models.models_dev_cache as models_dev_cache
+
 
 import requests
 
@@ -156,17 +158,10 @@ def _cfg_get(*keys: str, default: Any, config: Optional[Dict[str, Any]] = None) 
         return default
 
 
-def _hermes_path(name: str) -> Path:
-    from hermes_constants import get_hermes_home
-    return get_hermes_home() / name
 
 
-def _get_cache_path() -> Path:
-    return _hermes_path("models_dev_cache.json")
 
 
-def _get_etag_path() -> Path:
-    return _hermes_path("models_dev_cache.etag")
 
 
 def _quietly(what: str, fn, default=None):
@@ -178,25 +173,10 @@ def _quietly(what: str, fn, default=None):
         return default
 
 
-def _load_etag() -> str:
-    """Last-known ETag from disk, or "" if missing."""
-    return _quietly("load models.dev ETag", lambda: _get_etag_path().read_text(encoding="utf-8-sig").strip() if _get_etag_path().exists() else "", "")
 
 
-def _save_etag(etag: str) -> None:
-    def write() -> None:
-        etag_path = _get_etag_path()
-        from hermes_constants import mkdir_under_hermes_home
-
-        mkdir_under_hermes_home(etag_path.parent)
-        atomic_write_text(etag_path, etag)
-    _quietly("save models.dev ETag", write)
 
 
-def _clear_etag() -> None:
-    """Delete the ETag sidecar so the next fetch is unconditional: an If-None-Match without a
-    servable cache invites a 304 that leaves the process with no data at all."""
-    _quietly("clear models.dev ETag", lambda: _get_etag_path().unlink(missing_ok=True))
 
 
 def _get_models_dev_url() -> str:
@@ -206,56 +186,14 @@ def _get_models_dev_url() -> str:
     return url.strip() if isinstance(url, str) and url.strip() else MODELS_DEV_URL
 
 
-def _validate_registry(data: Any) -> bool:
-    """True if *data* is a non-empty dict suitable for serving."""
-    return isinstance(data, dict) and len(data) > 0
 
 
-def _load_disk_cache() -> Dict[str, Any]:
-    """Load the disk cache; a corrupt/empty one is quarantined with a warning so it never
-    masquerades as ``{}`` and breaks provider/model resolution."""
-    try:
-        cache_path = _get_cache_path()
-        if cache_path.exists():
-            with open(cache_path, encoding="utf-8-sig") as f:
-                data = json.load(f)
-            if _validate_registry(data):
-                return data
-            logger.warning("models.dev disk cache is corrupt or empty; quarantining (will refetch from network)")
-            _quarantine_corrupt_cache(cache_path)
-    except Exception as e:
-        logger.warning("Failed to load models.dev disk cache; quarantining: %s", e)
-        with contextlib.suppress(Exception):
-            _quarantine_corrupt_cache(_get_cache_path())
-    return {}
 
 
-def _quarantine_corrupt_cache(cache_path: Path) -> None:
-    """Rename a rejected cache aside and drop its ETag sidecar. Renaming makes the rejection a
-    one-time event — otherwise every hot-path call that finds the in-memory cache empty re-parses
-    and re-warns until a network fetch succeeds. The sidecar vouches for a registry we no longer hold."""
-    try:
-        cache_path.rename(cache_path.with_suffix(".json.corrupt"))
-    except Exception as e:
-        logger.debug("Could not quarantine corrupt models.dev cache: %s", e)
-    _clear_etag()
 
 
-def _disk_cache_age_seconds() -> Optional[float]:
-    """Age of the disk cache file in seconds, or None if missing/unreadable. An mtime in the future
-    (clock skew) is also None — unknown freshness — so callers fall through to the network."""
-    def stat() -> Optional[float]:
-        cache_path = _get_cache_path()
-        age = time.time() - cache_path.stat().st_mtime if cache_path.exists() else -1
-        return age if age >= 0 else None
-    return _quietly("stat models.dev disk cache", stat)
 
 
-def _save_disk_cache(data: Dict[str, Any], etag: str = "") -> None:
-    """Save the registry atomically, plus the ETag sidecar when non-empty."""
-    _quietly("save models.dev disk cache", lambda: atomic_json_write(_get_cache_path(), data, indent=None, separators=(",", ":")))
-    if etag:
-        _save_etag(etag)
 
 
 # Network refresh: all state mutation happens under _models_dev_fetch_lock.
@@ -269,7 +207,7 @@ def _fetch_models_dev_from_network(*, conditional: bool = False) -> Tuple[Dict[s
     ETag and raises ``_NotModified`` on 304 — pass True ONLY while holding ``_models_dev_fetch_lock``
     AND a servable registry, or a 304 leaves the process with no data."""
     headers: Dict[str, str] = {}
-    if conditional and (etag := _load_etag()):
+    if conditional and (etag := models_dev_cache.load_models_dev_etag()):
         headers["If-None-Match"] = etag
     # (connect, read): 5 s connect fails fast on blackholed hosts; 10 s read tolerates a slow registry.
     response = requests.get(_get_models_dev_url(), headers=headers, timeout=(5, 10))
@@ -277,7 +215,7 @@ def _fetch_models_dev_from_network(*, conditional: bool = False) -> Tuple[Dict[s
         raise _NotModified()
     response.raise_for_status()
     data = response.json()
-    if not _validate_registry(data):
+    if not models_dev_cache.valid_models_dev_registry(data):
         raise ValueError("models.dev returned an empty or invalid registry")
     return data, response.headers.get("ETag", "")
 
@@ -301,7 +239,7 @@ def _commit_registry(data: Dict[str, Any], *, etag: str = "", where: str) -> Non
     """Persist a fetched registry: disk + in-mem + clear backoff. Callers hold ``_models_dev_fetch_lock``
     so a failing refresh on one path can never stomp state a succeeding refresh just committed."""
     global _models_dev_cache, _models_dev_cache_time, _models_dev_retry_after
-    _save_disk_cache(data, etag)
+    models_dev_cache.save_models_dev_disk_cache(data, etag)
     _models_dev_cache = data
     _models_dev_cache_time = time.time()
     _models_dev_retry_after = 0
@@ -318,7 +256,7 @@ def _confirm_cache_not_modified(*, where: str) -> None:
     if not _models_dev_cache:
         # Should be unreachable (conditional GETs require a servable cache) but previously caused a
         # permanent empty-registry loop: drop the sidecar and arm the backoff rather than marking {} "fresh".
-        _clear_etag()
+        models_dev_cache.clear_models_dev_etag()
         _models_dev_retry_after = time.time() + _MODELS_DEV_RETRY_DELAY
         logger.warning("models.dev returned 304 but no cached registry is held (%s); "
                        "cleared ETag sidecar, will refetch unconditionally", where)
@@ -392,9 +330,9 @@ def fetch_models_dev(force_refresh: bool = False, *, allow_network: bool = True)
     only if the call fails. ``allow_network=False`` returns any memory/disk cache and never makes a request."""
     global _models_dev_cache, _models_dev_cache_time, _models_dev_retry_after
     if not allow_network:
-        if not _models_dev_cache and (disk_data := _load_disk_cache()):
+        if not _models_dev_cache and (disk_data := models_dev_cache.load_models_dev_disk_cache()):
             _models_dev_cache = disk_data
-            disk_age = _disk_cache_age_seconds()
+            disk_age = models_dev_cache.models_dev_disk_cache_age_seconds()
             _models_dev_cache_time = time.time() - disk_age if disk_age is not None else 0
         return _models_dev_cache
     if not force_refresh:
@@ -406,8 +344,8 @@ def fetch_models_dev(force_refresh: bool = False, *, allow_network: bool = True)
             return _serve_stale("Using stale in-memory models.dev cache; refreshing in background")
         # Stage 3: disk cache (cold-start only). A stale disk cache is deliberately usable so
         # resolution doesn't hang when models.dev is unreachable.
-        disk_age = _disk_cache_age_seconds()
-        if disk_age is not None and (disk_data := _load_disk_cache()):
+        disk_age = models_dev_cache.models_dev_disk_cache_age_seconds()
+        if disk_age is not None and (disk_data := models_dev_cache.load_models_dev_disk_cache()):
             _models_dev_cache = disk_data
             if disk_age >= _MODELS_DEV_CACHE_TTL:
                 return _serve_stale("Using stale models.dev disk cache (age=%.0fs); refreshing in background", disk_age)
@@ -425,7 +363,7 @@ def fetch_models_dev(force_refresh: bool = False, *, allow_network: bool = True)
             return _models_dev_cache
         # Cold force_refresh: stages 1-3 were skipped, so hydrate memory from disk first so the
         # conditional GET fires and a 304 can re-confirm it.
-        if force_refresh and not _models_dev_cache and (disk := _load_disk_cache()):
+        if force_refresh and not _models_dev_cache and (disk := models_dev_cache.load_models_dev_disk_cache()):
             _models_dev_cache = disk
             _models_dev_cache_time = 0  # servable but not fresh
         served = _refresh_locked("foreground")
@@ -434,7 +372,7 @@ def fetch_models_dev(force_refresh: bool = False, *, allow_network: bool = True)
         # Stage 5: network failed — serve any stale memory/disk cache. Freshness stays expired;
         # the retry-after timestamp gates the next attempt.
         if not _models_dev_cache:
-            _models_dev_cache = _load_disk_cache()
+            _models_dev_cache = models_dev_cache.load_models_dev_disk_cache()
             _models_dev_cache_time = 0
             if _models_dev_cache:
                 logger.debug("Loaded stale models.dev disk cache (%d providers)", len(_models_dev_cache))

@@ -34,6 +34,8 @@ from models.metadata.context import (
     save_provider_context_length,
     strip_codex_context_variant_suffix,
 )
+from models.metadata.fast_mode import model_supports_fast_mode, resolve_fast_mode_overrides
+from models.metadata.github import clamp_github_reasoning_effort, github_model_reasoning_efforts
 from models.metadata.interpretation import (
     UNKNOWN_MODEL_BASE,
     builtin_model_metadata,
@@ -105,6 +107,10 @@ __all__ = [
     "is_codex_context_variant",
     "is_grok_46_family",
     "is_local_endpoint",
+    "model_supports_fast_mode",
+    "resolve_fast_mode_overrides",
+    "clamp_github_reasoning_effort",
+    "github_model_reasoning_efforts",
     "merge_catalog_entry_with_override",
     "model_info_from_entry",
     "model_metadata_from_entry",

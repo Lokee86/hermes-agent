@@ -20,7 +20,11 @@ import urllib.request
 from pathlib import Path
 from typing import Any, NamedTuple, Optional
 from agent.secret_scope import get_secret_str
-from hermes_cli.urllib_security import url_origin
+from models.catalog_local import (
+    classify_ollama_catalog,
+    ollama_native_root as _root_for_ollama_native_api,
+    same_ollama_native_root as _same_ollama_native_root,
+)
 
 # Log-record parity with the origin module.
 logger = logging.getLogger("hermes_cli.models")
@@ -44,16 +48,6 @@ def _normalize_openai_base_url(base_url: Optional[str]) -> str:
     if value and "://" not in value:
         return "http://" + value
     return value
-
-
-def _root_for_ollama_native_api(base_url: str) -> str:
-    """Convert an OpenAI-style Ollama base URL to the native API root."""
-    root = str(base_url or "").strip().rstrip("/")
-    if root.startswith(":"):
-        root = "http://127.0.0.1" + root
-    elif root and "://" not in root:
-        root = "http://" + root
-    return _strip_suffixes(root, ("/api/tags", "/v1/models", "/api", "/v1"))
 
 
 def _configured_ollama_base_url() -> str:
@@ -268,23 +262,6 @@ def fetch_ollama_local_models(
     return probe_ollama_local_models(base_url, timeout, headers=headers)
 
 
-def _same_ollama_native_root(left: str, right: str) -> bool:
-    """Return True when two Ollama/OpenAI-style base URLs share an API root."""
-    left_root = _root_for_ollama_native_api(left).rstrip("/")
-    right_root = _root_for_ollama_native_api(right).rstrip("/")
-    if not left_root or not right_root:
-        return False
-    try:
-        left_parts = urllib.parse.urlsplit(left_root)
-        right_parts = urllib.parse.urlsplit(right_root)
-        return (
-            url_origin(left_root) == url_origin(right_root)
-            and left_parts.path.rstrip("/") == right_parts.path.rstrip("/")
-        )
-    except (AttributeError, ValueError):
-        return False
-
-
 _NEVER_OLLAMA_PROVIDERS = frozenset({"openrouter", "nous", "anthropic", "openai", "openai-codex", "gemini", "ollama-cloud"})
 _LOCAL_LIKE_PROVIDERS = frozenset({"", "custom", "local", "llamacpp", "llama.cpp", "llama-cpp", "vllm"})
 
@@ -294,50 +271,17 @@ def should_use_ollama_native_catalog(
     base_url: Optional[str],
     headers: Optional[dict[str, str]] = None,
 ) -> bool:
-    """True when model discovery should use local Ollama ``/api/tags``: the caller asked for Ollama
-    explicitly, the base URL matches ``providers.ollama.base_url``, or an ambiguous custom URL on
-    Ollama's default port actually serves ``/api/tags``. (Bare ``ollama`` is normalized to
-    ``custom`` elsewhere so runtime paths share the OpenAI client, but ``/api/tags`` is the
-    authoritative local list; other custom endpoints keep the ``/models`` probe.)"""
-    requested = str(provider or "").strip().lower()
+    """Resolve the pure catalogue classification, probing only when required."""
+    decision = classify_ollama_catalog(
+        provider,
+        base_url,
+        configured_base_url=_configured_ollama_base_url(),
+    )
+    if decision == "native":
+        return True
+    if decision == "openai":
+        return False
     root = _root_for_ollama_native_api(base_url or "")
-    if root:
-        try:
-            host = (urllib.parse.urlparse(root).hostname or "").lower()
-            if host == "ollama.com" or host.endswith(".ollama.com"):
-                return False
-        except ValueError:
-            pass
-
-    if requested in _NEVER_OLLAMA_PROVIDERS:
-        return False
-
-    configured_base = _configured_ollama_base_url()
-    if requested == "ollama":
-        if not root:
-            return False
-        if configured_base and not _same_ollama_native_root(root, configured_base):
-            return probe_ollama_local_models(root, timeout=0.5, headers=headers) is not None
-        return True
-
-    if configured_base and _same_ollama_native_root(root, configured_base):
-        return True
-
-    if not root:
-        return False
-
-    if requested not in _LOCAL_LIKE_PROVIDERS and not requested.startswith("custom:"):
-        return False
-
-    if requested == "custom:ollama" or requested.endswith("-ollama"):
-        return True
-
-    try:
-        if urllib.parse.urlparse(root).port != _OLLAMA_DEFAULT_PORT:
-            return False
-    except ValueError:
-        return False
-
     return probe_ollama_local_models(root, timeout=0.5, headers=headers) is not None
 
 

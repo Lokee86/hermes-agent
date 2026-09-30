@@ -1266,7 +1266,7 @@ def _model_id_missing_known_prefix(model: str, provider: str) -> bool:
     if not name or "/" in name:
         return False
     try:
-        from hermes_cli.models_catalog_static import static_provider_model_ids
+        from models.catalog_static import static_provider_model_ids
         from models import suggest_prefixed_model_id
 
         provider_id = (provider or "").strip()

@@ -125,7 +125,7 @@ def _is_entitlement_rejected(agent, provider: str, model: str) -> bool:
         return False
     if (provider, model) in rejected:
         return True
-    from hermes_cli.models_catalog_static import static_provider_model_ids
+    from models.catalog_static import static_provider_model_ids
     from models import normalize_model_id
 
     normalized = normalize_model_id(

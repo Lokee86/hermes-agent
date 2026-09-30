@@ -6,6 +6,8 @@ from unittest.mock import patch, MagicMock
 
 import pytest
 
+from models import models_dev_cache as mdc
+
 from agent.models_dev import (
     PROVIDER_TO_MODELS_DEV,
     _extract_context,
@@ -13,7 +15,6 @@ from agent.models_dev import (
     _explicit_model_override,
     _override_context_window,
     _override_for,
-    _validate_registry,
     fetch_models_dev,
     query_model_metadata,
     get_model_info,
@@ -170,10 +171,10 @@ class TestFetchModelsDev:
         md._models_dev_cache = {}
         md._models_dev_cache_time = 0
 
-        with patch.object(md, "_disk_cache_age_seconds",
+        with patch.object(mdc, "models_dev_disk_cache_age_seconds",
                           return_value=md._MODELS_DEV_CACHE_TTL + 60), \
-             patch.object(md, "_load_disk_cache", return_value=SAMPLE_REGISTRY), \
-             patch.object(md, "_load_etag", return_value=""), \
+             patch.object(mdc, "load_models_dev_disk_cache", return_value=SAMPLE_REGISTRY), \
+             patch.object(mdc, "load_models_dev_etag", return_value=""), \
              patch.object(md, "_start_background_refresh_models_dev") as mock_refresh:
             result = fetch_models_dev()
 
@@ -192,11 +193,11 @@ class TestFetchModelsDev:
         md._models_dev_cache_time = time.time() - md._MODELS_DEV_CACHE_TTL - 1
 
         with patch.object(
-            md,
-            "_disk_cache_age_seconds",
+            mdc,
+            "models_dev_disk_cache_age_seconds",
             return_value=md._MODELS_DEV_CACHE_TTL + 60,
-        ), patch.object(md, "_load_disk_cache", return_value=SAMPLE_REGISTRY), \
-           patch.object(md, "_load_etag", return_value=""):
+        ), patch.object(mdc, "load_models_dev_disk_cache", return_value=SAMPLE_REGISTRY), \
+           patch.object(mdc, "load_models_dev_etag", return_value=""):
             first = fetch_models_dev()
             # Join the background refresh worker so its failure backoff is
             # observable and requests.get stays patched for its lifetime.
@@ -231,9 +232,9 @@ class TestFetchModelsDev:
         md._models_dev_cache_time = 0
         md._models_dev_retry_after = time.time() - 1
 
-        with patch.object(md, "_save_disk_cache") as mock_save, \
-             patch.object(md, "_load_etag", return_value=""), \
-             patch.object(md, "_save_etag") as mock_save_etag:
+        with patch.object(mdc, "save_models_dev_disk_cache") as mock_save, \
+             patch.object(mdc, "load_models_dev_etag", return_value=""), \
+             patch.object(mdc, "save_models_dev_etag") as mock_save_etag:
             # Run the worker synchronously — deterministic, no thread.
             md._models_dev_refresh_in_flight = True
             md._background_refresh_models_dev()
@@ -262,10 +263,10 @@ class TestFetchModelsDev:
             return response
 
         mock_get.side_effect = blocking_get
-        with patch.object(md, "_disk_cache_age_seconds", return_value=None), patch.object(
-            md, "_save_disk_cache"
-        ), patch.object(md, "_load_etag", return_value=""), \
-             patch.object(md, "_save_etag"), \
+        with patch.object(mdc, "models_dev_disk_cache_age_seconds", return_value=None), patch.object(
+            mdc, "save_models_dev_disk_cache"
+        ), patch.object(mdc, "load_models_dev_etag", return_value=""), \
+             patch.object(mdc, "save_models_dev_etag"), \
              ThreadPoolExecutor(max_workers=6) as pool:
             futures = [pool.submit(fetch_models_dev) for _ in range(6)]
             assert request_started.wait(timeout=2)
@@ -282,11 +283,11 @@ class TestFetchModelsDev:
         response = self._mock_response(SAMPLE_REGISTRY)
         mock_get.side_effect = [OSError("models.dev unreachable"), response]
 
-        with patch.object(md, "_disk_cache_age_seconds", return_value=None), patch.object(
-            md, "_load_disk_cache", return_value={}
-        ), patch.object(md, "_save_disk_cache"), \
-             patch.object(md, "_load_etag", return_value=""), \
-             patch.object(md, "_save_etag"):
+        with patch.object(mdc, "models_dev_disk_cache_age_seconds", return_value=None), patch.object(
+            mdc, "load_models_dev_disk_cache", return_value={}
+        ), patch.object(mdc, "save_models_dev_disk_cache"), \
+             patch.object(mdc, "load_models_dev_etag", return_value=""), \
+             patch.object(mdc, "save_models_dev_etag"):
             assert fetch_models_dev() == {}
             assert fetch_models_dev(force_refresh=True) == SAMPLE_REGISTRY
 
@@ -315,7 +316,7 @@ class TestFetchModelsDev:
 
         md._models_dev_cache = cache
         md._models_dev_cache_time = cache_time(md)
-        with patch.object(md, "_load_disk_cache", return_value=disk_data):
+        with patch.object(mdc, "load_models_dev_disk_cache", return_value=disk_data):
             result = fetch_models_dev(allow_network=False)
 
         assert result == expected
@@ -365,11 +366,11 @@ class TestETagConditionalGet:
         md._models_dev_cache = SAMPLE_REGISTRY
         md._models_dev_cache_time = 0
 
-        with patch.object(md, "_disk_cache_age_seconds", return_value=None), \
-             patch.object(md, "_load_disk_cache", return_value={}), \
-             patch.object(md, "_save_disk_cache"), \
-             patch.object(md, "_load_etag", return_value='"v1"'), \
-             patch.object(md, "_save_etag"):
+        with patch.object(mdc, "models_dev_disk_cache_age_seconds", return_value=None), \
+             patch.object(mdc, "load_models_dev_disk_cache", return_value={}), \
+             patch.object(mdc, "save_models_dev_disk_cache"), \
+             patch.object(mdc, "load_models_dev_etag", return_value='"v1"'), \
+             patch.object(mdc, "save_models_dev_etag"):
             fetch_models_dev(force_refresh=True)
 
         call_kwargs = mock_get.call_args
@@ -389,8 +390,8 @@ class TestETagConditionalGet:
         md._models_dev_cache_time = 0
         md._models_dev_retry_after = time.time() + 100  # backoff was armed
 
-        with patch.object(md, "_load_etag", return_value='"v1"'), \
-             patch.object(md, "_save_etag"):
+        with patch.object(mdc, "load_models_dev_etag", return_value='"v1"'), \
+             patch.object(mdc, "save_models_dev_etag"):
             # Run the background worker synchronously
             md._models_dev_refresh_in_flight = True
             md._background_refresh_models_dev()
@@ -418,10 +419,10 @@ class TestETagConditionalGet:
         md._models_dev_cache_time = 0
         md._models_dev_retry_after = 0
 
-        with patch.object(md, "_disk_cache_age_seconds", return_value=None), \
-             patch.object(md, "_load_disk_cache", return_value={}), \
-             patch.object(md, "_load_etag", return_value='"v1"'), \
-             patch.object(md, "_save_etag"):
+        with patch.object(mdc, "models_dev_disk_cache_age_seconds", return_value=None), \
+             patch.object(mdc, "load_models_dev_disk_cache", return_value={}), \
+             patch.object(mdc, "load_models_dev_etag", return_value='"v1"'), \
+             patch.object(mdc, "save_models_dev_etag"):
             result = fetch_models_dev(force_refresh=True)
 
         assert result == SAMPLE_REGISTRY
@@ -440,11 +441,11 @@ class TestETagConditionalGet:
         response.raise_for_status = MagicMock()
         mock_get.return_value = response
 
-        with patch.object(md, "_disk_cache_age_seconds", return_value=None), \
-             patch.object(md, "_load_disk_cache", return_value={}), \
-             patch.object(md, "_save_disk_cache"), \
-             patch.object(md, "_load_etag", return_value=""), \
-             patch.object(md, "_save_etag"):
+        with patch.object(mdc, "models_dev_disk_cache_age_seconds", return_value=None), \
+             patch.object(mdc, "load_models_dev_disk_cache", return_value={}), \
+             patch.object(mdc, "save_models_dev_disk_cache"), \
+             patch.object(mdc, "load_models_dev_etag", return_value=""), \
+             patch.object(mdc, "save_models_dev_etag"):
             fetch_models_dev()
 
         call_kwargs = mock_get.call_args
@@ -461,15 +462,15 @@ class TestCorruptCacheRejection:
     """A corrupt or empty disk cache must be rejected, not served as {}."""
 
     def test_validate_registry_rejects_empty_dict(self):
-        assert not _validate_registry({})
+        assert not mdc.valid_models_dev_registry({})
 
     def test_validate_registry_rejects_non_dict(self):
-        assert not _validate_registry("not a dict")
-        assert not _validate_registry(None)
-        assert not _validate_registry([])
+        assert not mdc.valid_models_dev_registry("not a dict")
+        assert not mdc.valid_models_dev_registry(None)
+        assert not mdc.valid_models_dev_registry([])
 
     def test_validate_registry_accepts_populated_dict(self):
-        assert _validate_registry({"anthropic": {}})
+        assert mdc.valid_models_dev_registry({"anthropic": {}})
 
     def test_corrupt_json_on_disk_rejected_with_warning(self, tmp_path, caplog):
         """Invalid JSON in a REAL cache file is rejected with a warning."""
@@ -479,10 +480,10 @@ class TestCorruptCacheRejection:
 
         cache = tmp_path / "models_dev_cache.json"
         cache.write_text("not json{{{", encoding="utf-8")
-        with patch.object(md, "_get_cache_path", return_value=cache), \
-             patch.object(md, "_get_etag_path", return_value=tmp_path / "models_dev_cache.etag"):
+        with patch.object(mdc, "models_dev_cache_path", return_value=cache), \
+             patch.object(mdc, "models_dev_etag_path", return_value=tmp_path / "models_dev_cache.etag"):
             with caplog.at_level(logging.WARNING):
-                result = md._load_disk_cache()
+                result = mdc.load_models_dev_disk_cache()
 
         assert result == {}
         assert any("disk cache" in r.message for r in caplog.records)
@@ -495,10 +496,10 @@ class TestCorruptCacheRejection:
 
         cache = tmp_path / "models_dev_cache.json"
         cache.write_text("{}", encoding="utf-8")
-        with patch.object(md, "_get_cache_path", return_value=cache), \
-             patch.object(md, "_get_etag_path", return_value=tmp_path / "models_dev_cache.etag"):
+        with patch.object(mdc, "models_dev_cache_path", return_value=cache), \
+             patch.object(mdc, "models_dev_etag_path", return_value=tmp_path / "models_dev_cache.etag"):
             with caplog.at_level(logging.WARNING):
-                result = md._load_disk_cache()
+                result = mdc.load_models_dev_disk_cache()
 
         assert result == {}
         assert any("corrupt or empty" in r.message for r in caplog.records)
@@ -517,9 +518,9 @@ class TestCorruptCacheRejection:
         cache.write_text("corrupt!!", encoding="utf-8")
         etag.write_text("stale-etag", encoding="utf-8")
 
-        with patch.object(md, "_get_cache_path", return_value=cache), \
-             patch.object(md, "_get_etag_path", return_value=etag):
-            result = md._load_disk_cache()
+        with patch.object(mdc, "models_dev_cache_path", return_value=cache), \
+             patch.object(mdc, "models_dev_etag_path", return_value=etag):
+            result = mdc.load_models_dev_disk_cache()
 
         assert result == {}
         assert not etag.exists()
@@ -549,7 +550,7 @@ class TestCorruptCacheRejection:
             return resp
 
         with patch.object(md.requests, "get", side_effect=fake_get), \
-             patch.object(md, "_load_etag", return_value="stale-etag"), \
+             patch.object(mdc, "load_models_dev_etag", return_value="stale-etag"), \
              patch.object(md, "_models_dev_cache", {}):
             data, etag = md._fetch_models_dev_from_network()
 
@@ -565,7 +566,7 @@ class TestCorruptCacheRejection:
         etag = tmp_path / "models_dev_cache.etag"
         etag.write_text("stale", encoding="utf-8")
 
-        with patch.object(md, "_get_etag_path", return_value=etag), \
+        with patch.object(mdc, "models_dev_etag_path", return_value=etag), \
              patch.object(md, "_models_dev_cache", {}):
             before = md._models_dev_retry_after
             try:
@@ -611,11 +612,11 @@ class TestMirrorUrlOverride:
 
         fake_config = {"models_dev": {"url": "https://mirror.example.com/api.json"}}
 
-        with patch.object(md, "_disk_cache_age_seconds", return_value=None), \
-             patch.object(md, "_load_disk_cache", return_value={}), \
-             patch.object(md, "_save_disk_cache"), \
-             patch.object(md, "_load_etag", return_value=""), \
-             patch.object(md, "_save_etag"), \
+        with patch.object(mdc, "models_dev_disk_cache_age_seconds", return_value=None), \
+             patch.object(mdc, "load_models_dev_disk_cache", return_value={}), \
+             patch.object(mdc, "save_models_dev_disk_cache"), \
+             patch.object(mdc, "load_models_dev_etag", return_value=""), \
+             patch.object(mdc, "save_models_dev_etag"), \
              patch("hermes_cli.config.load_config_readonly", return_value=fake_config):
             fetch_models_dev()
 
@@ -637,11 +638,11 @@ class TestMirrorUrlOverride:
 
         fake_config = {"models_dev": {"url": ""}}
 
-        with patch.object(md, "_disk_cache_age_seconds", return_value=None), \
-             patch.object(md, "_load_disk_cache", return_value={}), \
-             patch.object(md, "_save_disk_cache"), \
-             patch.object(md, "_load_etag", return_value=""), \
-             patch.object(md, "_save_etag"), \
+        with patch.object(mdc, "models_dev_disk_cache_age_seconds", return_value=None), \
+             patch.object(mdc, "load_models_dev_disk_cache", return_value={}), \
+             patch.object(mdc, "save_models_dev_disk_cache"), \
+             patch.object(mdc, "load_models_dev_etag", return_value=""), \
+             patch.object(mdc, "save_models_dev_etag"), \
              patch("hermes_cli.config.load_config_readonly", return_value=fake_config):
             fetch_models_dev()
 

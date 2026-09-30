@@ -922,7 +922,7 @@ def _api_key_provider_model_list(provider_id: str, pconfig, existing_key: str, k
 def _model_flow_api_key_provider(config, provider_id, current_model=""):
     """Generic flow for API-key providers (z.ai, MiniMax, OpenCode, etc.)."""
     from hermes_cli.config import save_env_value, load_config
-    from hermes_cli.models import normalize_opencode_model_id
+    from providers import normalize_opencode_model_id
     pconfig = get_provider_config(provider_id)
     key_env = pconfig.api_key_env_vars[0] if pconfig.api_key_env_vars else ""
     base_url_env = pconfig.base_url_env_var or ""

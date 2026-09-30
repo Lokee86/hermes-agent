@@ -2,10 +2,11 @@ import base64
 import json
 from unittest.mock import patch
 
-from hermes_cli.codex_models import (
-    _FORWARD_COMPAT_TEMPLATE_MODELS,
+from hermes_cli.codex_models import get_codex_model_ids
+from models.codex_catalog import (
     DEFAULT_CODEX_MODELS,
-    get_codex_model_ids,
+    FORWARD_COMPAT_TEMPLATE_MODELS,
+    finalize_codex_models,
 )
 
 
@@ -37,12 +38,12 @@ def test_codex_catalog_never_offers_chatgpt_rejected_pro_slugs(monkeypatch, tmp_
 
     # Live discovery returning only template slugs fires every forward-compat
     # synthesis rule; none of what it adds may be -pro.
-    templates = list(dict.fromkeys(t for _, ts in _FORWARD_COMPAT_TEMPLATE_MODELS for t in ts))
+    templates = list(dict.fromkeys(t for _, ts in FORWARD_COMPAT_TEMPLATE_MODELS for t in ts))
     monkeypatch.setattr(
         "hermes_cli.codex_models._fetch_models_from_api", lambda access_token, **_kw: templates
     )
     live = get_codex_model_ids(access_token="codex-access-token")
-    assert {synthetic for synthetic, _ in _FORWARD_COMPAT_TEMPLATE_MODELS} <= set(live)
+    assert {synthetic for synthetic, _ in FORWARD_COMPAT_TEMPLATE_MODELS} <= set(live)
     assert _pro_slugs(live) == []
 
 
@@ -69,9 +70,9 @@ def test_picker_never_synthesizes_900k_for_pro_or_unknown_slugs():
     ``-pro`` slugs are not routable on Codex OAuth (backend 400s them) and
     unknown future descendants were never probed — neither may gain a
     synthetic ``-900k`` entry (#92797 review)."""
-    from hermes_cli.codex_models import _finalize_codex_models
+    from models.codex_catalog import finalize_codex_models
 
-    out = _finalize_codex_models(["gpt-5.6-sol-pro", "gpt-5.6-nova"])
+    out = finalize_codex_models(["gpt-5.6-sol-pro", "gpt-5.6-nova"])
     assert "gpt-5.6-sol-pro-900k" not in out
     assert "gpt-5.6-nova-900k" not in out
 
@@ -145,7 +146,7 @@ def test_astra_requires_live_codex_account_discovery(monkeypatch, tmp_path):
     monkeypatch.setattr(
         codex_models,
         "_fetch_models_from_api",
-        lambda _token, **_kw: codex_models._finalize_codex_models(["gpt-6-astra"]),
+        lambda _token, **_kw: finalize_codex_models(["gpt-6-astra"]),
     )
     entitled = get_codex_model_ids(access_token="entitled-token")
     assert entitled[entitled.index("gpt-6-astra") + 1] == "gpt-6-astra-900k"

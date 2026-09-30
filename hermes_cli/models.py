@@ -32,13 +32,12 @@ from providers import get_provider_profile, is_aggregator, list_providers, norma
 from hermes_cli.route_identity import normalize_route_base_url
 from hermes_cli.urllib_security import open_credentialed_url
 from hermes_cli.version_info import get_version_info
-from hermes_cli.models_catalog_static import (
+from models.catalog_static import (
     OPENROUTER_MODELS,
     VERCEL_AI_GATEWAY_MODELS,
     _BORROWED_MODEL_PROVIDERS,
     _LIVE_FIRST_PICKER_PROVIDERS,
     _MODELS_DEV_PREFERRED,
-    _OPENAI_FAST_MODE_PREFIXES,
     _PROVIDER_MODELS,
     _xai_finalize_catalog)
 from models.metadata.reasoning import (
@@ -67,8 +66,6 @@ _HERMES_USER_AGENT = f"hermes-cli/{get_version_info().base_version}"
 COPILOT_BASE_URL = "https://api.githubcopilot.com"
 COPILOT_MODELS_URL = f"{COPILOT_BASE_URL}/models"
 COPILOT_EDITOR_VERSION = "vscode/1.104.1"
-COPILOT_REASONING_EFFORTS_GPT5 = ["minimal", "low", "medium", "high"]
-COPILOT_REASONING_EFFORTS_O_SERIES = ["low", "medium", "high"]
 
 def _urlopen_model_catalog_request(req: urllib.request.Request, *, timeout: float, ssl_context=None):
     """Open catalog requests without forwarding headers across origins."""
@@ -457,27 +454,10 @@ def _openrouter_model_supports_tools(item: Any) -> bool:
     return "tools" in params if isinstance(params, list) else True
 
 
-from agent.reasoning_effort import CODEX_ASTRA_EFFORTS, clamp_effort as _clamp_effort, is_astra_model
 
 
-def clamp_reasoning_effort_to_supported(
-    effort: Optional[str], supported_efforts: Optional[list[str]]) -> Optional[str]:
-    """Thin wrapper over :func:`agent.reasoning_effort.clamp_effort`: keep a supported level verbatim,
-    else the nearest WEAKER supported level (never silently escalate cost), else the weakest; unknown
-    supported-sets and bespoke level names pass through unchanged."""
-    return _clamp_effort(effort, supported_efforts)
 
 
-def clamp_github_reasoning_effort(effort: Any, supported: list[str]) -> str:
-    """Copilot/GitHub Models effort for a non-empty *supported* list: the level itself when listed,
-    else the nearest WEAKER listed level; bespoke names the ladder can't place fall to ``medium``
-    (or the first listed level)."""
-    effort = str(effort or "medium").strip().lower()
-    if effort not in supported:
-        effort = _clamp_effort(effort, supported)
-        if effort not in supported:
-            effort = "medium" if "medium" in supported else supported[0]
-    return effort
 
 
 def _fetch_live_catalog_index(url: str, timeout: float, opener) -> Optional[tuple[list, dict[str, dict[str, Any]]]]:
@@ -1035,68 +1015,16 @@ def provider_label(provider: Optional[str]) -> str:
     return str(profile.display_name or profile.name) if profile else (original or "OpenRouter")
 
 
-def _is_openai_fast_model(model_id: Optional[str]) -> bool:
-    """OpenAI flagship eligible for Priority Processing. Codex-series excluded — the Codex Responses
-    API doesn't accept ``service_tier``."""
-    base = _strip_vendor_prefix(str(model_id or "")).split(":")[0]
-    return bool(base) and "codex" not in base and base.startswith(tuple(_OPENAI_FAST_MODE_PREFIXES))
 
 
-def _strip_vendor_prefix(model_id: str) -> str:
-    """Lowercase and strip a ``vendor/`` prefix (``anthropic/claude-opus-4-6`` → ``claude-opus-4-6``)."""
-    raw = str(model_id or "").strip().lower()
-    return raw.split("/", 1)[1] if "/" in raw else raw
 
 
-def model_supports_fast_mode(model_id: Optional[str]) -> bool:
-    """Return whether Hermes should expose the /fast toggle for this model."""
-    from models.metadata.context import is_grok_46_family
-
-    return (
-        _is_anthropic_fast_model(model_id)
-        or _is_openai_fast_model(model_id)
-        or is_grok_46_family(str(model_id or "")))
 
 
-def _is_anthropic_fast_model(model_id: Optional[str]) -> bool:
-    """Accepts the Anthropic Fast Mode ``speed`` param (Opus 4.8 / Opus 5 / Opus 5.5 only) —
-    deliberately NOT a general "fast model" check. The list lives in ``agent.model_metadata``."""
-    from models.metadata.context import is_anthropic_fast_mode_model
-
-    return is_anthropic_fast_mode_model(model_id)
 
 
-def _fast_mode_route_supported(
-    model_id: Optional[str], provider: Optional[str], base_url: Optional[str]) -> bool:
-    """Only the first-party endpoint that bills for fast mode may receive its params."""
-    from urllib.parse import urlparse
-
-    from models.metadata.context import is_grok_46_family
-
-    if _is_anthropic_fast_model(model_id):
-        allowed = {"anthropic": "api.anthropic.com"}
-    elif is_grok_46_family(str(model_id or "")):
-        allowed = {"xai": "api.x.ai"}
-    else:
-        allowed = {"openai": "api.openai.com", "openai-codex": "chatgpt.com"}
-    if provider and _normalize_provider(provider) not in allowed:
-        return False
-    host = (urlparse(str(base_url or "")).hostname or "").lower()
-    return not host or host in allowed.values()
 
 
-def resolve_fast_mode_overrides(
-    model_id: Optional[str], *, provider: Optional[str] = None, base_url: Optional[str] = None
-) -> dict[str, Any] | None:
-    """Fast/priority request_overrides — ``{"speed": "fast"}`` (Anthropic Fast Mode) or
-    ``{"service_tier": "priority"}`` (OpenAI / xAI Priority Processing) — or None if unsupported.
-    With ``provider``/``base_url`` the route is gated too (``_fast_mode_route_supported``) so proxies
-    never see the params. Single fast-mode gate for ``/fast`` and ``agent.fast_mode`` windows."""
-    if not model_supports_fast_mode(model_id):
-        return None
-    if (provider or base_url) and not _fast_mode_route_supported(model_id, provider, base_url):
-        return None
-    return {"speed": "fast"} if _is_anthropic_fast_model(model_id) else {"service_tier": "priority"}
 
 
 def _first_exchangeable_copilot_token(raw_tokens) -> str:
@@ -2234,87 +2162,16 @@ def normalize_copilot_model_id(
     )
 
 
-def _github_reasoning_efforts_for_model_id(model_id: str) -> list[str]:
-    raw = (model_id or "").strip().lower()
-    if raw.startswith(("openai/o1", "openai/o3", "openai/o4", "o1", "o3", "o4")):
-        return list(COPILOT_REASONING_EFFORTS_O_SERIES)
-    normalized = normalize_copilot_model_id(model_id).lower()
-    if is_astra_model(normalized):
-        return list(CODEX_ASTRA_EFFORTS)
-    if normalized.startswith("gpt-5"):
-        return list(COPILOT_REASONING_EFFORTS_GPT5)
-    return []
 
 
-_OPENCODE_FAMILIES = ("opencode-go", "opencode-zen")
 
 
-def opencode_provider_family(provider_id: Optional[str]) -> Optional[str]:
-    """Resolve a provider id (canonical or prefixed) to its OpenCode family, or None.
-
-    Returns ``"opencode-zen"`` or ``"opencode-go"`` for the built-in providers AND for custom providers
-    whose name extends a family slug (e.g. ``opencode-go-bridge`` pointing at
-    ``https://opencode.ai/zen/go/v1``, issue #85589). Matching is case-insensitive. Custom family providers
-    need the same per-model api_mode routing and /v1 base-url normalization as the built-ins — this
-    predicate is the single owner of that family-membership question; do not re-implement it inline.
-    """
-    raw = str(provider_id or "").strip().lower()
-    if not raw:
-        return None
-    canonical = _normalize_provider(provider_id)
-    if canonical in _OPENCODE_FAMILIES:
-        return canonical
-    return next((f for f in _OPENCODE_FAMILIES if raw.startswith(f)), None)
 
 
-def normalize_opencode_model_id(provider_id: Optional[str], model_id: Optional[str]) -> str:
-    """Normalize OpenCode config IDs to the bare model slug used in API requests."""
-    family = opencode_provider_family(provider_id)
-    current = str(model_id or "").strip()
-    if not current or family is None:
-        return current
-    for prefix in (f"{provider_id or family}/", f"{family}/"):
-        if current.lower().startswith(prefix.lower()):
-            return current[len(prefix):]
-    return current
 
 
-def normalize_opencode_base_url(
-    provider_id: Optional[str], api_mode: Optional[str], base_url: Optional[str]) -> str:
-    """Compatibility projection of the provider-owned OpenCode endpoint policy."""
-    from providers.routing import normalize_provider_base_url
-
-    return normalize_provider_base_url(
-        str(provider_id or ""),
-        str(api_mode or ""),
-        str(base_url or ""),
-    )
 
 
-def github_model_reasoning_efforts(
-    model_id: Optional[str], *, catalog: Optional[list[dict[str, Any]]] = None,
-    api_key: Optional[str] = None) -> list[str]:
-    """Return supported reasoning-effort levels for a Copilot-visible model."""
-    normalized = normalize_copilot_model_id(model_id, catalog=catalog, api_key=api_key)
-    if not normalized:
-        return []
-
-    if catalog is None and api_key:
-        catalog = fetch_github_model_catalog(api_key=api_key)
-    catalog_entry = next((item for item in catalog if item.get("id") == normalized), None) if catalog else None
-    if catalog_entry is not None:
-        capabilities = catalog_entry.get("capabilities")
-        if isinstance(capabilities, dict):
-            # Structured catalog: the advertised list is authoritative (empty when absent).
-            supports = capabilities.get("supports")
-            efforts = supports.get("reasoning_effort") if isinstance(supports, dict) else None
-            if not isinstance(efforts, list):
-                return []
-            return list(dict.fromkeys(e for effort in efforts if (e := str(effort).strip().lower())))
-        # Legacy list-shaped capabilities: only a "reasoning" tag unlocks the pattern defaults.
-        if "reasoning" not in {str(c).strip().lower() for c in catalog_entry.get("capabilities", [])}:
-            return []
-    return _github_reasoning_efforts_for_model_id(str(model_id or normalized))
 
 
 # Negative cache: monotonic timestamp of the last timed-out probe, keyed
@@ -2734,7 +2591,7 @@ def is_nous_free_tier(account_info: dict[str, Any]) -> bool:
 
 _PLUGIN_COMPAT_LAZY = {
     'LMStudioLoadResult': ('hermes_cli.models_local', 'LMStudioLoadResult'),
-    'PROVIDER_GROUPS': ('hermes_cli.models_catalog_static', 'PROVIDER_GROUPS'),
+    'PROVIDER_GROUPS': ('hermes_cli.provider_groups', 'PROVIDER_GROUPS'),
     'ProviderEntry': ('hermes_cli.provider_catalog', 'ProviderEntry'),
     'atomic_json_write': ('utils', 'atomic_json_write'),
     'base_url_host_matches': ('utils', 'base_url_host_matches'),
@@ -2746,7 +2603,7 @@ _PLUGIN_COMPAT_LAZY = {
     'fetch_ollama_local_models': ('hermes_cli.models_local', 'fetch_ollama_local_models'),
     'get_cached_nous_inference_base_url': ('hermes_cli.models_pricing', 'get_cached_nous_inference_base_url'),
     'get_pricing_for_provider': ('hermes_cli.models_pricing', 'get_pricing_for_provider'),
-    'group_providers': ('hermes_cli.models_catalog_static', 'group_providers'),
+    'group_providers': ('hermes_cli.provider_groups', 'group_providers'),
     'lmstudio_model_reasoning_options': ('hermes_cli.models_local', 'lmstudio_model_reasoning_options'),
     'nous_policy_allowed_ids': ('hermes_cli.models_pricing', 'nous_policy_allowed_ids'),
     'ollama_model_supports_thinking': ('hermes_cli.models_local', 'ollama_model_supports_thinking'),
@@ -2754,7 +2611,7 @@ _PLUGIN_COMPAT_LAZY = {
     'pricing_cache_scope': ('hermes_cli.models_pricing', 'pricing_cache_scope'),
     'probe_lmstudio_models': ('hermes_cli.models_local', 'probe_lmstudio_models'),
     'probe_ollama_local_models': ('hermes_cli.models_local', 'probe_ollama_local_models'),
-    'provider_group_for_slug': ('hermes_cli.models_catalog_static', 'provider_group_for_slug'),
+    'provider_group_for_slug': ('hermes_cli.provider_groups', 'provider_group_for_slug'),
     'restrict_to_nous_policy': ('hermes_cli.models_pricing', 'restrict_to_nous_policy'),
     'should_use_ollama_native_catalog': ('hermes_cli.models_local', 'should_use_ollama_native_catalog'),
     'url_origin': ('hermes_cli.urllib_security', 'url_origin'),

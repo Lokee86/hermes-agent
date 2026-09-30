@@ -76,7 +76,7 @@ def test_cli_picker_hides_excluded_provider_by_alias(config_home):
     """Exclusion by an alias (not the canonical slug) must also hide the
     provider, matching ``list_authenticated_providers``' matching against
     hermes_id / alias names."""
-    from hermes_cli.models_catalog_static import provider_group_for_slug
+    from hermes_cli.provider_groups import provider_group_for_slug
     from hermes_cli.provider_catalog import provider_catalog_by_slug
     from providers import list_providers
 
@@ -115,5 +115,3 @@ def test_cli_picker_hides_excluded_provider_by_alias(config_home):
         f"excluding alias {target_alias!r} should hide {target_slug}; "
         f"labels={excluded_labels}"
     )
-
-

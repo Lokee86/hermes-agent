@@ -1,6 +1,6 @@
-"""Static model and provider-presentation policy tables (data only — no network).
+"""Static model catalogue policy tables (data only — no network).
 
-Curated per-provider model lists, display groups, and model-parser alias policy. Provider
+Curated per-provider model lists and model-parser alias policy. Provider
 identity and declarations are owned by :mod:`providers`; live picker projection lives in
 :mod:`hermes_cli.provider_catalog`.
 """
@@ -72,10 +72,10 @@ VERCEL_AI_GATEWAY_MODELS: list[tuple[str, str]] = [("moonshotai/kimi-k2.6", "rec
 
 
 def _codex_curated_models() -> list[str]:
-    """openai-codex curated list from codex_models.py (DEFAULT_CODEX_MODELS + forward-compat
-    synthesis) so the gateway /model picker and the CLI ``hermes model`` flow share one source."""
-    from hermes_cli.codex_models import DEFAULT_CODEX_MODELS, _finalize_codex_models
-    return _finalize_codex_models(list(DEFAULT_CODEX_MODELS))
+    """Canonical offline Codex catalogue, including forward/context variants."""
+    from models.codex_catalog import curated_codex_models
+
+    return curated_codex_models()
 
 
 # Static xAI fallback when the models.dev disk cache is empty (fresh install, offline first run).
@@ -118,8 +118,8 @@ def _xai_curated_models() -> list[str]:
     """Offline curated floor for xAI / xAI OAuth pickers: $HERMES_HOME/models_dev_cache.json
     (no network), else ``_XAI_STATIC_FALLBACK``. Any failure falls through to the static list."""
     try:
-        from agent.models_dev import _load_disk_cache
-        data = _load_disk_cache()
+        from models.models_dev_cache import load_models_dev_disk_cache
+        data = load_models_dev_disk_cache()
         xai = data.get("xai") if isinstance(data, dict) else None
         models = xai.get("models") if isinstance(xai, dict) else None
         if isinstance(models, dict) and models:
@@ -298,75 +298,6 @@ _PROVIDER_MODELS: dict[str, list[str]] = {
 }
 
 
-# ---------------------------------------------------------------------------
-# Provider groups — DISPLAY ONLY. Vendors with several slugs (global API, China API, OAuth plan,
-# ...) fold under one top-level row in the INTERACTIVE PICKERS (``hermes model``, setup wizard,
-# Telegram ``/model``). They do not change provider identity, ``--provider``,
-# ``/model <provider:model>`` or any typed path — every member slug stays individually addressable.
-# ``group_providers()`` is the single fold used by all three surfaces.
-#   group_id -> (display_label, group_description shown on the collapsed row, [member_slug, ...])
-# Member order is the order shown inside the group submenu; member detail comes from ProviderProfile.
-# ---------------------------------------------------------------------------
-PROVIDER_GROUPS: dict[str, tuple[str, str, list[str]]] = {
-    "kimi":     ("Kimi / Moonshot", "Coding Plan, Moonshot global & China endpoints", ["kimi-coding", "kimi-coding-cn"]),
-    "minimax":  ("MiniMax",         "Global, OAuth Coding Plan & China endpoints",     ["minimax", "minimax-oauth", "minimax-cn"]),
-    "xai":      ("xAI Grok",        "Direct API or SuperGrok / Premium+ OAuth",        ["xai", "xai-oauth"]),
-    "google":   ("Google Gemini",   "Google AI Studio (API key)",                     ["gemini"]),
-    "openai":   ("OpenAI",          "ChatGPT/Codex subscription or direct OpenAI API", ["openai-codex", "openai-api"]),
-    "qwen":     ("Qwen",            "Qwen Cloud / DashScope, Coding Plan, Token Plan & Qwen CLI OAuth", ["alibaba", "alibaba-cn", "alibaba-coding-plan", "alibaba-coding-plan-cn", "alibaba-token-plan", "alibaba-token-plan-cn", "qwen-oauth"]),
-    "opencode": ("OpenCode",        "Zen pay-as-you-go or Go subscription", ["opencode-zen", "opencode-go"]),
-    "copilot":  ("GitHub Copilot",  "GitHub token API or copilot --acp process",       ["copilot", "copilot-acp"]),
-    "tencent":  ("Tencent Hy",      "Hy4 / Hy3 via TokenHub & TokenPlan", ["tencent-tokenhub", "tencent-tokenplan"]),
-}
-
-# Reverse index: member slug -> group_id.
-_SLUG_TO_GROUP: dict[str, str] = {
-    slug: gid for gid, (_label, _desc, members) in PROVIDER_GROUPS.items() for slug in members
-}
-
-
-def provider_group_for_slug(slug: str) -> str:
-    """Return the group_id a provider slug belongs to, or "" if ungrouped."""
-    return _SLUG_TO_GROUP.get(str(slug or "").strip().lower(), "")
-
-
-def group_providers(slugs):
-    """Fold a flat ordered slug iterable into picker rows by provider group (DISPLAY ONLY).
-
-    A group row appears at the position of its FIRST present member, in input order; later
-    members fold into it. Member order inside a group follows ``PROVIDER_GROUPS`` declaration,
-    restricted to the members present in ``slugs``.
-    """
-    present = set(slugs)
-    group_members = {
-        gid: [m for m in members if m in present]
-        for gid, (_label, _desc, members) in PROVIDER_GROUPS.items()
-    }
-    rows = []
-    seen: set[str] = set()
-    emitted_groups: set[str] = set()
-    for slug in slugs:
-        s = str(slug or "").strip().lower()
-        if not s or s in seen:
-            continue
-        seen.add(s)
-        gid = _SLUG_TO_GROUP.get(s, "")
-        if not gid:
-            rows.append({"kind": "single", "slug": s})
-            continue
-        if gid in emitted_groups:
-            continue  # already folded at the first member's position
-        emitted_groups.add(gid)
-        members = group_members.get(gid) or [s]
-        if len(members) <= 1:
-            rows.append({"kind": "single", "slug": members[0]})
-        else:
-            label, desc, _ = PROVIDER_GROUPS[gid]
-            rows.append({"kind": "group", "group_id": gid, "label": label,
-                         "description": desc, "members": list(members)})
-    return rows
-
-
 # Offline/fresh-install fallback for the model Hermes silently lands on when the user never picked
 # one (GUI onboarding confirm card, empty ``model.default``, provider-set-but-model-missing). The
 # AUTHORITATIVE source is the remote catalog manifest, which labels exactly one entry per provider
@@ -412,7 +343,6 @@ _LIVE_FIRST_PICKER_PROVIDERS: frozenset[str] = frozenset({"opencode-zen", "openc
 # Non-OpenAI endpoints (OpenRouter/Copilot/opencode-zen proxies) strip service_tier, so false
 # positives are harmless. Codex-series models are excluded — the Codex Responses API doesn't
 # expose service_tier.
-_OPENAI_FAST_MODE_PREFIXES: tuple[str, ...] = ("gpt-", "o1", "o3", "o4")
 
 
 # Providers where models.dev is authoritative: the curated list is an offline fallback plus custom

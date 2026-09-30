@@ -2129,7 +2129,7 @@ def try_activate_fallback(agent, reason: "FailoverReason | None" = None, reset_a
                 fb_base_url, fb_api_mode = "moa://local", "chat_completions"
             else:
                 try:
-                    from hermes_cli.models_catalog_static import static_provider_model_ids
+                    from models.catalog_static import static_provider_model_ids
                     from models import normalize_model_id
 
                     fb_model = normalize_model_id(

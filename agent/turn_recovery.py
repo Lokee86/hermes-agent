@@ -962,7 +962,7 @@ def _missing_vendor_prefix_suggestion(api_error: Exception, provider: Any, model
     if getattr(api_error, "status_code", None) != 404:
         return None
     try:
-        from hermes_cli.models_catalog_static import static_provider_model_ids
+        from models.catalog_static import static_provider_model_ids
         from models import suggest_prefixed_model_id
 
         provider_id = str(provider or "")

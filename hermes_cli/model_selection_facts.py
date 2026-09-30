@@ -6,7 +6,7 @@ from models import ModelRef
 from models.selection import ExplicitDetectionFacts
 from providers import list_providers, normalize_provider
 
-from hermes_cli.models_catalog_static import static_provider_model_ids
+from models.catalog_static import static_provider_model_ids
 
 
 def build_explicit_detection_facts(

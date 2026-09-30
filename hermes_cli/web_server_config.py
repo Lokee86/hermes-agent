@@ -420,7 +420,7 @@ def _normalize_main_model_assignment(provider: str, model: str) -> tuple[str, st
     from hermes_cli.config import load_config
     from hermes_cli.config import get_compatible_custom_providers
     from hermes_cli.models import _known_provider_names
-    from hermes_cli.models_catalog_static import static_provider_model_ids
+    from models.catalog_static import static_provider_model_ids
     from hermes_cli.providers import resolve_custom_provider, resolve_user_provider
     from models import normalize_model_id
     from providers import is_aggregator, normalize_provider

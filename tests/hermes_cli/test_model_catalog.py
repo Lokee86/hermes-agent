@@ -256,7 +256,7 @@ class TestDefaultModelFromCache:
         """Contract with the in-repo manifest: both provider blocks label the
         same default entry the code constant points at."""
         import hermes_cli.model_catalog as model_catalog
-        from hermes_cli.models_catalog_static import PREFERRED_SILENT_DEFAULT_MODEL
+        from models.catalog_static import PREFERRED_SILENT_DEFAULT_MODEL
 
         repo_root = Path(model_catalog.__file__).resolve().parent.parent
         manifest = json.loads(
