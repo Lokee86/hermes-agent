@@ -1,7 +1,6 @@
 """Tests for the #66140 fix: pre-update snapshots cover every profile."""
 
 import json
-import re
 from pathlib import Path
 
 import pytest
@@ -32,11 +31,6 @@ def profiles(monkeypatch, tmp_path):
     monkeypatch.setattr(
         "profiles.paths._get_profiles_root", lambda: tmp_path / "home" / "profiles"
     )
-    monkeypatch.setattr(
-        "profiles.names._PROFILE_ID_RE",
-        re.compile(r"^[a-z0-9][a-z0-9_-]*$"),
-        raising=False,
-    )
     return {"default": default_home, "work": work, "sparks": sparks}
 
 
@@ -48,6 +42,12 @@ class TestSiblingEnumeration:
     def test_invoked_from_named_profile_includes_default(self, profiles):
         names = [n for n, _ in backup._sibling_profile_homes(profiles["work"])]
         assert names == ["default", "sparks"]
+
+    def test_invalid_profile_directory_is_excluded(self, profiles):
+        invalid = profiles["default"] / "profiles" / "Bad Name"
+        invalid.mkdir()
+        names = [n for n, _ in backup._sibling_profile_homes(profiles["default"])]
+        assert names == ["sparks", "work"]
 
     def test_never_raises(self, monkeypatch, tmp_path):
         def _boom():
@@ -70,6 +70,17 @@ class TestAllProfileSnapshots:
             assert "pre-update" in snap_id
         # invoking profile untouched by THIS call
         assert not (profiles["default"] / "state-snapshots").exists()
+
+    def test_named_profile_snapshots_default_and_other_siblings(self, profiles):
+        result = backup.create_pre_update_snapshots_all_profiles(
+            invoking_home=profiles["work"], keep=1
+        )
+        assert set(result) == {"default", "sparks"}
+        for name, snap_id in result.items():
+            snap_dir = profiles[name] / "state-snapshots" / snap_id
+            assert snap_dir.is_dir()
+            assert (snap_dir / "config.yaml").is_file()
+        assert not (profiles["work"] / "state-snapshots").exists()
 
     def test_size_cap_forwarded(self, profiles):
         big = profiles["work"] / "state.db"
