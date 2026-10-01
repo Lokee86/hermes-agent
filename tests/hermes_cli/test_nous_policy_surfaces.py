@@ -97,7 +97,7 @@ class TestModelSwitchPicker:
 
     def _rows(self, monkeypatch):
         import hermes_cli.auth as auth_mod
-        import hermes_cli.model_switch as ms
+        import application_provider_discovery as ms
 
         monkeypatch.setattr(
             auth_mod,
@@ -170,7 +170,7 @@ class TestAuxiliaryFastModel:
     """Fast auxiliary selection uses the fetched catalog keys as candidate ids."""
 
     def _pick(self, monkeypatch, *, catalog):
-        from hermes_cli import model_selection_auxiliary as aux
+        from agent import auxiliary_model_resolution as aux
 
         seen: dict = {}
 
@@ -214,7 +214,7 @@ class TestAuxFallbackRespectsPolicy:
     a public recommendation and the rest are hardcoded."""
 
     def _patch(self, monkeypatch, *, allowed, recommended):
-        from hermes_cli import model_selection_auxiliary as aux
+        from agent import auxiliary_model_resolution as aux
         import providers
 
         monkeypatch.setattr(models_pricing, "nous_policy_allowed_ids", lambda **_k: allowed)

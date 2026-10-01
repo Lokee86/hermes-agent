@@ -175,7 +175,7 @@ def test_candidate_builder_uses_canonical_route_owner():
     assert candidate.route.provider == "actual"
     assert candidate.route.model == "gpt-5.4"
     assert candidate.route.api_mode == "chat_completions"
-    assert candidate.route.source == "endpoint_mandate"
+    assert candidate.route.source == "provider_mandate"
 
 
 def test_candidate_and_request_reject_ambiguous_identity():
