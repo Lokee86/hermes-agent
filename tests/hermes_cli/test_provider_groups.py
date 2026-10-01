@@ -6,7 +6,7 @@ These are invariant tests, not catalog snapshots: they assert how
 vendors, which is expected to change over time.
 """
 
-from hermes_cli.provider_groups import PROVIDER_GROUPS, group_providers, provider_group_for_slug
+from application_provider_groups import PROVIDER_GROUPS, group_providers, provider_group_for_slug
 
 
 def _slugs(rows):

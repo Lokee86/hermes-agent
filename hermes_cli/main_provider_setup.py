@@ -881,7 +881,7 @@ def _build_provider_picker_rows(config: dict, active: str, provider_labels: dict
     fold into display groups (PROVIDER_GROUPS): a group row's ``members`` drive a sub-picker, leaf
     rows have ``members == []``; saved custom providers and trailing actions stay flat. Honors
     ``model_catalog.excluded_providers`` (slug or alias, case-insensitive) like the gateway/TUI."""
-    from hermes_cli.provider_groups import group_providers, provider_group_for_slug
+    from application_provider_groups import group_providers, provider_group_for_slug
     from hermes_cli.provider_catalog import provider_entries
     from providers import get_provider_profile
     entries = provider_entries()

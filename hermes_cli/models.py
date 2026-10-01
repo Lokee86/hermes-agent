@@ -2168,7 +2168,7 @@ def is_nous_free_tier(account_info: dict[str, Any]) -> bool:
 
 _PLUGIN_COMPAT_LAZY = {
     'LMStudioLoadResult': ('hermes_cli.models_local', 'LMStudioLoadResult'),
-    'PROVIDER_GROUPS': ('hermes_cli.provider_groups', 'PROVIDER_GROUPS'),
+    'PROVIDER_GROUPS': ('application_provider_groups', 'PROVIDER_GROUPS'),
     'ProviderEntry': ('hermes_cli.provider_catalog', 'ProviderEntry'),
     'atomic_json_write': ('utils', 'atomic_json_write'),
     'base_url_host_matches': ('utils', 'base_url_host_matches'),
@@ -2180,7 +2180,7 @@ _PLUGIN_COMPAT_LAZY = {
     'fetch_ollama_local_models': ('hermes_cli.models_local', 'fetch_ollama_local_models'),
     'get_cached_nous_inference_base_url': ('hermes_cli.models_pricing', 'get_cached_nous_inference_base_url'),
     'get_pricing_for_provider': ('hermes_cli.models_pricing', 'get_pricing_for_provider'),
-    'group_providers': ('hermes_cli.provider_groups', 'group_providers'),
+    'group_providers': ('application_provider_groups', 'group_providers'),
     'lmstudio_model_reasoning_options': ('models.metadata.local', 'lmstudio_model_reasoning_options'),
     'nous_policy_allowed_ids': ('hermes_cli.models_pricing', 'nous_policy_allowed_ids'),
     'ollama_model_supports_thinking': ('models.metadata.local', 'ollama_model_supports_thinking'),
@@ -2188,7 +2188,7 @@ _PLUGIN_COMPAT_LAZY = {
     'pricing_cache_scope': ('hermes_cli.models_pricing', 'pricing_cache_scope'),
     'probe_lmstudio_models': ('hermes_cli.models_local', 'probe_lmstudio_models'),
     'probe_ollama_local_models': ('hermes_cli.models_local', 'probe_ollama_local_models'),
-    'provider_group_for_slug': ('hermes_cli.provider_groups', 'provider_group_for_slug'),
+    'provider_group_for_slug': ('application_provider_groups', 'provider_group_for_slug'),
     'restrict_to_nous_policy': ('hermes_cli.models_pricing', 'restrict_to_nous_policy'),
     'should_use_ollama_native_catalog': ('hermes_cli.models_local', 'should_use_ollama_native_catalog'),
     'url_origin': ('hermes_cli.urllib_security', 'url_origin'),
