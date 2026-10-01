@@ -15,7 +15,7 @@ logger = logging.getLogger(__name__)
 
 def _nous_allowed_ids() -> set[str] | None:
     try:
-        from hermes_cli.models_pricing import nous_policy_allowed_ids
+        from application_model_pricing import nous_policy_allowed_ids
         return nous_policy_allowed_ids()
     except Exception:
         logger.debug("Nous auxiliary policy lookup unavailable", exc_info=True)
@@ -29,7 +29,7 @@ def _fast_catalog_ids(provider: str) -> tuple[str, ...]:
     is_nous = provider_id == "nous"
     try:
         from hermes_cli.auth import resolve_api_key_provider_credentials
-        from hermes_cli.models_pricing import fetch_models_with_pricing
+        from application_model_pricing import fetch_models_with_pricing
         from providers import get_provider_profile
 
         api_key = ""
@@ -43,7 +43,7 @@ def _fast_catalog_ids(provider: str) -> tuple[str, ...]:
 
         if not api_key and is_nous:
             try:
-                from hermes_cli.models_pricing import _resolve_nous_pricing_credentials
+                from application_model_pricing import _resolve_nous_pricing_credentials
                 api_key, base_url = _resolve_nous_pricing_credentials()
             except Exception:
                 logger.debug("No Nous credentials for auxiliary catalog", exc_info=True)
@@ -59,7 +59,7 @@ def _fast_catalog_ids(provider: str) -> tuple[str, ...]:
 
         kwargs = {}
         if is_nous:
-            from hermes_cli.models_pricing import _NOUS_CATALOG_TTL_SECONDS
+            from application_model_pricing import _NOUS_CATALOG_TTL_SECONDS
             kwargs = {
                 "include_sale_original": True,
                 "cache_ttl_seconds": _NOUS_CATALOG_TTL_SECONDS,

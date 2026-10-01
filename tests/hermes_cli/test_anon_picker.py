@@ -8,6 +8,8 @@ against a temp ``HERMES_HOME`` with the network catalog fetch stubbed.
 
 from __future__ import annotations
 
+import hermes_cli.models_local as hermes_cli_models_local
+
 import os
 from pathlib import Path
 
@@ -40,7 +42,7 @@ def guest_home(monkeypatch, tmp_path):
     import application_provider_discovery as msp
     monkeypatch.setattr(models_dev, "fetch_models_dev", lambda *a, **k: {})
     monkeypatch.setattr(models_mod, "get_curated_nous_model_ids", lambda *a, **k: ["anthropic/claude-x", "openai/gpt-y"])
-    monkeypatch.setattr(models_mod, "fetch_ollama_cloud_models", lambda *a, **k: [])
+    monkeypatch.setattr(hermes_cli_models_local, "fetch_ollama_cloud_models", lambda *a, **k: [])
     monkeypatch.setattr(msp, "_nous_picker_model_ids", lambda *a, **k: pytest.fail("guest must not fetch the Portal catalog"))
     return Path(os.environ["HERMES_HOME"])
 

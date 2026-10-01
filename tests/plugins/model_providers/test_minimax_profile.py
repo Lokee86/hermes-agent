@@ -43,7 +43,7 @@ class TestMinimaxAuxModelM3:
     """MiniMax profile aux model is the new frontier M3, not the stale M2.7.
 
     The catalog top entry is ``MiniMax-M3`` in
-    ``hermes_cli.models._PROVIDER_MODELS['minimax']`` and the
+    ``models.catalog_static._PROVIDER_MODELS['minimax']`` and the
     user-facing ``model.default`` for a Token-Plan install is M3,
     so pinning the aux default to the same model keeps the runtime
     consistent (same auth, same billing pool, same rate limits, no
@@ -54,7 +54,7 @@ class TestMinimaxAuxModelM3:
 
 
     def test_consumer_api_returns_non_empty_for_each_provider(self, minimax_profile):
-        from hermes_cli.model_selection_auxiliary import select_provider_auxiliary_model
+        from agent.auxiliary_model_resolution import select_provider_auxiliary_model
 
         profile, provider_id = minimax_profile
         resolved = select_provider_auxiliary_model(provider_id)

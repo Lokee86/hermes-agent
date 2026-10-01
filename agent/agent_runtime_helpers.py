@@ -1267,7 +1267,7 @@ def restore_primary_runtime(agent) -> bool:
     primary_provider = str((rt or {}).get("provider") or "").strip().lower()
     primary_model = str((rt or {}).get("model") or "").strip()
     from agent.fallback_cooldown import _is_entitlement_rejected
-    from hermes_cli.chat_catalog import is_known_non_chat_model
+    from models.catalog_chat import is_known_non_chat_model
     if primary_model and (
         _is_entitlement_rejected(agent, primary_provider, primary_model)
         or is_known_non_chat_model(primary_model)

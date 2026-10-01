@@ -66,7 +66,7 @@ def _model_flow_openrouter(config, current_model=""):
         return
 
     from hermes_cli.models import model_ids
-    from hermes_cli.models_pricing import get_pricing_for_provider
+    from application_model_pricing import get_pricing_for_provider
     openrouter_models = model_ids(force_refresh=True)
     # Live pricing is non-blocking — empty dict on failure.
     pricing = get_pricing_for_provider("openrouter", force_refresh=True)
@@ -93,7 +93,7 @@ def _model_flow_ai_gateway(config, current_model=""):
         return
 
     from hermes_cli.models import ai_gateway_model_ids
-    from hermes_cli.models_pricing import get_pricing_for_provider
+    from application_model_pricing import get_pricing_for_provider
     models_list = ai_gateway_model_ids(force_refresh=True)
     pricing = get_pricing_for_provider("ai-gateway", force_refresh=True)
     selected = _prompt_model_selection(models_list, current_model=current_model, pricing=pricing)
@@ -178,12 +178,11 @@ def _nous_login_args(args) -> argparse.Namespace:
 def _nous_model_catalog(free_tier: bool, portal_url: str, model_ids: list, pricing: dict):
     """Free/paid-tier catalog for the Nous picker: ``(model_ids, pricing, unavailable_models,
     unavailable_message, policy_narrowed)`` or None (message already printed) when nothing is selectable."""
-    from hermes_cli.models_pricing import nous_policy_allowed_ids, restrict_to_nous_policy
-    from hermes_cli.models import (
-        partition_nous_models_by_tier,
-        union_with_portal_free_recommendations,
-        union_with_portal_paid_recommendations,
-    )
+    from application_model_pricing import nous_policy_allowed_ids
+    from models.catalog_policy import restrict_to_nous_policy
+    from models.metadata.pricing import partition_nous_models_by_tier
+    from hermes_cli.models import union_with_portal_free_recommendations
+    from hermes_cli.models import union_with_portal_paid_recommendations
 
     # Free users: union with the Portal's freeRecommendedModels (newly launched free models appear
     # before the curated list catches up), then partition selectable/unavailable by Portal pricing.
@@ -296,8 +295,9 @@ def _model_flow_nous(config, current_model="", args=None):
 
     # Already logged in — the curated list (agentic models users know from OpenRouter)
     # instead of the hundreds returned by the live /models endpoint.
-    from hermes_cli.models import check_nous_free_tier, get_curated_nous_model_ids
-    from hermes_cli.models_pricing import get_pricing_for_provider
+    from hermes_cli.models import check_nous_free_tier
+    from hermes_cli.models import get_curated_nous_model_ids
+    from application_model_pricing import get_pricing_for_provider
     from application_provider_discovery import _free_tier_nous_row
     tier_row = _free_tier_nous_row({"name": "Nous Portal", "models": []})
     if tier_row is None:
@@ -470,7 +470,7 @@ def _model_flow_minimax_oauth(config, current_model="", args=None):
         print(format_auth_error(exc))
         return
 
-    from hermes_cli.models import _PROVIDER_MODELS
+    from models.catalog_static import _PROVIDER_MODELS
     model_ids = _PROVIDER_MODELS.get("minimax-oauth", [])
     selected = _prompt_model_selection(model_ids, current_model, confirm_provider="minimax-oauth", confirm_base_url=creds["base_url"])
     _activate_provider_model(selected, "minimax-oauth", creds["base_url"], f"\u2713 Using MiniMax model: {selected}", no_change=None)
@@ -478,7 +478,7 @@ def _model_flow_minimax_oauth(config, current_model="", args=None):
 
 def _copilot_model_list(live_ids) -> list:
     """Live GitHub Copilot ids, or the curated fallback with a warning."""
-    from hermes_cli.models import _PROVIDER_MODELS
+    from models.catalog_static import _PROVIDER_MODELS
     if live_ids:
         model_list = [model_id for model_id in live_ids if model_id]
         print(f"  Found {len(model_list)} model(s) from GitHub Copilot")
@@ -637,7 +637,7 @@ def _model_flow_kimi(config, current_model=""):
     ``sk-kimi-*`` → api.kimi.com/coding/v1 (Kimi Coding Plan), other keys → Moonshot."""
     from hermes_cli.auth import KIMI_CODE_BASE_URL
     from hermes_cli.config import get_env_value, save_env_value
-    from hermes_cli.models import _PROVIDER_MODELS
+    from models.catalog_static import _PROVIDER_MODELS
     provider_id = "kimi-coding"
     pconfig = get_provider_config(provider_id)
     base_url_env = pconfig.base_url_env_var or ""
@@ -671,7 +671,8 @@ def _model_flow_stepfun(config, current_model=""):
     """StepFun Step Plan flow with region-specific endpoints."""
     from hermes_cli.main_provider_setup import _infer_stepfun_region, _prompt_provider_choice, _stepfun_base_url_for_region
     from hermes_cli.config import save_env_value
-    from hermes_cli.models import _PROVIDER_MODELS, fetch_api_models
+    from models.catalog_static import _PROVIDER_MODELS
+    from hermes_cli.models import fetch_api_models
     provider_id = "stepfun"
     pconfig = get_provider_config(provider_id)
     base_url_env = pconfig.base_url_env_var or ""
@@ -727,7 +728,7 @@ def _model_flow_vertex(config, current_model=""):
     GOOGLE_APPLICATION_CREDENTIALS); project ID and region are non-secret, saved under ``vertex:``."""
     from hermes_cli.auth import _prompt_model_selection
     from hermes_cli.config import load_config, get_env_value
-    from hermes_cli.models import _PROVIDER_MODELS
+    from models.catalog_static import _PROVIDER_MODELS
 
     # 1. Credential source detection (fast, no network / no google-auth import).
     sa_path = (get_env_value("VERTEX_CREDENTIALS_PATH") or get_env_value("GOOGLE_APPLICATION_CREDENTIALS") or "").strip()
@@ -848,7 +849,7 @@ def _lmstudio_models(pconfig, curated, api_key, base_url):
 def _ollama_cloud_models(pconfig, curated, api_key, base_url):
     """Ollama Cloud: forced live refresh so newly released models appear the moment the user
     enters their key, not when the disk cache TTL expires."""
-    from hermes_cli.models import fetch_ollama_cloud_models
+    from hermes_cli.models_local import fetch_ollama_cloud_models
     model_list = fetch_ollama_cloud_models(api_key=api_key, base_url=base_url, force_refresh=True)
     _report_live_models(model_list, "Ollama Cloud")
     return model_list
@@ -883,7 +884,9 @@ def _api_key_provider_model_list(provider_id: str, pconfig, existing_key: str, k
     ``models._profile_live_catalog``; generic /models probe for unregistered providers).
     Providers in ``_SPECIAL_MODEL_LISTS`` have their own resolution."""
     from hermes_cli.config import get_env_value
-    from hermes_cli.models import _PROVIDER_MODELS, fetch_api_models, probe_profile_catalog
+    from models.catalog_static import _PROVIDER_MODELS
+    from hermes_cli.models import fetch_api_models
+    from hermes_cli.models import probe_profile_catalog
     curated = _PROVIDER_MODELS.get(provider_id, [])
     api_key_for_probe = existing_key or (get_env_value(key_env) if key_env else "")
 
@@ -973,7 +976,7 @@ def _model_flow_api_key_provider(config, provider_id, current_model=""):
     pricing: dict = {}
     if model_list:
         try:
-            from hermes_cli.models_pricing import get_pricing_for_provider
+            from application_model_pricing import get_pricing_for_provider
             pricing = get_pricing_for_provider(provider_id) or {}
         except Exception:
             pricing = {}
@@ -1023,7 +1026,7 @@ def _anthropic_authenticate() -> bool:
 def _model_flow_anthropic(config, current_model=""):
     """Flow for Anthropic provider — OAuth subscription, API key, or Claude Code creds."""
     from hermes_cli.auth import get_anthropic_key
-    from hermes_cli.models import _PROVIDER_MODELS
+    from models.catalog_static import _PROVIDER_MODELS
 
     # Check ALL credential sources
     existing_key = get_anthropic_key()

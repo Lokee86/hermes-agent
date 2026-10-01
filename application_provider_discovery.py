@@ -42,7 +42,9 @@ def _fetch_picker_live_models(
     headers: dict[str, str] | None = None, timeout: float = 5.0,
     api_mode: str | None = None, *, cache: bool = True) -> list[str] | None:
     """Fetch picker models with native Ollama and cached generic discovery."""
-    from hermes_cli.models import _get_ollama_native_headers, cached_fetch_api_models, fetch_api_models
+    from hermes_cli.models_local import _get_ollama_native_headers
+    from hermes_cli.models import cached_fetch_api_models
+    from hermes_cli.models import fetch_api_models
     from hermes_cli.models_local import (
         _OLLAMA_LOCAL_MODELS_CACHE_TTL,
         _normalize_openai_base_url,
@@ -134,9 +136,11 @@ def _prefetch_provider_models_parallel(provider_slugs: list[str]) -> None:
     non-blocking serial read for a parallel fetch the picker waits on. Each worker re-persists
     through the thread-safe ``update_provider_cache_entry`` so concurrent writes cannot
     clobber each other."""
-    from hermes_cli.models import (
-        _credential_fingerprint, _disk_serve_tier, _load_provider_models_cache,
-        _normalized_cache_slug, cached_provider_model_ids)
+    from hermes_cli.models import _credential_fingerprint
+    from hermes_cli.models import _disk_serve_tier
+    from hermes_cli.models import _load_provider_models_cache
+    from hermes_cli.models import _normalized_cache_slug
+    from hermes_cli.models import cached_provider_model_ids
 
     now = time.time()
 
@@ -321,8 +325,10 @@ def _live_or_curated_ids(slug: str, curated: dict, *fallback_keys: str, merge_mo
     back to the curated list (merged with models.dev for preferred providers) when live is empty.
     ``non_blocking`` (GUI read path) reads the disk cache only — a provider that is slow or down
     contributes its curated list instead of stalling the whole picker (#114215)."""
-    from hermes_cli.models import _MODELS_DEV_PREFERRED, _merge_with_models_dev, cached_provider_model_ids
-    from hermes_cli.chat_catalog import without_generation_models
+    from models.catalog_static import _MODELS_DEV_PREFERRED
+    from hermes_cli.models import _merge_with_models_dev
+    from hermes_cli.models import cached_provider_model_ids
+    from models.catalog_chat import without_generation_models
 
     model_ids = cached_provider_model_ids(slug, non_blocking=non_blocking)
     if not model_ids:
@@ -360,12 +366,10 @@ def _nous_picker_model_ids(curated: dict, force_fresh_nous_tier: bool) -> list:
     recommendation fetch still yields a policy-filtered curated list."""
     model_ids = curated.get("nous", [])
     try:
-        from hermes_cli.models_pricing import get_pricing_for_provider
-        from hermes_cli.models import (
-            check_nous_free_tier,
-            union_with_portal_free_recommendations,
-            union_with_portal_paid_recommendations,
-        )
+        from application_model_pricing import get_pricing_for_provider
+        from hermes_cli.models import check_nous_free_tier
+        from hermes_cli.models import union_with_portal_free_recommendations
+        from hermes_cli.models import union_with_portal_paid_recommendations
         from hermes_cli.auth import get_provider_auth_state
         # Cache-only: both Portal unions below discard the pricing map (``model_ids, _ = ...``);
         # only the appended ids matter, so a live catalog fetch here buys nothing but latency.
@@ -381,7 +385,8 @@ def _nous_picker_model_ids(curated: dict, force_fresh_nous_tier: bool) -> list:
     except Exception:
         pass
     try:
-        from hermes_cli.models_pricing import nous_policy_allowed_ids, restrict_to_nous_policy
+        from application_model_pricing import nous_policy_allowed_ids
+        from models.catalog_policy import restrict_to_nous_policy
         model_ids = restrict_to_nous_policy(model_ids, nous_policy_allowed_ids(), rescue_empty=True)
     except Exception:
         pass
@@ -1075,7 +1080,9 @@ def _build_curated_lists(current_provider: str, current_base_url: str, current_m
     """Curated model lists keyed by hermes provider id, plus the dynamic ones (nous manifest,
     Ollama Cloud, LM Studio live probe). ``non_blocking`` (GUI read path) takes cached Ollama Cloud
     ids and warms them in the background rather than waiting on an 8s probe (#114215)."""
-    from hermes_cli.models import OPENROUTER_MODELS, _PROVIDER_MODELS, get_curated_nous_model_ids
+    from models.catalog_static import OPENROUTER_MODELS
+    from models.catalog_static import _PROVIDER_MODELS
+    from hermes_cli.models import get_curated_nous_model_ids
     curated: dict[str, list[str]] = dict(_PROVIDER_MODELS)
     curated["openrouter"] = [mid for mid, _ in OPENROUTER_MODELS]
     # Plugin profiles without a static row: their fallback_models are the curated floor, so the
@@ -1087,7 +1094,7 @@ def _build_curated_lists(current_provider: str, current_base_url: str, current_m
     # Remote manifest so new Portal models surface without a release; in-repo snapshot fallback.
     curated["nous"] = get_curated_nous_model_ids()
     if "ollama-cloud" not in curated:
-        from hermes_cli.models import fetch_ollama_cloud_models
+        from hermes_cli.models_local import fetch_ollama_cloud_models
         # Read path: cache only; the row's own SWR refresh (cached_provider_model_ids) warms it.
         curated["ollama-cloud"] = fetch_ollama_cloud_models(cache_only=non_blocking)
     # LM Studio has no static catalog: probe its native endpoint live. Base URL precedence:

@@ -450,7 +450,7 @@ class ProviderProfile:
             with open_credentialed_url(req, timeout=timeout) as resp:
                 data = json.loads(resp.read().decode())
             items = data if isinstance(data, list) else data.get("data", [])
-            from hermes_cli.chat_catalog import chat_catalog_ids
+            from models.catalog_chat import chat_catalog_ids
 
             return chat_catalog_ids(items)
         except Exception as exc:

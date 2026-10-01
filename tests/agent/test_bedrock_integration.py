@@ -55,7 +55,7 @@ class TestModelCatalog:
     """Verify Bedrock has a static model fallback list."""
 
     def test_bedrock_has_curated_models(self):
-        from hermes_cli.models import _PROVIDER_MODELS
+        from models.catalog_static import _PROVIDER_MODELS
         models = _PROVIDER_MODELS.get("bedrock", [])
         assert len(models) > 0
 

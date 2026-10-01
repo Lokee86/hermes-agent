@@ -31,7 +31,7 @@ def _configured(config: Mapping[str, Any], provider: str):
 
 def validate_model_switch(result, config: Mapping[str, Any]) -> str:
     try:
-        from hermes_cli.chat_catalog import is_known_non_chat_model
+        from models.catalog_chat import is_known_non_chat_model
 
         if is_known_non_chat_model(result.new_model):
             raise ModelValidationError(

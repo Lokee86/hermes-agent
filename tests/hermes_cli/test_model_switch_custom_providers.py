@@ -53,7 +53,7 @@ def test_picker_native_probe_failure_falls_back_to_openai_catalog(monkeypatch):
         "hermes_cli.models_local.should_use_ollama_native_catalog", lambda *a, **k: True
     )
     monkeypatch.setattr(
-        "hermes_cli.models._get_ollama_native_headers", lambda *a, **k: {}
+        "hermes_cli.models_local._get_ollama_native_headers", lambda *a, **k: {}
     )
     monkeypatch.setattr(
         "hermes_cli.models_local.fetch_ollama_local_models", lambda *a, **k: None
@@ -82,7 +82,7 @@ def test_picker_native_catalog_is_admitted_to_the_shared_model_cache(monkeypatch
     monkeypatch.setattr(
         "hermes_cli.models_local.should_use_ollama_native_catalog", lambda *a, **k: True
     )
-    monkeypatch.setattr("hermes_cli.models._get_ollama_native_headers", lambda *a, **k: {})
+    monkeypatch.setattr("hermes_cli.models_local._get_ollama_native_headers", lambda *a, **k: {})
     monkeypatch.setattr(
         "hermes_cli.models_local.fetch_ollama_local_models", lambda *a, **k: ["qwen3:8b"]
     )
@@ -106,7 +106,7 @@ def test_picker_native_catalog_skips_cache_admission_when_cache_is_off(monkeypat
     monkeypatch.setattr(
         "hermes_cli.models_local.should_use_ollama_native_catalog", lambda *a, **k: True
     )
-    monkeypatch.setattr("hermes_cli.models._get_ollama_native_headers", lambda *a, **k: {})
+    monkeypatch.setattr("hermes_cli.models_local._get_ollama_native_headers", lambda *a, **k: {})
     monkeypatch.setattr(
         "hermes_cli.models_local.fetch_ollama_local_models", lambda *a, **k: ["qwen3:8b"]
     )
@@ -124,7 +124,7 @@ def _native_picker_probe(monkeypatch, models_by_call):
     monkeypatch.setattr(
         "hermes_cli.models_local.should_use_ollama_native_catalog", lambda *a, **k: True
     )
-    monkeypatch.setattr("hermes_cli.models._get_ollama_native_headers", lambda *a, **k: {})
+    monkeypatch.setattr("hermes_cli.models_local._get_ollama_native_headers", lambda *a, **k: {})
     answers = iter(models_by_call)
     monkeypatch.setattr(
         "hermes_cli.models_local.fetch_ollama_local_models", lambda *a, **k: next(answers)

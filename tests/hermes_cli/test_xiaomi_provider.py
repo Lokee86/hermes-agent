@@ -114,7 +114,7 @@ class TestXiaomiModelCatalog:
         names are data that changes with upstream releases and doesn't
         belong in tests.
         """
-        from hermes_cli.models import _PROVIDER_MODELS
+        from models.catalog_static import _PROVIDER_MODELS
         assert "xiaomi" in _PROVIDER_MODELS
         assert len(_PROVIDER_MODELS["xiaomi"]) >= 1
 

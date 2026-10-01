@@ -112,7 +112,7 @@ def test_catalogue_isolated_by_endpoint_and_credential():
 
 
 def test_pricing_cached_only_never_fetches(monkeypatch):
-    from hermes_cli.models_pricing import get_pricing_for_provider
+    from application_model_pricing import get_pricing_for_provider
 
     hits = []
     payload = [

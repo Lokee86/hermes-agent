@@ -45,33 +45,6 @@ def current_provider_catalog_match(model_name: str, current_provider: str) -> Op
         (mid for mid in catalog if "/" in mid and mid.split("/", 1)[1].lower() == wanted), None)
 
 
-def current_provider_owns_vendor(model_name: str, current_provider: str) -> bool:
-    """True when *model_name* belongs to the vendor a single-vendor first-party provider natively
-    serves (``gpt-6-astra`` on ``openai-codex``, ``grok-4.6`` on ``xai-oauth``).
-
-    A first-party session plus that vendor's own id is a selection, not a guess: when the live
-    catalog could not confirm the id (fetch failed, static fallback lags an early-access rollout)
-    the answer is "stay and let the vendor accept or reject it", never "a reseller lists it, so
-    switch there". Aggregators, custom endpoints and multi-vendor resellers (nvidia, alibaba, ...)
-    have no single native vendor and are skipped."""
-    from hermes_cli.models import _PROVIDER_MODELS
-    from providers import is_aggregator, normalize_provider, vendor_for_model
-
-    provider = (current_provider or "").strip().lower()
-    if provider in _SKIP or provider.startswith("custom:"):
-        return False
-    normalized = normalize_provider(provider)
-    if normalized in _SKIP or is_aggregator(normalized):
-        return False
-    vendor = vendor_for_model(model_name or "")
-    if not vendor:
-        return False
-    # An id the classifier cannot place (Bedrock ``us.anthropic.claude-…``) is evidence the
-    # provider is NOT single-vendor; only a fully classified, single-vendor catalog owns the name.
-    native = {vendor_for_model(mid) for mid in _PROVIDER_MODELS.get(normalized, ())}
-    return native == {vendor}
-
-
 def provider_has_credentials(provider: str) -> bool:
     """Whether *provider* can be switched to without the user typing a key: env/.env key, auth
     store login, or a usable credential-pool entry. ``custom``/``custom:*`` targets only come out

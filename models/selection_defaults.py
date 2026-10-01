@@ -5,6 +5,8 @@ from __future__ import annotations
 from collections.abc import Iterable
 
 from models.identity import ModelRef
+from models.metadata.pricing import _is_model_free
+from models.catalog_policy import restrict_to_nous_policy
 from models.selection_types import (
     ModelSelection,
     SelectionCandidate,
@@ -87,36 +89,6 @@ def select_default_model(
     )
 
 
-def _policy_filtered_ids(
-    model_ids: tuple[str, ...],
-    allowed_ids: frozenset[str] | None,
-) -> tuple[str, ...]:
-    if not allowed_ids:
-        return model_ids
-    kept = tuple(
-        mid for mid in model_ids
-        if mid in allowed_ids or mid.split(":", 1)[0] in allowed_ids
-    )
-    if kept:
-        return kept
-    return tuple(sorted(allowed_ids)) if len(allowed_ids) <= 64 else ()
-
-
-def _zero_credit_model(model_id: str, pricing: dict[str, dict[str, object]]) -> bool:
-    entry = pricing.get(model_id)
-    if not isinstance(entry, dict):
-        return False
-    if entry.get("billing_mode") == "subscription":
-        return True
-    try:
-        return (
-            float(entry.get("prompt", "1")) == 0
-            and float(entry.get("completion", "1")) == 0
-        )
-    except (TypeError, ValueError):
-        return False
-
-
 def select_nous_default_model(
     curated_model_ids: Iterable[str],
     *,
@@ -133,7 +105,7 @@ def select_nous_default_model(
     seen = {mid.lower() for mid in curated}
     universe = curated + tuple(mid for mid in portal if mid.lower() not in seen)
     allowed = frozenset(policy_allowed_ids) if policy_allowed_ids else None
-    universe = _policy_filtered_ids(universe, allowed)
+    universe = tuple(restrict_to_nous_policy(list(universe), allowed, rescue_empty=True))
 
     price_map = pricing or {}
     subscription = tuple(
@@ -145,7 +117,7 @@ def select_nous_default_model(
         free_portal = {mid.lower() for mid in portal}
         universe = tuple(
             mid for mid in universe
-            if _zero_credit_model(mid, price_map) or mid.lower() in free_portal
+            if _is_model_free(mid, price_map) or mid.lower() in free_portal
         )
         subscription = tuple(mid for mid in subscription if mid in universe)
 

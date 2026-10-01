@@ -1,5 +1,9 @@
 """Tests for the hermes_cli models module."""
 
+import application_model_pricing
+import hermes_cli.models_local as hermes_cli_models_local
+import models.catalog_static as models_catalog_static
+
 from models import ModelRef
 
 import json
@@ -10,12 +14,13 @@ from threading import Thread
 from unittest.mock import patch, MagicMock
 
 from hermes_cli.nous_account import NousPortalAccountInfo
-from hermes_cli.models import (
-    OPENROUTER_MODELS, fetch_openrouter_models, detect_provider_for_model,
-    partition_nous_models_by_tier,
-    check_nous_free_tier, union_with_portal_free_recommendations,
-    union_with_portal_paid_recommendations,
-)
+from models.catalog_static import OPENROUTER_MODELS
+from hermes_cli.models import fetch_openrouter_models
+from hermes_cli.models import detect_provider_for_model
+from models.metadata.pricing import partition_nous_models_by_tier
+from hermes_cli.models import check_nous_free_tier
+from hermes_cli.models import union_with_portal_free_recommendations
+from hermes_cli.models import union_with_portal_paid_recommendations
 import hermes_cli.models as _models_mod
 from hermes_cli import models_local
 from hermes_cli import models_validate
@@ -65,7 +70,7 @@ class TestFetchOpenRouterModels:
 
         # Include the image-only id in the curated list so it has a chance to be surfaced.
         monkeypatch.setattr(
-            _models_mod,
+            models_catalog_static,
             "OPENROUTER_MODELS",
             [
                 ("anthropic/claude-opus-4.6", ""),
@@ -93,7 +98,7 @@ class TestOpenRouterToolSupportHelper:
 
     def test_empty_supported_parameters_list_drops_model(self):
         """Explicit empty list → no tools → drop."""
-        from hermes_cli.models import _openrouter_model_supports_tools
+        from models.catalog_projection import _openrouter_model_supports_tools
         assert _openrouter_model_supports_tools(
             {"id": "x", "supported_parameters": []}
         ) is False
@@ -150,14 +155,14 @@ class TestPartitionNousModelsByTier:
     def test_free_tier_default_prefers_a_free_model_over_a_subscription_billed_one(self, monkeypatch):
         import hermes_cli.models as m
         import application_model_selection_defaults as defaults
-        from hermes_cli import models_pricing as mp
+        import application_model_pricing as mp
         pricing = {"openai/gpt-5.4": {**self._PAID, "billing_mode": "subscription"}, "free/model": self._FREE}
         monkeypatch.setattr(m, "get_curated_nous_model_ids", lambda: list(pricing))
         monkeypatch.setattr(m, "check_nous_free_tier", lambda **kw: True)
         monkeypatch.setattr("application_nous_recommendations.fetch_recommended_models", lambda *a, **kw: {})
         monkeypatch.setattr(defaults, "preferred_silent_default_model", lambda provider="": "not/listed")
-        monkeypatch.setattr(mp, "get_pricing_for_provider", lambda slug, **kw: pricing)
-        monkeypatch.setattr(mp, "nous_policy_allowed_ids", lambda **kw: None)
+        monkeypatch.setattr(application_model_pricing, "get_pricing_for_provider", lambda slug, **kw: pricing)
+        monkeypatch.setattr(application_model_pricing, "nous_policy_allowed_ids", lambda **kw: None)
         selection, _ = defaults.select_nous_recommended_default()
         assert defaults.selected_model_id(selection) == "free/model"
         del pricing["free/model"]
@@ -601,7 +606,7 @@ class TestLocalOllamaModelDiscovery:
 
     def test_runtime_error_from_config_load_does_not_escape_ollama_helpers(self):
         """Managed-mode config failures should degrade to defaults, not crash pickers."""
-        from hermes_cli.models import _get_ollama_base_url
+        from hermes_cli.models_local import _get_ollama_base_url
         from hermes_cli.models_local import should_use_ollama_native_catalog
 
         with patch("hermes_cli.config.load_config", side_effect=RuntimeError("bad home")), patch(
@@ -1262,7 +1267,8 @@ class TestLocalOllamaModelDiscovery:
         ) is True
 
     def test_ollama_host_environment_forms_are_normalized(self, monkeypatch):
-        from hermes_cli.models import _get_ollama_base_url, _root_for_ollama_native_api
+        from hermes_cli.models_local import _get_ollama_base_url
+        from hermes_cli.models import _root_for_ollama_native_api
 
         monkeypatch.setenv("OLLAMA_HOST", "0.0.0.0")
         assert _root_for_ollama_native_api(_get_ollama_base_url()) == "http://0.0.0.0:11434"
@@ -1305,7 +1311,7 @@ class TestLocalOllamaModelDiscovery:
             ), patch.object(models, "_save_provider_models_cache"), patch.object(
                 models, "_credential_fingerprint", return_value="same"
             ), patch.object(models, "provider_model_ids", return_value=[]), patch.object(
-                models, "_get_ollama_base_url", return_value=base_url
+                hermes_cli_models_local, "_get_ollama_base_url", return_value=base_url
             ), patch.object(models_local, "_get_ollama_request_headers", return_value={}):
                 assert models.cached_provider_model_ids("ollama") == []
         finally:
@@ -1325,7 +1331,7 @@ class TestLocalOllamaModelDiscovery:
             ), patch.object(models, "_save_provider_models_cache"), patch.object(
                 models, "_credential_fingerprint", return_value="same"
             ), patch.object(models, "provider_model_ids", return_value=[]), patch.object(
-                models, "_get_ollama_base_url", return_value=base_url
+                hermes_cli_models_local, "_get_ollama_base_url", return_value=base_url
             ), patch.object(models_local, "_get_ollama_request_headers", return_value={}):
                 assert models.cached_provider_model_ids("ollama") == ["stale:model"]
         finally:

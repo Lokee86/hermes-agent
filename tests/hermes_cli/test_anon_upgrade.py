@@ -7,6 +7,8 @@ persisted over the guest singleton) is exercised rather than mocked away.
 
 from __future__ import annotations
 
+import application_model_pricing
+
 import base64
 import json
 import time
@@ -184,12 +186,12 @@ def free_account(monkeypatch):
     """The signed-in account is a $0 (free-plan) account: the Portal's tier read and its recommended
     free list are the only network egress the default pick has, stubbed at their seams."""
     from hermes_cli import models as m
-    from hermes_cli import models_pricing as mp
+    import application_model_pricing as mp
     monkeypatch.setattr(m, "check_nous_free_tier", lambda **kw: True)
     monkeypatch.setattr("application_nous_recommendations.fetch_recommended_models", lambda *a, **kw: {
         "freeRecommendedModels": [{"modelName": FREE_PICK}]})
-    monkeypatch.setattr(mp, "get_pricing_for_provider", lambda *a, **kw: {})
-    monkeypatch.setattr(mp, "nous_policy_allowed_ids", lambda **kw: None)
+    monkeypatch.setattr(application_model_pricing, "get_pricing_for_provider", lambda *a, **kw: {})
+    monkeypatch.setattr(application_model_pricing, "nous_policy_allowed_ids", lambda **kw: None)
 
 
 def _write_model_config(model_cfg: dict) -> None:

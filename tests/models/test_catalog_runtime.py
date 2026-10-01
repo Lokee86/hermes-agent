@@ -196,3 +196,16 @@ def test_seed_cache_from_checkout_validates_and_resets(tmp_path):
 
     assert seed_cache_from_checkout(project, cache)
     assert catalog_runtime.cached_default_model(cache, "openrouter") == "vendor/secondary"
+
+def test_remembered_chat_catalogue_facts_are_profile_scoped(tmp_path):
+    from hermes_constants import set_hermes_home_override, reset_hermes_home_override
+    from models.catalog_chat import note_catalog_item, is_known_non_chat_model
+
+    for profile, non_chat in (("a", True), ("b", False), ("a", True)):
+        token = set_hermes_home_override(tmp_path / profile)
+        try:
+            if profile == "a":
+                assert note_catalog_item({"id": "opaque-model", "type": "image"})
+            assert is_known_non_chat_model("opaque-model") is non_chat
+        finally:
+            reset_hermes_home_override(token)

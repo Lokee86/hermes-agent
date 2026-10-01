@@ -1,3 +1,5 @@
+
+import application_model_pricing
 import application_model_selection_defaults as defaults
 from models import catalog_static as static
 
@@ -63,7 +65,7 @@ def test_silent_default_uses_candidate_order_when_label_missing(monkeypatch):
 
 def _patch_nous_default_facts(monkeypatch, *, allowed):
     from hermes_cli import models as catalog
-    from hermes_cli import models_pricing as pricing
+    import application_model_pricing as pricing
 
     monkeypatch.setattr(
         catalog,
@@ -75,8 +77,8 @@ def _patch_nous_default_facts(monkeypatch, *, allowed):
         "application_nous_recommendations.fetch_recommended_models",
         lambda *_args, **_kwargs: {},
     )
-    monkeypatch.setattr(pricing, "get_pricing_for_provider", lambda _provider: {})
-    monkeypatch.setattr(pricing, "nous_policy_allowed_ids", lambda: allowed)
+    monkeypatch.setattr(application_model_pricing, "get_pricing_for_provider", lambda _provider: {})
+    monkeypatch.setattr(application_model_pricing, "nous_policy_allowed_ids", lambda: allowed)
     monkeypatch.setattr(
         "hermes_cli.auth.get_provider_auth_state",
         lambda _provider: {},

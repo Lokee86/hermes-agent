@@ -4472,10 +4472,6 @@ def test_startup_runtime_does_not_treat_inference_provider_as_explicit(monkeypat
     monkeypatch.setenv("HERMES_MODEL", "nous/hermes-test")
     monkeypatch.delenv("HERMES_TUI_PROVIDER", raising=False)
     monkeypatch.setenv("HERMES_INFERENCE_PROVIDER", "nous")
-    monkeypatch.setattr(
-        "hermes_cli.models.detect_static_provider_for_model",
-        lambda model, provider: None,
-    )
 
     assert server._resolve_startup_runtime() == ("nous/hermes-test", None)
 

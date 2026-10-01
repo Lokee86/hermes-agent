@@ -484,7 +484,7 @@ def test_model_flow_nous_does_not_restore_stale_custom_api_key(tmp_path, monkeyp
         "hermes_cli.models.get_curated_nous_model_ids",
         lambda: [selected_model],
     )
-    monkeypatch.setattr("hermes_cli.models_pricing.get_pricing_for_provider", lambda provider: {})
+    monkeypatch.setattr("application_model_pricing.get_pricing_for_provider", lambda provider: {})
     monkeypatch.setattr("hermes_cli.models.check_nous_free_tier", lambda **kwargs: False)
     monkeypatch.setattr(
         "hermes_cli.models.union_with_portal_paid_recommendations",

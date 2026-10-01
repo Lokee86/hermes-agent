@@ -17,6 +17,8 @@ Bug 2 — OpenRouter appeared authenticated whenever OPENAI_API_KEY was set
     resolution concern.
 """
 
+import models.catalog_static as models_catalog_static
+
 from unittest.mock import patch
 
 
@@ -30,7 +32,7 @@ def test_default_openai_endpoint_filters_to_curated(monkeypatch):
     monkeypatch.setenv("OPENAI_API_KEY", "sk-fake")
     monkeypatch.delenv("OPENAI_BASE_URL", raising=False)
 
-    curated = M._PROVIDER_MODELS["openai-api"]
+    curated = models_catalog_static._PROVIDER_MODELS["openai-api"]
     # Live catalog: every curated model PLUS a pile of non-agentic junk.
     live = list(curated) + [
         "text-embedding-3-large", "whisper-1", "tts-1", "dall-e-3",
@@ -50,7 +52,7 @@ def test_default_openai_endpoint_intersects_account_access(monkeypatch):
     monkeypatch.setenv("OPENAI_API_KEY", "sk-fake")
     monkeypatch.delenv("OPENAI_BASE_URL", raising=False)
 
-    curated = M._PROVIDER_MODELS["openai-api"]
+    curated = models_catalog_static._PROVIDER_MODELS["openai-api"]
     # Account only serves the first two curated models.
     live = list(curated[:2]) + ["text-embedding-3-large", "whisper-1"]
     with patch.object(M, "fetch_api_models", return_value=live):

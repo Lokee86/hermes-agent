@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import application_model_pricing
+
 from collections.abc import Iterable
 
 from models.selection import ModelSelection, select_default_model, select_nous_default_model
@@ -74,11 +76,10 @@ def select_nous_recommended_default() -> tuple[ModelSelection, bool]:
     """Gather Nous account/catalogue facts, then delegate all default policy."""
 
     from hermes_cli import models as catalog
-    from hermes_cli import models_pricing as pricing_mod
     from application_nous_recommendations import fetch_recommended_models
 
     curated = catalog.get_curated_nous_model_ids()
-    pricing = pricing_mod.get_pricing_for_provider("nous") or {}
+    pricing = application_model_pricing.get_pricing_for_provider("nous") or {}
     free_tier = bool(catalog.check_nous_free_tier(force_fresh=True))
     try:
         payload = fetch_recommended_models()
@@ -91,7 +92,7 @@ def select_nous_recommended_default() -> tuple[ModelSelection, bool]:
         curated,
         portal_recommended_model_ids=recommended,
         pricing=pricing,
-        policy_allowed_ids=pricing_mod.nous_policy_allowed_ids(),
+        policy_allowed_ids=application_model_pricing.nous_policy_allowed_ids(),
         free_tier=free_tier,
         preferred_model=preferred_silent_default_model("nous"),
     )

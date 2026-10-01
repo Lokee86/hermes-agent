@@ -1500,7 +1500,7 @@ def _validate_switch(st: _Switch) -> Optional[ModelSwitchResult]:
     """COMMON PATH part 2: validate the already-selected canonical model."""
     from hermes_cli.models_local import _get_ollama_request_headers
     from hermes_cli.models_validate import validate_requested_model
-    from hermes_cli.chat_catalog import is_known_non_chat_model
+    from models.catalog_chat import is_known_non_chat_model
     if is_known_non_chat_model(st.new_model):
         return st.fail(
             f"`{st.new_model}` is a generation model and cannot be used for chat. "

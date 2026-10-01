@@ -9,6 +9,11 @@ here — keep walking the ladder". The ladder ORDER is behavior (see ``_LADDER``
 """
 
 from __future__ import annotations
+from models.catalog_policy import _provider_token, _is_self_hosted_provider, allows_model_whitespace
+
+import application_provider_groups
+import hermes_cli.models_local as hermes_cli_models_local
+import models.catalog_detection as models_catalog_detection
 
 import re
 from dataclasses import dataclass
@@ -130,47 +135,12 @@ def _reject_whitespace(req: _Request) -> Optional[dict[str, Any]]:
     return None
 
 
-_SELF_HOSTED_PROVIDERS = frozenset({
-    "lmstudio", "ollama", "local", "vllm", "llamacpp", "llama.cpp", "llama-cpp",
-})
 
 
-def _provider_token(provider: Optional[str]) -> str:
-    return str(provider or "").strip().lower()
 
 
-def _is_self_hosted_provider(provider: Optional[str]) -> bool:
-    """Local servers and the custom endpoint bucket, including aliases that normalize to it."""
-    raw = _provider_token(provider)
-    if not raw:
-        return False
-    if raw == "custom" or raw.startswith("custom:"):
-        return True
-    from hermes_cli import models as _m
-
-    normalized = normalize_provider(raw)
-    if normalized == "custom" or normalized.startswith("custom:"):
-        return True
-    return raw in _SELF_HOSTED_PROVIDERS or normalized in _SELF_HOSTED_PROVIDERS
 
 
-def _non_public_host(host: str) -> bool:
-    """Loopback, LAN, and single-label hosts are a user's endpoint, never a vendor catalog."""
-    host = (host or "").lower().rstrip(".")
-    if not host or host in {"localhost", "127.0.0.1", "::1", "0.0.0.0"} or host.endswith(".localhost"):
-        return bool(host)
-    if host.endswith((".local", ".lan", ".internal", ".home", ".localdomain")):
-        return True
-    if "." not in host:
-        return True
-    parts = host.split(".")
-    if len(parts) == 4 and all(part.isdigit() for part in parts):
-        octets = [int(part) for part in parts]
-        if octets[0] in {10, 127} or (octets[0] == 192 and octets[1] == 168):
-            return True
-        if octets[0] == 172 and 16 <= octets[1] <= 31:
-            return True
-    return False
 
 
 def _stock_host(provider: str) -> str:
@@ -195,32 +165,6 @@ def _stock_host(provider: str) -> str:
     return base_url_hostname(pdef.base_url or "")
 
 
-def provider_allows_model_whitespace(provider: Optional[str], base_url: Optional[str] = None) -> bool:
-    """True when a spaced id is a real selection, not a cloud-catalog typo.
-
-    Self-hosted providers always qualify. A base_url qualifies when the user
-    configured it: a non-public host, or a public host that is not this
-    provider's own stock endpoint. A public host with no stock to compare
-    against stays rejected, so a cloud URL cannot slip through a cold catalog.
-    """
-    if _is_self_hosted_provider(provider):
-        return True
-    url = str(base_url or "").strip()
-    if not url:
-        return False
-    from utils import base_url_hostname
-
-    host = base_url_hostname(url)
-    if not host:
-        return False
-    if _non_public_host(host):
-        return True
-    raw = _provider_token(provider)
-    from hermes_cli import models as _m
-
-    normalized = normalize_provider(raw) if raw else ""
-    stock = _stock_host(normalized or raw)
-    return bool(stock) and host != stock
 
 
 def _whitespace_allowed(req: _Request) -> bool:
@@ -281,7 +225,7 @@ def _ollama_probe_headers(req: _Request) -> dict[str, str]:
 
     configured_base = _configured_ollama_base_url()
     configured_allowed = not configured_base or _ml._same_ollama_native_root(req.base_url or "", configured_base)
-    configured = _m._get_ollama_native_headers(req.base_url, api_key=req.api_key) if configured_allowed else {}
+    configured = hermes_cli_models_local._get_ollama_native_headers(req.base_url, api_key=req.api_key) if configured_allowed else {}
     if req.headers is None:
         return configured
     out = dict(configured)
@@ -301,7 +245,7 @@ def _validate_ollama_native(req: _Request) -> Optional[dict[str, Any]]:
     from hermes_cli import models_local as _ml
 
     if str(req.provider or "").strip().lower() == "ollama" and not req.base_url:
-        req.base_url = _m._get_ollama_base_url()
+        req.base_url = hermes_cli_models_local._get_ollama_base_url()
     headers = _ollama_probe_headers(req)
     if not _ml.should_use_ollama_native_catalog(req.provider, req.base_url, headers=headers):
         return None
@@ -586,11 +530,11 @@ def _validate_live_listing(req: _Request) -> Optional[dict[str, Any]]:
     # proxies keep the fallback.
     listing_authoritative = False
     if req.normalized in ("openai", "openai-api"):
-        from hermes_cli.providers import is_official_openai_host
+        from providers.routing import is_official_openai_host
 
         listing_authoritative = is_official_openai_host(req.base_url)
-    if not listing_authoritative and _m._model_in_provider_catalog(
-        (variant_base or req.lookup).lower(), _m._provider_keys(req.normalized)
+    if not listing_authoritative and models_catalog_detection._model_in_provider_catalog(
+        (variant_base or req.lookup).lower(), models_catalog_detection._provider_keys(req.normalized)
     ):
         return _accept_with_note(f"Note: `{req.requested}` was not found in the live /v1/models listing "
                                  "but exists in the curated catalog — accepted.")
@@ -651,7 +595,7 @@ def _validate_catalog_fallback(req: _Request) -> dict[str, Any]:
     fail and the gateway never writes the session override). No catalog → accept with a warning."""
     from hermes_cli import models as _m
 
-    label = _m.provider_label(req.normalized)
+    label = application_provider_groups.provider_label(req.normalized)
     catalog = _static_catalog(req.normalized)
     if not catalog:
         return _soft_accept(f"Note: could not reach the {label} API to validate `{req.requested}`. "
@@ -738,3 +682,9 @@ def validate_requested_model(
             if verdict is not None:
                 return verdict
     raise AssertionError("unreachable: _validate_catalog_fallback always decides")
+
+
+def provider_allows_model_whitespace(provider: Optional[str], base_url: Optional[str] = None) -> bool:
+    """Acquire the offline stock endpoint and apply canonical eligibility."""
+    normalized = normalize_provider(_provider_token(provider))
+    return allows_model_whitespace(provider, base_url, _stock_host(normalized))

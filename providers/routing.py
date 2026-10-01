@@ -146,6 +146,11 @@ def _kimi_coding_endpoint(base_url: str, parsed) -> bool:
     )
 
 
+def is_official_openai_host(base_url: str) -> bool:
+    """Whether a parsed endpoint belongs to OpenAI's API host family."""
+    return _exact_or_subdomain(_hostname(base_url), "api.openai.com")
+
+
 def endpoint_api_mode(base_url: str) -> str | None:
     """Return a hard API-mode mandate for a URL, or ``None``.
 
@@ -165,7 +170,7 @@ def endpoint_api_mode(base_url: str) -> str | None:
         return "anthropic_messages"
     if _kimi_coding_endpoint(base_url, parsed):
         return "anthropic_messages"
-    if _exact_or_subdomain(hostname, "api.openai.com"):
+    if is_official_openai_host(base_url):
         return "codex_responses"
     if hostname in _RESPONSES_NATIVE_HOSTS:
         return "codex_responses"

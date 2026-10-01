@@ -1,4 +1,7 @@
 """Regression tests for Nous OAuth refresh and inference JWT interactions."""
+
+import application_model_pricing
+import models.metadata.pricing as models_metadata_pricing
 from hermes_cli.provider_auth import get_provider_config
 
 import base64
@@ -435,7 +438,7 @@ class TestLoginNousSkipKeepsCurrent:
         import hermes_cli.auth as auth_mod
         import hermes_cli.auth_nous as auth_nous
         import hermes_cli.models as models_mod
-        from hermes_cli import models_pricing
+        import application_model_pricing as models_pricing
         import hermes_cli.nous_subscription as ns
 
         fake_auth_state = {
@@ -458,7 +461,7 @@ class TestLoginNousSkipKeepsCurrent:
             auth_mod, "_prompt_model_selection",
             lambda *a, **kw: prompt_returns,
         )
-        monkeypatch.setattr(models_pricing, "get_pricing_for_provider", lambda p: {})
+        monkeypatch.setattr(application_model_pricing, "get_pricing_for_provider", lambda p: {})
         free_tier_calls = []
 
         def _check_nous_free_tier(**kwargs):
@@ -467,7 +470,7 @@ class TestLoginNousSkipKeepsCurrent:
 
         monkeypatch.setattr(models_mod, "check_nous_free_tier", _check_nous_free_tier)
         monkeypatch.setattr(
-            models_mod, "partition_nous_models_by_tier",
+            models_metadata_pricing, "partition_nous_models_by_tier",
             lambda ids, p, free_tier=False: (ids, []),
         )
         monkeypatch.setattr(ns, "prompt_enable_tool_gateway", lambda cfg: None)

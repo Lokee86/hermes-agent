@@ -194,7 +194,7 @@ class TestDeepSeekAuxModel:
         assert all(normalize_model_id("deepseek", m) == m for m in deepseek_profile.fallback_models)
 
     def test_consumer_api_matches_profile_aux_model(self, deepseek_profile):
-        from hermes_cli.model_selection_auxiliary import select_provider_auxiliary_model
+        from agent.auxiliary_model_resolution import select_provider_auxiliary_model
         assert deepseek_profile.default_aux_model
         assert select_provider_auxiliary_model("deepseek") == deepseek_profile.default_aux_model
 

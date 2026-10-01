@@ -54,7 +54,8 @@ def test_process_provider_reaches_every_shared_picker(picker_env, monkeypatch):
     home, profile = picker_env
     from hermes_cli.config import save_config
     from hermes_cli.main_provider_setup import _build_provider_picker_rows
-    from hermes_cli.models import list_available_providers, provider_model_ids
+    from hermes_cli.models import list_available_providers
+    from hermes_cli.models import provider_model_ids
     from hermes_cli.provider_catalog import provider_catalog
     from tui_gateway import server
 

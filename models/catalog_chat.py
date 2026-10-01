@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import re
 from typing import Any
+from hermes_constants import hermes_home_key
 
 # Structured catalog types that mean "this row is not a chat completion".
 _GENERATION_TYPES = frozenset({
@@ -40,13 +41,13 @@ _GENERATION_ID_RE = re.compile(
 # Ids a live catalog item already proved are generation-only, even when the
 # id itself has no generation token. Process-local: the proof came from this
 # process's catalog parse.
-_seen_generation_ids: set[str] = set()
+_seen_generation_ids: dict[str, set[str]] = {}
 
 
 def note_generation_model(model_id: Any) -> None:
     key = str(model_id or "").strip().lower()
     if key:
-        _seen_generation_ids.add(key)
+        _seen_generation_ids.setdefault(hermes_home_key(), set()).add(key)
 
 
 def model_id_is_generation(model_id: Any) -> bool:
@@ -106,7 +107,7 @@ def note_catalog_item(item: Any) -> bool:
 def is_known_non_chat_model(model_id: Any) -> bool:
     """True when the id's name shape, or a catalog item already parsed, says it is not chat."""
     mid = str(model_id or "").strip()
-    return model_id_is_generation(mid) or mid.lower() in _seen_generation_ids
+    return model_id_is_generation(mid) or mid.lower() in _seen_generation_ids.get(hermes_home_key(), set())
 
 
 def without_generation_models(models):

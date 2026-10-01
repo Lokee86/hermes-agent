@@ -116,7 +116,7 @@ class TestSwitchModelAliasAmbiguity:
         instead of switching to a heuristic guess."""
         import hermes_cli.model_switch as ms
 
-        monkeypatch.setattr("hermes_cli.models._PROVIDER_MODELS", {})
+        monkeypatch.setattr("models.catalog_static._PROVIDER_MODELS", {})
         monkeypatch.setattr(ms, "_ensure_direct_aliases", lambda: None)
         monkeypatch.setattr(ms, "DIRECT_ALIASES", {})
         monkeypatch.setattr(ms, "list_provider_models",

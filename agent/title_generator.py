@@ -228,12 +228,13 @@ def _title_pin_may_share_endpoint(pinned_provider: str, main_provider: str, main
     """
     from hermes_cli.config import get_compatible_custom_providers, load_config_readonly
     from providers import custom_provider_aliases
-    from hermes_cli.providers import resolve_custom_provider
+    from providers import match_configured_provider
     if _is_self_hosted_provider(pinned_provider):
         return True
     if custom_provider_aliases(pinned_provider) & custom_provider_aliases(main_provider):
         return True
-    pdef = resolve_custom_provider(pinned_provider, get_compatible_custom_providers(load_config_readonly()))
+    pdef = match_configured_provider(
+        pinned_provider, custom_providers=get_compatible_custom_providers(load_config_readonly()))
     return bool(pdef and main_base_url and pdef.base_url.strip().rstrip("/") == main_base_url)
 
 

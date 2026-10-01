@@ -59,7 +59,8 @@ class _ModelPickerRows:
         self, all_models: List[str], pricing: Optional[Dict[str, Dict[str, str]]], *,
         current_model: str, sale_chrome: bool, notes: Optional[Dict[str, str]] = None,
     ) -> None:
-        from hermes_cli.models_pricing import _format_price_per_mtok, compute_sale_discount
+        from hermes_cli.models_pricing import _format_price_per_mtok
+        from models.metadata.pricing import compute_sale_discount
         self.current_model = current_model
         # Per-model dim annotation (e.g. "usage credits"); the row stays selectable.
         self.notes = notes or {}

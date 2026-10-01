@@ -250,3 +250,13 @@ def test_picker_and_setup_surfaces_consume_selection_candidate_projection():
     assert _definitions(validate).isdisjoint(
         {"offered_model_ids", "drop_unofferable_model_ids"}
     )
+
+def test_phase_5_9_detection_has_no_second_application_ladder():
+    assert {"detect_static_provider_for_model", "_detection_candidates"}.isdisjoint(
+        _definitions(ROOT / "hermes_cli/models.py"))
+    assert {"_zero_credit_model", "_policy_filtered_ids"}.isdisjoint(
+        _definitions(ROOT / "models/selection_defaults.py"))
+    assert "models.metadata.pricing" in _imports(ROOT / "models/selection_defaults.py")
+    assert "models.catalog_policy" in _imports(ROOT / "models/selection_defaults.py")
+    assert "models.selection" in _imports(ROOT / "hermes_cli/model_selection_facts.py")
+    assert "models.selection_detection" in _imports(ROOT / "hermes_cli/models.py")

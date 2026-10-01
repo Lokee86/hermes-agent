@@ -1,5 +1,7 @@
 """Tests for API-key provider support (z.ai/GLM, Kimi, MiniMax, AI Gateway)."""
 
+import application_model_pricing
+
 import json
 
 import pytest
@@ -653,7 +655,7 @@ class TestKimiMoonshotModelListIsolation:
     """Moonshot (legacy) users must not see Coding Plan-only models."""
 
     def test_moonshot_list_excludes_coding_plan_only_models(self):
-        from hermes_cli.models import _PROVIDER_MODELS
+        from models.catalog_static import _PROVIDER_MODELS
         moonshot_models = _PROVIDER_MODELS["moonshot"]
         coding_plan_only = {"kimi-for-coding", "kimi-k2-thinking-turbo"}
         leaked = set(moonshot_models) & coding_plan_only
@@ -670,7 +672,7 @@ class TestHuggingFaceModels:
 
     def test_model_metadata_has_context_lengths(self):
         """Every HF model should have a context length entry."""
-        from hermes_cli.models import _PROVIDER_MODELS
+        from models.catalog_static import _PROVIDER_MODELS
         from models.metadata.context import DEFAULT_CONTEXT_LENGTHS
         lower_keys = {k.lower() for k in DEFAULT_CONTEXT_LENGTHS}
         hf_models = _PROVIDER_MODELS["huggingface"]
@@ -691,10 +693,10 @@ class TestNovitaProvider:
     def test_novita_pricing_cache(self, monkeypatch):
         """_fetch_novita_pricing should cache results in _pricing_cache."""
         from hermes_cli import models as models_mod
-        from hermes_cli import models_pricing
+        import application_model_pricing as models_pricing
         monkeypatch.setenv("NOVITA_API_KEY", "sk-test-key")
         monkeypatch.setenv("NOVITA_BASE_URL", "https://api.novita.ai/openai/v1")
-        models_pricing._pricing_cache.pop("https://api.novita.ai/openai/v1", None)
+        application_model_pricing._pricing_cache.pop("https://api.novita.ai/openai/v1", None)
 
         call_count = {"n": 0}
         fake_payload = {
@@ -727,17 +729,17 @@ class TestNovitaProvider:
         )
 
         # First call hits the network.
-        first = models_pricing._fetch_novita_pricing()
+        first = application_model_pricing._fetch_novita_pricing()
         assert "x/y" in first
         assert call_count["n"] == 1
 
         # Second call returns cached result without re-hitting the network.
-        second = models_pricing._fetch_novita_pricing()
+        second = application_model_pricing._fetch_novita_pricing()
         assert second == first
         assert call_count["n"] == 1
 
         # force_refresh bypasses the cache.
-        models_pricing._fetch_novita_pricing(force_refresh=True)
+        application_model_pricing._fetch_novita_pricing(force_refresh=True)
         assert call_count["n"] == 2
 
 
@@ -885,7 +887,7 @@ class TestDeepInfraTagFiltering:
 @pytest.mark.usefixtures("_deepinfra_cache_isolation")
 class TestDeepInfraPricingFetcher:
     def test_pricing_shape_and_dispatch(self, monkeypatch):
-        from hermes_cli.models_pricing import get_pricing_for_provider
+        from application_model_pricing import get_pricing_for_provider
 
         rows = [
             {"id": "vendor/model-a", "metadata": {

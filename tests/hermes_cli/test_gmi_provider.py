@@ -18,9 +18,7 @@ if "dotenv" not in sys.modules:
 
 from hermes_cli.auth import resolve_provider
 from hermes_cli.config import load_config
-from hermes_cli.models import (
-    provider_model_ids,
-)
+from hermes_cli.models import provider_model_ids
 from agent.auxiliary_client import resolve_provider_client
 from models.metadata.context import get_model_context_length
 

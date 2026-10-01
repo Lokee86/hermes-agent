@@ -9,6 +9,11 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 LOWER_QUERY_FILES = (
     ROOT / "models" / "catalog_static.py",
+    ROOT / "models" / "catalog_detection.py",
+    ROOT / "models" / "catalog_projection.py",
+    ROOT / "models" / "catalog_policy.py",
+    ROOT / "models" / "catalog_chat.py",
+    ROOT / "models" / "metadata" / "pricing.py",
     ROOT / "models" / "catalog_local.py",
     ROOT / "models" / "catalog_probe.py",
     ROOT / "models" / "catalog_github.py",
@@ -38,6 +43,13 @@ def _imports(path: Path) -> set[str]:
             found.update(alias.name for alias in node.names)
         elif isinstance(node, ast.ImportFrom) and node.module:
             found.add(node.module)
+        elif isinstance(node, ast.Call) and node.args:
+            arg = node.args[0]
+            if isinstance(arg, ast.Constant) and isinstance(arg.value, str):
+                func = node.func
+                if (isinstance(func, ast.Name) and func.id in {"__import__", "import_module"}
+                    or isinstance(func, ast.Attribute) and func.attr == "import_module"):
+                    found.add(arg.value)
     return found
 
 
@@ -92,6 +104,10 @@ def test_primary_agent_runtime_has_no_cli_model_semantic_dependencies():
         ROOT / "agent" / "fast_mode.py",
         ROOT / "agent" / "reasoning_params.py",
         ROOT / "agent" / "model_metadata.py",
+        ROOT / "agent" / "credits_tracker.py",
+        ROOT / "agent" / "error_surface.py",
+        ROOT / "agent" / "turn_failure_copy.py",
+        ROOT / "agent" / "auxiliary_model_resolution.py",
         ROOT / "agent" / "models_dev.py",
         ROOT / "agent" / "opencode_affinity.py",
         *(ROOT / "agent" / "transports").glob("*.py"),
@@ -105,9 +121,9 @@ def test_primary_agent_runtime_has_no_cli_model_semantic_dependencies():
     )
     offenders = []
     for path in paths:
-        source = path.read_text(encoding="utf-8")
+        imports = _imports(path)
         for dependency in forbidden:
-            if dependency in source:
+            if any(module == dependency or module.startswith(dependency + ".") for module in imports):
                 offenders.append(f"{path.relative_to(ROOT)} -> {dependency}")
     assert offenders == []
 
@@ -723,3 +739,86 @@ def test_phase_5_8_6_2_tui_credential_acquisition_exceptions_are_exact():
         path = ROOT / rel
         visit(path, _tree(path))
     assert found == expected
+
+
+# Phase 5.9 scans every production root, including root application modules,
+# provider/media plugins and literal lazy imports. Test fixtures are excluded.
+from functools import lru_cache
+import os
+
+@lru_cache(maxsize=1)
+def _production_sources():
+    excluded = {".git", ".venv", "venv", "node_modules", "__pycache__", "tests",
+                "evals", "scripts", "skills", "optional-skills", "website", "build"}
+    sources = {}
+    for directory, dirs, files in os.walk(ROOT):
+        dirs[:] = [name for name in dirs if name not in excluded and not name.startswith(".")]
+        for name in files:
+            if name.endswith(".py"):
+                path = Path(directory) / name
+                sources[path] = path.read_text(encoding="utf-8-sig")
+    return sources
+
+
+def test_phase_5_9_deleted_modules_have_no_production_imports():
+    deleted = {
+        "hermes_cli.model_normalize", "hermes_cli.models_catalog_static",
+        "hermes_cli.model_selection_auxiliary", "hermes_cli.model_selection_guards",
+        "hermes_cli.provider_groups", "hermes_cli.model_switch_providers",
+        "hermes_cli.chat_catalog",
+    }
+    for module in deleted:
+        assert not (ROOT / (module.replace(".", "/") + ".py")).exists()
+    offenders = []
+    for path, source in _production_sources().items():
+        if not any(module in source for module in deleted):
+            continue
+        for module in _imports(path):
+            if any(module == old or module.startswith(old + ".") for old in deleted):
+                offenders.append((str(path.relative_to(ROOT)), module))
+    assert offenders == []
+
+
+def test_phase_5_9_catalogue_billing_and_matching_have_single_owners():
+    expected = {
+        "_resolve_static_model_alias": "models/catalog_detection.py",
+        "_static_catalog_matches": "models/catalog_detection.py",
+        "current_provider_owns_vendor": "models/catalog_detection.py",
+        "resolve_declared_provider_prefix": "models/catalog_detection.py",
+        "model_alias_canonical": "models/catalog_projection.py",
+        "merge_profile_models": "models/catalog_projection.py",
+        "_drop_delisted_opencode_models": "models/catalog_projection.py",
+        "_is_model_free": "models/metadata/pricing.py",
+        "partition_nous_models_by_tier": "models/metadata/pricing.py",
+        "compute_sale_discount": "models/metadata/pricing.py",
+        "restrict_to_nous_policy": "models/catalog_policy.py",
+        "allows_model_whitespace": "models/catalog_policy.py",
+        "chat_catalog_ids": "models/catalog_chat.py",
+        "is_official_openai_host": "providers/routing.py",
+    }
+    owners = {name: [] for name in expected}
+    for path, source in _production_sources().items():
+        if not any(name in source for name in expected):
+            continue
+        for name in _definitions(path):
+            if name in owners:
+                owners[name].append(path.relative_to(ROOT).as_posix())
+    assert owners == {name: [owner] for name, owner in expected.items()}
+    assert {"detect_static_provider_for_model", "_detection_candidates"}.isdisjoint(
+        _definitions(ROOT / "hermes_cli/models.py"))
+    assert _definitions(ROOT / "hermes_cli/models_pricing.py") == {"_format_price_per_mtok"}
+
+
+def test_phase_5_9_external_compat_targets_follow_final_owners():
+    import json
+    entries = json.loads((ROOT / "compat_manifest.json").read_text(encoding="utf-8"))["entries"]
+    for entry in entries:
+        if entry["facade"] != "hermes_cli.models":
+            continue
+        if entry["name"] == "compute_sale_discount":
+            assert entry["target"] == "models.metadata.pricing"
+        elif entry["name"] == "restrict_to_nous_policy":
+            assert entry["target"] == "models.catalog_policy"
+        elif entry["name"] in {"fetch_models_with_pricing", "get_pricing_for_provider",
+                               "peek_cached_pricing", "pricing_cache_scope"}:
+            assert entry["target"] == "application_model_pricing"

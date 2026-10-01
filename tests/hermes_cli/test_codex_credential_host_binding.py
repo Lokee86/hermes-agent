@@ -228,8 +228,8 @@ def test_full_picker_discovers_codex_models_with_pinned_canonical_url(monkeypatc
     # Unrelated metadata sources stay offline; config, auth, discovery, cache and picker are real.
     monkeypatch.setattr("agent.models_dev.fetch_models_dev", lambda: {})
     monkeypatch.setattr("hermes_cli.models.get_curated_nous_model_ids", lambda: [])
-    monkeypatch.setattr("hermes_cli.models.fetch_ollama_cloud_models", lambda **kw: [])
-    monkeypatch.setattr("hermes_cli.models_pricing.get_pricing_for_provider", lambda *a, **kw: {})
+    monkeypatch.setattr("hermes_cli.models_local.fetch_ollama_cloud_models", lambda **kw: [])
+    monkeypatch.setattr("application_model_pricing.get_pricing_for_provider", lambda *a, **kw: {})
 
     payload = build_model_options_payload(load_picker_context(), refresh=True)
     row = next(p for p in payload["providers"] if p["slug"] == "openai-codex")

@@ -221,7 +221,9 @@ def probe_ollama_local_models(
     """Probe local Ollama-compatible models from native ``/api/tags`` (Ollama's authoritative local
     catalog; ``/v1/models`` is not required for local servers). ``None`` when the endpoint cannot be
     reached or returns malformed data; a list (possibly empty) when it was reachable."""
-    from hermes_cli.models import _HERMES_USER_AGENT, _get_ollama_base_url, _urlopen_model_catalog_request
+    from hermes_cli.models import _HERMES_USER_AGENT
+    from hermes_cli.models_local import _get_ollama_base_url
+    from hermes_cli.models import _urlopen_model_catalog_request
     root = _root_for_ollama_native_api(base_url or _get_ollama_base_url())
     if not root:
         return None
@@ -289,7 +291,8 @@ def _ollama_local_catalog(force_refresh: bool) -> list[str]:
     """Catalog for the raw ``ollama`` provider: native ``/api/tags`` when the endpoint is a real
     Ollama server, else the OpenAI-style ``/v1/models`` of the configured gateway (incl. Ollama
     Cloud)."""
-    from hermes_cli.models import _get_provider_config_dict, fetch_api_models
+    from hermes_cli.models import _get_provider_config_dict
+    from hermes_cli.models import fetch_api_models
     if force_refresh:
         _OLLAMA_LOCAL_MODELS_CACHE.clear()
         _OLLAMA_LOCAL_PROBE_FAILURE_CACHE.clear()

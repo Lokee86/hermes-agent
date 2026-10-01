@@ -295,7 +295,7 @@ def _aux_flow_provider_model(task: str, provider_slug: str, curated_models: list
     """Prompt for a model under an already-authenticated provider (then its reasoning effort),
     save to aux."""
     from hermes_cli.auth import _prompt_model_selection
-    from hermes_cli.models_pricing import get_pricing_for_provider
+    from application_model_pricing import get_pricing_for_provider
     display_name = _aux_task_display_name(task)
     try:
         pricing = get_pricing_for_provider(provider_slug) or {}

@@ -63,3 +63,15 @@ def group_providers(slugs):
 
 
 __all__ = ["PROVIDER_GROUPS", "group_providers", "provider_group_for_slug"]
+
+
+def provider_label(provider: str | None) -> str:
+    """Return the effective provider declaration's display label."""
+    original = (provider or "openrouter").strip()
+    normalized = original.lower()
+    if normalized == "auto":
+        return "Auto"
+    from providers import get_provider_profile
+
+    profile = get_provider_profile(normalized)
+    return str(profile.display_name or profile.name) if profile else (original or "OpenRouter")

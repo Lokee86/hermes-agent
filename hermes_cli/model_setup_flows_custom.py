@@ -234,7 +234,8 @@ def _discover_named_custom_models(provider_info: dict, api_key: str, configured_
     """Live catalog probe for a named custom endpoint (native ``/api/tags`` for Ollama).
     Returns ``(models, native_catalog_empty)``; persists the live catalog as a side effect."""
     from hermes_cli.config import normalize_extra_headers
-    from hermes_cli.models import fetch_api_models, _get_ollama_native_headers
+    from hermes_cli.models import fetch_api_models
+    from hermes_cli.models_local import _get_ollama_native_headers
     from hermes_cli.models_local import (
         fetch_ollama_local_models,
         _normalize_openai_base_url,

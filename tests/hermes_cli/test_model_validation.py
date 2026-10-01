@@ -1,14 +1,14 @@
 """Tests for provider-aware `/model` validation in hermes_cli.models."""
 
+import json
+
 import pytest
 from unittest.mock import MagicMock, patch
 
-from hermes_cli.models import (
-    curated_models_for_provider,
-    fetch_api_models,
-    probe_api_models,
-    provider_model_ids,
-)
+from hermes_cli.models import curated_models_for_provider
+from hermes_cli.models import fetch_api_models
+from hermes_cli.models import probe_api_models
+from hermes_cli.models import provider_model_ids
 from providers import (
     normalize_opencode_model_id,
     normalize_provider,
@@ -64,7 +64,7 @@ class TestCuratedModelsForProvider:
         with patch("hermes_cli.models.provider_model_ids", return_value=["m-live"]):
             assert curated_models_for_provider("nous") == [("m-live", "")]
         with patch("hermes_cli.models.provider_model_ids", return_value=[]), patch.dict(
-            "hermes_cli.models._PROVIDER_MODELS", {"nous": ["m-static"]}
+            "models.catalog_static._PROVIDER_MODELS", {"nous": ["m-static"]}
         ):
             assert curated_models_for_provider("nous") == [("m-static", "")]
 
@@ -194,10 +194,12 @@ class TestFetchApiModels:
             def read(self):
                 return b'{"data": [{"id": "gpt-5.4", "model_picker_enabled": true, "supported_endpoints": ["/responses"], "capabilities": {"type": "chat", "supports": {"reasoning_effort": ["low", "medium", "high"]}}}, {"id": "claude-sonnet-4.6", "model_picker_enabled": true, "supported_endpoints": ["/chat/completions"], "capabilities": {"type": "chat", "supports": {"reasoning_effort": ["low", "medium", "high"]}}}, {"id": "text-embedding-3-small", "model_picker_enabled": true, "capabilities": {"type": "embedding"}}]}'
 
-        with patch("hermes_cli.models._urlopen_model_catalog_request", return_value=_Resp()) as mock_urlopen:
+        from models.catalog_github import reset_github_model_catalog_cache
+        reset_github_model_catalog_cache()
+        with patch("models.catalog_github._fetch_json", return_value=json.loads(_Resp().read())) as mock_urlopen:
             probe = probe_api_models("gh-token", "https://api.githubcopilot.com")
 
-        assert mock_urlopen.call_args[0][0].full_url == "https://api.githubcopilot.com/models"
+        assert mock_urlopen.call_args[0][0] == "https://api.githubcopilot.com/models"
         assert probe["models"] == ["gpt-5.4", "claude-sonnet-4.6"]
         assert probe["resolved_base_url"] == "https://api.githubcopilot.com"
         assert probe["used_fallback"] is False
@@ -693,7 +695,7 @@ class TestValidateRequestedModelNousPortalRecommendations:
              patch("hermes_cli.models.probe_api_models", return_value=probe_payload), \
              patch("application_nous_recommendations.fetch_recommended_models", side_effect=_fetch_portal), \
              patch("application_nous_recommendations.portal_base_url", return_value="https://portal.nousresearch.com"), \
-             patch("hermes_cli.models._model_in_provider_catalog", return_value=False):
+             patch("models.catalog_detection._model_in_provider_catalog", return_value=False):
             return validate_requested_model(model, "nous")
 
     def test_free_portal_recommendation_accepted(self):
@@ -759,7 +761,7 @@ class TestValidateRequestedModelNousPortalRecommendations:
         with patch("hermes_cli.models.fetch_api_models", return_value=["some/other-model"]), \
              patch("hermes_cli.models.probe_api_models", return_value=probe_payload), \
              patch("application_nous_recommendations.fetch_recommended_models") as mock_portal, \
-             patch("hermes_cli.models._model_in_provider_catalog", return_value=False):
+             patch("models.catalog_detection._model_in_provider_catalog", return_value=False):
             result = validate_requested_model("inclusionai/ling-3.0-flash:free", "openrouter")
         mock_portal.assert_not_called()
         assert result["accepted"] is False
@@ -965,12 +967,12 @@ def test_picker_payload_omits_ids_the_validator_rejects_for_whitespace():
     ctx = ConfigContext(
         current_provider="anthropic", current_model="claude-opus-4.6",
         current_base_url="", user_providers={}, custom_providers=[])
-    with patch("hermes_cli.model_switch.list_authenticated_providers", return_value=rows), \
+    with patch("application_provider_discovery.list_authenticated_providers", return_value=rows), \
          patch("hermes_cli.inventory._local_runtime_row", return_value=None), \
          patch("hermes_cli.inventory._moa_provider_row", return_value=None):
         payload = build_models_payload(ctx)
     by_slug = {row["slug"]: row["models"] for row in payload["providers"]}
     assert "claude opus" not in by_slug["anthropic"]
-    assert "claude-opus-4.6" in by_slug["anthropic"]
+    assert "claude-opus-4-6" in by_slug["anthropic"]
     assert "Go reasoning" in by_slug["omniroute"]
     assert "Meta Llama 3.1 8B" in by_slug["lmstudio"]

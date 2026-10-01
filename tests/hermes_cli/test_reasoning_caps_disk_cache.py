@@ -12,12 +12,14 @@ These tests pin the mirror that makes every run after the first correct from
 its first turn.
 """
 
+import application_model_pricing
+
 import json
 
 import pytest
 
 import hermes_cli.models as models_mod
-from hermes_cli import models_pricing
+import application_model_pricing as models_pricing
 import models.metadata.reasoning as reasoning_metadata
 
 
@@ -192,13 +194,13 @@ def test_pricing_fetch_seeds_the_mirror(cold_process, offline, monkeypatch):
     Every surface that renders prices goes through here, so the common case
     never pays a second round-trip to learn the same thing.
     """
-    monkeypatch.setattr(models_pricing, "_pricing_cache", {})
-    monkeypatch.setattr(models_pricing, "_pricing_cache_retry_after", {})
+    monkeypatch.setattr(application_model_pricing, "_pricing_cache", {})
+    monkeypatch.setattr(application_model_pricing, "_pricing_cache_retry_after", {})
     monkeypatch.setattr(
         models_mod, "_urlopen_model_catalog_request",
         lambda req, *, timeout: _response(_CATALOG),
     )
-    models_pricing.fetch_models_with_pricing(
+    application_model_pricing.fetch_models_with_pricing(
         base_url="https://inference-api.nousresearch.com"
     )
 

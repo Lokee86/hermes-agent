@@ -170,7 +170,7 @@ def test_scoped_endpoints_use_only_the_profile_declaration(monkeypatch):
 
 
 def test_deepinfra_pricing_scope_uses_canonical_endpoint(monkeypatch):
-    from hermes_cli.models_pricing import pricing_cache_scope
+    from application_model_pricing import pricing_cache_scope
     monkeypatch.setattr(
         "application_deepinfra_catalog.deepinfra_base_url",
         lambda: "https://scoped.example/v1",

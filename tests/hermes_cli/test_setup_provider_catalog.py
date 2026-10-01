@@ -1,4 +1,7 @@
 """First-time setup must consume the registered provider catalog (#116408)."""
+
+import application_model_pricing
+import models.catalog_static as models_catalog_static
 from unittest.mock import Mock
 
 import pytest
@@ -29,8 +32,8 @@ def test_setup_offers_registered_provider_catalog(monkeypatch, live):
     monkeypatch.setattr(flows, "_models_dev_merged", lambda *_: [])
     monkeypatch.setattr(config, "load_config", lambda: {})
     monkeypatch.setattr(models, "fetch_api_models", lambda *_args, **_kwargs: [])
-    from hermes_cli import models_pricing
-    monkeypatch.setattr(models_pricing, "get_pricing_for_provider", lambda *_: {})
+    import application_model_pricing as models_pricing
+    monkeypatch.setattr(application_model_pricing, "get_pricing_for_provider", lambda *_: {})
     picker = Mock(return_value=None)
     monkeypatch.setattr(flows, "_pick_model_or_prompt", picker)
     monkeypatch.setattr(flows, "_finish_model", Mock())
@@ -155,7 +158,7 @@ def test_setup_keeps_curated_list_when_profile_catalog_is_down_and_declares_no_f
     profile = DownProfile(name="scout-curated-only", auth_type="api_key", env_vars=("SCOUT_CURATED_KEY",),
                           base_url="https://down.example.invalid/v1")
     monkeypatch.setitem(providers.registry._REGISTRY, profile.name, profile)
-    monkeypatch.setitem(models._PROVIDER_MODELS, profile.name, ["curated-a", "curated-b"])
+    monkeypatch.setitem(models_catalog_static._PROVIDER_MODELS, profile.name, ["curated-a", "curated-b"])
     monkeypatch.setattr(flows, "_models_dev_merged", lambda *_: [])
 
     setup_rows = flows._api_key_provider_model_list(

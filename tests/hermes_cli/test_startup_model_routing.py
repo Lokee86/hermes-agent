@@ -196,9 +196,6 @@ def test_oneshot_and_tui_qualified_model_never_reaches_default_provider(tmp_path
     monkeypatch.setattr(
         "hermes_cli.models.detect_provider_for_model",
         lambda *_a, **_k: pytest.fail("auto-detection ran on a provider-qualified model"))
-    monkeypatch.setattr(
-        "hermes_cli.models.detect_static_provider_for_model",
-        lambda *_a, **_k: pytest.fail("auto-detection ran on a provider-qualified model"))
     monkeypatch.setenv("HERMES_INFERENCE_MODEL", "custom:jetson-vllm:nemotron-nano-30b")
     choice = _resolve_model_and_provider(cfg, None, None)
     assert (choice.provider, choice.model) == ("custom:jetson-vllm", "nemotron-nano-30b")
