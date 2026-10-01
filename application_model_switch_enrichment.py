@@ -29,7 +29,7 @@ def _configured(config: Mapping[str, Any], provider: str):
     )
 
 
-def _validate(result, config: Mapping[str, Any]) -> str:
+def validate_model_switch(result, config: Mapping[str, Any]) -> str:
     try:
         from hermes_cli.chat_catalog import is_known_non_chat_model
 
@@ -81,7 +81,7 @@ def _validate(result, config: Mapping[str, Any]) -> str:
 
 
 def enrich_model_switch(result, config: Mapping[str, Any]):
-    validation_warning = _validate(result, config)
+    validation_warning = validate_model_switch(result, config)
     configured = _configured(config, result.target_provider)
     result.provider_label = (
         configured.name
@@ -117,4 +117,4 @@ def enrich_model_switch(result, config: Mapping[str, Any]):
     return result
 
 
-__all__ = ["ModelValidationError", "enrich_model_switch"]
+__all__ = ["ModelValidationError", "enrich_model_switch", "validate_model_switch"]

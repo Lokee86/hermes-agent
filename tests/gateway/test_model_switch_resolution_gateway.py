@@ -7,7 +7,7 @@ from gateway.model_switch_resolution import resolve_model_switch
 
 
 def _cheap_enrichment(monkeypatch):
-    monkeypatch.setattr("application_model_switch_enrichment._validate", lambda *_a, **_k: "")
+    monkeypatch.setattr("application_model_switch_enrichment.validate_model_switch", lambda *_a, **_k: "")
     monkeypatch.setattr(
         "agent.models_dev.query_model_metadata", lambda *_a, **_k: None
     )
