@@ -1,6 +1,7 @@
 """Tests for auth subcommands backed by the credential pool."""
 
 from __future__ import annotations
+from hermes_cli.config_credentials import credential_pool_environment
 from hermes_cli.config_credentials import credential_pool_environment as _phase6_auth_environment
 
 import auth.providers.anthropic as _auth_auth_providers_anthropic
@@ -328,7 +329,7 @@ def test_auth_add_nous_oauth_persists_pool_entry(tmp_path, monkeypatch):
     _write_auth_store(tmp_path, {"version": 1, "providers": {}})
     token = _jwt_with_email("nous@example.com")
     monkeypatch.setattr(
-        "hermes_cli.auth._nous_device_code_login",
+        "hermes_cli.auth_nous._nous_device_code_login",
         lambda **kwargs: {
             "portal_base_url": "https://portal.example.com",
             "inference_base_url": "https://inference.example.com/v1",
@@ -405,7 +406,7 @@ def test_auth_add_nous_oauth_honors_custom_label(tmp_path, monkeypatch):
     _write_auth_store(tmp_path, {"version": 1, "providers": {}})
     token = _jwt_with_email("nous@example.com")
     monkeypatch.setattr(
-        "hermes_cli.auth._nous_device_code_login",
+        "hermes_cli.auth_nous._nous_device_code_login",
         lambda **kwargs: {
             "portal_base_url": "https://portal.example.com",
             "inference_base_url": "https://inference.example.com/v1",
@@ -492,7 +493,7 @@ def test_auth_add_codex_oauth_keeps_distinct_pool_accounts(tmp_path, monkeypatch
             },
         ]
     )
-    monkeypatch.setattr("hermes_cli.auth._codex_device_code_login", lambda: next(logins))
+    monkeypatch.setattr("hermes_cli.auth_codex._codex_device_code_login", lambda: next(logins))
 
     from hermes_cli.auth_commands import auth_add_command
     from auth.credential_pool import load_pool
@@ -545,7 +546,7 @@ def _add_codex_twice(tmp_path, monkeypatch, capsys, second_token: str) -> str:
         {"tokens": {"access_token": _codex_jwt("me@example.com", "acct-A", "user-1"), "refresh_token": "rt-1"}, **codex_login},
         {"tokens": {"access_token": second_token, "refresh_token": "rt-2"}, **codex_login},
     ])
-    monkeypatch.setattr("hermes_cli.auth._codex_device_code_login", lambda: next(logins))
+    monkeypatch.setattr("hermes_cli.auth_codex._codex_device_code_login", lambda: next(logins))
     from hermes_cli.auth_commands import auth_add_command
 
     class _Args:
@@ -579,9 +580,9 @@ def test_codex_auth_status_reports_pool_only_credential(tmp_path, monkeypatch):
     monkeypatch.setenv("HERMES_HOME", str(tmp_path / "hermes"))
     _write_auth_store(tmp_path, _codex_pool_only_store())
 
-    from hermes_cli.auth import get_codex_auth_status
+    from auth.provider_status import get_codex_auth_status
 
-    status = get_codex_auth_status()
+    status = get_codex_auth_status(environment=credential_pool_environment())
 
     assert status["logged_in"] is True
     assert status["source"] == "pool:codex@example.com"
@@ -646,7 +647,7 @@ def test_auth_add_xai_oauth_keeps_distinct_pool_accounts(tmp_path, monkeypatch):
         ]
     )
     monkeypatch.setattr(
-        "hermes_cli.auth._xai_oauth_device_code_login",
+        "hermes_cli.auth_xai._xai_oauth_device_code_login",
         lambda **kwargs: next(logins),
     )
 
@@ -839,7 +840,7 @@ def test_logout_resets_codex_config_when_auth_state_already_cleared(tmp_path, mo
     )
 
     from types import SimpleNamespace
-    from hermes_cli.auth import logout_command
+    from hermes_cli.auth_commands import logout_command
 
     logout_command(SimpleNamespace(provider="openai-codex"))
 
@@ -1010,7 +1011,7 @@ def test_auth_add_openrouter_oauth_persists_pkce_key_without_touching_api_key_de
     monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     _write_auth_store(tmp_path, {"version": 1, "providers": {}})
-    monkeypatch.setattr("hermes_cli.auth._openrouter_pkce_login", lambda **kw: {"api_key": "sk-or-v1-from-pkce"})
+    monkeypatch.setattr("hermes_cli.auth_openrouter._openrouter_pkce_login", lambda **kw: {"api_key": "sk-or-v1-from-pkce"})
 
     from hermes_cli.auth import resolve_provider
     from hermes_cli.auth_commands import auth_add_command

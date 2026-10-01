@@ -74,7 +74,8 @@ def _login_openai_codex(args, pconfig: ProviderConfig, *, force_new_login: bool 
     """OpenAI Codex login: device code by default, browser PKCE when opted in (``--browser`` /
     ``auth.codex_login_flow``). Tokens stored in ~/.hermes/auth.json."""
     from auth.providers.codex import _codex_access_token_is_expiring, _import_codex_cli_tokens, _save_codex_tokens, resolve_codex_runtime_credentials
-    from hermes_cli.auth import _offer_existing_oauth_credentials, _print_login_success, _prompt_yes_no, _update_config_for_provider
+    from hermes_cli.auth_device_flow import _offer_existing_oauth_credentials, _print_login_success, _prompt_yes_no
+    from hermes_cli.auth import _update_config_for_provider
     from hermes_cli.auth_codex_browser import codex_oauth_login
     del pconfig  # kept for parity with other provider login helpers
     if not force_new_login:

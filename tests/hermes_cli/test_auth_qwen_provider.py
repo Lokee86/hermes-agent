@@ -176,7 +176,7 @@ def test_model_flow_qwen_oauth_stale_token_shows_reauth_guidance(qwen_env, monke
     update_called = {"value": False}
 
     monkeypatch.setattr(
-        "hermes_cli.auth._prompt_model_selection",
+        "hermes_cli.auth_model_picker._prompt_model_selection",
         lambda *args, **kwargs: prompt_called.__setitem__("value", True),
     )
     monkeypatch.setattr(

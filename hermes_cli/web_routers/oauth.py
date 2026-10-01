@@ -373,7 +373,11 @@ def _resolve_provider_status(provider_id: str, status_fn) -> Dict[str, Any]:
                 from auth.providers.nous_status import get_nous_auth_status_local
                 from hermes_cli.config_credentials import credential_pool_environment
                 return shape(get_nous_auth_status_local(environment=credential_pool_environment()))
-            return shape(getattr(hauth, getter)())
+            if provider_id == "qwen-oauth":
+                from auth.providers.qwen import get_qwen_auth_status
+                return shape(get_qwen_auth_status())
+            from auth import provider_status
+            return shape(getattr(provider_status, getter)(environment=_phase6_auth_environment()))
         # Catalog-derived providers (status_fn=None, no hand-written card) still
         # reflect real login state via the canonical slug-driven dispatcher, so
         # a new OAuth/account provider plugin never renders permanently logged-out.

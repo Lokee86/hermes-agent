@@ -25,7 +25,8 @@ if TYPE_CHECKING:  # annotation-only; the runtime import would be a cycle
 
 def _minimax_oauth_login(*, region: str = "global", open_browser: bool = True, timeout_seconds: float = 15.0) -> Dict[str, Any]:
     """Run MiniMax OAuth flow, persist tokens, return auth state dict."""
-    from hermes_cli.auth import PROVIDER_REGISTRY, _can_open_graphical_browser, _is_remote_session, _print_device_code_instructions
+    from hermes_cli.auth import PROVIDER_REGISTRY
+    from hermes_cli.auth_device_flow import _can_open_graphical_browser, _is_remote_session, _print_device_code_instructions
     from auth.providers.minimax import _minimax_pkce_pair, _minimax_request_user_code, _minimax_save_auth_state
     pconfig = PROVIDER_REGISTRY["minimax-oauth"]
     if region == "cn":
@@ -86,7 +87,7 @@ def _minimax_oauth_login(*, region: str = "global", open_browser: bool = True, t
 
 def _login_minimax_oauth(args, pconfig: ProviderConfig) -> None:
     """CLI entry for MiniMax OAuth login."""
-    from hermes_cli.auth import format_auth_error
+    from hermes_cli.auth_error_copy import format_auth_error
     try:
         _minimax_oauth_login(
             region=getattr(args, "region", None) or "global",

@@ -1,6 +1,7 @@
 """Tests for the Phase 2b billing:manage scope step-up (auth.py)."""
 
 from __future__ import annotations
+import hermes_cli.auth_nous as _auth_hermes_cli_auth_nous
 import auth.providers.nous_store as _auth_auth_providers_nous_store
 
 import auth.oauth as _auth_auth_oauth
@@ -14,7 +15,8 @@ import pytest
 import hermes_cli.auth as auth
 import hermes_cli.auth_nous as auth_nous
 from auth.constants import NOUS_BILLING_MANAGE_SCOPE
-from hermes_cli.auth import nous_token_has_billing_scope, step_up_nous_billing_scope
+from hermes_cli.auth import nous_token_has_billing_scope
+from hermes_cli.auth_nous import step_up_nous_billing_scope
 
 
 # ---------------------------------------------------------------------------
@@ -90,7 +92,7 @@ def test_step_up_requests_billing_scope_and_reuses_prior_urls(monkeypatch, _stub
         # Simulate the admin ticking the box → token comes back WITH the scope.
         return {"scope": "inference:invoke billing:manage", "access_token": "t"}
 
-    monkeypatch.setattr(auth, "_nous_device_code_login", _fake_login)
+    monkeypatch.setattr(_auth_hermes_cli_auth_nous, "_nous_device_code_login", _fake_login)
     monkeypatch.setattr(auth_nous, "_nous_device_code_login", _fake_login)
 
     granted = step_up_nous_billing_scope()
@@ -143,7 +145,7 @@ def test_device_login_fires_on_verification_before_polling(monkeypatch):
     # validation (JWT usability checks) is out of scope and may raise on the
     # synthetic token — swallow it; the ordering assertion is what matters.
     try:
-        auth._nous_device_code_login(open_browser=False, on_verification=_cb)
+        _auth_hermes_cli_auth_nous._nous_device_code_login(open_browser=False, on_verification=_cb)
     except Exception:
         pass
 

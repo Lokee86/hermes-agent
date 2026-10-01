@@ -27,7 +27,9 @@ if TYPE_CHECKING:  # annotation-only; the runtime import would be a cycle
 
 
 def _login_xai_oauth(args, pconfig: ProviderConfig, *, force_new_login: bool = False) -> None:
-    from hermes_cli.auth import _is_remote_session, _offer_existing_oauth_credentials, _print_login_success, _update_config_for_provider, _xai_oauth_device_code_login
+    from hermes_cli.auth_device_flow import _is_remote_session, _offer_existing_oauth_credentials, _print_login_success
+    from hermes_cli.auth import _update_config_for_provider
+    from hermes_cli.auth_xai import _xai_oauth_device_code_login
     from auth.providers.xai import resolve_xai_oauth_runtime_credentials
     from auth.sources import unsuppress_credential_source
     del pconfig
@@ -66,7 +68,7 @@ def _login_xai_oauth(args, pconfig: ProviderConfig, *, force_new_login: bool = F
 
 
 def _xai_oauth_device_code_login(*, timeout_seconds: float = 20.0, open_browser: bool = True) -> Dict[str, Any]:
-    from hermes_cli.auth import _can_open_graphical_browser, _is_remote_session, _print_device_code_instructions
+    from hermes_cli.auth_device_flow import _can_open_graphical_browser, _is_remote_session, _print_device_code_instructions
     from auth.oauth import _utc_now_z
     from auth.providers.xai import _xai_oauth_discovery, _xai_oauth_poll_device_token
     discovery = _xai_oauth_discovery(timeout_seconds)

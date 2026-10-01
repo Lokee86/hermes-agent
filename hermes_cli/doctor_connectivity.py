@@ -49,8 +49,10 @@ def _has_healthy_oauth_fallback_for_apikey_provider(provider_label: str) -> bool
     if not getter:
         return False
     try:
-        from hermes_cli import auth
-        return bool((getattr(auth, getter)() or {}).get("logged_in"))
+        from auth import provider_status
+        from hermes_cli.config_credentials import credential_pool_environment
+        return bool((getattr(provider_status, getter)(
+            environment=credential_pool_environment()) or {}).get("logged_in"))
     except Exception:
         return False
 
@@ -151,8 +153,9 @@ def _probe_openrouter() -> ProbeResult:
 
 def _probe_anthropic() -> ProbeResult:
     name = "Anthropic API"
-    from hermes_cli.auth import get_anthropic_key
-    key = get_anthropic_key()
+    from auth.api_keys import get_anthropic_key
+    from hermes_cli.config_credentials import credential_pool_environment
+    key = get_anthropic_key(environment=credential_pool_environment())
     if not key:
         return _skip(name)
     try:

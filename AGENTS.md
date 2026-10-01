@@ -541,8 +541,15 @@ scope context. Runtime route materialization remains application policy in
 `hermes_cli/runtime_provider_credentials.py`; provider/model routing is outside Phase 6.
 Import canonical operations directly; never restore the retired CLI keepalive module or
 API-key source helper. Structural checks cover both runtime and CLI source consumers.
-See `PHASE6_AUTH_POOL.md`, `PHASE6_AUTH_OAUTH.md` and `PHASE6_AUTH_CONSUMERS.md`
-for ownership and verification.
+OAuth status snapshots belong to `auth/provider_status.py` and take explicit scoped
+settings. Anthropic environment-key lookup belongs to `auth/api_keys.py`; error
+rendering belongs to `hermes_cli/auth_error_copy.py`. Genuine login/logout/auth
+commands and plugin `auth_handler(action, args)` dispatch stay at the presentation
+edge. CLI authentication modules must not implement auth-store write transactions.
+This independent baseline has no `nous_cli`: relocate genuine presentation only
+during CLI integration, without adding internal forwarding paths.
+See `PHASE6_AUTH_POOL.md`, `PHASE6_AUTH_OAUTH.md`, `PHASE6_AUTH_CONSUMERS.md`
+and `PHASE6_AUTH_PRESENTATION.md` for ownership and verification.
 
 ## Routing Table — working in X → read X/AGENTS.md
 

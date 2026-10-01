@@ -15,6 +15,7 @@ Derived from #97058 by @astraltrekkin, re-homed after the ``auth_codex.py`` spli
 """
 
 from __future__ import annotations
+import hermes_cli.auth_codex as _auth_hermes_cli_auth_codex
 
 import hmac
 import logging
@@ -74,7 +75,7 @@ def codex_oauth_login(args: Any) -> Dict[str, Any]:
     print("Signing in to OpenAI Codex...")
     print("(Hermes creates its own session — won't affect Codex CLI or VS Code)")
     print()
-    return auth_mod._codex_device_code_login()
+    return _auth_hermes_cli_auth_codex._codex_device_code_login()
 
 
 def _codex_browser_login(

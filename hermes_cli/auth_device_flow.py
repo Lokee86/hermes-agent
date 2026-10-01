@@ -97,7 +97,7 @@ def _print_loopback_ssh_hint(redirect_uri: str, *, docs_url: str | None = None) 
     The auth server redirects the browser to ``127.0.0.1:<port>/callback``; when the browser is
     on another machine (the SSH case) the redirect needs a local port forward to reach us.
     """
-    from hermes_cli.auth import _is_remote_session
+    from hermes_cli.auth_device_flow import _is_remote_session
     if not _is_remote_session():
         return
     try:

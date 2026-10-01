@@ -262,7 +262,7 @@ class TestLogout:
     def test_logout_with_only_free_tier_is_a_true_noop(self, portal):
         from types import SimpleNamespace
         from auth.store import _auth_file_path
-        from hermes_cli.auth import logout_command
+        from hermes_cli.auth_commands import logout_command
         _auth_auth_providers_nous_guest.ensure_portal_identity(explicit=True, environment=_phase6_auth_environment())
         before = _auth_file_path().read_bytes()
         logout_command(SimpleNamespace(provider=None))
@@ -270,7 +270,7 @@ class TestLogout:
 
     def test_logout_of_real_account_clears_shared_store(self, portal, tmp_path):
         from types import SimpleNamespace
-        from hermes_cli.auth import logout_command
+        from hermes_cli.auth_commands import logout_command
         from auth.providers.nous import persist_nous_credentials
         persist_nous_credentials({"access_token": _jwt(client_id="hermes-cli", account_tier="free"),
                                   "refresh_token": "rt-1", "expires_at": "2030-01-01T00:00:00+00:00",

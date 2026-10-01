@@ -1949,8 +1949,8 @@ def _forward_command(name: str, module: str, attr: str, *, forward_return: bool 
 
 
 cmd_setup = _forward_command("cmd_setup", "hermes_cli.setup", "run_setup_wizard", doc='Interactive setup wizard.')
-cmd_login = _forward_command("cmd_login", "hermes_cli.auth", "login_command", doc='Authenticate Hermes CLI with a provider.')
-cmd_logout = _forward_command("cmd_logout", "hermes_cli.auth", "logout_command", doc='Clear provider authentication.')
+cmd_login = _forward_command("cmd_login", "hermes_cli.auth_commands", "login_command", doc='Authenticate Hermes CLI with a provider.')
+cmd_logout = _forward_command("cmd_logout", "hermes_cli.auth_commands", "logout_command", doc='Clear provider authentication.')
 cmd_auth = _forward_command("cmd_auth", "hermes_cli.auth_commands", "auth_command", doc='Manage pooled credentials.')
 cmd_status = _forward_command("cmd_status", "hermes_cli.status", "show_status", doc='Show status of all components.')
 cmd_cron = _forward_command("cmd_cron", "hermes_cli.cron", "cron_command", forward_return=True, doc='Cron job management.')
@@ -2029,7 +2029,8 @@ def _resolve_active_provider(config, model_cfg, effective_provider, custom_provi
     detection. Unknown/unauthenticated providers warn and fall back to auto.
     """
     from auth.errors import AuthError
-    from hermes_cli.auth import format_auth_error, resolve_provider
+    from hermes_cli.auth_error_copy import format_auth_error
+    from hermes_cli.auth import resolve_provider
     from hermes_cli.config import get_compatible_custom_providers, get_env_value
     from hermes_cli.providers import custom_provider_aliases, resolve_provider_full
 

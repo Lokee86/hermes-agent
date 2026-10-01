@@ -91,3 +91,16 @@ def resolve_api_key_provider_secret(provider_id: str, pconfig: Any, *, environme
     except Exception:
         pass
     return "", ""
+
+
+def get_anthropic_key(*, environment: PoolEnvironment) -> str:
+    """First usable Anthropic credential (``.env`` preferred over a stale shell export), or ``""``.
+
+    Order mirrors ``PROVIDER_REGISTRY["anthropic"].api_key_env_vars``.
+
+    Checks both the ``.env`` file and the process environment, preferring ``~/.hermes/.env`` so a deliberate
+    key rotation isn't shadowed by a stale shell export (matches the api-key resolution path — see #20591).
+    """
+    environment.require_current_scope()
+    env_vars = environment.provider_config("anthropic").api_key_env_vars
+    return next((v for v in (environment.read_secret(var) or "" for var in env_vars) if v), "")

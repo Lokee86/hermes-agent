@@ -76,7 +76,7 @@ def _load_config_model_section() -> tuple[dict, dict]:
 def _begin_model_config(selected: str, provider: str) -> tuple[dict, dict]:
     """Record *selected* as the model choice and open the config model section
     with ``provider`` set; callers set endpoint fields then ``_commit_model_config``."""
-    from hermes_cli.auth import _save_model_choice
+    from hermes_cli.auth_model_picker import _save_model_choice
     _save_model_choice(selected)
     cfg, model = _load_config_model_section()
     model["provider"] = provider
@@ -130,7 +130,8 @@ def _activate_provider_model(selected, provider_id: str, base_url: str, done: st
                              no_change: str | None = "No change.") -> None:
     """OAuth-provider persist: model choice + ``_update_config_for_provider`` (which owns
     the auth-state bookkeeping), then *done*; *no_change* (``None`` = silent) otherwise."""
-    from hermes_cli.auth import _save_model_choice, _update_config_for_provider
+    from hermes_cli.auth_model_picker import _save_model_choice
+    from hermes_cli.auth import _update_config_for_provider
     if not selected:
         if no_change is not None:
             print(no_change)
@@ -152,7 +153,7 @@ def _ensure_dict_section(cfg: dict, key: str) -> dict:
 def _pick_model_or_prompt(model_list, prompt: str, **kwargs):
     """Radio picker when *model_list* is non-empty, else a free-text ``line_input``
     (None on Ctrl-C/EOF)."""
-    from hermes_cli.auth import _prompt_model_selection
+    from hermes_cli.auth_model_picker import _prompt_model_selection
     if model_list:
         return _prompt_model_selection(model_list, **kwargs)
     return _ask(prompt, cancel_msg=None)

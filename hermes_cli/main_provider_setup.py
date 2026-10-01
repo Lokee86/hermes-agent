@@ -296,7 +296,7 @@ def _aux_flow_provider_model(task: str, provider_slug: str, curated_models: list
                              current_model: str = "", current_effort: str = "") -> None:
     """Prompt for a model under an already-authenticated provider (then its reasoning effort),
     save to aux."""
-    from hermes_cli.auth import _prompt_model_selection
+    from hermes_cli.auth_model_picker import _prompt_model_selection
     from hermes_cli.models_pricing import get_pricing_for_provider
     display_name = _aux_task_display_name(task)
     try:

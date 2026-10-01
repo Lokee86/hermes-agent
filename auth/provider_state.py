@@ -181,3 +181,51 @@ def deactivate_provider() -> None:
         auth_store = store._load_auth_store()
         auth_store["active_provider"] = None
         store._save_auth_store(auth_store)
+
+def mark_provider_active(provider_id: str) -> None:
+    """Select an already chosen provider without changing its credentials."""
+    with store._auth_store_lock():
+        auth_store = store._load_auth_store()
+        auth_store["active_provider"] = provider_id
+        store._save_auth_store(auth_store)
+
+
+def save_provider_auth_state(
+    provider_id: str, state: Dict[str, Any], *, set_active: bool = False
+) -> Path:
+    """Persist a login result without changing the inference route."""
+    with store._auth_store_lock():
+        auth_store = store._load_auth_store()
+        _store_provider_state(auth_store, provider_id, state, set_active=set_active)
+        return store._save_auth_store(auth_store)
+
+
+def logout_provider_auth(provider_id: str, *, configured: bool = False) -> bool:
+    """Clear a login and its shared adoption source before reporting logout."""
+    if not (clear_provider_auth(provider_id) or configured):
+        return False
+    if provider_id == "nous":
+        from auth.providers.nous_store import _clear_shared_nous_state
+        _clear_shared_nous_state("logout")
+    return True
+
+
+def restore_active_provider(prior_active_provider: Any) -> None:
+    """Undo the ``active_provider="nous"`` that ``_save_provider_state`` wrote during login."""
+    from auth.store import _auth_store_lock, _load_auth_store, _save_auth_store
+    with _auth_store_lock():
+        auth_store = _load_auth_store()
+        if prior_active_provider:
+            auth_store["active_provider"] = prior_active_provider
+        else:
+            auth_store.pop("active_provider", None)
+        _save_auth_store(auth_store)
+
+def update_provider_auth_state(provider_id: str, changes: Dict[str, Any]) -> None:
+    """Merge provider metadata under the store lock without changing the active route."""
+    with store._auth_store_lock():
+        auth_store = store._load_auth_store()
+        state = _load_provider_state(auth_store, provider_id) or {}
+        state.update(changes)
+        _store_provider_state(auth_store, provider_id, state, set_active=False)
+        store._save_auth_store(auth_store)

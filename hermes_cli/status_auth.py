@@ -1,3 +1,5 @@
+from hermes_cli.config_credentials import credential_pool_environment as _credential_environment
+import auth.provider_status as _auth_auth_provider_status
 
 import auth.providers.nous_status as _auth_auth_providers_nous_status
 
@@ -95,26 +97,30 @@ _FEATURE_STATES = (
 
 def _render_api_keys(ctx):
     _status._section("API Keys")
-    from hermes_cli.auth import get_anthropic_key
+    from auth.api_keys import get_anthropic_key
     # Anthropic uses the dedicated lookup (it also resolves OAuth tokens).
-    for name, env_ref in (*_API_KEYS.items(), ("Anthropic", get_anthropic_key)):
+    for name, env_ref in (*_API_KEYS.items(), ("Anthropic", lambda: get_anthropic_key(environment=_phase6_auth_environment()))):
         value = env_ref() if callable(env_ref) else _status._first_env_value(env_ref)
         _status._row(name, bool(value), config.redact_key(value))
 
 
 def _render_auth_providers(ctx):
     _status._section("Auth Providers")
-    import hermes_cli.auth as auth
     try:
         # Read-only display: the refresh-free snapshot, so `hermes status` never performs an OAuth
         # refresh or burns a single-use refresh token.
         nous_status = _auth_auth_providers_nous_status.get_nous_auth_status_local(environment=_phase6_auth_environment())
-        statuses = {getter: getattr(auth, getter)() for _, getter, _, _ in _OAUTH_BLOCKS[:3]}
+        from auth.providers.qwen import get_qwen_auth_status
+        statuses = {
+            "get_codex_auth_status": _auth_auth_provider_status.get_codex_auth_status(environment=_phase6_auth_environment()),
+            "get_qwen_auth_status": get_qwen_auth_status(),
+            "get_minimax_oauth_auth_status": _auth_auth_provider_status.get_minimax_oauth_auth_status(environment=_phase6_auth_environment()),
+        }
     except Exception:
         nous_status, statuses = {}, {}
     # xAI OAuth is guarded separately so an import failure there cannot disrupt the other rows.
     try:
-        statuses["get_xai_oauth_auth_status"] = auth.get_xai_oauth_auth_status() or {}
+        statuses["get_xai_oauth_auth_status"] = _auth_auth_provider_status.get_xai_oauth_auth_status(environment=_credential_environment()) or {}
     except Exception:
         statuses["get_xai_oauth_auth_status"] = {}
 

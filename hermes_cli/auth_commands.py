@@ -1,6 +1,14 @@
 """Credential-pool auth subcommands."""
 
 from __future__ import annotations
+import auth.errors as _auth_auth_errors
+import auth.oauth_grants as _auth_auth_oauth_grants
+import hermes_cli.auth_error_copy as _auth_hermes_cli_auth_error_copy
+import hermes_cli.auth_minimax as _auth_hermes_cli_auth_minimax
+import hermes_cli.auth_nous as _auth_hermes_cli_auth_nous
+import hermes_cli.auth_openrouter as _auth_hermes_cli_auth_openrouter
+import hermes_cli.auth_spotify as _auth_hermes_cli_auth_spotify
+import hermes_cli.auth_xai as _auth_hermes_cli_auth_xai
 import auth.providers.nous_store as _auth_auth_providers_nous_store
 
 from hermes_cli.config_credentials import credential_pool_environment as _phase6_auth_environment
@@ -15,10 +23,12 @@ from hermes_cli.config_credentials import credential_environment
 import auth.provider_state as auth_provider_state
 import auth.sources as auth_sources
 import auth.store as auth_storage
+import auth.pool_persistence as auth_pool_persistence
 from pm import install_hint
 from hermes_cli.cli_output import line_input
 
 import math
+import os
 import sys
 import time
 from dataclasses import dataclass
@@ -104,33 +114,6 @@ def _normalize_provider(provider: str) -> str:
             or auth_mod._plugin_aliases().get(normalized) or normalized)
 
 
-def _migrate_legacy_custom_pool_key(provider: str, legacy_key: str) -> None:
-    """Move a keyed provider's old ``custom:`` pool into its runtime slug."""
-    with auth_storage._auth_store_lock():
-        auth_store = auth_storage._load_auth_store()
-        credential_pool = auth_store.get("credential_pool")
-        if not isinstance(credential_pool, dict):
-            return
-        legacy_entries = credential_pool.get(legacy_key)
-        if not isinstance(legacy_entries, list) or not legacy_entries:
-            return
-        current_entries = credential_pool.get(provider)
-        merged = list(current_entries) if isinstance(current_entries, list) else []
-        known_ids = {e.get("id") for e in merged if isinstance(e, dict) and e.get("id")}
-        for entry in legacy_entries:
-            entry_id = entry.get("id") if isinstance(entry, dict) else None
-            if not entry_id or entry_id not in known_ids:
-                merged.append(entry)
-                if entry_id:
-                    known_ids.add(entry_id)
-        credential_pool[provider] = merged
-        del credential_pool[legacy_key]
-        auth_storage._save_auth_store(auth_store)
-    try:
-        from hermes_cli.models import clear_provider_models_cache
-        clear_provider_models_cache(legacy_key)
-    except Exception:
-        pass
 
 
 def _provider_base_url(provider: str) -> str:
@@ -276,7 +259,7 @@ _OAUTH_ADD_SPECS: dict[str, _OAuthAddSpec] = {
             "last_refresh": creds.get("last_refresh")},
         activate_first=True),
     "xai-oauth": _OAuthAddSpec(
-        login=lambda args: auth_mod._xai_oauth_device_code_login(
+        login=lambda args: _auth_hermes_cli_auth_xai._xai_oauth_device_code_login(
             timeout_seconds=getattr(args, "timeout", None) or 20.0,
             open_browser=not getattr(args, "no_browser", False)),
         token=lambda creds: creds["tokens"]["access_token"],
@@ -292,7 +275,7 @@ _OAUTH_ADD_SPECS: dict[str, _OAuthAddSpec] = {
         source=f"{SOURCE_MANUAL}:qwen_cli",
         fields=lambda creds, provider: {"base_url": creds.get("base_url")}),
     "minimax-oauth": _OAuthAddSpec(
-        login=lambda args: auth_mod._minimax_oauth_login(
+        login=lambda args: _auth_hermes_cli_auth_minimax._minimax_oauth_login(
             open_browser=not getattr(args, "no_browser", False),
             timeout_seconds=getattr(args, "timeout", None) or 15.0),
         token=lambda creds: creds["access_token"],
@@ -300,7 +283,7 @@ _OAUTH_ADD_SPECS: dict[str, _OAuthAddSpec] = {
         fields=lambda creds, provider: {
             "refresh_token": creds.get("refresh_token"), "base_url": creds.get("inference_base_url")}),
     "openrouter": _OAuthAddSpec(
-        login=lambda args: auth_mod._openrouter_pkce_login(
+        login=lambda args: _auth_hermes_cli_auth_openrouter._openrouter_pkce_login(
             open_browser=not getattr(args, "no_browser", False),
             timeout_seconds=float(getattr(args, "timeout", None) or 300.0)),
         token=lambda creds: creds["api_key"],
@@ -351,7 +334,7 @@ def _add_nous_oauth_credential(args, provider: str) -> PooledCredential:
             # Expired refresh_token, portal down, etc. — fall through to device-code.
             print("Could not refresh shared credentials — falling back to device-code login.")
 
-    creds = auth_mod._nous_device_code_login(
+    creds = _auth_hermes_cli_auth_nous._nous_device_code_login(
         portal_base_url=getattr(args, "portal_url", None),
         inference_base_url=getattr(args, "inference_url", None),
         client_id=getattr(args, "client_id", None), scope=getattr(args, "scope", None),
@@ -360,16 +343,6 @@ def _add_nous_oauth_credential(args, provider: str) -> PooledCredential:
     return _persist(creds, "Saved")
 
 
-def _unsuppress_provider_sources(provider: str) -> None:
-    """Clear ALL suppressions for this provider — re-adding a credential is a strong signal the
-    user wants auth re-enabled. Covers env:* (shell-exported vars), gh_cli (copilot), claude_code,
-    qwen-cli, device_code (codex), etc. — one consistent re-engagement pattern."""
-    try:
-        suppressed = auth_storage._load_auth_store().get("suppressed_sources", {})
-        for src in list(suppressed.get(provider, []) or []):
-            auth_sources.unsuppress_credential_source(provider, src)
-    except Exception:
-        pass
 
 
 def _add_api_key_credential(args, provider: str, pool) -> PooledCredential:
@@ -401,7 +374,12 @@ def auth_add_command(args) -> None:
     if (error := plugin_missing_auth_handler_error(provider, "add")) is not None:
         raise error
     if configured_provider is not None:
-        _migrate_legacy_custom_pool_key(provider, configured_provider["pool_key"])
+        if auth_pool_persistence.migrate_legacy_custom_pool_key(provider, configured_provider["pool_key"]):
+            try:
+                from hermes_cli.models import clear_provider_models_cache
+                clear_provider_models_cache(configured_provider["pool_key"])
+            except Exception:
+                pass
 
     is_custom = provider.startswith(CUSTOM_POOL_PREFIX)
     requested_type = str(getattr(args, "auth_type", "") or "").strip().lower()
@@ -413,14 +391,14 @@ def auth_add_command(args) -> None:
 
     pool = load_pool(provider, environment=credential_pool_environment())
     if not is_custom:
-        _unsuppress_provider_sources(provider)
+        auth_sources.unsuppress_provider_sources(provider)
 
     wanted_priority = getattr(args, "priority", None)
     try:
         entry = _add_credential(args, provider, pool, requested_type)
-    except auth_mod.AuthError as exc:
+    except _auth_auth_errors.AuthError as exc:
         # A denied / mismatched / timed-out OAuth login is a user-facing outcome, not a crash.
-        raise SystemExit(f"Login failed: {auth_mod.format_auth_error(exc)}") from exc
+        raise SystemExit(f"Login failed: {_auth_hermes_cli_auth_error_copy.format_auth_error(exc)}") from exc
     if wanted_priority is not None:
         placed_pool = load_pool(provider, environment=credential_pool_environment())
         moved = placed_pool.move_entry(entry.id, int(wanted_priority))
@@ -576,7 +554,7 @@ def _print_external_login_notice() -> None:
 
 def _print_oauth_heal_notices() -> None:
     """Tell the user when load_pool() just consolidated a forked OAuth grant."""
-    for note in auth_mod.consume_oauth_heal_notices():
+    for note in _auth_auth_oauth_grants.consume_oauth_heal_notices():
         print(f"note: {note}")
 
 
@@ -692,7 +670,7 @@ def auth_status_command(args) -> None:
         raise SystemExit("Provider is required. Example: `hermes auth status spotify`.")
     if dispatch_plugin_auth("status", args, provider):
         return
-    if provider in auth_mod.SINGLE_USE_REFRESH_POOL_PROVIDERS:
+    if provider in _auth_auth_oauth_grants.SINGLE_USE_REFRESH_POOL_PROVIDERS:
         load_pool(provider, environment=credential_pool_environment())  # runs the forked-grant heal first so the report reflects the consolidated grant
     status = auth_mod.get_auth_status(provider)
     _print_oauth_heal_notices()
@@ -721,13 +699,13 @@ def auth_logout_command(args) -> None:
     raw_provider = getattr(args, "provider", None)
     if dispatch_plugin_auth("logout", args, _normalize_provider(raw_provider or "")):
         return
-    auth_mod.logout_command(SimpleNamespace(provider=raw_provider))
+    logout_command(SimpleNamespace(provider=raw_provider))
 
 
 def auth_spotify_command(args) -> None:
     action = str(getattr(args, "spotify_action", "") or "login").strip().lower()
     if action in {"", "login"}:
-        auth_mod.login_spotify_command(args)
+        _auth_hermes_cli_auth_spotify.login_spotify_command(args)
         return
     handler = {"status": auth_status_command, "logout": auth_logout_command}.get(action)
     if handler is None:
@@ -933,3 +911,47 @@ def auth_command(args) -> None:
         handler(args)
     else:
         _interactive_auth()  # no subcommand
+
+
+def login_command(args) -> None:
+    """Deprecated: use 'hermes model' or 'hermes setup' instead."""
+    print("The 'hermes login' command has been removed.\nUse 'hermes auth' to manage credentials,\n"
+          "'hermes model' to select a provider, or 'hermes setup' for full setup.")
+    raise SystemExit(0)
+
+
+def logout_command(args) -> None:
+    """Clear auth state for a provider."""
+    from hermes_cli.auth import (
+        is_known_auth_provider, get_auth_provider_display_name,
+        _logout_default_provider_from_config, _should_reset_config_provider_on_logout,
+        _reset_config_provider,
+    )
+    provider_id = getattr(args, "provider", None)
+    if provider_id and not is_known_auth_provider(provider_id):
+        print(f"Unknown provider: {provider_id}")
+        raise SystemExit(1)
+    target = provider_id or auth_provider_state.get_active_provider() or _logout_default_provider_from_config()
+    if not target:
+        print("No provider is currently logged in.")
+        return
+    if target == "nous":
+        from auth.providers.nous_guest import FREE_TIER_NOT_SIGNED_IN, is_guest_state
+        if is_guest_state(auth_provider_state.get_provider_auth_state("nous")):
+            # Free tier is not a login; there is nothing to log out of and nothing is cleared.
+            print(FREE_TIER_NOT_SIGNED_IN)
+            return
+    should_reset_config = _should_reset_config_provider_on_logout(target)
+    provider_name = get_auth_provider_display_name(target)
+    if not (auth_provider_state.logout_provider_auth(target, configured=should_reset_config)):
+        print(f"No auth state found for {provider_name}.")
+        return
+    if should_reset_config:
+        _reset_config_provider()
+    print(f"Logged out of {provider_name}.")
+    if not should_reset_config:
+        print("Model provider configuration was unchanged.")
+    elif os.getenv("OPENROUTER_API_KEY"):
+        print("Hermes will use OpenRouter for inference.")
+    else:
+        print("Run `hermes model` or configure an API key to use Hermes.")

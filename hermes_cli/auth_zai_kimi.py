@@ -107,8 +107,7 @@ def _resolve_zai_base_url(api_key: str, default_url: str, env_override: str) -> 
     The detected endpoint is cached in provider state (auth.json) keyed on a hash of the API key so
     subsequent starts skip the probe.
     """
-    from auth.store import _auth_store_lock, _load_auth_store, _save_auth_store
-    from auth.provider_state import _load_provider_state, _store_provider_state
+    from auth.provider_state import get_provider_auth_state, update_provider_auth_state
     from hermes_cli.auth import detect_zai_endpoint
     if env_override:
         return env_override
@@ -117,7 +116,7 @@ def _resolve_zai_base_url(api_key: str, default_url: str, env_override: str) -> 
         return default_url
 
     key_hash = hashlib.sha256(api_key.encode()).hexdigest()[:16]
-    state = _load_provider_state(_load_auth_store(), "zai") or {}
+    state = get_provider_auth_state("zai") or {}
     cached = state.get("detected_endpoint")
     if isinstance(cached, dict) and cached.get("base_url") and cached.get("key_hash", "") == key_hash:
         logger.debug("Z.AI: using cached endpoint %s", cached["base_url"])
@@ -141,13 +140,7 @@ def _resolve_zai_base_url(api_key: str, default_url: str, env_override: str) -> 
     }
     # Persist failure must not break resolution; worst case the next start re-probes.
     try:
-        with _auth_store_lock():
-            auth_store = _load_auth_store()  # reload under lock to avoid overwriting concurrent changes
-            state_under_lock = _load_provider_state(auth_store, "zai") or {}
-            state_under_lock["detected_endpoint"] = detected_endpoint
-            # set_active=False: runs from credential-pool env seeding; must not flip active provider.
-            _store_provider_state(auth_store, "zai", state_under_lock, set_active=False)
-            _save_auth_store(auth_store)
+        update_provider_auth_state("zai", {"detected_endpoint": detected_endpoint})
     except Exception as exc:
         logger.warning("Z.AI: could not persist detected endpoint (%s); will re-probe next start", exc)
     logger.info("Z.AI: auto-detected endpoint %s (%s)", detected["label"], detected["base_url"])

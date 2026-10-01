@@ -1,6 +1,7 @@
 """Helpers for Nous subscription managed-tool capabilities."""
 
 from __future__ import annotations
+import hermes_cli.auth_nous as _auth_hermes_cli_auth_nous
 import auth.providers.nous_store as _auth_auth_providers_nous_store
 
 from hermes_cli.config_credentials import credential_pool_environment as _phase6_auth_environment
@@ -684,7 +685,7 @@ def _run_nous_portal_login_only(*, capability: str) -> bool:
         if _auth_auth_providers_nous_store._read_shared_nous_state() and _confirm("  Found existing Nous OAuth credentials. Import them? [Y/n]: ") is not False:
             auth_state = _auth_auth_providers_nous_store._try_import_shared_nous_state(timeout_seconds=15.0)
         if auth_state is None:
-            auth_state = auth._nous_device_code_login()
+            auth_state = _auth_hermes_cli_auth_nous._nous_device_code_login()
         with auth_storage._auth_store_lock():
             auth_store = auth_storage._load_auth_store()
             auth_provider_state._save_provider_state(auth_store, "nous", auth_state)

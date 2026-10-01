@@ -133,7 +133,7 @@ class TestProviderModelIdsPreferred:
 
         with (
             patch("hermes_cli.main_provider_setup._prompt_api_key", return_value=("sk-kimi-test", False)),
-            patch("hermes_cli.auth._prompt_model_selection", side_effect=fake_select),
+            patch("hermes_cli.auth_model_picker._prompt_model_selection", side_effect=fake_select),
             patch("hermes_cli.config.get_env_value", return_value=""),
             patch("hermes_cli.config.save_env_value"),
         ):

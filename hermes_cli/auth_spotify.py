@@ -23,7 +23,7 @@ from auth.oauth import _bind_loopback_callback_server, _make_loopback_callback_h
 
 def _spotify_interactive_setup(redirect_uri_hint: str) -> str:
     """Walk the user through creating a Spotify developer app; persist the client_id to ~/.hermes/.env."""
-    from hermes_cli.auth import _is_remote_session
+    from hermes_cli.auth_device_flow import _is_remote_session
     from hermes_cli.config import save_env_value
     print(
         f"\n{'=' * 70}\nSpotify first-time setup\n{'=' * 70}\n\n"
@@ -70,9 +70,8 @@ def _spotify_interactive_setup(redirect_uri_hint: str) -> str:
 
 
 def login_spotify_command(args) -> None:
-    from auth.store import _auth_store_lock, _load_auth_store, _save_auth_store
-    from hermes_cli.auth import _can_open_graphical_browser, _is_remote_session, _print_loopback_ssh_hint
-    from auth.provider_state import _store_provider_state, get_provider_auth_state
+    from hermes_cli.auth_device_flow import _can_open_graphical_browser, _is_remote_session, _print_loopback_ssh_hint
+    from auth.provider_state import save_provider_auth_state, get_provider_auth_state
     existing_state = get_provider_auth_state("spotify") or {}
 
     # No client_id anywhere -> wizard instead of "HERMES_SPOTIFY_CLIENT_ID is required".
@@ -139,10 +138,7 @@ def login_spotify_command(args) -> None:
         accounts_base_url=accounts_base_url, api_base_url=api_base_url,
     )
 
-    with _auth_store_lock():
-        auth_store = _load_auth_store()
-        _store_provider_state(auth_store, "spotify", spotify_state, set_active=False)
-        saved_to = _save_auth_store(auth_store)
+    saved_to = save_provider_auth_state("spotify", spotify_state, set_active=False)
 
     print(
         f"Spotify login successful!\n  Auth state: {saved_to}\n"

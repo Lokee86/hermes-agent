@@ -7,6 +7,7 @@ own ``model_setup_flows_*`` modules.
 """
 
 from __future__ import annotations
+from hermes_cli.config_credentials import credential_pool_environment as _credential_environment
 from hermes_cli.config_credentials import credential_pool_environment as _phase6_auth_environment
 
 
@@ -56,7 +57,8 @@ def _report_live_models(model_list, source: str) -> None:
 def _model_flow_openrouter(config, current_model=""):
     """OpenRouter provider: ensure API key, then pick model."""
     from hermes_constants import OPENROUTER_BASE_URL
-    from hermes_cli.auth import ProviderConfig, _prompt_model_selection
+    from hermes_cli.auth import ProviderConfig
+    from hermes_cli.auth_model_picker import _prompt_model_selection
 
     # OpenRouter isn't in PROVIDER_REGISTRY so we synthesize a minimal pconfig.
     pconfig = ProviderConfig(id="openrouter", name="OpenRouter", auth_type="api_key", api_key_env_vars=("OPENROUTER_API_KEY",))
@@ -81,7 +83,8 @@ def _model_flow_ai_gateway(config, current_model=""):
     """Vercel AI Gateway provider: ensure API key, then pick model with pricing."""
     from hermes_constants import AI_GATEWAY_BASE_URL
     from hermes_cli.main_provider_setup import _prompt_api_key
-    from hermes_cli.auth import PROVIDER_REGISTRY, _prompt_model_selection
+    from hermes_cli.auth import PROVIDER_REGISTRY
+    from hermes_cli.auth_model_picker import _prompt_model_selection
     from hermes_cli.config import get_env_value
     pconfig = PROVIDER_REGISTRY["ai-gateway"]
     existing_key = get_env_value("AI_GATEWAY_API_KEY") or ""
@@ -105,7 +108,7 @@ def _model_flow_ai_gateway(config, current_model=""):
 def _model_flow_moa(config, current_model=""):
     """Mixture of Agents virtual provider: pick a preset (list always shown, even with one entry),
     persist it, print the breakdown. No credential step — presets reference configured providers."""
-    from hermes_cli.auth import _save_model_choice
+    from hermes_cli.auth_model_picker import _save_model_choice
     from hermes_cli.moa_config import normalize_moa_config
     moa = normalize_moa_config(config.get("moa") if isinstance(config, dict) else {})
     presets = moa.get("presets") or {}
@@ -225,7 +228,9 @@ def _nous_verified_credentials(creds_or_none=None):
     """Resolve Nous runtime credentials; on failure print the diagnosis (re-login when the
     session expired) and return None."""
     from auth.errors import AuthError
-    from hermes_cli.auth import PROVIDER_REGISTRY, _login_nous, format_auth_error
+    from hermes_cli.auth import PROVIDER_REGISTRY
+    from hermes_cli.auth_nous import _login_nous
+    from hermes_cli.auth_error_copy import format_auth_error
     from auth.providers.nous import resolve_nous_runtime_credentials
 
     try:
@@ -248,7 +253,8 @@ def _nous_persist_selection(selected: str, creds: dict) -> dict:
     """Nous persist step: model choice + provider state, then rewrite ``model`` on a fresh
     config (the caller's may carry stale custom-provider fields) and clear a conflicting
     OPENAI_BASE_URL / OPENAI_API_KEY. Returns the saved config."""
-    from hermes_cli.auth import _save_model_choice, _update_config_for_provider
+    from hermes_cli.auth_model_picker import _save_model_choice
+    from hermes_cli.auth import _update_config_for_provider
     from hermes_cli.config import get_env_value, load_config, save_config, save_env_value
     _save_model_choice(selected)
     inference_url = creds.get("base_url", "")
@@ -279,7 +285,9 @@ def _nous_persist_selection(selected: str, creds: dict) -> dict:
 def _model_flow_nous(config, current_model="", args=None):
     """Nous Portal provider: ensure logged in, then pick model."""
     from auth.provider_state import get_provider_auth_state
-    from hermes_cli.auth import _prompt_model_selection, _login_nous, PROVIDER_REGISTRY
+    from hermes_cli.auth_model_picker import _prompt_model_selection
+    from hermes_cli.auth_nous import _login_nous
+    from hermes_cli.auth import PROVIDER_REGISTRY
     from hermes_cli.config import load_config
     from hermes_cli.nous_subscription import prompt_enable_tool_gateway
     state = get_provider_auth_state("nous")
@@ -367,12 +375,15 @@ def _model_flow_nous(config, current_model="", args=None):
 
 def _model_flow_openai_codex(config, current_model=""):
     """OpenAI Codex provider: ensure logged in, then pick model."""
-    from hermes_cli.auth import get_codex_auth_status, _prompt_model_selection, _login_openai_codex, PROVIDER_REGISTRY
+    from hermes_cli.auth import get_auth_status
+    from hermes_cli.auth_model_picker import _prompt_model_selection
+    from hermes_cli.auth_codex import _login_openai_codex
+    from hermes_cli.auth import PROVIDER_REGISTRY
     from auth.constants import DEFAULT_CODEX_BASE_URL
     from hermes_cli.codex_models import get_codex_model_ids
     if not _oauth_gate(
-        bool(get_codex_auth_status().get("logged_in")), "OpenAI Codex", _login_openai_codex, argparse.Namespace(),
-        PROVIDER_REGISTRY["openai-codex"], recheck=lambda: get_codex_auth_status().get("logged_in")):
+        bool(get_auth_status("openai-codex").get("logged_in")), "OpenAI Codex", _login_openai_codex, argparse.Namespace(),
+        PROVIDER_REGISTRY["openai-codex"], recheck=lambda: get_auth_status("openai-codex").get("logged_in")):
         return
 
     # Prefer the credential pool (where `hermes auth` stores device_code tokens),
@@ -381,7 +392,7 @@ def _model_flow_openai_codex(config, current_model=""):
     # the chatgpt.com default by the catalog probe.
     _codex_token = _codex_base = None
     with contextlib.suppress(Exception):
-        _codex_status = get_codex_auth_status()
+        _codex_status = get_auth_status("openai-codex")
         if _codex_status.get("logged_in"):
             _codex_token, _codex_base = _codex_status.get("api_key"), _codex_status.get("base_url")
     if not _codex_token:
@@ -400,13 +411,16 @@ def _model_flow_openai_codex(config, current_model=""):
 
 def _model_flow_xai_oauth(_config, current_model="", *, args=None):
     """xAI Grok OAuth (SuperGrok / Premium+) provider: ensure logged in, then pick model."""
-    from hermes_cli.auth import get_xai_oauth_auth_status, _prompt_model_selection, _login_xai_oauth, PROVIDER_REGISTRY
+    from auth.provider_status import get_xai_oauth_auth_status
+    from hermes_cli.auth_model_picker import _prompt_model_selection
+    from hermes_cli.auth_xai import _login_xai_oauth
+    from hermes_cli.auth import PROVIDER_REGISTRY
     from auth.providers.xai import resolve_xai_oauth_runtime_credentials
     from auth.constants import DEFAULT_XAI_OAUTH_BASE_URL
     from hermes_cli.models import provider_model_ids
     login_args = argparse.Namespace(no_browser=bool(getattr(args, "no_browser", False)), timeout=getattr(args, "timeout", None))
     if not _oauth_gate(
-        bool(get_xai_oauth_auth_status().get("logged_in")), "xAI Grok OAuth (SuperGrok / Premium+)", _login_xai_oauth,
+        bool(get_xai_oauth_auth_status(environment=_credential_environment()).get("logged_in")), "xAI Grok OAuth (SuperGrok / Premium+)", _login_xai_oauth,
         login_args, PROVIDER_REGISTRY["xai-oauth"], fresh_name="xAI OAuth"):
         return
 
@@ -428,7 +442,7 @@ def _model_flow_qwen_oauth(_config, current_model=""):
     """Qwen OAuth provider: reuse local Qwen CLI login, then pick model."""
     from hermes_cli.main_provider_setup import _DEFAULT_QWEN_PORTAL_MODELS
     from auth.providers.qwen import get_qwen_auth_status, resolve_qwen_runtime_credentials
-    from hermes_cli.auth import _prompt_model_selection
+    from hermes_cli.auth_model_picker import _prompt_model_selection
     from auth.constants import DEFAULT_QWEN_BASE_URL
     from hermes_cli.models import fetch_api_models
     status = get_qwen_auth_status()
@@ -454,7 +468,10 @@ def _model_flow_qwen_oauth(_config, current_model=""):
 def _model_flow_minimax_oauth(config, current_model="", args=None):
     """MiniMax OAuth provider: ensure logged in, then pick model."""
     from auth.provider_state import get_provider_auth_state
-    from hermes_cli.auth import _prompt_model_selection, format_auth_error, _login_minimax_oauth, PROVIDER_REGISTRY
+    from hermes_cli.auth_model_picker import _prompt_model_selection
+    from hermes_cli.auth_error_copy import format_auth_error
+    from hermes_cli.auth_minimax import _login_minimax_oauth
+    from hermes_cli.auth import PROVIDER_REGISTRY
     from auth.providers.minimax import resolve_minimax_oauth_runtime_credentials
     from auth.errors import AuthError
 
@@ -723,7 +740,7 @@ def _model_flow_vertex(config, current_model=""):
     """Google Vertex AI (Gemini via the OpenAI-compatible endpoint). Auth is OAuth2 (service-account
     JSON or ADC): the credential *path* lives in .env (VERTEX_CREDENTIALS_PATH /
     GOOGLE_APPLICATION_CREDENTIALS); project ID and region are non-secret, saved under ``vertex:``."""
-    from hermes_cli.auth import _prompt_model_selection
+    from hermes_cli.auth_model_picker import _prompt_model_selection
     from hermes_cli.config import load_config, get_env_value
     from hermes_cli.models import _PROVIDER_MODELS
 
@@ -1016,11 +1033,12 @@ def _anthropic_authenticate() -> bool:
 
 def _model_flow_anthropic(config, current_model=""):
     """Flow for Anthropic provider — OAuth subscription, API key, or Claude Code creds."""
-    from hermes_cli.auth import get_anthropic_key
+    from auth.api_keys import get_anthropic_key
+    from hermes_cli.config_credentials import credential_pool_environment
     from hermes_cli.models import _PROVIDER_MODELS
 
     # Check ALL credential sources
-    existing_key = get_anthropic_key()
+    existing_key = get_anthropic_key(environment=credential_pool_environment())
     cc_available = False
     with contextlib.suppress(Exception):
         from auth.providers.anthropic import read_claude_code_credentials, is_claude_code_token_valid, _is_oauth_token

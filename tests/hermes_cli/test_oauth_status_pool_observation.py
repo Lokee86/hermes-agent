@@ -1,3 +1,4 @@
+from hermes_cli.config_credentials import credential_pool_environment
 
 import auth.providers.codex_quota as _auth_auth_providers_codex_quota
 
@@ -25,7 +26,7 @@ from auth import credential_pool
 from auth.credential_pool import load_pool
 from auth.errors import AuthError
 from auth.constants import DEFAULT_CODEX_BASE_URL
-from hermes_cli.auth import get_codex_auth_status
+from auth.provider_status import get_codex_auth_status
 
 
 def _jwt_with_exp(offset_seconds: int) -> str:
@@ -73,7 +74,7 @@ def test_status_snapshot_does_not_refresh_or_bench_an_expiring_pool_entry(tmp_pa
     from hermes_cli.config_credentials import credential_pool_environment
     home, refresh_calls = _pool_only_codex_home(tmp_path, monkeypatch, access_tokens=[_jwt_with_exp(-3600)])
 
-    status = get_codex_auth_status()
+    status = get_codex_auth_status(environment=credential_pool_environment())
 
     assert refresh_calls == [], "a status read spent the single-use pool refresh token"
     assert status["logged_in"] is True, status
@@ -98,7 +99,7 @@ def test_status_snapshot_leaves_round_robin_order_and_counts_untouched(tmp_path,
     monkeypatch.setattr(credential_pool, "get_pool_strategy", lambda provider, environment=None: credential_pool.STRATEGY_ROUND_ROBIN)
     before = _persisted_pool(home)
 
-    assert get_codex_auth_status()["logged_in"] is True
+    assert get_codex_auth_status(environment=credential_pool_environment())["logged_in"] is True
     assert _persisted_pool(home) == before, "a status read rotated or re-counted the persisted pool"
 
     # Control: a runtime selection still rotates and persists the new order.
@@ -172,7 +173,7 @@ def test_status_snapshot_never_adopts_codex_cli_tokens(tmp_path, monkeypatch):
         tmp_path, monkeypatch, tokens=stale,
         codex_cli_tokens={"access_token": _jwt_with_exp(86400), "refresh_token": "cli-refresh"})
 
-    get_codex_auth_status()
+    get_codex_auth_status(environment=credential_pool_environment())
 
     assert _singleton_tokens(home) == stale, "a status read persisted the Codex CLI login into auth.json"
 
@@ -187,7 +188,7 @@ def test_status_snapshot_never_refreshes_an_expired_singleton(tmp_path, monkeypa
 
     The token is already expired (not merely expiring): ``load_pool`` mirrors the singleton as a
     ``device_code`` pool entry and ``pool.peek`` would answer for a still-valid token, so only an
-    expired one drives ``get_codex_auth_status()`` down to the singleton resolver under test."""
+    expired one drives ``get_codex_auth_status(environment=credential_pool_environment())`` down to the singleton resolver under test."""
     import hermes_cli.auth as auth
     from auth.providers.codex import resolve_codex_runtime_credentials
 
@@ -202,7 +203,7 @@ def test_status_snapshot_never_refreshes_an_expired_singleton(tmp_path, monkeypa
 
     monkeypatch.setattr(_auth_auth_providers_codex, "refresh_codex_oauth_pure", _rotate)
 
-    status = get_codex_auth_status()
+    status = get_codex_auth_status(environment=credential_pool_environment())
 
     assert refresh_calls == [], "a status read spent the single-use singleton refresh token"
     assert status["logged_in"] is True and status["api_key"] == expired["access_token"]
@@ -226,11 +227,11 @@ def test_status_snapshot_leaves_the_auth_store_manifest_byte_identical(tmp_path,
     expired = {"access_token": _jwt_with_exp(-60), "refresh_token": "singleton-refresh"}
     home = _singleton_only_codex_home(tmp_path, monkeypatch, tokens=expired, codex_cli_tokens={})
 
-    get_codex_auth_status()  # first read: ``load_pool`` seeds the singleton into the pool (by design)
+    get_codex_auth_status(environment=credential_pool_environment())  # first read: ``load_pool`` seeds the singleton into the pool (by design)
     (home / "auth.lock").unlink(missing_ok=True)
     manifest = {p.name: p.read_bytes() for p in home.iterdir() if p.is_file()}
 
-    status = get_codex_auth_status()
+    status = get_codex_auth_status(environment=credential_pool_environment())
 
     assert status["source"] == "hermes-auth-store"
     assert {p.name: p.read_bytes() for p in home.iterdir() if p.is_file()} == manifest

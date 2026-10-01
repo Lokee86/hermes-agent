@@ -85,3 +85,35 @@ def provider_setup_failure_lines(exc: BaseException, *, retry_command: str = "he
     if not is_cancelled(exc):
         lines.append(_details_line(exc))
     return lines
+
+
+from auth.errors import AuthError
+from auth.failure_policy import is_rate_limited_auth_error
+from auth.providers.nous import _format_nous_entitlement_auth_error
+from hermes_cli.config_credentials import credential_pool_environment as _phase6_auth_environment
+
+_GENERIC_ENTITLEMENT_MESSAGES = {
+    "subscription_required": "No active paid subscription found. Please purchase/activate a subscription, then retry.",
+    "insufficient_credits": "Subscription credits are exhausted. Top up/renew credits, then retry."}
+_ENTITLEMENT_ERROR_CODES = frozenset(_GENERIC_ENTITLEMENT_MESSAGES) | {
+    "subscription_expired", "no_usable_credits", "account_missing", "member_spend_cap_exceeded"}
+
+def format_auth_error(error: Exception) -> str:
+    """Map auth failures to concise user-facing guidance."""
+    if not isinstance(error, AuthError) or is_rate_limited_auth_error(error):
+        # Rate-limit / quota errors are not credential problems: never append "re-authenticate".
+        return str(error)
+    if error.relogin_required:
+        # Profile-aware: a bare `hermes model` from a named profile re-signs the ROOT store (#114012).
+        from hermes_constants import profile_cli_selector
+
+        return f"{error} Run `hermes {profile_cli_selector()}model` to re-authenticate."
+    if error.code in _ENTITLEMENT_ERROR_CODES:
+        if error.provider == "nous":
+            return _format_nous_entitlement_auth_error(error, environment=_phase6_auth_environment())
+        generic = _GENERIC_ENTITLEMENT_MESSAGES.get(error.code)
+        if generic:
+            return generic
+    if error.code == "temporarily_unavailable":
+        return f"{error} Please retry in a few seconds."
+    return str(error)

@@ -5,6 +5,8 @@ Portal's ``recommended-models`` endpoint; neither source is authenticated.
 """
 
 from __future__ import annotations
+import hermes_cli.auth_model_picker as _auth_hermes_cli_auth_model_picker
+import hermes_cli.auth_nous as _auth_hermes_cli_auth_nous
 import hermes_cli.nous_account as _auth_auth_providers_nous_account
 
 import auth.provider_state as auth_provider_state
@@ -41,7 +43,7 @@ class TestLoginNous:
         seen: dict = {}
         monkeypatch.setenv("HERMES_HOME", str(tmp_path))
         monkeypatch.setattr(
-            auth_mod,
+            _auth_hermes_cli_auth_nous,
             "_nous_device_code_login",
             lambda **_k: {
                 "access_token": "tok",
@@ -78,13 +80,13 @@ class TestLoginNous:
             seen["model_ids"] = list(model_ids)
             return None
 
-        monkeypatch.setattr(auth_mod, "_prompt_model_selection", _capture)
+        monkeypatch.setattr(_auth_hermes_cli_auth_model_picker, "_prompt_model_selection", _capture)
 
         args = argparse.Namespace(
             portal_url=None, inference_url=None, client_id=None, scope=None,
             no_browser=True, timeout=15.0, ca_bundle=None, insecure=False,
         )
-        auth_mod._login_nous(args, auth_mod.PROVIDER_REGISTRY["nous"])
+        _auth_hermes_cli_auth_nous._login_nous(args, auth_mod.PROVIDER_REGISTRY["nous"])
         return seen
 
     def test_hidden_model_is_not_offered(self, monkeypatch, tmp_path, policy):

@@ -1374,7 +1374,7 @@ def _copilot_catalog(normalized: str, force_refresh: bool) -> Optional[list[str]
 
 def _nous_catalog(normalized: str, force_refresh: bool) -> Optional[list[str]]:
     try:
-        from hermes_cli.auth import fetch_nous_models
+        from hermes_cli.auth_nous import fetch_nous_models
         from auth.providers.nous import resolve_nous_runtime_credentials
 
         creds = resolve_nous_runtime_credentials(environment=_phase6_auth_environment())

@@ -362,7 +362,7 @@ class CLIAgentSetupMixin:
         None when the error is not auth-related or no fallback resolves."""
         from cli import _cprint, logger
         from auth.errors import AuthError
-        from hermes_cli.auth import primary_failure_wording
+        from auth.failure_policy import primary_failure_wording
         from hermes_cli.runtime_provider import resolve_runtime_provider
         if not isinstance(primary_exc, AuthError):
             return None
@@ -446,7 +446,7 @@ class CLIAgentSetupMixin:
         True when the failure was explained; False when nothing is configured (the wizard's case).
         """
         from cli import _cprint
-        from hermes_cli.auth import format_auth_error
+        from hermes_cli.auth_error_copy import format_auth_error
         if error is None or getattr(error, "code", None) == "no_provider_configured":
             return False
         provider = getattr(error, "provider", None) or self.requested_provider

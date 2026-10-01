@@ -27,7 +27,8 @@ from auth.credential_pool import (  # custom_provider_pool_key_candidates is rea
 )
 from agent.secret_scope import get_secret_str
 from auth.constants import ACTUAL_LOCAL_NOAUTH_PLACEHOLDER, DEFAULT_CODEX_BASE_URL, DEFAULT_QWEN_BASE_URL, DEFAULT_XAI_OAUTH_BASE_URL
-from hermes_cli.auth import PROVIDER_REGISTRY, format_auth_error, resolve_provider
+from hermes_cli.auth import PROVIDER_REGISTRY, resolve_provider
+from hermes_cli.auth_error_copy import format_auth_error
 from hermes_cli.runtime_provider_credentials import resolve_api_key_provider_credentials, resolve_external_process_provider_credentials
 from hermes_cli.route_identity import is_actual_local_base_url, normalize_actual_base_url
 from auth.secret_validation import has_usable_secret, looks_like_openrouter_key
@@ -1138,7 +1139,7 @@ def resolve_runtime_with_fallback(config: Optional[Dict[str, Any]], *, requested
     ``model`` is the model the caller must send.
     """
     from auth.errors import AuthError
-    from hermes_cli.auth import primary_failure_wording
+    from auth.failure_policy import primary_failure_wording
     try:
         return resolve_runtime_provider(requested=requested, target_model=target_model,
                                         explicit_base_url=explicit_base_url, explicit_api_key=explicit_api_key), None

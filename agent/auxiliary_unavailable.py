@@ -230,7 +230,7 @@ def record_nous_credential_failure(exc: BaseException) -> str:
     Logged once per distinct message: WARNING when a real credential failed, DEBUG when Hermes was
     simply never logged into Nous.
     """
-    from hermes_cli.auth import format_auth_error
+    from hermes_cli.auth_error_copy import format_auth_error
 
     exc = _quarantined_nous_error(exc)
     message = format_auth_error(exc) if isinstance(exc, Exception) else str(exc)

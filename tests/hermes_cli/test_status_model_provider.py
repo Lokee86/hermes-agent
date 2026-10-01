@@ -1,3 +1,4 @@
+import auth.provider_status as _auth_auth_provider_status
 
 import auth.providers.nous_status as _auth_auth_providers_nous_status
 
@@ -27,7 +28,7 @@ def _patch_common_status_deps(monkeypatch, status_mod, tmp_path, *, openai_base_
     monkeypatch.setattr(
         _auth_auth_providers_nous_status, "get_nous_auth_status_local", lambda**_auth_settings: {}, raising=False
     )
-    monkeypatch.setattr(auth_mod, "get_codex_auth_status", lambda: {}, raising=False)
+    monkeypatch.setattr(_auth_auth_provider_status, "get_codex_auth_status", lambda: {}, raising=False)
     monkeypatch.setattr(
         subprocess,
         "run",

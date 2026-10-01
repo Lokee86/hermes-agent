@@ -7,6 +7,7 @@ boundary with genuine single-use semantics (a refresh token redeems once;
 a second POST returns ``invalid_grant``).
 """
 from __future__ import annotations
+import auth.oauth_grants as _auth_auth_oauth_grants
 from hermes_cli.config_credentials import credential_pool_environment as _phase6_auth_environment
 
 import auth.store as auth_storage
@@ -99,12 +100,12 @@ def fleet(tmp_path, monkeypatch):
         hermes_constants._default_hermes_root_memo = None  # type: ignore[attr-defined]
         import hermes_cli.auth as auth_mod
         auth_storage._global_auth_store_cache = None
-        auth_mod._oauth_heal_clean_marks.clear()
+        _auth_auth_oauth_grants._oauth_heal_clean_marks.clear()
 
     # Process-wide notice buffer: start each test clean.
     import hermes_cli.auth as _auth_mod
-    _auth_mod._oauth_heal_notices.clear()
-    _auth_mod._oauth_heal_clean_marks.clear()
+    _auth_auth_oauth_grants._oauth_heal_notices.clear()
+    _auth_auth_oauth_grants._oauth_heal_clean_marks.clear()
 
     def pool_rows(home):
         p = home / "auth.json"
@@ -775,7 +776,7 @@ def test_heal_leaves_an_aliased_anthropic_singleton_alone(fleet):
 
 def _new_process(auth_mod):
     """Simulate a fresh `hermes` invocation: in-memory state gone, disk kept."""
-    auth_mod._oauth_heal_clean_marks.clear()
+    _auth_auth_oauth_grants._oauth_heal_clean_marks.clear()
     auth_storage._global_auth_store_cache = None
 
 
@@ -823,14 +824,14 @@ def test_persisted_mark_still_re_heals_when_the_root_store_gains_a_grant(fleet):
     (kid / "auth.json").write_text(json.dumps(kid_store))
 
     fleet["use"](kid)
-    assert auth_mod.heal_forked_single_use_oauth_grants("anthropic") is None
+    assert _auth_auth_oauth_grants.heal_forked_single_use_oauth_grants("anthropic") is None
     assert fleet["rows"](kid), "the only surviving copy must not be stripped"
     marked = grants._oauth_heal_clean_mark_path().read_text()
 
     store["credential_pool"]["anthropic"] = [dict(fork)]
     (root / "auth.json").write_text(json.dumps(store))
     _new_process(auth_mod)
-    assert auth_mod.heal_forked_single_use_oauth_grants("anthropic") is not None, (
+    assert _auth_auth_oauth_grants.heal_forked_single_use_oauth_grants("anthropic") is not None, (
         "the persisted mark skipped a heal that had become necessary")
     assert not fleet["rows"](kid), "the fork survived in the profile store"
 
@@ -838,7 +839,7 @@ def test_persisted_mark_still_re_heals_when_the_root_store_gains_a_grant(fleet):
     # stale -- it describes the pre-heal files and can no longer match. The
     # next process re-checks, finds the store clean, and re-stamps.
     _new_process(auth_mod)
-    assert auth_mod.heal_forked_single_use_oauth_grants("anthropic") is None
+    assert _auth_auth_oauth_grants.heal_forked_single_use_oauth_grants("anthropic") is None
     assert grants._oauth_heal_clean_mark_path().read_text() != marked
 
 

@@ -42,7 +42,7 @@ class TestGeminiSetupFreeTierBlock:
             "agent.gemini_native_adapter.probe_gemini_tier",
             return_value="free",
         ), patch(
-            "hermes_cli.auth._prompt_model_selection",
+            "hermes_cli.auth_model_picker._prompt_model_selection",
             return_value="gemini-2.5-flash",
         ), patch(
             'auth.provider_state.deactivate_provider',
@@ -75,7 +75,7 @@ class TestGeminiSetupFreeTierBlock:
             "agent.gemini_native_adapter.probe_gemini_tier",
             return_value="paid",
         ), patch(
-            "hermes_cli.auth._prompt_model_selection",
+            "hermes_cli.auth_model_picker._prompt_model_selection",
             return_value="gemini-2.5-flash",
         ), patch(
             'auth.provider_state.deactivate_provider',
@@ -104,7 +104,7 @@ class TestGeminiSetupFreeTierBlock:
         with patch(
             "agent.gemini_native_adapter.probe_gemini_tier",
         ) as mock_probe, patch(
-            "hermes_cli.auth._prompt_model_selection",
+            "hermes_cli.auth_model_picker._prompt_model_selection",
             return_value="deepseek-chat",
         ), patch(
             'auth.provider_state.deactivate_provider',

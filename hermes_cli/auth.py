@@ -8,9 +8,8 @@ Provider and model routing remain with their existing Phase 5 owners.
 from __future__ import annotations
 from hermes_cli.route_identity import is_actual_local_base_url, normalize_actual_base_url
 from auth.api_keys import resolve_api_key_provider_secret
-from auth.secret_validation import KNOWN_PROVIDER_KEY_PREFIXES, _PLACEHOLDER_KEY_PREFIXES, _PLACEHOLDER_SECRET_VALUES, _is_placeholder_shape, _matches_key_prefix, _usable_declared_secret, has_usable_secret, looks_like_openrouter_key
-from auth.failure_policy import is_rate_limited_auth_error
-from auth.oauth import _is_terminal_refresh_error, _is_terminal_nous_refresh_error, _is_terminal_codex_oauth_refresh_error, _is_terminal_xai_oauth_refresh_error
+from auth.secret_validation import has_usable_secret, looks_like_openrouter_key
+from auth.oauth import _is_terminal_refresh_error
 
 from hermes_cli.config_credentials import credential_pool_environment as _phase6_auth_environment
 
@@ -18,6 +17,7 @@ import auth.pool_persistence as auth_pool_persistence
 import auth.provider_state as auth_provider_state
 import auth.store as auth_storage
 import auth.store_migrations as auth_store_migrations
+import auth.provider_status as auth_provider_status
 
 from pm import install_hint
 import json
@@ -42,48 +42,11 @@ from utils import atomic_json_write, env_float, file_signature, is_truthy_value 
 from hermes_cli.auth_zai_kimi import (  # noqa: F401  re-exported
     KIMI_CODE_BASE_URL, ZAI_ENDPOINTS, _normalize_lmstudio_runtime_base_url, _resolve_kimi_base_url,
     _resolve_zai_base_url, detect_zai_endpoint)
-from hermes_cli.auth_model_picker import (  # noqa: F401  re-exported
-    _prompt_model_selection, _save_model_choice)
-from hermes_cli.auth_device_flow import _can_open_graphical_browser, _is_remote_session, _offer_existing_oauth_credentials, _print_device_code_instructions, _print_login_success, _print_loopback_ssh_hint, _prompt_yes_no, _ssh_user_at_host
-from auth.oauth import _default_verify, _nous_device_auth_timeout_message, _poll_device_token_generic, _poll_for_token, _request_device_code, _resolve_verify
-from auth.oauth_grants import (  # noqa: F401  re-exported
-    SINGLE_USE_REFRESH_POOL_PROVIDERS, _oauth_heal_clean_marks, _oauth_heal_notices,
-    consume_oauth_heal_notices, heal_forked_single_use_oauth_grants,
-    strip_cloned_single_use_oauth_grants)
-from auth.providers.nous_status import NOUS_SESSION_TERMINAL, NOUS_SESSION_UNKNOWN, NOUS_SESSION_VALID, _compute_nous_auth_status, _pool_first_oauth_status, get_nous_auth_status_local, get_nous_session_validity
-from auth.providers.nous import _ALLOWED_NOUS_INFERENCE_HOSTS, _agent_key_is_usable, _apply_nous_refreshed_tokens, _assert_nous_inference_jwt_usable, _format_nous_entitlement_auth_error, _healed_nous_inference_url, _nous_inference_env_override, _nous_portal_env_override, _refresh_access_token, _refresh_nous_or_quarantine, _select_nous_invoke_jwt, _sync_nous_pool_from_auth_store, _token_fingerprint, _validate_nous_inference_url_from_network, persist_nous_credentials, refresh_nous_oauth_from_state, resolve_nous_runtime_credentials
-from auth.providers.nous_store import _merge_shared_nous_oauth_state, _nous_shared_store_lock, _nous_shared_store_path, _quarantine_nous_oauth_state, _quarantine_nous_pool_entries, _read_shared_nous_state, _try_import_shared_nous_state, _write_shared_nous_state
-from hermes_cli.auth_nous import _login_nous, _nous_device_code_login, fetch_nous_models, step_up_nous_billing_scope
-from auth.token_validation import _nous_invoke_jwt_is_usable, _nous_invoke_jwt_status
-from auth.providers.minimax import _MINIMAX_OAUTH_ERROR_BODY_LIMIT, _minimax_pkce_pair, _minimax_poll_token, _minimax_post_form, _minimax_request_user_code, _minimax_resolve_token_expiry_unix, _minimax_response_error_text, _minimax_save_auth_state, _refresh_minimax_oauth_state, build_minimax_oauth_token_provider, resolve_minimax_oauth_runtime_credentials
-from hermes_cli.auth_minimax import _login_minimax_oauth, _minimax_oauth_login
-from hermes_cli.auth_xai import _login_xai_oauth, _xai_oauth_device_code_login
-from auth.providers.xai import _read_xai_oauth_tokens, _refresh_xai_oauth_tokens, _save_xai_oauth_tokens, _write_through_xai_oauth_to_global_root, _xai_access_token_is_expiring, _xai_oauth_discovery, _xai_oauth_poll_device_token, _xai_oauth_request_device_code, _xai_proactive_refresh_skew_seconds, _xai_validate_inference_base_url, refresh_xai_oauth_pure, resolve_xai_oauth_runtime_credentials
-from auth.providers.codex import _codex_access_token_is_expiring, _import_codex_cli_tokens, _read_codex_tokens, _refresh_codex_auth_tokens, _save_codex_tokens, refresh_codex_oauth_pure, resolve_codex_runtime_credentials
-from auth.providers.codex_http import _codex_http_client
-from auth.providers.codex_quota import _codex_pool_rate_limit_status, _codex_quota_probe_cache, _codex_usage_probe_url, _is_codex_rate_limit_shaped, _probe_codex_quota_restored, _refresh_expired_codex_probe_token, clear_codex_pool_quota_cooldowns
-from hermes_cli.auth_codex import _codex_device_code_login, _login_openai_codex
-from auth.providers.spotify import _refresh_spotify_oauth_state, get_spotify_auth_status, resolve_spotify_runtime_credentials
-from hermes_cli.auth_spotify import login_spotify_command
-from hermes_cli.auth_openrouter import _openrouter_pkce_login  # noqa: F401  re-exported
-from auth.providers.qwen import _qwen_access_token_is_expiring, _qwen_cli_auth_path, _read_qwen_cli_tokens, _refresh_qwen_cli_tokens, _save_qwen_cli_tokens, get_qwen_auth_status, resolve_qwen_runtime_credentials
-from auth.token_validation import _decode_jwt_claims
-from auth.constants import DEFAULT_NOUS_INFERENCE_URL, DEFAULT_NOUS_CLIENT_ID, NOUS_BILLING_MANAGE_SCOPE, DEFAULT_NOUS_SCOPE, NOUS_DEVICE_CODE_SOURCE, NOUS_AUTH_PATH_INVOKE_JWT, ACCESS_TOKEN_REFRESH_SKEW_SECONDS, NOUS_INVOKE_JWT_MIN_TTL_SECONDS, DEFAULT_CODEX_BASE_URL, DEFAULT_XAI_OAUTH_BASE_URL, MINIMAX_OAUTH_CLIENT_ID, MINIMAX_OAUTH_SCOPE, MINIMAX_OAUTH_GLOBAL_BASE, MINIMAX_OAUTH_CN_BASE, MINIMAX_OAUTH_GLOBAL_INFERENCE, MINIMAX_OAUTH_CN_INFERENCE, MINIMAX_OAUTH_REFRESH_SKEW_SECONDS, DEFAULT_QWEN_BASE_URL, DEFAULT_GITHUB_MODELS_BASE_URL, DEFAULT_COPILOT_ACP_BASE_URL, DEFAULT_OLLAMA_CLOUD_BASE_URL, DEFAULT_ACTUAL_BASE_URL, DEFAULT_ACTUAL_LOCAL_BASE_URL, STEPFUN_STEP_PLAN_INTL_BASE_URL, STEPFUN_STEP_PLAN_CN_BASE_URL, CODEX_OAUTH_CLIENT_ID, CODEX_OAUTH_TOKEN_URL, CODEX_ACCESS_TOKEN_REFRESH_SKEW_SECONDS, XAI_OAUTH_CLIENT_ID, XAI_OAUTH_SCOPE, XAI_ACCESS_TOKEN_REFRESH_SKEW_SECONDS, QWEN_ACCESS_TOKEN_REFRESH_SKEW_SECONDS, DEFAULT_SPOTIFY_ACCOUNTS_BASE_URL, DEFAULT_SPOTIFY_API_BASE_URL, SPOTIFY_DOCS_URL, DEFAULT_SPOTIFY_SCOPE, SERVICE_PROVIDER_NAMES, LMSTUDIO_NOAUTH_PLACEHOLDER, ACTUAL_LOCAL_NOAUTH_PLACEHOLDER, CODEX_RATE_LIMITED_CODE, _nous_err, httpx
+from auth.providers.spotify import get_spotify_auth_status
+from auth.constants import DEFAULT_NOUS_INFERENCE_URL, DEFAULT_NOUS_CLIENT_ID, NOUS_BILLING_MANAGE_SCOPE, DEFAULT_NOUS_SCOPE, DEFAULT_CODEX_BASE_URL, DEFAULT_XAI_OAUTH_BASE_URL, MINIMAX_OAUTH_CLIENT_ID, MINIMAX_OAUTH_SCOPE, MINIMAX_OAUTH_GLOBAL_BASE, MINIMAX_OAUTH_CN_BASE, MINIMAX_OAUTH_GLOBAL_INFERENCE, MINIMAX_OAUTH_CN_INFERENCE, DEFAULT_QWEN_BASE_URL, DEFAULT_GITHUB_MODELS_BASE_URL, DEFAULT_COPILOT_ACP_BASE_URL, DEFAULT_OLLAMA_CLOUD_BASE_URL, DEFAULT_ACTUAL_BASE_URL, STEPFUN_STEP_PLAN_INTL_BASE_URL, SERVICE_PROVIDER_NAMES
 from auth.errors import AuthError
 
 logger = logging.getLogger(__name__)
-
-try:
-    import fcntl
-except Exception:
-    fcntl = None
-try:
-    import msvcrt
-except Exception:
-    msvcrt = None
-
-
-
 
 
 # ── Provider Registry ───────────────────────────────────────────────────────────────────────────────
@@ -206,35 +169,20 @@ from hermes_cli.config import (  # noqa: E402
 # Plugin profiles (plugins/model-providers/<name>/) are mirrored into PROVIDER_REGISTRY with the
 # auth_type they declare; the mirror lives in the sibling so it can be re-run after discovery.
 from hermes_cli.auth_plugin_providers import (  # noqa: E402
-    get_plugin_oauth_auth_status, registry_lookup as _registry_lookup, sync_plugin_provider_registry)
+    registry_lookup as _registry_lookup, sync_plugin_provider_registry)
+import hermes_cli.auth_plugin_providers as auth_plugin_providers
 
 sync_plugin_provider_registry()
 
 
-def get_anthropic_key() -> str:
-    """First usable Anthropic credential (``.env`` preferred over a stale shell export), or ``""``.
-
-    Order mirrors ``PROVIDER_REGISTRY["anthropic"].api_key_env_vars``.
-
-    Checks both the ``.env`` file and the process environment, preferring ``~/.hermes/.env`` so a deliberate
-    key rotation isn't shadowed by a stale shell export (matches the api-key resolution path — see #20591).
-    """
-    from hermes_cli.config import get_env_value_prefer_dotenv
-    env_vars = PROVIDER_REGISTRY["anthropic"].api_key_env_vars
-    return next((v for v in (get_env_value_prefer_dotenv(var) or "" for var in env_vars) if v), "")
 
 
 # ── Secret validation ───────────────────────────────────────────────────────────────────────────────
 
 
-
 # The two placeholder shapes this repo ships itself, in ``.env.example`` (four providers) and in
 # the quickstart / MCP / skill references (``ghp_xxx``, ``hf_xxx``, ``sk-xxxxxxxx``). Both are
 # copied verbatim by users, so both must read as "not configured" rather than as a credential.
-
-
-
-
 
 
 # Known API-key prefixes per provider. Only listed providers get prefix validation; everyone else
@@ -243,57 +191,11 @@ def get_anthropic_key() -> str:
 # See #93593.
 
 
-
-
-
-
-
-
-
-
-
-
 # ── Error formatting (AuthError itself lives in auth_constants) ─────────────────────────────────────
-
-
-
-def primary_failure_wording(error: Exception) -> tuple[str, str]:
-    """``(log_phrase, user_phrase)`` for a primary-provider failure that triggers the fallback
-    chain. A 429/quota AuthError leaves the credentials valid; labelling it "auth failed" sends
-    operators hunting for an expired token (#117482), so it reads as quota at every surface."""
-    if is_rate_limited_auth_error(error):
-        return "rate-limited (429)", "Primary provider quota exhausted"
-    return "auth failed", "Primary auth failed"
 
 
 # Entitlement failures: Nous gets a Portal-aware message; other providers a fixed generic one (or
 # the raw error when no generic text exists for the code).
-_GENERIC_ENTITLEMENT_MESSAGES = {
-    "subscription_required": "No active paid subscription found. Please purchase/activate a subscription, then retry.",
-    "insufficient_credits": "Subscription credits are exhausted. Top up/renew credits, then retry."}
-_ENTITLEMENT_ERROR_CODES = frozenset(_GENERIC_ENTITLEMENT_MESSAGES) | {
-    "subscription_expired", "no_usable_credits", "account_missing", "member_spend_cap_exceeded"}
-
-
-def format_auth_error(error: Exception) -> str:
-    """Map auth failures to concise user-facing guidance."""
-    if not isinstance(error, AuthError) or is_rate_limited_auth_error(error):
-        # Rate-limit / quota errors are not credential problems: never append "re-authenticate".
-        return str(error)
-    if error.relogin_required:
-        # Profile-aware: a bare `hermes model` from a named profile re-signs the ROOT store (#114012).
-        from hermes_constants import profile_cli_selector
-
-        return f"{error} Run `hermes {profile_cli_selector()}model` to re-authenticate."
-    if error.code in _ENTITLEMENT_ERROR_CODES:
-        if error.provider == "nous":
-            return _format_nous_entitlement_auth_error(error, environment=_phase6_auth_environment())
-        generic = _GENERIC_ENTITLEMENT_MESSAGES.get(error.code)
-        if generic:
-            return generic
-    if error.code == "temporarily_unavailable":
-        return f"{error} Please retry in a few seconds."
-    return str(error)
 
 
 # ── Auth Store — persistence layer for ~/.hermes/auth.json ──────────────────────────────────────────
@@ -879,8 +781,6 @@ class OAuthProviderFlow:
         return _is_terminal_refresh_error(exc, self.provider_id)
 
 
-from auth.errors import _OAUTH_GRANT_DEAD_CODES
-
 # Nous state-shape failures raised BEFORE any refresh POST (no login, no token pair): retrying
 # cannot succeed either, so the pool must not bench them as a transient outage (#113718).
 
@@ -890,55 +790,18 @@ OAUTH_PROVIDER_FLOWS: Dict[str, OAuthProviderFlow] = {
         "nous", 'auth.providers.nous.resolve_nous_runtime_credentials', 'auth.providers.nous_status.get_nous_auth_status',
         resolver_uses_environment=True, status_uses_environment=True, logout_from_config=True),
     "openai-codex": OAuthProviderFlow(
-        "openai-codex", 'auth.providers.codex.resolve_codex_runtime_credentials', 'hermes_cli.auth.get_codex_auth_status',
-        resolver_uses_environment=True,
+        "openai-codex", 'auth.providers.codex.resolve_codex_runtime_credentials', 'auth.provider_status.get_codex_auth_status',
+        resolver_uses_environment=True, status_uses_environment=True,
         logout_from_config=True),
     "xai-oauth": OAuthProviderFlow(
-        "xai-oauth", 'auth.providers.xai.resolve_xai_oauth_runtime_credentials', 'hermes_cli.auth.get_xai_oauth_auth_status',
-        resolver_uses_environment=False,
+        "xai-oauth", 'auth.providers.xai.resolve_xai_oauth_runtime_credentials', 'auth.provider_status.get_xai_oauth_auth_status',
+        resolver_uses_environment=False, status_uses_environment=True,
         logout_from_config=True),
     "qwen-oauth": OAuthProviderFlow(
         "qwen-oauth", 'auth.providers.qwen.resolve_qwen_runtime_credentials', 'auth.providers.qwen.get_qwen_auth_status'),
     "minimax-oauth": OAuthProviderFlow(
-        "minimax-oauth", 'auth.providers.minimax.resolve_minimax_oauth_runtime_credentials', 'hermes_cli.auth.get_minimax_oauth_auth_status'),
+        "minimax-oauth", 'auth.providers.minimax.resolve_minimax_oauth_runtime_credentials', 'auth.provider_status.get_minimax_oauth_auth_status', status_uses_environment=True),
 }
-
-
-def _codex_pool_rate_limited_status() -> Optional[Dict[str, Any]]:
-    rate_limit = _codex_pool_rate_limit_status()
-    if not rate_limit:
-        return None
-    return {
-        "logged_in": True, "auth_store": str(auth_storage._auth_file_path()),
-        "last_refresh": rate_limit.get("last_refresh"), "auth_mode": "chatgpt",
-        "source": f"pool:{rate_limit.get('label') or 'unknown'}", "rate_limited": True,
-        "error_code": CODEX_RATE_LIMITED_CODE,
-        "error": (rate_limit.get("message")
-                  or "Codex provider quota exhausted; retry after the usage limit resets."),
-        "reset_at": rate_limit.get("reset_at")}
-
-
-def get_codex_auth_status() -> Dict[str, Any]:
-    """Status snapshot for Codex auth (pool first, then legacy provider state).
-
-    Read-only by contract: status/doctor must never adopt, refresh or persist a credential (#68004)."""
-    status = _pool_first_oauth_status(
-        "openai-codex", is_expiring=_codex_access_token_is_expiring, auth_mode="chatgpt",
-        resolve=lambda: resolve_codex_runtime_credentials(read_only=True, environment=_phase6_auth_environment()),
-        on_pool_miss=_codex_pool_rate_limited_status, environment=_phase6_auth_environment())
-    if str(status.get("source") or "").startswith("pool:"):
-        # Pool rows keep the canonical URL; the chat route may send this key to model.base_url.
-        from hermes_cli.auth_codex import _codex_pool_route_base_url
-        status["base_url"] = _codex_pool_route_base_url(status.get("base_url"))
-    return status
-
-
-def get_xai_oauth_auth_status() -> Dict[str, Any]:
-    # auth_mode is display/telemetry only; device-code is the only xAI OAuth flow, so report it
-    # unconditionally (auth.json may still carry a legacy ``oauth_pkce`` label).
-    return _pool_first_oauth_status(
-        "xai-oauth", is_expiring=_xai_access_token_is_expiring, auth_mode="oauth_device_code",
-        resolve=lambda: resolve_xai_oauth_runtime_credentials(refresh_if_expiring=False), environment=_phase6_auth_environment())
 
 
 def _provider_env_base_url(pconfig: ProviderConfig) -> str:
@@ -1080,11 +943,22 @@ def get_auth_status(provider_id: Optional[str] = None) -> Dict[str, Any]:
     if not target:
         return {"logged_in": False}
     if target in OAUTH_PROVIDER_FLOWS:
-        return OAUTH_PROVIDER_FLOWS[target].status()
+        status = OAUTH_PROVIDER_FLOWS[target].status()
+        if target == "openai-codex" and str(status.get("source") or "").startswith("pool:"):
+            from hermes_cli.auth_codex import _codex_pool_route_base_url
+            status["base_url"] = _codex_pool_route_base_url(status.get("base_url"))
+        return status
     status_fn_name = _BESPOKE_STATUS_FUNCTIONS.get(target)
     if status_fn_name:
         return globals()[status_fn_name]()
     pconfig = _registry_lookup(target)
+    if pconfig and pconfig.auth_type in {"oauth_device_code", "oauth_external"}:
+        if target not in auth_plugin_providers.PLUGIN_MIRRORED_PROVIDERS:
+            return {"logged_in": False}
+        status = auth_provider_status.get_plugin_oauth_auth_status(
+            target, environment=_phase6_auth_environment())
+        status["hint"] = "" if status["logged_in"] else f"Run `hermes auth add {target}` to sign in."
+        return status
     if pconfig and pconfig.auth_type in _STATUS_BY_AUTH_TYPE:
         return globals()[_STATUS_BY_AUTH_TYPE[pconfig.auth_type]](target)
     return {"logged_in": False}
@@ -1098,10 +972,7 @@ _BESPOKE_STATUS_FUNCTIONS: Dict[str, str] = {
 _STATUS_BY_AUTH_TYPE: Dict[str, str] = {
     "external_process": "get_external_process_provider_status",
     "api_key": "get_api_key_provider_status",
-    "aws_sdk": "_get_aws_sdk_auth_status",
-    # OAuth-shaped plugin providers (their login lives in the plugin's auth_handler, tokens in the pool).
-    "oauth_device_code": "get_plugin_oauth_auth_status",
-    "oauth_external": "get_plugin_oauth_auth_status"}
+    "aws_sdk": "_get_aws_sdk_auth_status"}
 
 
 def _get_azure_foundry_auth_status() -> Dict[str, Any]:
@@ -1153,16 +1024,8 @@ def _get_azure_foundry_auth_status() -> Dict[str, Any]:
     return info
 
 
-
-
-
-
 # Providers whose runtime base URL is not simply env-override-or-registry-default:
 # ``(api_key, registry_default, env_override) -> base_url``.
-
-
-
-
 
 
 # ── CLI Commands — login / logout ───────────────────────────────────────────────────────────────────
@@ -1177,10 +1040,7 @@ def _update_config_for_provider(
     finishes and send an OpenRouter-style ``vendor/model`` name to a direct API. *clear_default*
     removes ``model.default`` in that same write, for a caller that has no model to offer and must
     not leave the previous provider's model paired with the new host."""
-    with auth_storage._auth_store_lock():  # so auto-resolution picks this provider
-        auth_store = auth_storage._load_auth_store()
-        auth_store["active_provider"] = provider_id
-        auth_storage._save_auth_store(auth_store)
+    auth_provider_state.mark_provider_active(provider_id)
 
     config_path = get_config_path()
     config_path.parent.mkdir(parents=True, exist_ok=True)
@@ -1259,63 +1119,6 @@ def _reset_config_provider() -> Path:
     return config_path
 
 
-def login_command(args) -> None:
-    """Deprecated: use 'hermes model' or 'hermes setup' instead."""
-    print("The 'hermes login' command has been removed.\nUse 'hermes auth' to manage credentials,\n"
-          "'hermes model' to select a provider, or 'hermes setup' for full setup.")
-    raise SystemExit(0)
-
-
-def get_minimax_oauth_auth_status() -> Dict[str, Any]:
-    """Return auth status dict for MiniMax OAuth provider."""
-    state = auth_provider_state.get_provider_auth_state("minimax-oauth")
-    if not state or not state.get("access_token"):
-        return {"logged_in": False, "provider": "minimax-oauth"}
-    try:
-        token_valid = datetime.fromisoformat(state.get("expires_at", "")).timestamp() > time.time()
-    except Exception:
-        token_valid = True  # access_token is known non-empty here
-    return {
-        "logged_in": token_valid, "provider": "minimax-oauth",
-        "region": state.get("region", "global"), "expires_at": state.get("expires_at")}
-
-
-def logout_command(args) -> None:
-    """Clear auth state for a provider."""
-    provider_id = getattr(args, "provider", None)
-    if provider_id and not is_known_auth_provider(provider_id):
-        print(f"Unknown provider: {provider_id}")
-        raise SystemExit(1)
-    target = provider_id or auth_provider_state.get_active_provider() or _logout_default_provider_from_config()
-    if not target:
-        print("No provider is currently logged in.")
-        return
-    if target == "nous":
-        from auth.providers.nous_guest import FREE_TIER_NOT_SIGNED_IN, is_guest_state
-        if is_guest_state(auth_provider_state.get_provider_auth_state("nous")):
-            # Free tier is not a login; there is nothing to log out of and nothing is cleared.
-            print(FREE_TIER_NOT_SIGNED_IN)
-            return
-    should_reset_config = _should_reset_config_provider_on_logout(target)
-    provider_name = get_auth_provider_display_name(target)
-    if not (auth_provider_state.clear_provider_auth(target) or should_reset_config):
-        print(f"No auth state found for {provider_name}.")
-        return
-    if target == "nous":
-        # A profile logout must not be re-adopted from the cross-profile store on the next boot.
-        from auth.providers.nous_store import _clear_shared_nous_state
-        _clear_shared_nous_state("logout")
-    if should_reset_config:
-        _reset_config_provider()
-    print(f"Logged out of {provider_name}.")
-    if not should_reset_config:
-        print("Model provider configuration was unchanged.")
-    elif os.getenv("OPENROUTER_API_KEY"):
-        print("Hermes will use OpenRouter for inference.")
-    else:
-        print("Run `hermes model` or configure an API key to use Hermes.")
-
-
 # ---- BEGIN PLUGIN-COMPAT (revert-scheduled; see COMPAT_MANIFEST.md) ----
 # Names external plugins imported from this module before the Sep 2026 decomposition.
 # Internal code MUST NOT use these (scripts/check_compat_pointers.py fails CI if it does).
@@ -1363,4 +1166,4 @@ def __getattr__(name):  # PEP 562 — lazy so no import cycles
     return getattr(importlib.import_module(target[0]), target[1])
 # ---- END PLUGIN-COMPAT ----
 
-from auth.token_validation import _nonempty_str, _parse_iso_timestamp, _is_expiring
+from auth.token_validation import _nonempty_str

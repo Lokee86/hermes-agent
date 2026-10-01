@@ -165,8 +165,9 @@ class TestAuthResolvesFromDotEnv:
         _write_env_file(isolated_hermes_home, ANTHROPIC_API_KEY="dotenv-fresh-anthropic")
         monkeypatch.setenv("ANTHROPIC_API_KEY", "stale-shell-anthropic")
 
-        from hermes_cli.auth import get_anthropic_key
-        assert get_anthropic_key() == "dotenv-fresh-anthropic"
+        from auth.api_keys import get_anthropic_key
+        from hermes_cli.config_credentials import credential_pool_environment
+        assert get_anthropic_key(environment=credential_pool_environment()) == "dotenv-fresh-anthropic"
 
 
 class TestAuthCredentialPoolFallback:

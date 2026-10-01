@@ -101,7 +101,9 @@ def _nous_device_code_login(
     timeout_seconds: float = 15.0, insecure: bool = False, ca_bundle: Optional[str] = None,
     on_verification: Optional[Callable[[str, str], None]] = None) -> Dict[str, Any]:
     """Run the Nous device-code flow and return full OAuth state without persisting."""
-    from hermes_cli.auth import PROVIDER_REGISTRY, _is_remote_session, _print_device_code_instructions, format_auth_error
+    from hermes_cli.auth import PROVIDER_REGISTRY
+    from hermes_cli.auth_device_flow import _is_remote_session, _print_device_code_instructions
+    from hermes_cli.auth_error_copy import format_auth_error
     from auth.oauth import _coerce_ttl_seconds, _optional_base_url, _poll_for_token, _request_device_code, _tls_state_from_verify
     from auth.providers.nous import refresh_nous_oauth_from_state
     pconfig = PROVIDER_REGISTRY["nous"]
@@ -191,7 +193,8 @@ def step_up_nous_billing_scope(
     server silently downscopes and this returns False. Persists like ``_login_nous`` minus the
     model picker.
     """
-    from hermes_cli.auth import PROVIDER_REGISTRY, _nous_device_code_login
+    from hermes_cli.auth import PROVIDER_REGISTRY
+    from hermes_cli.auth_nous import _nous_device_code_login
     from auth.provider_state import _save_active_provider_state, get_provider_auth_state
     prior = get_provider_auth_state("nous") or {}
     pconfig = PROVIDER_REGISTRY["nous"]
@@ -219,7 +222,7 @@ def _pick_nous_model_after_login(
     Returns the selected model id, or None when the user skipped / nothing was selectable.
     Raises on any fetch failure so the caller can print the "Login succeeded, but..." notice.
     """
-    from hermes_cli.auth import _prompt_model_selection
+    from hermes_cli.auth_model_picker import _prompt_model_selection
     runtime_key = auth_state.get("agent_key") or auth_state.get("access_token")
     if not isinstance(runtime_key, str) or not runtime_key:
         raise _nous_err("No runtime API key available to fetch models", "invalid_token")
@@ -289,7 +292,7 @@ def _offer_shared_nous_import(timeout_seconds: float) -> Optional[Dict[str, Any]
     Checks the shared store before launching a fresh device-code flow. Returns the refreshed
     auth state when the user accepted and the import succeeded, else None.
     """
-    from hermes_cli.auth import _prompt_yes_no
+    from hermes_cli.auth_device_flow import _prompt_yes_no
     from auth.providers.nous_store import _read_shared_nous_state
     from auth.providers.nous_guest import is_guest_state
     shared = _read_shared_nous_state()
@@ -313,25 +316,17 @@ def _offer_shared_nous_import(timeout_seconds: float) -> Optional[Dict[str, Any]
     return auth_state
 
 
-def _restore_active_provider(prior_active_provider: Any) -> None:
-    """Undo the ``active_provider="nous"`` that ``_save_provider_state`` wrote during login."""
-    from auth.store import _auth_store_lock, _load_auth_store, _save_auth_store
-    with _auth_store_lock():
-        auth_store = _load_auth_store()
-        if prior_active_provider:
-            auth_store["active_provider"] = prior_active_provider
-        else:
-            auth_store.pop("active_provider", None)
-        _save_auth_store(auth_store)
 
 
 def _login_nous(args, pconfig: ProviderConfig) -> None:
     """Nous Portal device authorization flow."""
-    from auth.store import _auth_store_lock, _load_auth_store
-    from hermes_cli.auth import _nous_device_code_login, _save_model_choice, _update_config_for_provider, format_auth_error
+    from hermes_cli.auth_nous import _nous_device_code_login
+    from hermes_cli.auth_model_picker import _save_model_choice
+    from hermes_cli.auth import _update_config_for_provider
+    from hermes_cli.auth_error_copy import format_auth_error
     from auth.providers.nous import _sync_nous_pool_from_auth_store
     from auth.providers.nous_store import _write_shared_nous_state
-    from auth.provider_state import _save_active_provider_state
+    from auth.provider_state import _save_active_provider_state, get_active_provider, restore_active_provider
     timeout_seconds = getattr(args, "timeout", None) or 15.0
     ca_bundle = (
         getattr(args, "ca_bundle", None) or os.getenv("HERMES_CA_BUNDLE")
@@ -350,8 +345,7 @@ def _login_nous(args, pconfig: ProviderConfig) -> None:
         inference_base_url = auth_state["inference_base_url"]
         # Snapshot BEFORE _save_provider_state overwrites active_provider to "nous", so a
         # model-picker "Skip (keep current)" can restore the user's previous provider.
-        with _auth_store_lock():
-            prior_active_provider = _load_auth_store().get("active_provider")
+        prior_active_provider = get_active_provider()
         saved_to = _save_active_provider_state("nous", auth_state)
         # Mirror to the shared store so other profiles can one-tap import (best-effort inside).
         _write_shared_nous_state(auth_state)
@@ -370,7 +364,7 @@ def _login_nous(args, pconfig: ProviderConfig) -> None:
         # No model (Skip, fetch failed, nothing curated): keep the previous provider rather than
         # switch to Nous with a mismatched model; the Nous tokens stay saved for future use.
         if not selected_model:
-            _restore_active_provider(prior_active_provider)
+            restore_active_provider(prior_active_provider)
             print()
             print("No provider change. Nous credentials saved for future use.")
             print("  Run `hermes model` again to switch to Nous Portal.")

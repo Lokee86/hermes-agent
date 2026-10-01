@@ -1,4 +1,5 @@
 """Tests for xAI Grok OAuth — tokens stored in Hermes auth store (~/.hermes/auth.json)."""
+from hermes_cli.config_credentials import credential_pool_environment
 
 import base64
 import json
@@ -10,7 +11,8 @@ import pytest
 from auth.errors import AuthError
 from auth.constants import DEFAULT_XAI_OAUTH_BASE_URL
 from auth.providers.xai import _read_xai_oauth_tokens, _refresh_xai_oauth_tokens, _save_xai_oauth_tokens, refresh_xai_oauth_pure, resolve_xai_oauth_runtime_credentials
-from hermes_cli.auth import get_xai_oauth_auth_status, resolve_provider
+from auth.provider_status import get_xai_oauth_auth_status
+from hermes_cli.auth import resolve_provider
 
 
 # ---------------------------------------------------------------------------
@@ -346,7 +348,7 @@ def test_get_xai_oauth_auth_status_logged_out(tmp_path, monkeypatch):
     (hermes_home / "auth.json").write_text(json.dumps({"version": 1, "providers": {}}))
     monkeypatch.setenv("HERMES_HOME", str(hermes_home))
 
-    status = get_xai_oauth_auth_status()
+    status = get_xai_oauth_auth_status(environment=credential_pool_environment())
     assert status["logged_in"] is False
     assert "error" in status
 
@@ -594,7 +596,7 @@ def test_login_xai_oauth_relogin_clears_suppression_and_reseeds(tmp_path, monkey
     from types import SimpleNamespace
 
     from auth.credential_pool import load_pool
-    from hermes_cli.auth import _login_xai_oauth
+    from hermes_cli.auth_xai import _login_xai_oauth
     from auth.sources import is_source_suppressed, suppress_credential_source
 
     hermes_home = tmp_path / "hermes"
@@ -612,7 +614,7 @@ def test_login_xai_oauth_relogin_clears_suppression_and_reseeds(tmp_path, monkey
 
     new_access = _jwt_with_exp(int(time.time()) + 2 * 60 * 60)
     monkeypatch.setattr(
-        "hermes_cli.auth._xai_oauth_device_code_login",
+        "hermes_cli.auth_xai._xai_oauth_device_code_login",
         lambda **kwargs: {
             "tokens": {
                 "access_token": new_access,

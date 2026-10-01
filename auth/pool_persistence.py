@@ -250,3 +250,28 @@ def write_credential_pool(
         pool[provider_id] = merged
         store._save_auth_store(auth_store)
         return merged
+
+
+def migrate_legacy_custom_pool_key(provider: str, legacy_key: str) -> bool:
+    """Move a keyed provider's old ``custom:`` pool into its runtime slug."""
+    with store._auth_store_lock():
+        auth_store = store._load_auth_store()
+        credential_pool = auth_store.get("credential_pool")
+        if not isinstance(credential_pool, dict):
+            return False
+        legacy_entries = credential_pool.get(legacy_key)
+        if not isinstance(legacy_entries, list) or not legacy_entries:
+            return False
+        current_entries = credential_pool.get(provider)
+        merged = list(current_entries) if isinstance(current_entries, list) else []
+        known_ids = {e.get("id") for e in merged if isinstance(e, dict) and e.get("id")}
+        for entry in legacy_entries:
+            entry_id = entry.get("id") if isinstance(entry, dict) else None
+            if not entry_id or entry_id not in known_ids:
+                merged.append(entry)
+                if entry_id:
+                    known_ids.add(entry_id)
+        credential_pool[provider] = merged
+        del credential_pool[legacy_key]
+        store._save_auth_store(auth_store)
+        return True

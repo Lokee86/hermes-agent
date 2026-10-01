@@ -146,9 +146,9 @@ def test_setup_flow_status_carries_the_pool_entry_route(monkeypatch):
     home = _home(monkeypatch)
     _write_config(home, base_url=GW)
     _write_pool(home, OPAQUE)
-    from hermes_cli.auth import get_codex_auth_status
+    from hermes_cli.auth import get_auth_status
 
-    status = get_codex_auth_status()
+    status = get_auth_status("openai-codex")
 
     assert status["api_key"] == OPAQUE
     assert status["base_url"] == GW
@@ -158,9 +158,9 @@ def test_setup_flow_status_carries_a_pool_row_own_gateway_url(monkeypatch):
     home = _home(monkeypatch)
     _write_config(home)
     _write_pool(home, OPAQUE, row_base=OTHER_GW)
-    from hermes_cli.auth import get_codex_auth_status
+    from hermes_cli.auth import get_auth_status
 
-    assert get_codex_auth_status()["base_url"] == OTHER_GW
+    assert get_auth_status("openai-codex")["base_url"] == OTHER_GW
 
 
 def test_model_setup_flow_catalog_goes_to_the_pool_entry_gateway(monkeypatch, picker_http):
@@ -171,7 +171,7 @@ def test_model_setup_flow_catalog_goes_to_the_pool_entry_gateway(monkeypatch, pi
     _write_pool(home, OPAQUE)
     monkeypatch.setattr("builtins.input", lambda prompt="": "1")  # reuse existing credentials
     confirm = {}
-    monkeypatch.setattr("hermes_cli.auth._prompt_model_selection", lambda *a, **kw: confirm.update(kw))
+    monkeypatch.setattr("hermes_cli.auth_model_picker._prompt_model_selection", lambda *a, **kw: confirm.update(kw))
     from hermes_cli.model_setup_flows import _model_flow_openai_codex
 
     _model_flow_openai_codex({}, current_model="gpt-5.5")

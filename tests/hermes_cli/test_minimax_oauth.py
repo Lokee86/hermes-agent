@@ -9,6 +9,7 @@ Covers:
 - resolve_minimax_oauth_runtime_credentials: error when not logged in
 """
 from __future__ import annotations
+from hermes_cli.config_credentials import credential_pool_environment
 
 import base64
 import hashlib
@@ -22,7 +23,8 @@ import pytest
 from auth.errors import AuthError
 from auth.constants import MINIMAX_OAUTH_CLIENT_ID, MINIMAX_OAUTH_GLOBAL_BASE, MINIMAX_OAUTH_GLOBAL_INFERENCE, MINIMAX_OAUTH_REFRESH_SKEW_SECONDS
 from auth.providers.minimax import _minimax_pkce_pair, _minimax_request_user_code, _minimax_resolve_token_expiry_unix, _refresh_minimax_oauth_state, resolve_minimax_oauth_runtime_credentials
-from hermes_cli.auth import get_minimax_oauth_auth_status, get_auth_status
+from auth.provider_status import get_minimax_oauth_auth_status
+from hermes_cli.auth import get_auth_status
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -261,7 +263,7 @@ def test_resolve_credentials_quarantines_dead_tokens_on_terminal_refresh_failure
 
 def test_get_minimax_oauth_auth_status_not_logged_in():
     with patch('auth.provider_state.get_provider_auth_state', return_value=None):
-        status = get_minimax_oauth_auth_status()
+        status = get_minimax_oauth_auth_status(environment=credential_pool_environment())
 
     assert status["logged_in"] is False
     assert status["provider"] == "minimax-oauth"

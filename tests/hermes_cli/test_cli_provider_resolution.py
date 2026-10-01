@@ -492,7 +492,7 @@ def test_model_flow_nous_does_not_restore_stale_custom_api_key(tmp_path, monkeyp
         lambda model_ids, pricing, portal_url: (model_ids, pricing),
     )
     monkeypatch.setattr(
-        "hermes_cli.auth._prompt_model_selection",
+        "hermes_cli.auth_model_picker._prompt_model_selection",
         lambda *args, **kwargs: selected_model,
     )
     monkeypatch.setattr(
@@ -653,7 +653,7 @@ def test_model_flow_custom_saves_verified_v1_base_url(monkeypatch):
     )
     saved_env = {}
     monkeypatch.setattr("hermes_cli.config.save_env_value", lambda key, value: saved_env.__setitem__(key, value))
-    monkeypatch.setattr("hermes_cli.auth._save_model_choice", lambda model: saved_env.__setitem__("MODEL", model))
+    monkeypatch.setattr("hermes_cli.auth_model_picker._save_model_choice", lambda model: saved_env.__setitem__("MODEL", model))
     monkeypatch.setattr('auth.provider_state.deactivate_provider', lambda: None)
     monkeypatch.setattr("hermes_cli.main_provider_setup._save_custom_provider", lambda *args, **kwargs: None)
     monkeypatch.setattr(
@@ -696,7 +696,7 @@ def test_model_flow_custom_persists_selected_api_mode(monkeypatch):
         "hermes_cli.config.get_env_value",
         lambda key: "" if key in {"OPENAI_BASE_URL", "OPENAI_API_KEY"} else "",
     )
-    monkeypatch.setattr("hermes_cli.auth._save_model_choice", lambda model: None)
+    monkeypatch.setattr("hermes_cli.auth_model_picker._save_model_choice", lambda model: None)
     monkeypatch.setattr('auth.provider_state.deactivate_provider', lambda: None)
     monkeypatch.setattr(
         "hermes_cli.models.probe_api_models",
@@ -781,7 +781,7 @@ def test_cmd_model_forwards_nous_login_tls_options(monkeypatch):
         captured["ca_bundle"] = login_args.ca_bundle
         captured["insecure"] = login_args.insecure
 
-    monkeypatch.setattr("hermes_cli.auth._login_nous", _fake_login)
+    monkeypatch.setattr("hermes_cli.auth_nous._login_nous", _fake_login)
 
     hermes_main.cmd_model(
         SimpleNamespace(
@@ -881,4 +881,3 @@ def test_custom_endpoint_key_env_is_a_valid_posix_name_for_ip_endpoints():
 
     for identity in ("127.0.0.1_8080", "0.0.0.0", "10.0.0.7:11434", "", "-–-"):
         assert _ENV_VAR_NAME_RE.match(custom_endpoint_key_env(identity)), identity
-

@@ -59,6 +59,11 @@ def test_runtime_imports_authentication_operations_from_canonical_owners():
     """Routing metadata and presentation may remain at the application edge."""
     canonical = {
         "resolve_api_key_provider_secret": "auth.api_keys",
+        "get_anthropic_key": "auth.api_keys",
+        "get_codex_auth_status": "auth.provider_status",
+        "get_xai_oauth_auth_status": "auth.provider_status",
+        "get_minimax_oauth_auth_status": "auth.provider_status",
+        "get_plugin_oauth_auth_status": "auth.provider_status",
         "_resolve_api_key_provider_secret": "auth.api_keys",
         "has_usable_secret": "auth.secret_validation",
         "looks_like_openrouter_key": "auth.secret_validation",
@@ -107,3 +112,18 @@ def test_runtime_imports_authentication_operations_from_canonical_owners():
                         violations.append(
                             f"{path.relative_to(ROOT)}:{node.lineno}: lazy {symbol.value}")
     assert not violations, "CLI-owned runtime authentication:\n" + "\n".join(violations)
+
+
+def test_authentication_presentation_does_not_implement_store_transactions():
+    """CLI interaction consumes operations without owning auth.json writes."""
+    forbidden = {"_auth_store_lock", "_save_auth_store", "_store_provider_state"}
+    violations = []
+    for path in sorted((ROOT / "hermes_cli").glob("auth*.py")):
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Call):
+                name = (node.func.id if isinstance(node.func, ast.Name)
+                        else node.func.attr if isinstance(node.func, ast.Attribute) else "")
+                if name in forbidden:
+                    violations.append(f"{path.relative_to(ROOT)}:{node.lineno}: {name}")
+    assert not violations, "CLI-owned store transaction:\n" + "\n".join(violations)

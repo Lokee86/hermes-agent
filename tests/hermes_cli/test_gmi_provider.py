@@ -1,6 +1,7 @@
 """Focused tests for GMI Cloud first-class provider wiring."""
 
 from __future__ import annotations
+import auth.provider_status as _auth_auth_provider_status
 import auth.providers.nous_status as _auth_auth_providers_nous_status
 
 import auth.providers.nous as _auth_auth_providers_nous
@@ -151,7 +152,7 @@ class TestGmiDoctor:
             from hermes_cli import auth as _auth_mod
 
             monkeypatch.setattr(_auth_auth_providers_nous_status, "get_nous_auth_status", lambda**_auth_settings: {})
-            monkeypatch.setattr(_auth_mod, "get_codex_auth_status", lambda: {})
+            monkeypatch.setattr(_auth_auth_provider_status, "get_codex_auth_status", lambda: {})
         except Exception:
             pass
 
@@ -265,7 +266,7 @@ class TestGmiMainFlow:
             "hermes_cli.models.fetch_api_models",
             return_value=["zai-org/GLM-5.1-FP8", "openai/gpt-5.4-mini"],
         ), patch(
-            "hermes_cli.auth._prompt_model_selection",
+            "hermes_cli.auth_model_picker._prompt_model_selection",
             return_value="openai/gpt-5.4-mini",
         ), patch(
             'auth.provider_state.deactivate_provider',

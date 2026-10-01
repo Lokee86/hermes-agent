@@ -212,3 +212,15 @@ def remove_provider_env_credential(
         "config_scrubbed": config_scrubbed,
         "found": bool(removed_from_env or refs["pool_pruned"] or config_scrubbed),
     }
+
+
+def unsuppress_provider_sources(provider: str) -> None:
+    """Clear ALL suppressions for this provider — re-adding a credential is a strong signal the
+    user wants auth re-enabled. Covers env:* (shell-exported vars), gh_cli (copilot), claude_code,
+    qwen-cli, device_code (codex), etc. — one consistent re-engagement pattern."""
+    try:
+        suppressed = store._load_auth_store().get("suppressed_sources", {})
+        for src in list(suppressed.get(provider, []) or []):
+            unsuppress_credential_source(provider, src)
+    except Exception:
+        pass
