@@ -276,3 +276,72 @@ Verification:
 
 Phase 5.8.3 does not claim auxiliary runtime ownership; the inherited Copilot
 auxiliary failures and the broader auxiliary migration remain Phase 5.8.4 work.
+
+## Phase 5.8.4 closeout — auxiliary runtime hard cut
+
+Phase 5.8.4 hard-cuts auxiliary model/provider semantics away from CLI-owned
+selection and routing authority while keeping auxiliary orchestration,
+credential acquisition, retries, health/quarantine, and transport construction
+application-owned.
+
+Ownership changes:
+
+- Auxiliary model selection consumes `models.selection_auxiliary`; the old
+  `hermes_cli.model_selection_auxiliary` owner is deleted.
+- Configured-provider matching, custom-provider identity, direct-API aliases,
+  and custom-resolution semantics are owned by `providers.configured`.
+  `agent.configured_provider_resolution` only acquires already-loaded
+  application config facts.
+- Copilot auxiliary transport/header behavior consumes
+  `providers.github.copilot_request_headers`; GitHub token acquisition remains
+  application-owned.
+- The main-session runtime route is authoritative for auxiliary main-first
+  resolution. Provider/model/base URL/API mode facts are projected through
+  canonical lower-domain routing rather than reconstructed from CLI helpers.
+- Vision defaults/rejection are provider-profile facts; model image capability
+  comes from `models.metadata`; vision-model precedence comes from
+  `models.selection_auxiliary`.
+- Nous auxiliary recommendation semantics are provider-owned via
+  `providers.nous_recommendations`; the obsolete CLI recommendation selector is
+  removed.
+- Fallback route interpretation is centralized in `agent.fallback_routing`,
+  which acquires application config facts then delegates provider/base/API-mode
+  semantics to `providers.routing`. Main-agent and auxiliary fallback consumers
+  share this route owner.
+- Actual route protocol mandate is lower-owned by `providers.routing`.
+- Auxiliary unhealthy-route identity uses canonical provider identity while
+  custom routes remain endpoint-scoped.
+- No auxiliary runtime consumer imports
+  `hermes_cli.model_selection_auxiliary`, `hermes_cli.model_switch*`,
+  `hermes_cli.model_selection*`, `hermes_cli.models_validate`,
+  `hermes_cli.model_catalog`, or `hermes_cli.runtime_provider_custom`.
+
+Phase 6 boundary retained:
+
+- Credential acquisition, OAuth/token refresh, pools, secrets, and
+  provider-specific auth/runtime assembly remain application-owned.
+- `agent.auxiliary_client` has exactly two permitted
+  `hermes_cli.runtime_provider` imports, frozen by the architecture gate:
+  bare-custom runtime acquisition and Azure Foundry auth/runtime acquisition.
+  These are application mechanics, not new semantic-owner surfaces, and are
+  deferred to Phase 6 rather than hidden behind a forwarding façade.
+
+Architecture gates:
+
+- `tests/models/test_runtime_query_boundary.py` now locks the complete
+  auxiliary semantic boundary, the final lower owners, canonical fallback
+  routing, and the exact Phase-6 acquisition exceptions.
+- The gate rejects reintroduction of CLI selection/custom-provider authority or
+  new `runtime_provider` imports in the auxiliary runtime surface.
+
+Verification:
+
+- Final ownership gate: **14 passed**.
+- Selection/capability/vision closeout set: **51 passed**.
+- Main-first/custom/OpenCode/Copilot/Azure closeout set: **73 passed**.
+- Fallback/routing/health/provider-parity closeout set: **102 passed**.
+- Total focused 5.8.4 closeout verification: **240 passed**.
+- `ruff check` and `git diff --check`: clean.
+
+Phase 5.8.4 is closed. Gateway/session runtime migration remains Phase 5.8.5;
+TUI/web/ACP remains 5.8.6; provider/plugin/environment policy remains 5.8.7.

@@ -266,3 +266,63 @@ def test_auxiliary_fallback_routing_has_one_canonical_route_owner():
     health_source = (ROOT / "agent" / "auxiliary_health.py").read_text(encoding="utf-8")
     assert "normalize_provider" in health_source
     assert "_normalize_chain_label" not in health_source
+
+
+def test_phase_5_8_4_auxiliary_runtime_has_no_cli_semantic_authority():
+    paths = (
+        ROOT / "agent" / "auxiliary_client.py",
+        ROOT / "agent" / "auxiliary_health.py",
+        ROOT / "agent" / "auxiliary_model_resolution.py",
+        ROOT / "agent" / "configured_provider_resolution.py",
+        ROOT / "agent" / "fallback_routing.py",
+    )
+    forbidden = (
+        "hermes_cli.model_selection_auxiliary",
+        "hermes_cli.model_switch",
+        "hermes_cli.model_selection",
+        "hermes_cli.models_validate",
+        "hermes_cli.model_catalog",
+        "hermes_cli.runtime_provider_custom",
+    )
+    offenders = []
+    for path in paths:
+        source = path.read_text(encoding="utf-8")
+        for dependency in forbidden:
+            if dependency in source:
+                offenders.append(f"{path.relative_to(ROOT)} -> {dependency}")
+    assert offenders == []
+
+    # runtime_provider remains application-owned for credential/config acquisition only.
+    # These are the only two auxiliary call sites allowed until Phase 6 moves auth ownership.
+    auxiliary = ROOT / "agent" / "auxiliary_client.py"
+    tree = _tree(auxiliary)
+    allowed_runtime_provider_imports = {
+        ("_resolve_custom_runtime", "resolve_runtime_provider"),
+        ("_try_azure_foundry", "_resolve_azure_foundry_runtime"),
+    }
+    found = set()
+    for node in tree.body:
+        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        for child in ast.walk(node):
+            if (
+                isinstance(child, ast.ImportFrom)
+                and child.module == "hermes_cli.runtime_provider"
+            ):
+                found.update((node.name, alias.name) for alias in child.names)
+    assert found == allowed_runtime_provider_imports
+
+
+def test_phase_5_8_4_auxiliary_final_owners_are_present():
+    assert (ROOT / "agent" / "fallback_routing.py").exists()
+    assert (ROOT / "agent" / "configured_provider_resolution.py").exists()
+    assert (ROOT / "agent" / "auxiliary_model_resolution.py").exists()
+
+    assert "resolve_invocation_route" in _definitions(ROOT / "providers" / "routing.py")
+    assert "match_configured_provider" in _definitions(ROOT / "providers" / "configured.py")
+    assert "select_vision_auxiliary_model" in _definitions(
+        ROOT / "models" / "selection_auxiliary.py"
+    )
+    assert "resolve_supports_vision" in _definitions(
+        ROOT / "models" / "metadata" / "capabilities.py"
+    )
