@@ -97,7 +97,10 @@ def _is_facade_target(node: ast.AST, aliases: set[str]) -> bool:
 def _patched_facade_names(path: Path) -> list[tuple[int, str]]:
     source = path.read_text(encoding="utf-8", errors="ignore")
     if "hermes_cli" not in source or "profiles" not in source or (
-        "monkeypatch" not in source and "patch(" not in source and "patch.object" not in source
+        "monkeypatch" not in source
+        and "patch(" not in source
+        and "patch.object" not in source
+        and "object(" not in source
     ):
         return []
     tree = ast.parse(source, filename=str(path))
@@ -134,10 +137,7 @@ def _patched_facade_names(path: Path) -> list[tuple[int, str]]:
                     continue
 
         if (
-            isinstance(func, ast.Attribute)
-            and func.attr == "object"
-            and isinstance(func.value, ast.Name)
-            and func.value.id == "patch"
+            _canonical_name(func, bindings) == "unittest.mock.patch.object"
             and len(node.args) >= 2
             and _is_facade_target(node.args[0], aliases)
             and isinstance(node.args[1], ast.Constant)
@@ -225,6 +225,30 @@ def test_patch_collector_uses_canonical_patch_identity(tmp_path: Path, source: s
     probe = tmp_path / "probe.py"
     probe.write_text(source, encoding="utf-8")
     assert _patched_facade_names(probe) == [(2, "profile_exists")]
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "from unittest.mock import patch\nfrom hermes_cli import profiles\n"
+        "patch.object(profiles, 'profile_exists', fake)\n",
+        "from unittest.mock import patch as p\nfrom hermes_cli import profiles as hp\n"
+        "p.object(hp, 'profile_exists', fake)\n",
+        "from unittest import mock\nfrom hermes_cli import profiles\n"
+        "mock.patch.object(profiles, 'profile_exists', fake)\n",
+        "import unittest.mock\nfrom hermes_cli import profiles\n"
+        "unittest.mock.patch.object(profiles, 'profile_exists', fake)\n",
+        "import unittest as ut\nfrom hermes_cli import profiles\n"
+        "ut.mock.patch.object(profiles, 'profile_exists', fake)\n",
+    ],
+)
+def test_patch_collector_normalizes_patch_object_forms(
+    tmp_path: Path, source: str
+) -> None:
+    probe = tmp_path / "probe.py"
+    probe.write_text(source, encoding="utf-8")
+    expected_line = len(source.rstrip("\n").splitlines())
+    assert _patched_facade_names(probe) == [(expected_line, "profile_exists")]
 
 
 def test_patch_collector_allows_canonical_owner(tmp_path: Path) -> None:
