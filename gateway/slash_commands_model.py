@@ -410,13 +410,20 @@ class GatewayModelCommandsMixin:
                 persist_global=ctx.persist_global and global_error is None)
         return reply
 
-    async def _send_model_picker(self, event: MessageEvent, source, adapter, session_key: str, listing_kwargs: dict, on_model_selected) -> bool:
+    async def _send_model_picker(
+        self, event: MessageEvent, source, adapter, session_key: str,
+        listing_kwargs: dict, on_model_selected, *, refresh: bool = False,
+    ) -> bool:
         """Send the interactive /model picker; False when nothing was sent (text fallback). *source*
         is session-key-normalized so the picker's thread metadata lands where the next turn reads."""
-        from hermes_cli.model_switch_providers import list_picker_providers
+        from gateway.model_picker_inventory import model_provider_rows
         try:  # off-loop: listing still reads config/disk cache synchronously (#41289)
             providers = await asyncio.to_thread(
-                list_picker_providers, max_models=50, include_moa=True, **listing_kwargs
+                model_provider_rows,
+                listing=listing_kwargs,
+                max_models=50,
+                interactive=True,
+                refresh=refresh,
             )
         except Exception:
             providers = []
@@ -432,10 +439,11 @@ class GatewayModelCommandsMixin:
         return bool(result.success)
 
     async def _model_listing_reply(
-        self, event: MessageEvent, ctx: _ModelSwitchContext, profile_home
+        self, event: MessageEvent, ctx: _ModelSwitchContext, profile_home,
+        *, refresh: bool = False,
     ) -> Optional[str]:
         """``/model`` with no args: interactive picker where supported, else the text list."""
-        from hermes_cli.model_switch_providers import list_authenticated_providers
+        from gateway.model_picker_inventory import model_provider_rows
         from providers import get_provider_label
 
         listing_kwargs = dict(
@@ -463,7 +471,10 @@ class GatewayModelCommandsMixin:
                 with _profile_runtime_scope(profile_home):
                     return await _picker_switch(model_id, provider_slug)
 
-            if await self._send_model_picker(event, ctx.source, adapter, ctx.session_key, listing_kwargs, _on_model_selected):
+            if await self._send_model_picker(
+                event, ctx.source, adapter, ctx.session_key, listing_kwargs,
+                _on_model_selected, refresh=refresh,
+            ):
                 return None  # Picker sent — adapter handles the response
 
         lines = [
@@ -475,7 +486,13 @@ class GatewayModelCommandsMixin:
             "",
         ]
         try:  # off-loop: listing still reads config/disk cache synchronously (#41289)
-            providers = await asyncio.to_thread(list_authenticated_providers, max_models=5, **listing_kwargs)
+            providers = await asyncio.to_thread(
+                model_provider_rows,
+                listing=listing_kwargs,
+                max_models=5,
+                interactive=False,
+                refresh=refresh,
+            )
             lines.extend(_model_provider_listing_lines(providers))
         except Exception:
             pass
@@ -559,10 +576,6 @@ class GatewayModelCommandsMixin:
         request = parse_model_command(event.get_command_args().strip())
         if request.errors:
             return f"❌ {request.error_messages()[0]}"  # gateway decoration over canonical copy
-        if request.force_refresh:  # bust the disk cache so the picker shows live data
-            with contextlib.suppress(Exception):
-                from hermes_cli.models import clear_provider_models_cache
-                clear_provider_models_cache()
         # Normalize like a message turn (Telegram DM topic recovery) before deriving the override
         # key, so the override lands under the key the next turn reads.
         # Check for session override. See #30479.
@@ -593,7 +606,9 @@ class GatewayModelCommandsMixin:
         ctx.persist_global = resolve_model_persistence(ctx.config, request)
         ctx.apply_override(self._session_model_overrides.get(session_key, {}))
         if not request.target and not request.explicit_provider:
-            return await self._model_listing_reply(event, ctx, profile_home)
+            return await self._model_listing_reply(
+                event, ctx, profile_home, refresh=request.force_refresh
+            )
         result, error = await self._perform_model_switch(ctx, request.target, request.explicit_provider, source)
         if error is not None:
             return error

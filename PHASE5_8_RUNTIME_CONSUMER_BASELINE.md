@@ -503,4 +503,45 @@ passed** (62 existing aiohttp application-key warnings). Ruff, `py_compile`,
 scoped ownership searches, and `git diff --check` are clean. New production
 seam `gateway/model_runtime_facts.py` is 47 lines.
 
-5.8.5.6 remains next.
+### 5.8.5.6 — catalogue, metadata, and picker ownership
+
+Gateway catalogue/picker consumers no longer depend on CLI-owned model catalogue,
+selection, or switch-provider semantics.
+
+- `models/catalog_manifest.py` owns remote catalogue schema validation, config
+  interpretation, provider block projection, curated IDs/descriptions, and
+  default-model facts.
+- `models/catalog_runtime.py` owns remote catalogue cache/fetch/SWR lifecycle,
+  provider overrides, cached default lookup, curated provider reads, refresh
+  cadence, and cache reset. It imports no application layer.
+- `models/catalog_seed.py` owns checkout-to-cache seeding.
+- `gateway/model_catalog_runtime.py` is the application adapter from gateway
+  config/home paths into the lower catalogue service. The gateway watcher and
+  default-model path consume this seam.
+- `gateway/model_picker_inventory.py` owns the gateway projection of application
+  inventory into `/model` rows. Picker/list presentation remains gateway-owned;
+  credential/config acquisition remains application-owned pending Phase 6.
+- `/model --refresh` now requests live inventory refresh through that projection
+  rather than clearing `hermes_cli.models` caches directly.
+- Existing CLI catalogue consumers were migrated to the same lower catalogue
+  service, so the old `hermes_cli.model_catalog` module no longer owns live
+  catalogue semantics.
+- A deliberately tiny `hermes_cli/model_catalog.py` compatibility hook remains
+  only because shipped pre-handoff updaters import
+  `seed_cache_from_checkout` after pulling the new tree. Architecture tests
+  constrain that module to exactly that one updater hook; it forwards only to
+  `models.catalog_seed` and cannot expose runtime catalogue/query APIs.
+- The picker regression where `hermes_cli.models.is_astra_model` was undefined
+  is fixed by importing the lower reasoning-metadata owner.
+- Targeted gateway/runtime consumers contain zero
+  `hermes_cli.models*`, `hermes_cli.model_selection*`,
+  `hermes_cli.model_catalog`, or `hermes_cli.model_switch_providers`
+  semantic dependencies.
+
+Verification: lower catalogue/picker core **9 passed**; migrated legacy
+catalogue/SWR/profile/default set **31 passed**; architecture boundary **20
+passed**; gateway catalogue/picker behavior **40 passed**. Ruff and
+`git diff --check` are clean. The two new lower production modules remain
+within the small-file boundary (`catalog_runtime.py` 199 lines).
+
+5.8.5.7 remains next.

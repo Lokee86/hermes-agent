@@ -28,7 +28,7 @@ class TestFetchOpenRouterModels:
         monkeypatch.setattr(_models_mod, "_openrouter_catalog_cache", None)
         # Pin the remote manifest out too — otherwise the fallback silently
         # depends on whatever the deployed catalog currently contains.
-        with patch("hermes_cli.model_catalog.get_curated_openrouter_models", return_value=None), \
+        with patch("models.catalog_runtime.curated_openrouter", return_value=()), \
              patch("hermes_cli.models._urlopen_model_catalog_request", side_effect=OSError("boom")):
             models = fetch_openrouter_models(force_refresh=True)
 
@@ -75,7 +75,7 @@ class TestFetchOpenRouterModels:
         )
         monkeypatch.setattr(_models_mod, "_openrouter_catalog_cache", None)
         with (
-            patch("hermes_cli.model_catalog.get_curated_openrouter_models", return_value=[]),
+            patch("models.catalog_runtime.curated_openrouter", return_value=()),
             patch("hermes_cli.models._urlopen_model_catalog_request", return_value=_Resp()),
         ):
             models = fetch_openrouter_models(force_refresh=True)
@@ -1455,8 +1455,8 @@ class TestOpenRouterCatalogDiskCache:
             return payload["data"], {m["id"]: m for m in payload["data"]}
 
         monkeypatch.setattr(_models_mod, "_fetch_live_catalog_index", fake_index)
-        monkeypatch.setattr("hermes_cli.model_catalog.get_curated_openrouter_models",
-                            lambda: [("a/one", "")])
+        monkeypatch.setattr("models.catalog_runtime.curated_openrouter",
+                            lambda *_args, **_kwargs: (("a/one", ""),))
 
     def test_fresh_snapshot_serves_cold_process_without_network(self, monkeypatch, tmp_path):
         calls = []

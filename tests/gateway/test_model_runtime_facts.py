@@ -15,7 +15,7 @@ def test_provider_default_uses_canonical_selection_with_preferred_cache(monkeypa
         lambda _provider: "safe/model",
     )
     monkeypatch.setattr(
-        "hermes_cli.model_catalog.get_default_model_from_cache",
+        "gateway.model_catalog_runtime.cached_default_model",
         lambda _provider: "safe/model",
     )
 

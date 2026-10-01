@@ -11,6 +11,8 @@ LOWER_QUERY_FILES = (
     ROOT / "models" / "catalog_static.py",
     ROOT / "models" / "catalog_local.py",
     ROOT / "models" / "catalog_github.py",
+    ROOT / "models" / "catalog_manifest.py",
+    ROOT / "models" / "catalog_runtime.py",
     ROOT / "models" / "codex_catalog.py",
     ROOT / "models" / "models_dev_cache.py",
     ROOT / "models" / "metadata" / "fast_mode.py",
@@ -475,9 +477,9 @@ def test_phase_5_8_5_turn_runtime_semantics_use_lower_owners():
     assert "normalize_runtime_model" in turn_source
     assert "is_foreign_provider_endpoint" in cache_source
 
-    # Deferred seams are explicit: catalogue cache acquisition moves in 5.8.5.6;
-    # credential/fallback mechanics move in Phase 6.
-    assert "hermes_cli.model_catalog" in facts.read_text(encoding="utf-8")
+    # Credential/fallback mechanics remain the Phase 6 seam.
+    assert "hermes_cli.model_catalog" not in facts.read_text(encoding="utf-8")
+    assert "cached_default_model" in facts.read_text(encoding="utf-8")
     assert "resolve_runtime_with_fallback" in prepare_source
     assert "resolve_runtime_provider" in api_source
 
@@ -491,3 +493,55 @@ def test_phase_5_8_5_turn_runtime_semantics_use_lower_owners():
     )
     assert "provider_default_model" in tui_source
     assert "is_foreign_provider_endpoint" in tui_source
+
+
+def test_phase_5_8_5_catalogue_picker_runtime_has_lower_semantic_owners():
+    paths = (
+        ROOT / "gateway" / "run_watchers.py",
+        ROOT / "gateway" / "run_turn.py",
+        ROOT / "gateway" / "run_turn_prepare.py",
+        ROOT / "gateway" / "slash_commands_model.py",
+        ROOT / "gateway" / "model_runtime_facts.py",
+        ROOT / "gateway" / "model_catalog_runtime.py",
+        ROOT / "gateway" / "model_picker_inventory.py",
+        ROOT / "gateway" / "platforms" / "api_server.py",
+        ROOT / "gateway" / "session_config.py",
+    )
+    forbidden = (
+        "hermes_cli.models",
+        "hermes_cli.model_selection",
+        "hermes_cli.model_catalog",
+        "hermes_cli.model_switch_providers",
+    )
+    offenders = []
+    for source_path in paths:
+        source = source_path.read_text(encoding="utf-8")
+        for dependency in forbidden:
+            if dependency in source:
+                offenders.append(f"{source_path.relative_to(ROOT)} -> {dependency}")
+    assert offenders == []
+
+    watcher = (ROOT / "gateway" / "run_watchers.py").read_text(encoding="utf-8")
+    picker = (ROOT / "gateway" / "slash_commands_model.py").read_text(encoding="utf-8")
+    assert "gateway.model_catalog_runtime" in watcher
+    assert "model_provider_rows" in picker
+
+    manifest_defs = _definitions(ROOT / "models" / "catalog_manifest.py")
+    runtime_defs = _definitions(ROOT / "models" / "catalog_runtime.py")
+    assert {"catalog_settings", "validate_manifest", "default_model"} <= manifest_defs
+    assert {
+        "get_catalog",
+        "cached_default_model",
+        "refresh_manifest",
+        "refresh_interval_seconds",
+    } <= runtime_defs
+
+    # Historical pre-handoff updaters import this path after pulling the new
+    # tree. Keep only that seed hook; live catalogue semantics must not return.
+    compat = ROOT / "hermes_cli" / "model_catalog.py"
+    assert _definitions(compat) == {"seed_cache_from_checkout"}
+    compat_source = compat.read_text(encoding="utf-8")
+    assert "models.catalog_seed" in compat_source
+    assert "get_catalog" not in compat_source
+    assert "refresh_catalogs" not in compat_source
+    assert "get_curated_openrouter_models" not in compat_source

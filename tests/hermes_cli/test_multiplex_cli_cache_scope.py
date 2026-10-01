@@ -154,7 +154,8 @@ def _write_manifest(home, model_id: str, mtime: float) -> None:
 
 def test_model_catalog_in_process_copy_is_bound_to_its_cache_file(homes, monkeypatch):
     a, b = homes
-    import hermes_cli.model_catalog as mc
+    from models import catalog_runtime as mc
+    from models.catalog_manifest import catalog_settings
 
     for home in (a, b):
         (home / "config.yaml").write_text("model_catalog:\n  ttl_minutes: 600\n", encoding="utf-8")
@@ -162,11 +163,13 @@ def test_model_catalog_in_process_copy_is_bound_to_its_cache_file(homes, monkeyp
     _write_manifest(a, "vendor/a-model", same_mtime)
     _write_manifest(b, "vendor/b-model", same_mtime)
     mc.reset_cache()
+    settings = catalog_settings({})
+    catalog_path_b = b / "cache" / "model_catalog.json"
     with _Scoped(a):
-        assert [m["id"] for m in mc.get_catalog()["providers"]["openrouter"]["models"]] == ["vendor/a-model"]
+        assert [m["id"] for m in mc.get_catalog(settings, a / "cache" / "model_catalog.json")["providers"]["openrouter"]["models"]] == ["vendor/a-model"]
     with _Scoped(b):
-        assert [m["id"] for m in mc.get_catalog()["providers"]["openrouter"]["models"]] == ["vendor/b-model"]
-        assert mc.get_default_model_from_cache("openrouter") == "vendor/b-model"
+        assert [m["id"] for m in mc.get_catalog(settings, b / "cache" / "model_catalog.json")["providers"]["openrouter"]["models"]] == ["vendor/b-model"]
+        assert mc.cached_default_model(catalog_path_b, "openrouter") == "vendor/b-model"
 
 
 def test_openrouter_curated_list_is_per_profile(homes, monkeypatch):

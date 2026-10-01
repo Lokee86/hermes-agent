@@ -52,6 +52,7 @@ from models.metadata.reasoning import (
     _OPENROUTER_CATALOG_URL,
     _seed_reasoning_caps,
     configure_reasoning_metadata_sources,
+    is_astra_model,
 )
 from hermes_cli.models_local import (
     _OLLAMA_LOCAL_MODELS_CACHE,
@@ -159,10 +160,12 @@ _openrouter_catalog_cache: list[tuple[str, str]] | None = None
 
 
 def _openrouter_catalog_disk_ttl() -> float:
-    """Same TTL as the catalog manifest this list is filtered from (honours ``model_catalog.ttl_minutes``)."""
-    from hermes_cli.model_catalog import refresh_interval_seconds
+    """Same TTL as the canonical manifest cache used by this active profile."""
+    from hermes_cli.catalog_context import catalog_runtime_context
+    from models.catalog_runtime import refresh_interval_seconds
 
-    return refresh_interval_seconds()
+    settings, _cache_path = catalog_runtime_context()
+    return refresh_interval_seconds(settings)
 
 
 def _openrouter_catalog_disk_path() -> Path:
@@ -493,10 +496,15 @@ def fetch_openrouter_models(
     # Remote catalog manifest first, in-repo snapshot when unreachable; the live /v1/models filter
     # (tool support, free pricing) is applied on top either way.
     try:
-        from hermes_cli.model_catalog import get_curated_openrouter_models
-        remote = get_curated_openrouter_models()
+        from hermes_cli.catalog_context import catalog_runtime_context
+        from models.catalog_runtime import curated_openrouter
+
+        settings, cache_path = catalog_runtime_context()
+        remote = curated_openrouter(
+            settings, cache_path, user_agent=_HERMES_USER_AGENT
+        )
     except Exception:
-        remote = None
+        remote = ()
     fallback = list(remote) if remote else list(OPENROUTER_MODELS)
 
     live = _fetch_live_catalog_index(_OPENROUTER_CATALOG_URL, timeout, _urlopen_model_catalog_request)
@@ -542,10 +550,15 @@ def get_curated_nous_model_ids() -> list[str]:
     """Curated Nous Portal model ids: the remote catalog manifest, else the in-repo
     ``_PROVIDER_MODELS["nous"]`` snapshot. Always a list."""
     try:
-        from hermes_cli.model_catalog import get_curated_nous_models
-        remote = get_curated_nous_models()
+        from hermes_cli.catalog_context import catalog_runtime_context
+        from models.catalog_runtime import curated_ids
+
+        settings, cache_path = catalog_runtime_context()
+        remote = curated_ids(
+            settings, cache_path, "nous", user_agent=_HERMES_USER_AGENT
+        )
     except Exception:
-        remote = None
+        remote = ()
     return list(remote or _PROVIDER_MODELS.get("nous", []))
 
 

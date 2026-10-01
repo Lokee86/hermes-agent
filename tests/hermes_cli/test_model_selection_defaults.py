@@ -1,19 +1,19 @@
 from hermes_cli import model_selection_defaults as defaults
-from hermes_cli import models_catalog_static as static
+from models import catalog_static as static
 
 
 def test_preferred_silent_default_uses_cached_label(monkeypatch):
     monkeypatch.setattr(
-        "hermes_cli.model_catalog.get_default_model_from_cache",
-        lambda provider: "provider/default",
+        "models.catalog_runtime.cached_default_model",
+        lambda _path, provider: "provider/default",
     )
     assert defaults.preferred_silent_default_model("provider") == "provider/default"
 
 
 def test_preferred_silent_default_falls_back_to_curated_constant(monkeypatch):
     monkeypatch.setattr(
-        "hermes_cli.model_catalog.get_default_model_from_cache",
-        lambda provider: None,
+        "models.catalog_runtime.cached_default_model",
+        lambda _path, provider: None,
     )
     assert (
         defaults.preferred_silent_default_model("openrouter")

@@ -784,3 +784,14 @@ def _moa_provider_row(current_provider: str = "") -> dict | None:
             warning="Aggregator is the acting model billed for the run; references only advise once per user turn by default.")
     except Exception:
         return None
+
+
+def refresh_picker_catalog_sources() -> None:
+    """Eagerly warm the remote provider catalogues used by picker inventory."""
+    from hermes_cli.models import (
+        fetch_nous_recommended_models,
+        fetch_openrouter_models,
+    )
+
+    fetch_openrouter_models(force_refresh=True)
+    fetch_nous_recommended_models(force_refresh=True)

@@ -17,9 +17,9 @@ def provider_default_model(provider: str) -> str:
     preferred = static_provider_default_preference(provider_id)
     if preferred:
         try:
-            from hermes_cli.model_catalog import get_default_model_from_cache
+            from gateway.model_catalog_runtime import cached_default_model
 
-            preferred = str(get_default_model_from_cache(provider_id) or preferred)
+            preferred = str(cached_default_model(provider_id) or preferred)
         except Exception:
             pass
     selection = select_default_model(

@@ -10,11 +10,12 @@ from models.selection import ModelSelection, select_default_model, select_nous_d
 def preferred_silent_default_model(provider: str = "openrouter") -> str:
     """Cache-only labelled default, else the curated global silent fallback."""
 
-    from hermes_cli.model_catalog import get_default_model_from_cache
+    from hermes_cli.catalog_context import catalog_cache_path
+    from models.catalog_runtime import cached_default_model
     from models.catalog_static import PREFERRED_SILENT_DEFAULT_MODEL
 
     try:
-        labeled = get_default_model_from_cache(provider)
+        labeled = cached_default_model(catalog_cache_path(), provider)
     except Exception:
         labeled = None
     return str(labeled or PREFERRED_SILENT_DEFAULT_MODEL)
