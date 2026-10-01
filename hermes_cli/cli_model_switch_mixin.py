@@ -91,7 +91,7 @@ def _merge_preflight_warning(cli, result, custom_providers) -> None:
     if cli.agent is None:
         return
     try:
-        from hermes_cli.context_switch_guard import merge_preflight_compression_warning
+        from application_model_switch_preflight import merge_preflight_compression_warning
         # Prefer the fresh inventory list (same source as switch_model / TUI); fall back
         # to the agent-init snapshot.
         merge_preflight_compression_warning(

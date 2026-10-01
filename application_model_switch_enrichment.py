@@ -1,4 +1,4 @@
-"""Application enrichment for a canonically resolved gateway model switch."""
+"""Application enrichment for a canonically resolved application model switch."""
 
 from __future__ import annotations
 

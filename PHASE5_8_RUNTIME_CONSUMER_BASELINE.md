@@ -546,4 +546,6 @@ within the small-file boundary (`catalog_runtime.py` 199 lines).
 
 5.8.5.7 closed at `3f3ddeeefc`. Phase 5.8.6.1 TUI startup and rehydration
 closeout is recorded in `PHASE5_8_6_1_TUI_STARTUP_CLOSEOUT.md`; 5.8.6.2
-(TUI model-switch orchestration) follows.
+(TUI model-switch orchestration) is recorded in
+`PHASE5_8_6_2_TUI_SWITCH_CLOSEOUT.md`; 5.8.6.3 (TUI picker/config and
+metadata) follows.

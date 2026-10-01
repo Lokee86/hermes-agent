@@ -1,4 +1,4 @@
-"""Gateway ownership of persisted /model selection shape."""
+"""Shared application ownership of persisted /model selection shape."""
 
 from __future__ import annotations
 

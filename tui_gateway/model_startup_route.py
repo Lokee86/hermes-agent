@@ -126,8 +126,18 @@ def resolve_startup_seed(
 
 def recover_custom_identity(config: Mapping[str, Any], *, base_url: str = "", model: str = "") -> str:
     """Recover named custom identity, including the owned local runtime endpoint."""
+    configured_model = config.get("model") if isinstance(config.get("model"), Mapping) else {}
+    # Older rows can lose both the endpoint and the named entry's identity.
+    # The active default is a valid recovery hint only for that same model;
+    # never heal an unrelated stale session onto the profile's default host.
+    default_model = str(configured_model.get("default") or "").strip()
+    config_provider = (
+        str(configured_model.get("provider") or "").strip()
+        if not model or (default_model and model == default_model)
+        else ""
+    )
     identity = configured_custom_identity(
-        base_url=base_url, model=model,
+        base_url=base_url, model=model, config_provider=config_provider,
         providers=config.get("providers") if isinstance(config.get("providers"), Mapping) else None,
         custom_providers=config.get("custom_providers") if isinstance(config.get("custom_providers"), list) else None,
     )

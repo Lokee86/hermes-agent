@@ -56,7 +56,7 @@ def _model_switch_skew_guard() -> Optional[str]:
 
 async def _persist_model_switch_to_config(result, config_path) -> None:
     """Write-through a resolved /model switch to the profile config off-loop."""
-    from gateway.model_switch_persistence import persist_model_selection
+    from application_model_switch_persistence import persist_model_selection
 
     await asyncio.to_thread(persist_model_selection, result, config_path)
 
@@ -511,7 +511,7 @@ class GatewayModelCommandsMixin:
         rendered confirm buttons itself.
         """
         try:
-            from gateway.model_selection_guards import (
+            from application_model_selection_guards import (
                 combined_selection_warning,
                 selection_context_for_agent,
             )
@@ -564,7 +564,7 @@ class GatewayModelCommandsMixin:
             return await self._handle_model_command_locked(event)
 
     async def _handle_model_command_locked(self, event: MessageEvent) -> Optional[str]:
-        from gateway.model_command_request import (
+        from application_model_command_request import (
             parse_model_command,
             resolve_model_persistence,
         )

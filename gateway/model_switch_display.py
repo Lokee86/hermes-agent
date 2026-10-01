@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from gateway.model_switch_persistence import route_changed
+from application_model_switch_persistence import route_changed
 
 _OPAQUE_MODEL_PREFIXES = ("ri.language-model-service..language-model.",)
 

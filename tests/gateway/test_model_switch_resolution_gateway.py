@@ -2,18 +2,18 @@
 
 import pytest
 
-from gateway.model_command_request import parse_model_command, resolve_model_persistence
+from application_model_command_request import parse_model_command, resolve_model_persistence
 from gateway.model_switch_resolution import resolve_model_switch
 
 
 def _cheap_enrichment(monkeypatch):
-    monkeypatch.setattr("gateway.model_switch_enrichment._validate", lambda *_a, **_k: "")
+    monkeypatch.setattr("application_model_switch_enrichment._validate", lambda *_a, **_k: "")
     monkeypatch.setattr(
         "agent.models_dev.query_model_metadata", lambda *_a, **_k: None
     )
     monkeypatch.setattr("agent.models_dev.get_model_info", lambda *_a, **_k: None)
     monkeypatch.setattr(
-        "gateway.model_switch_enrichment.resolve_native_compaction_capabilities",
+        "application_model_switch_enrichment.resolve_native_compaction_capabilities",
         lambda **_k: {},
     )
 

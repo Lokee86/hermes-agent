@@ -4436,15 +4436,15 @@ def test_apply_model_switch_persist_override_false_never_persists(monkeypatch):
         error_message="",
     )
     monkeypatch.setattr(
-        "hermes_cli.model_switch.switch_model", lambda **kw: result
+        "tui_gateway.model_switch_resolution.resolve_tui_model_switch", lambda **kw: result
     )
     monkeypatch.setattr(
-        "hermes_cli.model_switch.resolve_persist_behavior",
+        "application_model_command_request.resolve_model_persistence",
         lambda *a: pytest.fail("persist_override must bypass resolve_persist_behavior"),
     )
     monkeypatch.setattr(
-        "hermes_cli.model_switch.persist_model_selection",
-        lambda _r: pytest.fail("persist_override=False must not persist"),
+        "application_model_switch_persistence.persist_model_selection",
+        lambda *_args: pytest.fail("persist_override=False must not persist"),
     )
     monkeypatch.setattr(
         "hermes_cli.model_cost_guard.expensive_model_warning",
@@ -9804,7 +9804,7 @@ def test_config_set_model_requires_confirmation_for_expensive_model(monkeypatch)
     agent = _Agent()
     server._sessions["sid"] = _session(agent=agent)
     monkeypatch.setattr(
-        "hermes_cli.model_switch.switch_model", lambda **_kwargs: result
+        "tui_gateway.model_switch_resolution.resolve_tui_model_switch", lambda **_kwargs: result
     )
     monkeypatch.setattr(server, "_restart_slash_worker", lambda sid, session: None)
     monkeypatch.setattr(server, "_emit", lambda *args, **kwargs: None)
@@ -9869,12 +9869,12 @@ def test_config_set_model_global_persists(monkeypatch):
         return result
 
     server._sessions["sid"] = _session(agent=_Agent())
-    monkeypatch.setattr("hermes_cli.model_switch.switch_model", _switch_model)
+    monkeypatch.setattr("tui_gateway.model_switch_resolution.resolve_tui_model_switch", _switch_model)
     monkeypatch.setattr(server, "_restart_slash_worker", lambda sid, session: None)
     monkeypatch.setattr(server, "_emit", lambda *args, **kwargs: None)
     # persist_model_selection uses targeted per-key writes (#48305) so it
     # preserves sibling model.* keys instead of rewriting the whole block.
-    monkeypatch.setattr("utils.atomic_roundtrip_yaml_update", lambda path, key, value: saved_values.__setitem__(key, value))
+    monkeypatch.setattr("application_model_switch_persistence.atomic_roundtrip_yaml_update", lambda path, key, value: saved_values.__setitem__(key, value))
 
     resp = server.handle_request(
         {
@@ -10108,9 +10108,9 @@ def test_config_set_model_recovers_failed_profile_resume_after_build_completes(
             assert release_old_finally.wait(timeout=10)
         return real_transfer(agent, db)
 
-    monkeypatch.setattr("hermes_cli.model_switch.switch_model", fake_switch_model)
+    monkeypatch.setattr("tui_gateway.model_switch_resolution.resolve_tui_model_switch", fake_switch_model)
     monkeypatch.setattr(
-        "hermes_cli.model_selection_guards.combined_selection_warning",
+        "application_model_selection_guards.combined_selection_warning",
         lambda *args, **kwargs: None,
     )
     monkeypatch.setattr("hermes_state_registry.acquire", FakeDb)
@@ -10287,7 +10287,7 @@ def test_config_set_model_does_not_leak_inference_provider_env(monkeypatch):
     server._sessions["sid"] = session
     monkeypatch.setenv("HERMES_INFERENCE_PROVIDER", "openrouter")
     monkeypatch.setattr(
-        "hermes_cli.model_switch.switch_model", lambda **_kwargs: result
+        "tui_gateway.model_switch_resolution.resolve_tui_model_switch", lambda **_kwargs: result
     )
     monkeypatch.setattr(server, "_restart_slash_worker", lambda sid, session: None)
     monkeypatch.setattr(server, "_emit", lambda *args, **kwargs: None)
@@ -10348,7 +10348,7 @@ def test_config_set_model_records_per_session_override_not_env(monkeypatch):
     monkeypatch.delenv("HERMES_TUI_PROVIDER", raising=False)
     monkeypatch.delenv("HERMES_INFERENCE_PROVIDER", raising=False)
     monkeypatch.setattr(
-        "hermes_cli.model_switch.switch_model", lambda **_kwargs: result
+        "tui_gateway.model_switch_resolution.resolve_tui_model_switch", lambda **_kwargs: result
     )
     monkeypatch.setattr(server, "_restart_slash_worker", lambda sid, session: None)
     monkeypatch.setattr(server, "_emit", lambda *args, **kwargs: None)
@@ -10446,7 +10446,7 @@ def test_config_set_model_switches_agent_without_touching_env(monkeypatch):
             warning_message="",
         )
 
-    monkeypatch.setattr("hermes_cli.model_switch.switch_model", fake_switch_model)
+    monkeypatch.setattr("tui_gateway.model_switch_resolution.resolve_tui_model_switch", fake_switch_model)
 
     try:
         resp = server.handle_request(
@@ -10522,7 +10522,7 @@ def test_config_set_model_once_keeps_env_and_records_restore(monkeypatch):
     monkeypatch.setenv("HERMES_INFERENCE_PROVIDER", "openrouter")
     monkeypatch.setenv("HERMES_MODEL", "old/model")
     monkeypatch.setattr(
-        "hermes_cli.model_switch.switch_model",
+        "tui_gateway.model_switch_resolution.resolve_tui_model_switch",
         lambda **kwargs: seen.update(kwargs) or result,
     )
     monkeypatch.setattr(server, "_restart_slash_worker", lambda *args, **kwargs: None)
@@ -10553,7 +10553,7 @@ def test_config_set_model_once_keeps_env_and_records_restore(monkeypatch):
 
 def test_config_set_model_once_requires_live_session(monkeypatch):
     monkeypatch.setattr(
-        "hermes_cli.model_switch.switch_model",
+        "tui_gateway.model_switch_resolution.resolve_tui_model_switch",
         lambda **_: (_ for _ in ()).throw(AssertionError("switch should not run")),
     )
 
@@ -10653,7 +10653,7 @@ def test_config_set_model_session_switch_clears_pending_once_restore(monkeypatch
     session = _session(agent=Agent())
     session["one_turn_model_restore"] = {"model": "old/model"}
     server._sessions["sid"] = session
-    monkeypatch.setattr("hermes_cli.model_switch.switch_model", lambda **_kwargs: result)
+    monkeypatch.setattr("tui_gateway.model_switch_resolution.resolve_tui_model_switch", lambda **_kwargs: result)
     monkeypatch.setattr(server, "_restart_slash_worker", lambda *args, **kwargs: None)
     monkeypatch.setattr(server, "_emit", lambda *args, **kwargs: None)
 

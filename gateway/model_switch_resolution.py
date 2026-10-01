@@ -7,7 +7,7 @@ from typing import Any, Mapping
 
 from providers import get_provider_profile, match_configured_provider
 
-from gateway.model_switch_enrichment import ModelValidationError, enrich_model_switch
+from application_model_switch_enrichment import ModelValidationError, enrich_model_switch
 from gateway.session_model_resolution import resolve_session_model
 
 

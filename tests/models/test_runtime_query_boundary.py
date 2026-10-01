@@ -400,12 +400,12 @@ def test_phase_5_8_5_session_mutation_is_gateway_owned():
 def test_phase_5_8_5_model_command_orchestration_is_gateway_owned():
     paths = (
         ROOT / "gateway" / "slash_commands_model.py",
-        ROOT / "gateway" / "model_command_request.py",
+        ROOT / "application_model_command_request.py",
         ROOT / "gateway" / "model_switch_resolution.py",
-        ROOT / "gateway" / "model_switch_enrichment.py",
-        ROOT / "gateway" / "model_switch_persistence.py",
+        ROOT / "application_model_switch_enrichment.py",
+        ROOT / "application_model_switch_persistence.py",
         ROOT / "gateway" / "model_switch_display.py",
-        ROOT / "gateway" / "model_selection_guards.py",
+        ROOT / "application_model_selection_guards.py",
         ROOT / "gateway" / "model_switch_preflight.py",
     )
     forbidden = (
@@ -423,16 +423,16 @@ def test_phase_5_8_5_model_command_orchestration_is_gateway_owned():
     assert offenders == []
 
     assert "parse_model_command" in _definitions(
-        ROOT / "gateway" / "model_command_request.py"
+        ROOT / "application_model_command_request.py"
     )
     assert "resolve_model_switch" in _definitions(
         ROOT / "gateway" / "model_switch_resolution.py"
     )
     assert "persist_model_selection" in _definitions(
-        ROOT / "gateway" / "model_switch_persistence.py"
+        ROOT / "application_model_switch_persistence.py"
     )
     assert "combined_selection_warning" in _definitions(
-        ROOT / "gateway" / "model_selection_guards.py"
+        ROOT / "application_model_selection_guards.py"
     )
 
 
@@ -658,3 +658,68 @@ def test_phase_5_8_5_gateway_runtime_provider_exceptions_are_exact():
         collect(path, _tree(path))
 
     assert found == allowed
+
+def test_phase_5_8_6_2_tui_switch_owns_application_mutation():
+    paths = (
+        ROOT / "tui_gateway" / "model_switch.py",
+        ROOT / "tui_gateway" / "model_switch_resolution.py",
+        ROOT / "tui_gateway" / "methods_config_set.py",
+    )
+    forbidden = {
+        "hermes_cli.model_switch",
+        "hermes_cli.model_switch_providers",
+        "hermes_cli.model_selection_guards",
+        "hermes_cli.context_switch_guard",
+    }
+    offenders = [
+        f"{path.relative_to(ROOT)} -> {module}"
+        for path in paths
+        for module in _imports(path)
+        if module in forbidden
+    ]
+    assert offenders == []
+    assert "resolve_tui_model_switch" in _definitions(paths[1])
+    assert "_apply_model_switch" in _definitions(paths[0])
+
+    shared = (
+        ROOT / "application_model_command_request.py",
+        ROOT / "application_model_selection_guards.py",
+        ROOT / "application_model_switch_enrichment.py",
+        ROOT / "application_model_switch_persistence.py",
+        ROOT / "application_model_switch_preflight.py",
+    )
+    for path in shared:
+        assert path.exists()
+        assert not any(
+            module == "gateway" or module.startswith("gateway.")
+            or module == "tui_gateway" or module.startswith("tui_gateway.")
+            or module == "hermes_cli.model_switch"
+            for module in _imports(path)
+        )
+
+
+def test_phase_5_8_6_2_tui_credential_acquisition_exceptions_are_exact():
+    expected = {
+        ("tui_gateway/model_switch.py", "_current_model_runtime",
+         "hermes_cli.runtime_provider", "resolve_runtime_provider"),
+        ("tui_gateway/model_switch_resolution.py", "resolve_tui_model_switch",
+         "hermes_cli.runtime_provider", "resolve_runtime_provider"),
+    }
+    found = set()
+
+    def visit(path, node, scope="<module>"):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            scope = node.name
+        if (isinstance(node, ast.ImportFrom)
+                and node.module and node.module.startswith("hermes_cli.runtime_provider")):
+            found.update(
+                (path.relative_to(ROOT).as_posix(), scope, node.module, alias.name)
+                for alias in node.names
+            )
+        for child in ast.iter_child_nodes(node):
+            visit(path, child, scope)
+
+    for rel in ("tui_gateway/model_switch.py", "tui_gateway/model_switch_resolution.py"):
+        path = ROOT / rel
+        visit(path, _tree(path))
+    assert found == expected

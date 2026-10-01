@@ -1,14 +1,45 @@
-"""Warn when an in-session model switch will trigger preflight compression on the next turn."""
+"""Application preflight warning for a model change that triggers compression."""
 
 from __future__ import annotations
 
-from typing import Any, Callable, List, Optional
+from typing import Any, List, Optional
 
 from models.metadata.context import MINIMUM_CONTEXT_LENGTH
-from hermes_cli.model_switch import ModelSwitchResult, resolve_display_context_length
+from types import SimpleNamespace
+
+from application_model_switch_persistence import route_changed
+from models.metadata.context import get_model_context_length
 
 
-def _append_warning(result: ModelSwitchResult, text: str) -> None:
+def resolve_display_context_length(
+    model: str, provider: str, base_url: str = "", api_key: Any = "",
+    model_info: Any = None, custom_providers: list | None = None,
+    config_context_length: int | None = None, configured_model: str | None = None,
+    configured_provider: str | None = None, configured_base_url: str | None = None,
+) -> Optional[int]:
+    """Read canonical context metadata; only a matching persisted route keeps its pin."""
+    pinned = config_context_length
+    if pinned is not None and (configured_model or configured_provider or configured_base_url):
+        old = {"default": configured_model, "provider": configured_provider,
+               "base_url": configured_base_url}
+        new = SimpleNamespace(new_model=model, target_provider=provider, base_url=base_url)
+        if (configured_model and configured_model != model) or route_changed(old, new):
+            pinned = None
+    try:
+        size = get_model_context_length(
+            model, base_url=base_url or "", api_key=api_key or "",
+            provider=provider or None, custom_providers=custom_providers,
+            config_context_length=pinned,
+        )
+        if size:
+            return int(size)
+    except Exception:
+        pass
+    fallback = getattr(model_info, "context_window", None)
+    return int(fallback) if fallback else None
+
+
+def _append_warning(result: Any, text: str) -> None:
     if result.warning_message:
         result.warning_message = f"{result.warning_message} | {text}"
     else:
@@ -53,7 +84,7 @@ def _estimate_tokens(agent: Any, messages: Optional[List[dict]]) -> Optional[int
 
 
 def merge_preflight_compression_warning(
-    result: ModelSwitchResult,
+    result: Any,
     *,
     agent: Any = None,
     messages: Optional[List[dict]] = None,
@@ -115,52 +146,3 @@ def merge_preflight_compression_warning(
         f"(auto-compress at ~{new_threshold:,}). "
         f"Your next message will run preflight compression before the model replies.")
     _append_warning(result, "".join(parts))
-
-
-def enrich_model_switch_warnings_for_gateway(
-    result: ModelSwitchResult,
-    runner: Any,
-    *,
-    session_key: str,
-    source: Any,
-    custom_providers: list | None = None,
-    load_gateway_config: Callable[[], dict] | None = None) -> None:
-    """Gateway helper: cached agent + session DB messages."""
-    lock = getattr(runner, "_agent_cache_lock", None)
-    cache = getattr(runner, "_agent_cache", None)
-    agent = None
-    if lock is not None and cache is not None:
-        with lock:
-            entry = cache.get(session_key)
-            if entry and entry[0] is not None:
-                agent = entry[0]
-    if agent is None:
-        return
-
-    configured: dict = dict.fromkeys(
-        ("config_context_length", "configured_model", "configured_provider", "configured_base_url"))
-    if load_gateway_config is not None:
-        try:
-            cfg = load_gateway_config()
-            model_cfg = cfg.get("model", {}) if isinstance(cfg, dict) else {}
-            if isinstance(model_cfg, dict) and model_cfg.get("context_length") is not None:
-                configured.update(
-                    config_context_length=int(model_cfg["context_length"]),
-                    configured_model=model_cfg.get("default") or model_cfg.get("model"),
-                    configured_provider=model_cfg.get("provider"),
-                    configured_base_url=model_cfg.get("base_url"))
-        except Exception:
-            pass
-
-    messages = None
-    db = getattr(runner, "_session_db", None)
-    store = getattr(runner, "session_store", None)
-    if db is not None and store is not None:
-        try:
-            entry = store.get_or_create_session(source)
-            messages = db.get_messages_as_conversation(entry.session_id)
-        except Exception:
-            pass
-
-    merge_preflight_compression_warning(
-        result, agent=agent, messages=messages, custom_providers=custom_providers, **configured)

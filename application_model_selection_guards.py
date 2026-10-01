@@ -1,4 +1,4 @@
-"""Gateway-owned confirmation policy for model selection."""
+"""Shared application confirmation policy for model selection."""
 
 from __future__ import annotations
 
@@ -104,6 +104,18 @@ def _context_warning(model, provider, _base_url, _api_key, _model_info, ctx, thr
     return SelectionWarning("context_cache", "Large Context Switch Warning", target, provider or "", message)
 
 
+def _context_threshold_from_config() -> int:
+    """Read the active profile's cache-switch confirmation threshold (0 disables)."""
+    try:
+        from hermes_cli.config import load_config
+        config = load_config() or {}
+        section = config.get("model") if isinstance(config, dict) else None
+        value = section.get("switch_context_confirm_tokens") if isinstance(section, dict) else None
+        return max(0, int(value)) if value is not None else 100_000
+    except Exception:
+        return 100_000
+
+
 def combined_selection_warning(
     model_name: str,
     *,
@@ -112,9 +124,11 @@ def combined_selection_warning(
     api_key: str = "",
     model_info=None,
     selection_context: Optional[SelectionContext] = None,
-    context_threshold: int = 100_000,
+    context_threshold: int | None = None,
     include_kinds: Optional[Iterable[str]] = None,
 ) -> Optional[SelectionWarning]:
+    if context_threshold is None:
+        context_threshold = _context_threshold_from_config()
     wanted = set(include_kinds) if include_kinds is not None else None
     warnings = []
     for kind, fn in (

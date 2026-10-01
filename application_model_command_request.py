@@ -1,4 +1,4 @@
-"""Gateway-owned parsing and persistence scope for /model commands."""
+"""Shared application parsing and persistence scope for /model commands."""
 
 from __future__ import annotations
 
