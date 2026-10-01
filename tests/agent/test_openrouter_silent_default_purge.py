@@ -50,7 +50,7 @@ class TestEnvIngestionWarning:
         self._fresh_home(tmp_path, monkeypatch)
         from auth import credential_pool as cp
 
-        monkeypatch.setattr(cp, "_ENV_INGESTION_WARNED", set())
+        monkeypatch.setattr(credential_pool_sources, "_ENV_INGESTION_WARNED", set())
         entries = []
         with caplog.at_level(logging.WARNING, logger=cp.logger.name):
             changed, sources = credential_pool_sources._seed_from_env("openrouter", entries, environment=credential_pool_environment())
@@ -69,7 +69,7 @@ class TestEnvIngestionWarning:
         self._fresh_home(tmp_path, monkeypatch)
         from auth import credential_pool as cp
 
-        monkeypatch.setattr(cp, "_ENV_INGESTION_WARNED", set())
+        monkeypatch.setattr(credential_pool_sources, "_ENV_INGESTION_WARNED", set())
         with caplog.at_level(logging.WARNING, logger=cp.logger.name):
             credential_pool_sources._warn_env_ingestion_once("openrouter", "OPENROUTER_API_KEY")
             credential_pool_sources._warn_env_ingestion_once("openrouter", "OPENROUTER_API_KEY")
@@ -91,7 +91,7 @@ class TestEnvIngestionWarning:
         changed, _ = credential_pool_sources._seed_from_env("openrouter", entries, environment=credential_pool_environment())
         assert changed is True
 
-        monkeypatch.setattr(cp, "_ENV_INGESTION_WARNED", set())
+        monkeypatch.setattr(credential_pool_sources, "_ENV_INGESTION_WARNED", set())
         caplog.clear()
         with caplog.at_level(logging.WARNING, logger=cp.logger.name):
             changed_again, _ = credential_pool_sources._seed_from_env("openrouter", entries, environment=credential_pool_environment())

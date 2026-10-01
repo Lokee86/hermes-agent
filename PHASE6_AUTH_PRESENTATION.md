@@ -74,5 +74,6 @@ imports and auth-store transactions implemented by CLI authentication modules.
 Fresh-process import checks include the new status owner. Compatibility target
 identity and the supported provider PKCE hook contract are verified.
 
-6.8 full-repository integration, build, packaging and independent PR closeout
-remain pending.
+6.8 integration, build, packaging, compatibility and independent PR closeout
+are recorded in `PHASE6_AUTH_CLOSEOUT.md`, including baseline failures and the
+full TUI validation limitation.

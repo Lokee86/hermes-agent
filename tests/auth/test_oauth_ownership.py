@@ -33,7 +33,7 @@ def test_retained_oauth_settings_reject_another_profile_before_read(tmp_path, mo
     assert not (b / "auth.json").exists()
 
 
-def test_all_builtin_authentication_modules_import_without_cli(tmp_path):
+def test_all_authentication_modules_import_without_cli(tmp_path):
     code = r'''
 import importlib, importlib.abc, pkgutil, sys
 class BlockCLI(importlib.abc.MetaPathFinder):
@@ -41,10 +41,8 @@ class BlockCLI(importlib.abc.MetaPathFinder):
         if fullname.split(".")[0] in {"hermes_cli", "nous_cli"}:
             raise AssertionError("reverse CLI dependency: " + fullname)
 sys.meta_path.insert(0, BlockCLI())
-import auth.providers
-for module in ('auth.api_keys', 'auth.provider_status', 'auth.keepalive', 'auth.failure_policy', 'auth.secret_validation'):
-    importlib.import_module(module)
-for info in pkgutil.iter_modules(auth.providers.__path__, "auth.providers."):
+import auth
+for info in pkgutil.walk_packages(auth.__path__, "auth."):
     importlib.import_module(info.name)
 '''
     result = subprocess.run(

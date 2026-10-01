@@ -1,6 +1,6 @@
 # Hermes Phase 6 — Authentication and Credential Ownership
 
-Status: 6.1–6.7 complete on the independent baseline; integration/build/PR closeout (6.8) remains pending.
+Status: 6.1–6.8 implementation and closeout complete on the independent baseline. Validation results, baseline failures and the full TUI gate limitation are recorded in `PHASE6_AUTH_CLOSEOUT.md`; the independent PR remains draft.
 See `PHASE6_AUTH_STORAGE.md`, `PHASE6_AUTH_POOL.md`, `PHASE6_AUTH_OAUTH.md` `PHASE6_AUTH_CONSUMERS.md` and `PHASE6_AUTH_PRESENTATION.md` for ownership cuts and verification.
 Branch: `refactor/phase6-auth-credentials`.
 Base: One Gateway `bc1b572e2c`. Phase 6 is independent of Phase 5.

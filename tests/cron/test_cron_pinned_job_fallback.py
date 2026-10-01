@@ -206,7 +206,8 @@ def test_pinned_job_same_provider_credential_pool_still_loads(tmp_path):
         success, error, _requested, agent_kwargs = _run(
             tmp_path, _job(provider="anthropic", model="claude-sonnet-5"))
     assert (success, error) == (True, None)
-    load_pool.assert_called_once_with("anthropic")
+    load_pool.assert_called_once_with("anthropic", environment=load_pool.call_args.kwargs["environment"])
+    assert load_pool.call_args.kwargs["environment"].scope.profile_home == tmp_path.resolve()
     assert agent_kwargs["credential_pool"] is pool
     assert agent_kwargs["fallback_model"] is None
 

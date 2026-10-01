@@ -164,7 +164,7 @@ def test_model_command_prompts_to_reuse_or_reauthenticate_codex_session(monkeypa
     monkeypatch.setattr("builtins.input", lambda prompt="": next(choices))
     monkeypatch.setattr(
         "auth.provider_status.get_codex_auth_status",
-        lambda: {"logged_in": True, "source": "hermes-auth-store"},
+        lambda **_kwargs: {"logged_in": True, "source": "hermes-auth-store"},
     )
     monkeypatch.setattr(
         'auth.providers.codex.resolve_codex_runtime_credentials',
