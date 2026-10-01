@@ -47,6 +47,17 @@ def model_selection_config_updates(result, current_model_cfg: Any) -> dict[str, 
     return updates
 
 
+def apply_model_selection(model_cfg: Any, result) -> dict[str, Any]:
+    """Apply the shared global model shape to an already-loaded config block."""
+    updated = dict(model_cfg) if isinstance(model_cfg, dict) else {}
+    for key, value in model_selection_config_updates(result, updated).items():
+        if value is None:
+            updated.pop(key, None)
+        else:
+            updated[key] = value
+    return updated
+
+
 def persist_model_selection(result, config_path: Any) -> None:
     from hermes_cli.config import read_user_config_raw
 
@@ -60,4 +71,4 @@ def persist_model_selection(result, config_path: Any) -> None:
         pass
 
 
-__all__ = ["model_selection_config_updates", "persist_model_selection", "route_changed"]
+__all__ = ["apply_model_selection", "model_selection_config_updates", "persist_model_selection", "route_changed"]

@@ -16,7 +16,7 @@ from hermes_cli.web_server_config import (
     _AUX_TASK_SLOTS, _UNSET, _apply_model_assignment_sync, _dashboard_code_skew_guard,
     _prepare_main_assignment,
 )
-from agent.model_metadata import is_local_endpoint
+from models.metadata.context import is_local_endpoint
 from starlette.concurrency import run_in_threadpool
 from hermes_cli.web_models import ModelAssignment, MoaConfigPayload, MoaModelSlot
 from hermes_cli.web_routers._common import _CONFIG_MUTATION_LOCK, config_write_scope, http_failure
@@ -342,7 +342,7 @@ async def set_model_assignment(body: ModelAssignment, profile: Optional[str] = N
         # coroutine interleaving on the event-loop thread could cross-restore module globals).
         if model and not body.confirm_expensive_model:
             try:
-                from hermes_cli.model_selection_guards import combined_selection_warning
+                from application_model_selection_guards import combined_selection_warning
 
                 # Pricing lookup can hit models.dev / a /models endpoint on a cache miss — off the loop.
                 warning = await asyncio.to_thread(combined_selection_warning, model, provider=provider, base_url=base_url)

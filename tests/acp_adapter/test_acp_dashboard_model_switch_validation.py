@@ -1,10 +1,9 @@
 """ACP session switch transaction tests and independent dashboard validation.
 
-ACP owns its canonical selection/routing and transaction; dashboard retains
-its separate existing validation path until Phase 5.8.6.6.
-These transaction tests inject ACP resolution outcomes without importing a
-second CLI coordinator. The dashboard-only assertion still exercises its
-current CLI validation until that later phase.
+ACP and dashboard now resolve through distinct application coordinators
+over the same canonical model and provider domains. These transaction tests
+inject ACP resolution outcomes independently; dashboard unknown-provider
+rejection runs through the actual dashboard selection application.
 """
 
 from __future__ import annotations
@@ -63,7 +62,6 @@ def _state(**agent_attrs):
 
 def test_acp_and_dashboard_reject_what_switch_model_rejects(monkeypatch):
     rejected = types.SimpleNamespace(success=False, error_message="Unknown provider 'notaprovider'.")
-    monkeypatch.setattr("hermes_cli.model_switch.switch_model", lambda **_kw: rejected)
     _patch_acp_switch(monkeypatch, lambda **_kw: rejected)
 
     agent, made = _acp_agent()
