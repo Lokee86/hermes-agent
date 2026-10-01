@@ -83,7 +83,7 @@ def test_keepalive_thread_starts_when_an_agent_routes_to_nous(monkeypatch, tmp_p
 
     monkeypatch.setenv("HERMES_HOME", str(tmp_path / "hh"))
     started = []
-    monkeypatch.setattr("hermes_cli.nous_auth_keepalive.start_nous_auth_keepalive", lambda: started.append(1))
+    monkeypatch.setattr("auth.keepalive.start_nous_auth_keepalive", lambda **kwargs: started.append(1))
     # Tool discovery and the SDK client are irrelevant to the keepalive wiring and dominate runtime.
     monkeypatch.setattr("model_tools.get_tool_definitions", lambda *a, **k: [])
     monkeypatch.setattr("model_tools.check_toolset_requirements", lambda *a, **k: {})

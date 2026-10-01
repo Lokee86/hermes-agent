@@ -4,7 +4,8 @@ import json
 
 import pytest
 
-from hermes_cli.auth import PROVIDER_REGISTRY, resolve_provider, get_api_key_provider_status, resolve_api_key_provider_credentials, KIMI_CODE_BASE_URL, _resolve_kimi_base_url
+from hermes_cli.auth import PROVIDER_REGISTRY, resolve_provider, get_api_key_provider_status, KIMI_CODE_BASE_URL, _resolve_kimi_base_url
+from hermes_cli.runtime_provider_credentials import resolve_api_key_provider_credentials
 from auth.constants import STEPFUN_STEP_PLAN_INTL_BASE_URL
 from auth.errors import AuthError
 from auth.providers.copilot import _try_gh_cli_token
@@ -206,7 +207,7 @@ class TestResolveApiKeyProviderCredentials:
             calls.append(cmd)
             return _Result()
 
-        monkeypatch.setattr("hermes_cli.copilot_auth.subprocess.run", _fake_run)
+        monkeypatch.setattr("auth.providers.copilot.subprocess.run", _fake_run)
 
         assert _try_gh_cli_token() == "gh-cli-secret"
         assert calls == [[str(gh), "auth", "token"]]

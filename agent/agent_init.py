@@ -453,8 +453,10 @@ def _finalize_routing(agent, api_mode, credential_pool):
     # process-wide, daemon.
     if agent.provider == "nous":
         with suppress(Exception):
-            from hermes_cli.nous_auth_keepalive import start_nous_auth_keepalive
-            start_nous_auth_keepalive()
+            from auth.keepalive import start_nous_auth_keepalive
+            from hermes_cli.config_credentials import credential_pool_environment
+            from tui_gateway.launch_profile_policy import launch_profile_scope_if_multiplexed
+            start_nous_auth_keepalive(environment_factory=credential_pool_environment, scope_context=launch_profile_scope_if_multiplexed)
 
     with suppress(Exception):
         from hermes_cli.model_normalize import (
@@ -2442,7 +2444,7 @@ def init_agent(
     # Effective base URL for feature detection (prompt caching, reasoning, etc.)
     from hermes_cli.providers import is_actual_route
     if is_actual_route(provider, base_url):
-        from hermes_cli.auth import normalize_actual_base_url
+        from hermes_cli.route_identity import normalize_actual_base_url
         base_url = normalize_actual_base_url(base_url)
     agent.base_url = base_url or ""
     provider_name = provider.strip().lower() if isinstance(provider, str) and provider.strip() else None

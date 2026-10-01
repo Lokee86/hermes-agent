@@ -25,7 +25,7 @@ if "dotenv" not in sys.modules:
     fake_dotenv.load_dotenv = lambda *args, **kwargs: None
     sys.modules["dotenv"] = fake_dotenv
 
-from hermes_cli.auth import resolve_api_key_provider_credentials
+from hermes_cli.runtime_provider_credentials import resolve_api_key_provider_credentials
 from hermes_cli.models import normalize_provider
 
 

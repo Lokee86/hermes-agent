@@ -6,6 +6,10 @@ Provider and model routing remain with their existing Phase 5 owners.
 """
 
 from __future__ import annotations
+from hermes_cli.route_identity import is_actual_local_base_url, normalize_actual_base_url
+from auth.api_keys import resolve_api_key_provider_secret
+from auth.secret_validation import KNOWN_PROVIDER_KEY_PREFIXES, _PLACEHOLDER_KEY_PREFIXES, _PLACEHOLDER_SECRET_VALUES, _is_placeholder_shape, _matches_key_prefix, _usable_declared_secret, has_usable_secret, looks_like_openrouter_key
+from auth.failure_policy import is_rate_limited_auth_error
 from auth.oauth import _is_terminal_refresh_error, _is_terminal_nous_refresh_error, _is_terminal_codex_oauth_refresh_error, _is_terminal_xai_oauth_refresh_error
 
 from hermes_cli.config_credentials import credential_pool_environment as _phase6_auth_environment
@@ -78,30 +82,8 @@ try:
 except Exception:
     msvcrt = None
 
-def is_actual_local_base_url(base_url: str) -> bool:
-    """Return True for Actual's loopback local API endpoint."""
-    try:
-        host = (urlparse(base_url or "").hostname or "").lower().rstrip(".")
-    except Exception:
-        return False
-    return host in {"localhost", "127.0.0.1", "::1", "0.0.0.0"}
 
 
-def normalize_actual_base_url(base_url: str) -> str:
-    """Return Actual's OpenAI-compatible base URL (hosted api.actual.inc or the loopback local server;
-    both expose a /v1 surface for the selected OpenAI-compatible transport)."""
-    url = str(base_url or "").strip().rstrip("/")
-    if not url:
-        return DEFAULT_ACTUAL_BASE_URL
-    try:
-        parsed = urlparse(url)
-        host = (parsed.hostname or "").lower().rstrip(".")
-        path = parsed.path.rstrip("/")
-    except Exception:
-        return url
-    if path in {"", "/"} and (host == "api.actual.inc" or is_actual_local_base_url(url)):
-        return url + "/v1"
-    return url
 
 
 # ── Provider Registry ───────────────────────────────────────────────────────────────────────────────
@@ -244,170 +226,35 @@ def get_anthropic_key() -> str:
 
 # ── Secret validation ───────────────────────────────────────────────────────────────────────────────
 
-_PLACEHOLDER_SECRET_VALUES = {
-    "*", "**", "***", "changeme", "your_api_key", "your_api_key_here", "your-api-key",
-    "placeholder", "example", "dummy", "null", "none"}
 
 
 # The two placeholder shapes this repo ships itself, in ``.env.example`` (four providers) and in
 # the quickstart / MCP / skill references (``ghp_xxx``, ``hf_xxx``, ``sk-xxxxxxxx``). Both are
 # copied verbatim by users, so both must read as "not configured" rather than as a credential.
-_PLACEHOLDER_KEY_PREFIXES = ("sk-", "ghp_", "hf_")
 
 
-def _is_placeholder_shape(value: str) -> bool:
-    """True for the placeholder shapes shipped in .env.example and the docs."""
-    lowered = value.lower()
-    if lowered.startswith("your_") and lowered.endswith("_here"):
-        return True
-    for prefix in _PLACEHOLDER_KEY_PREFIXES:
-        if lowered.startswith(prefix):
-            tail = lowered[len(prefix):]
-            if tail and all(c == "x" for c in tail):
-                return True
-    stripped = lowered.replace(" ", "").replace("-", "").replace("_", "")
-    return bool(stripped) and all(c == "x" for c in stripped)
 
 
-def has_usable_secret(value: Any, *, min_length: int = 4) -> bool:
-    """Return True when a configured secret looks usable, not empty/placeholder."""
-    if not isinstance(value, str):
-        return False
-    cleaned = value.strip()
-    return (len(cleaned) >= min_length
-            and cleaned.lower() not in _PLACEHOLDER_SECRET_VALUES
-            and not _is_placeholder_shape(cleaned))
 
 
 # Known API-key prefixes per provider. Only listed providers get prefix validation; everyone else
 # is fail-open. Keeps an obviously malformed key in .env (truncated paste, wrong provider's key)
 # from silently shadowing a valid credential-pool entry and producing opaque 401s.
 # See #93593.
-KNOWN_PROVIDER_KEY_PREFIXES: Dict[str, tuple] = {
-    "openrouter": ("sk-or-",),  # all OpenRouter keys are sk-or-... (currently sk-or-v1-)
-}
 
 
-def _matches_key_prefix(provider_id: str, val: str) -> bool:
-    """True when *val* starts with one of *provider_id*'s declared key prefixes (False when the
-    provider declares none)."""
-    return val.startswith(KNOWN_PROVIDER_KEY_PREFIXES.get(provider_id, ()))
 
 
-def looks_like_openrouter_key(value: Any) -> bool:
-    """True when *value* carries an OpenRouter key prefix. OPENAI_API_KEY is a legacy home for an
-    OpenRouter key, so only a value shaped like one may be read as an OpenRouter credential: a real
-    OpenAI key must never be auto-routed to, or sent to, openrouter.ai."""
-    return _matches_key_prefix("openrouter", str(value or "").strip())
 
 
-def _usable_declared_secret(provider_id: str, value: Any, source: str) -> Optional[str]:
-    """*value* stripped when it is a usable, prefix-valid secret; None (after warning on a provable
-    prefix mismatch, so it never shadows a later credential source) otherwise. Providers without a
-    declared prefix are fail-open."""
-    val = str(value or "").strip()
-    if not has_usable_secret(val):
-        return None
-    prefixes = KNOWN_PROVIDER_KEY_PREFIXES.get(provider_id)
-    if prefixes and not _matches_key_prefix(provider_id, val):
-        logger.warning(
-            "Ignoring %s for provider %r: value does not match the expected key "
-            "prefix (%s). Falling back to the next credential source. Fix or "
-            "remove the malformed key to silence this warning.",
-            source, provider_id, " or ".join(prefixes))
-        return None
-    return val
 
 
-def _model_level_key_env(provider_id: str) -> str:
-    """``model.key_env`` when config.yaml's main model targets *provider_id*, else ``""``.
-
-    The Desktop settings UI saves registry-provider keys as a credential pointer
-    (``model.key_env`` → ``$HERMES_HOME/.env``) instead of the registry's canonical env var,
-    so credential resolution must consult it (#106336).
-    """
-    try:
-        from hermes_cli.config import load_config
-        model_cfg = (load_config() or {}).get("model")
-    except Exception:
-        return ""
-    if not isinstance(model_cfg, dict):
-        return ""
-    if str(model_cfg.get("provider") or "").strip().lower() != provider_id:
-        return ""
-    return str(model_cfg.get("key_env") or model_cfg.get("api_key_env") or "").strip()
 
 
-def _resolve_api_key_provider_secret(provider_id: str, pconfig: ProviderConfig) -> tuple[str, str]:
-    """Resolve an API-key provider's token and indicate where it came from."""
-    from hermes_cli.config_credentials import credential_pool_environment
-    if provider_id == "copilot":
-        # The dedicated copilot auth module does proper token validation/exchange.
-        try:
-            from auth.providers.copilot import resolve_copilot_token, get_copilot_api_token
-            token, source = resolve_copilot_token()
-            if token:
-                api_token, _base_url = get_copilot_api_token(token)
-                return api_token, source
-        except ValueError as exc:
-            logger.warning("Copilot token validation failed: %s", exc)
-        except Exception:
-            pass
-        return "", ""
-
-    # Prefer ~/.hermes/.env over os.environ so a deliberate key rotation in .env isn't shadowed by
-    # a stale shell export inherited from a parent process (Codex CLI, test runners, etc.).
-    from hermes_cli.config import get_env_value_prefer_dotenv
-
-    # Desktop-saved credential pointer: the settings UI persists registry-provider keys as
-    # model.key_env → $HERMES_HOME/.env (e.g. HERMES_CUSTOM_LMSTUDIO_API_KEY) while keeping
-    # model.provider on the registry id, so the pointer must be honored here or the UI-saved
-    # key is silently ignored and lmstudio falls through to its no-auth placeholder (#106336).
-    key_env = _model_level_key_env(provider_id)
-    if key_env:
-        val = _usable_declared_secret(provider_id, get_env_value_prefer_dotenv(key_env), key_env)
-        if val:
-            return val, key_env
-
-    for env_var in pconfig.api_key_env_vars:
-        val = _usable_declared_secret(provider_id, get_env_value_prefer_dotenv(env_var), env_var)
-        if val:
-            # A provably malformed key (declared prefix mismatch) must not shadow a valid credential-pool
-            # entry (#93593). Warn and keep looking instead of returning it.
-            return val, env_var
-
-    # Fallback: credential pool (e.g. zai key stored via auth.json). Prefer the pool's own
-    # selection (peek) but try the rest too so one malformed entry doesn't block a valid one.
-    pool_source = f"credential_pool:{provider_id}"
-    try:
-        from auth.credential_pool import load_pool
-        pool = load_pool(provider_id, environment=credential_pool_environment())
-        if pool and pool.has_credentials():
-            entry = pool.peek()
-            candidates = [entry] if entry is not None else []
-            try:
-                for extra in pool.entries():
-                    if extra is not None and all(extra is not c for c in candidates):
-                        candidates.append(extra)
-            except Exception:
-                pass
-            for entry in candidates:
-                key = getattr(entry, "access_token", "") or getattr(entry, "runtime_api_key", "")
-                val = _usable_declared_secret(provider_id, key, pool_source)
-                if val:
-                    return val, pool_source
-    except Exception:
-        pass
-    return "", ""
 
 
 # ── Error formatting (AuthError itself lives in auth_constants) ─────────────────────────────────────
 
-def is_rate_limited_auth_error(error: Exception) -> bool:
-    """True when an :class:`AuthError` is upstream rate-limiting / quota: transient, and
-    re-authenticating cannot fix it, so callers should say "retry later", not ``hermes auth``."""
-    return (isinstance(error, AuthError) and not error.relogin_required
-            and error.code == CODEX_RATE_LIMITED_CODE)
 
 
 def primary_failure_wording(error: Exception) -> tuple[str, str]:
@@ -1111,7 +958,7 @@ def get_api_key_provider_status(provider_id: str) -> Dict[str, Any]:
     pconfig = _registry_lookup(provider_id)
     if not pconfig or pconfig.auth_type != "api_key":
         return {"configured": False}
-    api_key, key_source = _resolve_api_key_provider_secret(provider_id, pconfig)
+    api_key, key_source = resolve_api_key_provider_secret(provider_id, pconfig, environment=_phase6_auth_environment())
     env_url = _provider_env_base_url(pconfig)
     if provider_id in {"kimi-coding", "kimi-coding-cn"}:
         base_url = _resolve_kimi_base_url(api_key, pconfig.inference_base_url, env_url)
@@ -1306,90 +1153,16 @@ def _get_azure_foundry_auth_status() -> Dict[str, Any]:
     return info
 
 
-def _default_api_key_base_url(api_key: str, default: str, env_url: str) -> str:
-    return env_url.rstrip("/") if env_url else default
 
 
-def _copilot_runtime_base_url(api_key: str, default: str, env_url: str) -> str:
-    """Copilot's API base comes from the token-exchange response (endpoints.api, proxy-ep fallback),
-    authoritative for Enterprise / proxied accounts; falls back to the registry default."""
-    base_url = _default_api_key_base_url(api_key, default, env_url)
-    try:
-        from auth.providers.copilot import resolve_copilot_token, get_copilot_api_token
-        raw_token, _ = resolve_copilot_token()
-        if raw_token:
-            resolved = (get_copilot_api_token(raw_token)[1] or "").strip()
-            if resolved:
-                base_url = resolved
-    except Exception as exc:
-        logger.debug("Copilot base URL resolution fell back to default: %s", exc)
-    return base_url
 
 
 # Providers whose runtime base URL is not simply env-override-or-registry-default:
 # ``(api_key, registry_default, env_override) -> base_url``.
-_API_KEY_BASE_URL_RESOLVERS: Dict[str, Callable[[str, str, str], str]] = {
-    "kimi-coding": _resolve_kimi_base_url,
-    "kimi-coding-cn": _resolve_kimi_base_url,
-    "zai": _resolve_zai_base_url,
-    "copilot": _copilot_runtime_base_url,
-    "lmstudio": lambda *a: _normalize_lmstudio_runtime_base_url(_default_api_key_base_url(*a)),
-    "actual": lambda *a: normalize_actual_base_url(_default_api_key_base_url(*a))}
 
 
-def resolve_api_key_provider_credentials(provider_id: str) -> Dict[str, Any]:
-    """Resolve API key and base URL for an API-key provider."""
-    pconfig = _registry_lookup(provider_id)
-    if not pconfig or pconfig.auth_type != "api_key":
-        raise AuthError(
-            f"Provider '{provider_id}' is not an API-key provider.",
-            provider=provider_id, code="invalid_provider")
-
-    api_key, key_source = _resolve_api_key_provider_secret(provider_id, pconfig)
-    # No-auth LM Studio: a placeholder so runtime / auxiliary_client see the local server as
-    # configured. doctor still reports unconfigured because the status path uses the raw secret.
-    if not api_key and provider_id == "lmstudio":
-        api_key = LMSTUDIO_NOAUTH_PLACEHOLDER
-        key_source = key_source or "default"
-
-    env_url = _provider_env_base_url(pconfig)
-    resolve_url = _API_KEY_BASE_URL_RESOLVERS.get(provider_id, _default_api_key_base_url)
-    base_url = resolve_url(api_key, pconfig.inference_base_url, env_url)
-    # An API-key provider must never hand back an empty base URL (a set-but-empty
-    # COPILOT_API_BASE_URL or similar env override otherwise wedges chat inference).
-    if not _nonempty_str(base_url):
-        base_url = pconfig.inference_base_url
-
-    if not api_key and provider_id == "actual" and is_actual_local_base_url(base_url):
-        api_key = ACTUAL_LOCAL_NOAUTH_PLACEHOLDER
-        key_source = key_source or "local-offline"
-    return {
-        "provider": provider_id, "api_key": api_key, "base_url": base_url.rstrip("/"),
-        "source": key_source or "default"}
 
 
-def resolve_external_process_provider_credentials(provider_id: str) -> Dict[str, Any]:
-    """Resolve runtime details for local subprocess-backed providers."""
-    pconfig = _registry_lookup(provider_id)
-    if not pconfig or pconfig.auth_type != "external_process":
-        raise AuthError(
-            f"Provider '{provider_id}' is not an external-process provider.",
-            provider=provider_id, code="invalid_provider")
-
-    command, args, base_url, resolved_command, command_env_vars = _external_process_spec(pconfig)
-    if not resolved_command and not base_url.startswith("acp+tcp://"):
-        _hint = " or set " + "/".join(command_env_vars) if command_env_vars else ""
-        raise AuthError(
-            f"Could not find the '{provider_id}' CLI command "
-            f"'{command or '(none configured)'}'. Install it{_hint}.",
-            provider=provider_id,
-            code="missing_external_process_cli")
-    # api_key is a placeholder: the subprocess owns real auth. Keyed on the provider id so each
-    # external-process provider gets a distinct value.
-    return {
-        "provider": provider_id, "api_key": pconfig.id or provider_id,
-        "base_url": base_url.rstrip("/"), "command": resolved_command or command, "args": args,
-        "source": "process"}
 
 
 # ── CLI Commands — login / logout ───────────────────────────────────────────────────────────────────

@@ -408,7 +408,7 @@ class TestResolveVisionMainFirst:
         ), patch(
             "agent.auxiliary_client.OpenAI",
         ) as mock_openai, patch(
-            "hermes_cli.auth.resolve_api_key_provider_credentials",
+            "hermes_cli.runtime_provider_credentials.resolve_api_key_provider_credentials",
             return_value={
                 "provider": "copilot",
                 "api_key": "copilot-api-token",
@@ -445,7 +445,7 @@ class TestResolveVisionMainFirst:
         with patch(
             "agent.auxiliary_client.OpenAI",
         ) as mock_openai, patch(
-            "hermes_cli.auth.resolve_api_key_provider_credentials",
+            "hermes_cli.runtime_provider_credentials.resolve_api_key_provider_credentials",
             return_value={
                 "provider": "copilot",
                 "api_key": "copilot-api-token",

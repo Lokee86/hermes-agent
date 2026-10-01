@@ -5217,7 +5217,7 @@ class TestFastModelTier:
         from agent import auxiliary_client as ac
 
         with patch(
-            "hermes_cli.auth.resolve_api_key_provider_credentials",
+            "hermes_cli.runtime_provider_credentials.resolve_api_key_provider_credentials",
             return_value={"api_key": "sk-test", "base_url": "https://api.example.com/v1"},
         ), patch(
             "hermes_cli.models_pricing.fetch_models_with_pricing", return_value={}

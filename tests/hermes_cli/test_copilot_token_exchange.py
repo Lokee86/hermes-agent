@@ -1,6 +1,7 @@
 """Tests for Copilot token exchange (raw GitHub token → Copilot API token)."""
 
 from __future__ import annotations
+from hermes_cli.config_credentials import credential_pool_environment
 import auth.providers.copilot as _auth_auth_providers_copilot
 
 
@@ -75,11 +76,11 @@ class TestCallerIntegration:
     @patch('auth.providers.copilot.resolve_copilot_token', return_value=("gho_raw", "GH_TOKEN"))
     @patch('auth.providers.copilot.get_copilot_api_token', return_value=("exchanged_jwt", None))
     def test_auth_resolve_uses_exchange(self, mock_exchange, mock_resolve):
-        from hermes_cli.auth import _resolve_api_key_provider_secret
+        from auth.api_keys import resolve_api_key_provider_secret
 
         # Create a minimal pconfig mock
         pconfig = MagicMock()
-        token, source = _resolve_api_key_provider_secret("copilot", pconfig)
+        token, source = resolve_api_key_provider_secret("copilot", pconfig, environment=credential_pool_environment())
         assert token == "exchanged_jwt"
         assert source == "GH_TOKEN"
         mock_exchange.assert_called_once_with("gho_raw")

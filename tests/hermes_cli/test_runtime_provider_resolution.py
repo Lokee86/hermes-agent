@@ -19,7 +19,7 @@ def test_configured_api_key_provider_without_key_fails_closed(monkeypatch):
     )
     monkeypatch.setattr(rp, "load_pool", lambda _provider, environment=None: SimpleNamespace(has_credentials=lambda: False))
     monkeypatch.setattr(
-        "hermes_cli.auth.resolve_api_key_provider_credentials",
+        "hermes_cli.runtime_provider_credentials.resolve_api_key_provider_credentials",
         lambda _provider: {
             "provider": "deepseek",
             "api_key": "",
@@ -36,7 +36,7 @@ def test_noauth_lmstudio_still_resolves(monkeypatch):
     """The fail-closed key guard preserves LM Studio's no-auth contract."""
     monkeypatch.setattr(rp, "load_pool", lambda _provider, environment=None: SimpleNamespace(has_credentials=lambda: False))
     monkeypatch.setattr(
-        "hermes_cli.auth.resolve_api_key_provider_credentials",
+        "hermes_cli.runtime_provider_credentials.resolve_api_key_provider_credentials",
         lambda _provider: {
             "provider": "lmstudio",
             "api_key": "lmstudio-noauth",

@@ -706,7 +706,7 @@ class ClientLifecycleMixin:
             default_base = (pconfig.inference_base_url or "").strip().rstrip("/")
             base_url = env_url or default_base
             if self.provider == "actual":
-                from hermes_cli.auth import normalize_actual_base_url
+                from hermes_cli.route_identity import normalize_actual_base_url
                 from hermes_cli.runtime_provider import _config_base_url_for_provider, _get_model_config
                 configured_base = _config_base_url_for_provider(_get_model_config(), "actual")
                 base_url = normalize_actual_base_url(configured_base or base_url)
@@ -963,7 +963,7 @@ class ClientLifecycleMixin:
         from hermes_cli.providers import is_actual_route
         actual_route = is_actual_route(getattr(self, "provider", ""), runtime_base)
         if actual_route:
-            from hermes_cli.auth import normalize_actual_base_url
+            from hermes_cli.route_identity import normalize_actual_base_url
             runtime_base = normalize_actual_base_url(runtime_base)
         stripped_base = runtime_base.rstrip("/") if isinstance(runtime_base, str) else runtime_base
         # Refuse BEFORE any state changes below: a refused swap must leave the agent exactly as it was.

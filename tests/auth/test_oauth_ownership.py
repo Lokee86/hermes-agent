@@ -42,6 +42,8 @@ class BlockCLI(importlib.abc.MetaPathFinder):
             raise AssertionError("reverse CLI dependency: " + fullname)
 sys.meta_path.insert(0, BlockCLI())
 import auth.providers
+for module in ('auth.api_keys', 'auth.keepalive', 'auth.failure_policy', 'auth.secret_validation'):
+    importlib.import_module(module)
 for info in pkgutil.iter_modules(auth.providers.__path__, "auth.providers."):
     importlib.import_module(info.name)
 '''

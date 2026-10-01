@@ -534,7 +534,15 @@ and `auth/providers/`. Supply explicit settings through the application environm
 factory; auth must never import CLI configuration. Prompts, browser launching and
 plugin `auth_handler(action, args)` remain at the CLI edge. Retired implementations
 `agent.anthropic_credentials` and `hermes_cli.auth_qwen` must not return.
-See `PHASE6_AUTH_POOL.md` and `PHASE6_AUTH_OAUTH.md` for ownership and verification.
+Runtime secret validation, quota classification, API-key source precedence and the Nous
+keepalive belong to `auth/secret_validation.py`, `auth/failure_policy.py`, `auth/api_keys.py`
+and `auth/keepalive.py`. Keepalive callers supply both the configuration factory and thread
+scope context. Runtime route materialization remains application policy in
+`hermes_cli/runtime_provider_credentials.py`; provider/model routing is outside Phase 6.
+Import canonical operations directly; never restore the retired CLI keepalive module or
+API-key source helper. Structural checks cover both runtime and CLI source consumers.
+See `PHASE6_AUTH_POOL.md`, `PHASE6_AUTH_OAUTH.md` and `PHASE6_AUTH_CONSUMERS.md`
+for ownership and verification.
 
 ## Routing Table — working in X → read X/AGENTS.md
 

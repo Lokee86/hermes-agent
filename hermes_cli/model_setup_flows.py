@@ -556,7 +556,8 @@ def _model_flow_copilot(config, current_model=""):
     """GitHub Copilot flow using env vars, gh CLI, or OAuth device code. The reasoning-effort step
     is the shared post-pick one in ``select_provider_and_model`` (Copilot's per-model level set
     comes from ``github_model_reasoning_efforts`` there)."""
-    from hermes_cli.auth import PROVIDER_REGISTRY, resolve_api_key_provider_credentials
+    from hermes_cli.auth import PROVIDER_REGISTRY
+    from hermes_cli.runtime_provider_credentials import resolve_api_key_provider_credentials
     from hermes_cli.models import fetch_api_models, copilot_model_api_mode
     provider_id = "copilot"
     pconfig = PROVIDER_REGISTRY[provider_id]
@@ -594,9 +595,8 @@ def _model_flow_copilot(config, current_model=""):
 
 def _model_flow_copilot_acp(config, current_model=""):
     """GitHub Copilot ACP flow using the local Copilot CLI."""
-    from hermes_cli.auth import (
-        PROVIDER_REGISTRY, get_external_process_provider_status, resolve_api_key_provider_credentials,
-        resolve_external_process_provider_credentials)
+    from hermes_cli.auth import PROVIDER_REGISTRY, get_external_process_provider_status
+    from hermes_cli.runtime_provider_credentials import resolve_api_key_provider_credentials, resolve_external_process_provider_credentials
 
     del config
     provider_id = "copilot-acp"
@@ -1104,7 +1104,8 @@ def _external_process_login_gate(profile, status) -> bool:
 
 
 def _plugin_flow_external_process(provider_id: str, profile) -> tuple[str, str] | None:
-    from hermes_cli.auth import get_external_process_provider_status, resolve_external_process_provider_credentials
+    from hermes_cli.auth import get_external_process_provider_status
+    from hermes_cli.runtime_provider_credentials import resolve_external_process_provider_credentials
     status = get_external_process_provider_status(provider_id)
     _say(f"  {profile.display_name or provider_id} delegates Hermes turns to a local `{status.get('command') or profile.process_command}` process.",
          f"  Command: {status.get('resolved_command') or status.get('command') or '(not found)'}",

@@ -250,7 +250,7 @@ class CLIAgentSetupMixin:
             if runtime is not None:
                 _primary_exc = None
         if runtime is None:
-            from hermes_cli.auth import is_rate_limited_auth_error
+            from auth.failure_policy import is_rate_limited_auth_error
             self._credentials_rate_limited = bool(_primary_exc) and is_rate_limited_auth_error(_primary_exc)
             message = format_runtime_provider_error(_primary_exc) if _primary_exc else "Provider resolution failed."
             if getattr(self, "tool_progress_mode", "full") == "off":

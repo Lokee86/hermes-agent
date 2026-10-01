@@ -2024,7 +2024,7 @@ def _resolve_switch_destination(agent, new_model, new_provider, base_url, api_mo
     if is_actual_route(new_provider, effective_base_url):
         api_mode = "chat_completions"
         if effective_base_url:
-            from hermes_cli.auth import normalize_actual_base_url
+            from hermes_cli.route_identity import normalize_actual_base_url
             base_url = normalize_actual_base_url(effective_base_url)
     destination_capabilities = (
         dict(capabilities)

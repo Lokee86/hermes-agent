@@ -396,7 +396,8 @@ def test_refresh_429_classified_as_quota_not_auth_failure(monkeypatch):
     than a misleading "run hermes auth".
     """
     from auth.constants import CODEX_RATE_LIMITED_CODE
-    from hermes_cli.auth import format_auth_error, is_rate_limited_auth_error
+    from hermes_cli.auth import format_auth_error
+    from auth.failure_policy import is_rate_limited_auth_error
 
     response = _StubHTTPResponse(
         429,

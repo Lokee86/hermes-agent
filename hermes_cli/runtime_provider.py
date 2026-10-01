@@ -27,7 +27,10 @@ from auth.credential_pool import (  # custom_provider_pool_key_candidates is rea
 )
 from agent.secret_scope import get_secret_str
 from auth.constants import ACTUAL_LOCAL_NOAUTH_PLACEHOLDER, DEFAULT_CODEX_BASE_URL, DEFAULT_QWEN_BASE_URL, DEFAULT_XAI_OAUTH_BASE_URL
-from hermes_cli.auth import PROVIDER_REGISTRY, format_auth_error, resolve_provider, resolve_api_key_provider_credentials, resolve_external_process_provider_credentials, has_usable_secret, is_actual_local_base_url, looks_like_openrouter_key, normalize_actual_base_url
+from hermes_cli.auth import PROVIDER_REGISTRY, format_auth_error, resolve_provider
+from hermes_cli.runtime_provider_credentials import resolve_api_key_provider_credentials, resolve_external_process_provider_credentials
+from hermes_cli.route_identity import is_actual_local_base_url, normalize_actual_base_url
+from auth.secret_validation import has_usable_secret, looks_like_openrouter_key
 from auth.providers.nous import _agent_key_is_usable, _nous_inference_env_override, resolve_nous_runtime_credentials
 from auth.providers.codex import resolve_codex_runtime_credentials
 from auth.providers.xai import resolve_xai_oauth_runtime_credentials

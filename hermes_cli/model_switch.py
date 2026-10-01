@@ -1777,7 +1777,7 @@ def model_selection_config_updates(result: ModelSwitchResult, current_model_cfg:
     provider and base_url) — ``custom:a`` -> ``custom:b`` must not hand endpoint A's secret to B.
     The ``key_env`` / ``api_key_env`` credential POINTER (written by custom-endpoint activation
     and, for REGISTRY providers too, by the Desktop settings UI (#106336); resolved by
-    runtime_provider / auxiliary_client / ``auth._model_level_key_env``) clears only when the
+    runtime_provider / auxiliary_client / ``auth.api_keys._model_level_key_env``) clears only when the
     route changed: left behind it routes the NEW provider's requests to the OLD endpoint's env
     var, but a same-provider same-base_url model re-pick keeps it whatever the provider is. The
     dashboard re-adds an explicitly submitted key / the target provider's own pointer after this

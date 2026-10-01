@@ -1,6 +1,13 @@
 import logging
 
-from hermes_cli import nous_auth_keepalive as keepalive
+from auth import keepalive
+from hermes_cli.config_credentials import credential_pool_environment
+from tui_gateway.launch_profile_policy import launch_profile_scope_if_multiplexed
+
+def _inputs():
+    return dict(environment_factory=credential_pool_environment,
+                scope_context=launch_profile_scope_if_multiplexed)
+
 
 # Both lifetimes have been observed on real installs.
 OBSERVED_LIFETIMES_SECONDS = (3594, 899)
@@ -40,31 +47,31 @@ def test_refresh_always_fires_before_expiry_for_observed_lifetimes():
 
 def test_interval_precedence_and_disable(monkeypatch):
     def _config(section):
-        monkeypatch.setattr(keepalive, "_nous_config", lambda: section)
+        monkeypatch.setattr(keepalive, "_nous_config", lambda environment: section)
 
     # An absent section leaves the module default in place.
     _config({})
     assert (
-        keepalive._interval_seconds(None)
+        keepalive._interval_seconds(None, credential_pool_environment())
         == keepalive.NOUS_AUTH_KEEPALIVE_INTERVAL_SECONDS
     )
 
     _config({keepalive.NOUS_AUTH_KEEPALIVE_INTERVAL_CONFIG_KEY: 600})
-    assert keepalive._interval_seconds(None) == 600
+    assert keepalive._interval_seconds(None, credential_pool_environment()) == 600
     # An explicit argument still outranks config.yaml.
-    assert keepalive._interval_seconds(300) == 300
+    assert keepalive._interval_seconds(300, credential_pool_environment()) == 300
 
     # A malformed value falls back to the default rather than disabling.
     _config({keepalive.NOUS_AUTH_KEEPALIVE_INTERVAL_CONFIG_KEY: "not-a-number"})
     assert (
-        keepalive._interval_seconds(None)
+        keepalive._interval_seconds(None, credential_pool_environment())
         == keepalive.NOUS_AUTH_KEEPALIVE_INTERVAL_SECONDS
     )
 
     # Zero remains the documented way to turn the keepalive off.
     _config({keepalive.NOUS_AUTH_KEEPALIVE_INTERVAL_CONFIG_KEY: 0})
-    assert keepalive._interval_seconds(None) == 0
-    assert keepalive.start_nous_auth_keepalive() is None
+    assert keepalive._interval_seconds(None, credential_pool_environment()) == 0
+    assert keepalive.start_nous_auth_keepalive(**_inputs()) is None
 
 
 def test_keepalive_refreshes_stale_pool_entry(monkeypatch):
@@ -91,7 +98,7 @@ def test_keepalive_refreshes_stale_pool_entry(monkeypatch):
     pool = _Pool()
     monkeypatch.setattr("auth.credential_pool.load_pool", lambda provider, environment=None: pool)
 
-    assert keepalive.refresh_nous_auth_keepalive_once() is True
+    assert keepalive.refresh_nous_auth_keepalive_once(**_inputs()) is True
     assert pool.refreshed is True
 
 
@@ -124,7 +131,7 @@ def test_keepalive_falls_back_to_singleton_state(monkeypatch):
         _resolve_nous_runtime_credentials,
     )
 
-    assert keepalive.refresh_nous_auth_keepalive_once(timeout_seconds=15.0) is True
+    assert keepalive.refresh_nous_auth_keepalive_once(**_inputs(), timeout_seconds=15.0) is True
     assert calls == [{"timeout_seconds": 15.0}]
 
 
@@ -158,7 +165,7 @@ def test_keepalive_binds_launch_scope_for_multiplexed_singleton_refresh(tmp_path
     set_multiplex_active(True)
     try:
         with caplog.at_level(logging.WARNING):
-            assert keepalive.refresh_nous_auth_keepalive_once(timeout_seconds=15.0) is True
+            assert keepalive.refresh_nous_auth_keepalive_once(**_inputs(), timeout_seconds=15.0) is True
     finally:
         set_multiplex_active(previous_multiplex)
 
@@ -202,7 +209,7 @@ def test_keepalive_binds_launch_scope_for_multiplexed_pool_refresh(tmp_path, mon
     previous_multiplex = is_multiplex_active()
     set_multiplex_active(True)
     try:
-        assert keepalive.refresh_nous_auth_keepalive_once() is True
+        assert keepalive.refresh_nous_auth_keepalive_once(**_inputs()) is True
     finally:
         set_multiplex_active(previous_multiplex)
 

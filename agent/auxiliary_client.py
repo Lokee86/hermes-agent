@@ -725,7 +725,7 @@ def _fast_model_from_catalog(provider_id: str) -> str:
     """
     is_nous = provider_id.strip().lower() == "nous"
     try:
-        from hermes_cli.auth import resolve_api_key_provider_credentials
+        from hermes_cli.runtime_provider_credentials import resolve_api_key_provider_credentials
         from hermes_cli.models_pricing import fetch_models_with_pricing
         from providers import get_provider_profile
         # Most /v1/models endpoints are authenticated; an anonymous 401 would read as "no small
@@ -999,7 +999,7 @@ def _to_openai_base_url(base_url: str) -> str:
     """
     url = str(base_url or "").strip().rstrip("/")
     if base_url_hostname(url) == "api.actual.inc":
-        from hermes_cli.auth import normalize_actual_base_url
+        from hermes_cli.route_identity import normalize_actual_base_url
         return normalize_actual_base_url(url)
     if url.endswith("/anthropic"):
         if base_url_host_matches(url, "open.bigmodel.cn") or base_url_host_matches(url, "api.z.ai"):
@@ -2159,7 +2159,8 @@ def _read_codex_singleton_token() -> Optional[str]:
 def _resolve_api_key_provider() -> Tuple[Optional[OpenAI], Optional[str]]:
     """Try each API-key provider in PROVIDER_REGISTRY order; (client, model) or (None, None)."""
     try:
-        from hermes_cli.auth import PROVIDER_REGISTRY, resolve_api_key_provider_credentials
+        from hermes_cli.auth import PROVIDER_REGISTRY
+        from hermes_cli.runtime_provider_credentials import resolve_api_key_provider_credentials
     except ImportError:
         logger.debug("Could not import PROVIDER_REGISTRY for API-key fallback")
         return None, None
@@ -4902,7 +4903,7 @@ def _log_once_debug(seen: set, key: Any, msg: str, *args: Any) -> None:
 
 
 def _is_actual_auxiliary_route(req: _ResolveRequest, base_url: str) -> bool:
-    from hermes_cli.auth import normalize_actual_base_url
+    from hermes_cli.route_identity import normalize_actual_base_url
     from hermes_cli.providers import is_actual_route
     from hermes_cli.route_identity import normalize_route_base_url
 
@@ -5107,7 +5108,7 @@ def _resolve_custom_branch(req: _ResolveRequest) -> _ResolveResult:
             custom_base, custom_key = _main_base, _main_key
     if custom_base and custom_key:
         if _is_actual_auxiliary_route(req, custom_base):
-            from hermes_cli.auth import normalize_actual_base_url
+            from hermes_cli.route_identity import normalize_actual_base_url
             custom_base = normalize_actual_base_url(custom_base)
         final_model = _normalize_resolved_model(
             model or (main_runtime.get("model") if main_runtime else None) or "gpt-4o-mini", provider,
@@ -5179,7 +5180,7 @@ def _resolve_named_custom_branch(req: _ResolveRequest) -> Optional[_ResolveResul
     # Actual's wire protocol takes precedence over persisted task/provider modes.
     entry_api_mode = (req.api_mode or custom_entry.get("api_mode") or "").strip()
     if _is_actual_auxiliary_route(req, custom_base):
-        from hermes_cli.auth import normalize_actual_base_url
+        from hermes_cli.route_identity import normalize_actual_base_url
         custom_base = normalize_actual_base_url(custom_base)
         entry_api_mode = "chat_completions"
     if not custom_base:
@@ -5284,7 +5285,7 @@ def _resolve_api_key_branch(req: _ResolveRequest, pconfig: Any, resolve_creds: C
     if provider == "actual":
         with contextlib.suppress(Exception):
             from auth.constants import ACTUAL_LOCAL_NOAUTH_PLACEHOLDER
-            from hermes_cli.auth import is_actual_local_base_url, normalize_actual_base_url
+            from hermes_cli.route_identity import is_actual_local_base_url, normalize_actual_base_url
             raw_base_url = normalize_actual_base_url(raw_base_url)
             if not api_key and is_actual_local_base_url(raw_base_url):
                 api_key = ACTUAL_LOCAL_NOAUTH_PLACEHOLDER
@@ -5371,10 +5372,8 @@ def _resolve_registry_branch(req: _ResolveRequest) -> _ResolveResult:
     """PROVIDER_REGISTRY providers, dispatched on ``auth_type``; unknown providers log once."""
     provider = req.provider
     try:
-        from hermes_cli.auth import (
-            PROVIDER_REGISTRY, resolve_api_key_provider_credentials,
-            resolve_external_process_provider_credentials,
-        )
+        from hermes_cli.auth import PROVIDER_REGISTRY
+        from hermes_cli.runtime_provider_credentials import resolve_api_key_provider_credentials, resolve_external_process_provider_credentials
     except ImportError:
         logger.debug("hermes_cli.auth not available for provider %s", provider)
         return None, None

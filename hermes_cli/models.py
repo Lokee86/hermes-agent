@@ -740,7 +740,8 @@ def _configured_custom_provider_ids() -> set[str]:
 
 def _provider_has_credentials(pid: str) -> bool:
     try:
-        from hermes_cli.auth import get_auth_status, has_usable_secret
+        from hermes_cli.auth import get_auth_status
+        from auth.secret_validation import has_usable_secret
 
         if pid == "custom":
             return bool((_get_custom_base_url() or "").strip())
@@ -1391,7 +1392,7 @@ def _nous_catalog(normalized: str, force_refresh: bool) -> Optional[list[str]]:
 def _api_key_credentials(normalized: str) -> tuple[str, str]:
     """``(api_key, base_url)`` from ``resolve_api_key_provider_credentials``; empty strings on any miss."""
     try:
-        from hermes_cli.auth import resolve_api_key_provider_credentials
+        from hermes_cli.runtime_provider_credentials import resolve_api_key_provider_credentials
 
         creds = resolve_api_key_provider_credentials(normalized)
         return str(creds.get("api_key") or "").strip(), str(creds.get("base_url") or "").strip()

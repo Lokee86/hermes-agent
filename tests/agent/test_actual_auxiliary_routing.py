@@ -485,7 +485,7 @@ def test_actual_setup_keeps_provider_settings_in_yaml(
 ):
     from hermes_cli import config as config_module
     from hermes_cli import model_setup_flows as setup
-    from hermes_cli.auth import resolve_api_key_provider_credentials
+    from hermes_cli.runtime_provider_credentials import resolve_api_key_provider_credentials
     from hermes_cli.runtime_provider import resolve_runtime_provider
     from providers import get_provider_profile
 

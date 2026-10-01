@@ -7,6 +7,9 @@ rendering. The keepalive has nothing to keep alive for the free tier and must no
 """
 
 from __future__ import annotations
+from auth import keepalive as nous_auth_keepalive
+from hermes_cli.config_credentials import credential_pool_environment
+from tui_gateway.launch_profile_policy import launch_profile_scope_if_multiplexed
 import auth.providers.nous_status as _auth_auth_providers_nous_status
 
 from hermes_cli.config_credentials import credential_pool_environment as _phase6_auth_environment
@@ -31,7 +34,6 @@ from hermes_cli import (
     anon_auth,
     auth_commands,
     nous_account,
-    nous_auth_keepalive,
     portal_cli,
     status_auth,
 )
@@ -151,11 +153,11 @@ def test_keepalive_does_not_start_for_free_tier(isolated_store, monkeypatch):
     monkeypatch.setattr(nous_auth_keepalive, "_keepalive_thread", None)
 
     _write_auth(_guest_state())
-    assert nous_auth_keepalive.start_nous_auth_keepalive(interval_seconds=900) is None
+    assert nous_auth_keepalive.start_nous_auth_keepalive(interval_seconds=900, environment_factory=credential_pool_environment, scope_context=launch_profile_scope_if_multiplexed) is None
     assert started == []
 
     _write_auth(_account_state())
-    thread = nous_auth_keepalive.start_nous_auth_keepalive(interval_seconds=900)
+    thread = nous_auth_keepalive.start_nous_auth_keepalive(interval_seconds=900, environment_factory=credential_pool_environment, scope_context=launch_profile_scope_if_multiplexed)
     assert thread is not None and started == ["nous-auth-keepalive"]
     monkeypatch.setattr(nous_auth_keepalive, "_keepalive_thread", None)
 

@@ -42,6 +42,7 @@ class PoolEnvironment:
     normalize_endpoint: Callable[[Any], str] = field(repr=False)
     provider_hooks: Callable[[str], PoolProviderHooks] = field(repr=False)
 
+    read_secret: Callable[[str], str | None] | None = field(default=None, repr=False)
     entitlement_message: Callable[[str], str] | None = field(default=None, repr=False)
     oauth_user_agent: Callable[[], str] | None = field(default=None, repr=False)
 

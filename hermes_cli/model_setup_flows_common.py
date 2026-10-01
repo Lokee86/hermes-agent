@@ -7,6 +7,7 @@ cycle) and tests patch ``hermes_cli.config.load_config`` etc. at call time.
 """
 
 from __future__ import annotations
+from hermes_cli.config_credentials import credential_pool_environment
 
 import contextlib
 import subprocess
@@ -42,8 +43,8 @@ def _ask(prompt: str, *, secret: bool = False, raw: bool = False, cancel_msg: st
 
 def _existing_api_key_for_model_flow(provider_id: str, pconfig) -> tuple[str, str]:
     """Resolve an existing wizard credential without changing its storage."""
-    from hermes_cli.auth import _resolve_api_key_provider_secret
-    return _resolve_api_key_provider_secret(provider_id, pconfig)
+    from auth.api_keys import resolve_api_key_provider_secret
+    return resolve_api_key_provider_secret(provider_id, pconfig, environment=credential_pool_environment())
 
 
 def _ensure_flow_api_key(provider_id: str, pconfig, *, missing_hint=()) -> tuple[str, str, bool]:

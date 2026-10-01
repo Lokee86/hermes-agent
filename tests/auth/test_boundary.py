@@ -53,3 +53,57 @@ def test_runtime_has_no_retired_pool_or_grant_imports():
                 if name in retired:
                     violations.append(f"{path.relative_to(ROOT)}:{node.lineno}: {name}")
     assert not violations, "Retired authentication dependency:\n" + "\n".join(violations)
+
+
+def test_runtime_imports_authentication_operations_from_canonical_owners():
+    """Routing metadata and presentation may remain at the application edge."""
+    canonical = {
+        "resolve_api_key_provider_secret": "auth.api_keys",
+        "_resolve_api_key_provider_secret": "auth.api_keys",
+        "has_usable_secret": "auth.secret_validation",
+        "looks_like_openrouter_key": "auth.secret_validation",
+        "_usable_declared_secret": "auth.secret_validation",
+        "is_rate_limited_auth_error": "auth.failure_policy",
+        "strip_cloned_single_use_oauth_grants": "auth.oauth_grants",
+        "heal_forked_single_use_oauth_grants": "auth.oauth_grants",
+        "consume_oauth_heal_notices": "auth.oauth_grants",
+        "resolve_nous_runtime_credentials": "auth.providers.nous",
+        "resolve_codex_runtime_credentials": "auth.providers.codex",
+        "resolve_xai_oauth_runtime_credentials": "auth.providers.xai",
+        "resolve_qwen_runtime_credentials": "auth.providers.qwen",
+        "resolve_minimax_oauth_runtime_credentials": "auth.providers.minimax",
+        "resolve_spotify_runtime_credentials": "auth.providers.spotify",
+        "get_spotify_auth_status": "auth.providers.spotify",
+        "get_nous_auth_status_local": "auth.providers.nous_status",
+    }
+    retired = {"hermes_cli.nous_auth_keepalive", "hermes_cli.auth_qwen",
+               "agent.anthropic_credentials", "agent.credential_pool"}
+    paths = list(ROOT.glob("*.py"))
+    for directory in ("agent", "gateway", "tools", "tui_gateway", "plugins",
+                      "cron", "acp_adapter", "auth", "hermes_cli"):
+        paths.extend((ROOT / directory).rglob("*.py"))
+    violations = []
+    for path in sorted(paths):
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ImportFrom) and node.module:
+                if node.module in retired:
+                    violations.append(f"{path.relative_to(ROOT)}:{node.lineno}: {node.module}")
+                if node.module.startswith("hermes_cli.auth"):
+                    for alias in node.names:
+                        if alias.name in canonical:
+                            violations.append(
+                                f"{path.relative_to(ROOT)}:{node.lineno}: "
+                                f"{alias.name} belongs to {canonical[alias.name]}")
+            elif isinstance(node, ast.Import):
+                for alias in node.names:
+                    if alias.name in retired:
+                        violations.append(f"{path.relative_to(ROOT)}:{node.lineno}: {alias.name}")
+            # Lazy dispatch must follow the same ownership cut as static imports.
+            elif isinstance(node, ast.Call) and len(node.args) >= 2:
+                module, symbol = node.args[:2]
+                if isinstance(module, ast.Constant) and isinstance(symbol, ast.Constant):
+                    if module.value == "hermes_cli.auth" and symbol.value in canonical:
+                        violations.append(
+                            f"{path.relative_to(ROOT)}:{node.lineno}: lazy {symbol.value}")
+    assert not violations, "CLI-owned runtime authentication:\n" + "\n".join(violations)

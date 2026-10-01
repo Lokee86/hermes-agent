@@ -1,7 +1,7 @@
 # Hermes Phase 6 — Authentication and Credential Ownership
 
-Status: 6.1–6.5 complete; consumer migration, presentation integration and closeout (6.6–6.8) remain pending.
-See `PHASE6_AUTH_STORAGE.md`, `PHASE6_AUTH_POOL.md` and `PHASE6_AUTH_OAUTH.md` for ownership cuts and verification.
+Status: 6.1–6.6 complete; authentication presentation integration and closeout (6.7–6.8) remain pending.
+See `PHASE6_AUTH_STORAGE.md`, `PHASE6_AUTH_POOL.md`, `PHASE6_AUTH_OAUTH.md` and `PHASE6_AUTH_CONSUMERS.md` for ownership cuts and verification.
 Branch: `refactor/phase6-auth-credentials`.
 Base: One Gateway `bc1b572e2c`. Phase 6 is independent of Phase 5.
 

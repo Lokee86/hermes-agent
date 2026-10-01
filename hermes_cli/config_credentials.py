@@ -133,7 +133,6 @@ def credential_environment() -> CredentialEnvironment:
 
 def _pool_provider_hooks(provider: str, environment):
     from auth.pool_environment import PoolProviderHooks
-    from hermes_cli import auth as provider_auth
 
     def nous_hooks():
         return PoolProviderHooks(
@@ -214,8 +213,6 @@ def _pool_provider_hooks(provider: str, environment):
         )
 
     def copilot_hooks():
-        from hermes_cli import copilot_auth
-
         return PoolProviderHooks(
             resolve_external_token=lambda: (
                 _auth_auth_providers_copilot.resolve_copilot_token()
@@ -265,6 +262,7 @@ def credential_pool_environment():
         key_endpoint=key_endpoint,
         normalize_endpoint=normalize_route_base_url,
         provider_hooks=lambda provider: _pool_provider_hooks(provider, environment),
+        read_secret=config.get_env_value_prefer_dotenv,
         oauth_user_agent=_codex_oauth_user_agent,
         entitlement_message=lambda capability: _nous_entitlement_message(
             capability, environment

@@ -200,7 +200,6 @@ def resolve_xai_http_credentials(
     ``XAI_BASE_URL`` behind the same origin-pinning validation as the OAuth branch. See #87045, #88040.
     """
     from hermes_cli.config_credentials import credential_pool_environment
-    import hermes_cli.auth as auth_mod
     if prefer_api_key and (explicit_key := str(_resolve_explicit_xai_api_key() or "").strip()):
         # Origin-pinned so a tampered env override can't exfiltrate the bearer; rejection -> default URL.
         override = _xai_base_url_override()

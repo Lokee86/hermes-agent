@@ -20,7 +20,7 @@ class TestCopilotCatalogApiKeyResolution:
     def test_falls_back_to_pool_oauth_token(self):
         """Empty env → walk credential_pool.copilot[] for an OAuth access_token."""
         with patch(
-            "hermes_cli.auth.resolve_api_key_provider_credentials",
+            "hermes_cli.runtime_provider_credentials.resolve_api_key_provider_credentials",
             return_value={"api_key": ""},
         ), patch(
             'auth.pool_persistence.read_credential_pool',
@@ -46,7 +46,7 @@ class TestCopilotCatalogApiKeyResolution:
             return ("tid_from_second", 1234567890.0)
 
         with patch(
-            "hermes_cli.auth.resolve_api_key_provider_credentials",
+            "hermes_cli.runtime_provider_credentials.resolve_api_key_provider_credentials",
             return_value={"api_key": ""},
         ), patch(
             'auth.pool_persistence.read_credential_pool',

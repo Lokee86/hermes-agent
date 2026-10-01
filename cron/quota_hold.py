@@ -27,7 +27,7 @@ def hold_seconds_from_failure(exc: BaseException) -> Optional[float]:
     AuthError itself, never on arbitrary text, so an unrelated "retry after" in an agent's
     output cannot park a job."""
     from auth.errors import AuthError
-    from hermes_cli.auth import is_rate_limited_auth_error
+    from auth.failure_policy import is_rate_limited_auth_error
 
     seen: set[int] = set()
     cur: Optional[BaseException] = exc

@@ -76,7 +76,7 @@ class TestGmiModelCatalog:
 
     def test_provider_model_ids_prefers_live_api(self, monkeypatch):
         monkeypatch.setattr(
-            "hermes_cli.auth.resolve_api_key_provider_credentials",
+            "hermes_cli.runtime_provider_credentials.resolve_api_key_provider_credentials",
             lambda provider_id: {
                 "provider": provider_id,
                 "api_key": "gmi-live-key",

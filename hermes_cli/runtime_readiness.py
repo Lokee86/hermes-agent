@@ -12,7 +12,7 @@ def check_runtime_readiness(requested=None, *, strict_profile_scope=False, resol
     without another provider's fallback masking a failed connection. Both branches report the model.
     """
     from hermes_cli.runtime_provider import resolve_runtime_provider
-    from hermes_cli.auth import has_usable_secret
+    from auth.secret_validation import has_usable_secret
     from hermes_cli.main import _has_any_provider_configured
 
     if resolve is not None:
