@@ -16,7 +16,7 @@ const TICKET_SCRIPT = `
 import json, sys
 from pathlib import Path
 from types import SimpleNamespace
-from hermes_cli.gateway_client import _session_ticket
+from gateway.client import _session_ticket
 request = json.loads(sys.stdin.buffer.read(65537))
 endpoint = SimpleNamespace(**{'control_home': None, **request['endpoint']})
 home = Path(endpoint.profile_id)
