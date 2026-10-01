@@ -50,7 +50,9 @@ selections (78 passes / one failure, and two passes / three failures).
 The full file's timeout remains a validation limitation, not a passing result.
 An extended retry was stopped after eight minutes without further progress at
 `test_prompt_submit_releases_old_history_before_heap_trim`.
-The PR remains draft because the broad gate is not entirely green on this host.
+The full baseline file also fails to complete within its 340-second job budget.
+The independent review is draft PR https://github.com/Lokee86/hermes-agent/pull/4
+against One Gateway `bc1b572e2c`; the broad gate is not entirely green on this host.
 
 ## Existing baseline failures
 
