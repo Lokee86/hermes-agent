@@ -552,4 +552,6 @@ closeout is recorded in `PHASE5_8_6_1_TUI_STARTUP_CLOSEOUT.md`; 5.8.6.2
 `PHASE5_8_6_4_ACP_CATALOG_CLOSEOUT.md`; 5.8.6.5 (ACP session switch) is documented in
 `PHASE5_8_6_5_ACP_SWITCH_CLOSEOUT.md`; 5.8.6.6 (dashboard model assignment) is recorded in
 `PHASE5_8_6_6_DASHBOARD_ASSIGNMENT_CLOSEOUT.md`; 5.8.6.7 (web/desktop audit) is recorded in
-`PHASE5_8_6_7_WEB_DESKTOP_AUDIT_CLOSEOUT.md`; 5.8.6.8 (ownership closeout) follows.
+`PHASE5_8_6_7_WEB_DESKTOP_AUDIT_CLOSEOUT.md`; 5.8.6.8 (final ownership and regression closeout)
+is recorded in `PHASE5_8_6_8_FINAL_OWNERSHIP_CLOSEOUT.md`. Phase 5.8.6 is closed;
+5.8.7 (provider/plugin discovery and environment policy) follows.
