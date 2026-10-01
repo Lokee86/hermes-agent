@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import ast
 from pathlib import Path
+import subprocess
 
 import pytest
 
@@ -96,12 +97,7 @@ def _is_facade_target(node: ast.AST, aliases: set[str]) -> bool:
 
 def _patched_facade_names(path: Path) -> list[tuple[int, str]]:
     source = path.read_text(encoding="utf-8", errors="ignore")
-    if "hermes_cli" not in source or "profiles" not in source or (
-        "monkeypatch" not in source
-        and "patch(" not in source
-        and "patch.object" not in source
-        and "object(" not in source
-    ):
+    if "hermes_cli" not in source or "profiles" not in source:
         return []
     tree = ast.parse(source, filename=str(path))
     aliases = _profile_facade_aliases(tree)
@@ -242,13 +238,27 @@ def test_patch_collector_uses_canonical_patch_identity(tmp_path: Path, source: s
         "ut.mock.patch.object(profiles, 'profile_exists', fake)\n",
     ],
 )
-def test_patch_collector_normalizes_patch_object_forms(
-    tmp_path: Path, source: str
-) -> None:
+def test_patch_collector_normalizes_patch_object_forms(tmp_path: Path, source: str) -> None:
     probe = tmp_path / "probe.py"
     probe.write_text(source, encoding="utf-8")
     expected_line = len(source.rstrip("\n").splitlines())
     assert _patched_facade_names(probe) == [(expected_line, "profile_exists")]
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "from unittest.mock import patch as p\n"
+        "p('hermes_cli.profiles.profile_exists', return_value=True)\n",
+        "from unittest.mock import patch as replace\n"
+        "replace('hermes_cli.profiles.get_profile_dir', fake)\n",
+    ],
+)
+def test_patch_aliases_cannot_bypass_source_prefilter(tmp_path: Path, source: str) -> None:
+    probe = tmp_path / "probe.py"
+    probe.write_text(source, encoding="utf-8")
+    expected_name = "profile_exists" if "profile_exists" in source else "get_profile_dir"
+    assert _patched_facade_names(probe) == [(2, expected_name)]
 
 
 def test_patch_collector_allows_canonical_owner(tmp_path: Path) -> None:
@@ -263,7 +273,15 @@ def test_patch_collector_allows_canonical_owner(tmp_path: Path) -> None:
 def test_profile_tests_patch_canonical_owners_not_facade_aliases() -> None:
     offenders: list[tuple[str, int, str]] = []
     tests_root = REPO_ROOT / "tests"
-    for path in tests_root.rglob("*.py"):
+    tracked = subprocess.run(
+        ["git", "grep", "-l", "-e", "hermes_cli.profiles",
+         "-e", "from hermes_cli import profiles", "--", "tests"],
+        cwd=REPO_ROOT, check=False, capture_output=True, text=True,
+    ).stdout.splitlines()
+    for relative_text in tracked:
+        if not relative_text.endswith(".py"):
+            continue
+        path = REPO_ROOT / relative_text
         if path == Path(__file__).resolve():
             continue
         for line, name in _patched_facade_names(path):
