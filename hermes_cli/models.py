@@ -644,35 +644,7 @@ def _configured_custom_provider_ids() -> set[str]:
     return ids
 
 
-def _provider_has_credentials(pid: str) -> bool:
-    try:
-        from hermes_cli.auth import get_auth_status, has_usable_secret
-
-        if pid == "custom":
-            return bool((_get_custom_base_url() or "").strip())
-        if pid == "openrouter":
-            from hermes_cli.model_switch import _scoped_key_env
-            return has_usable_secret(_scoped_key_env("OPENROUTER_API_KEY"))
-        status = get_auth_status(pid)
-        return bool(status.get("logged_in") or status.get("configured"))
-    except Exception:
-        return False
-
-
-def list_available_providers() -> list[dict[str, str]]:
-    """``{id, label, aliases, authenticated}`` for every provider usable with ``provider:model``,
-    derived from the live provider catalog shared with ``hermes model`` and ``/model``."""
-    from hermes_cli.provider_catalog import provider_catalog
-
-    return [
-        {
-            "id": descriptor.slug,
-            "label": descriptor.label,
-            "aliases": list(getattr(get_provider_profile(descriptor.slug), "aliases", ()) or ()),
-            "authenticated": _provider_has_credentials(descriptor.slug),
-        }
-        for descriptor in provider_catalog()
-    ]
+from application_provider_listing import list_available_providers
 
 
 def _get_custom_base_url() -> str:

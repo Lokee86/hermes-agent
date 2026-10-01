@@ -1788,7 +1788,7 @@ import time  # noqa: F401,E402
 _PLUGIN_COMPAT_LAZY = {
     'base_url_host_matches': ('utils', 'base_url_host_matches'),
     'list_picker_providers': ('hermes_cli.model_switch_providers', 'list_picker_providers'),
-    'prewarm_picker_cache_async': ('hermes_cli.model_switch_providers', 'prewarm_picker_cache_async'),
+    'prewarm_picker_cache_async': ('application_picker_prewarm', 'prewarm_picker_cache_async'),
 }
 
 

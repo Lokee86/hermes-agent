@@ -166,11 +166,6 @@ def _fetch_picker_live_models(
     return generic_models if generic_models or use_native else None
 
 
-# Process-level guard: the prewarm thread is spawned at most once per process, otherwise a
-# long-lived process (or repeated triggers) would leak one OS thread per call.
-_picker_prewarm_done = _threading.Event()
-
-
 def _credential_pool_is_usable(provider: str, *, raw_pool_present: bool = False) -> bool:
     """Whether *provider* has a credential that can be selected now.
 
@@ -185,35 +180,6 @@ def _credential_pool_is_usable(provider: str, *, raw_pool_present: bool = False)
     except Exception:
         pass
     return raw_pool_present
-
-
-def prewarm_picker_cache_async() -> Optional["_threading.Thread"]:
-    """Warm ``provider_models_cache.json`` in a daemon thread by running the picker path once.
-
-    The first ``/model`` open (or the first after the 1h TTL) otherwise blocks ~1-2s on serial
-    live ``/v1/models`` fetches. Fire-and-forget, at most once per process, fully
-    exception-isolated. Returns the thread (for tests) or None if already warmed."""
-    from hermes_cli.model_switch import list_authenticated_providers
-    if _picker_prewarm_done.is_set():
-        return None
-    _picker_prewarm_done.set()
-
-    def _warm() -> None:
-        try:
-            from hermes_cli.inventory import load_picker_context
-            ctx = load_picker_context()
-            # The result is discarded; the warm disk cache is the point.
-            list_authenticated_providers(
-                current_provider=ctx.current_provider, current_base_url=ctx.current_base_url,
-                current_model=ctx.current_model, user_providers=ctx.user_providers,
-                custom_providers=ctx.custom_providers,
-                excluded_providers=ctx.excluded_providers or [])
-        except Exception:
-            logger.debug("picker cache prewarm failed", exc_info=True)
-
-    t = _threading.Thread(target=_warm, daemon=True, name="picker-cache-prewarm")
-    t.start()
-    return t
 
 
 def _prefetch_provider_models_parallel(provider_slugs: list[str]) -> None:
