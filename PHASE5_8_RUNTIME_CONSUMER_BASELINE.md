@@ -345,3 +345,27 @@ Verification:
 
 Phase 5.8.4 is closed. Gateway/session runtime migration remains Phase 5.8.5;
 TUI/web/ACP remains 5.8.6; provider/plugin/environment policy remains 5.8.7.
+
+## Phase 5.8.5 progress — gateway/session runtime hard cut
+
+### 5.8.5.1 — gateway effective-model precedence
+
+Gateway application precedence no longer depends on
+`hermes_cli.model_switch.resolve_effective_model`.
+
+- `gateway/model_resolution.py` now owns only the application-tier choice of the
+  first non-empty model candidate. It deliberately does not interpret model
+  identity, provider identity, catalogue membership, or invocation routing.
+- `gateway/run_config_loaders.py` uses that gateway-owned precedence for
+  channel override > global model selection.
+- `gateway/platforms/api_server.py` uses the same gateway-owned precedence for
+  advertised model naming and session override/session-row precedence.
+- `tests/models/test_runtime_query_boundary.py` prevents these gateway
+  consumers from regaining the CLI effective-model dependency.
+- No compatibility wrapper or lower-domain duplicate authority was introduced.
+
+Verification: gateway/API focused set **129 passed**; runtime ownership gate
+**15 passed**; Ruff, `py_compile`, `git diff --check`, and the gateway
+`resolve_effective_model` search are clean.
+
+5.8.5.2 remains next.

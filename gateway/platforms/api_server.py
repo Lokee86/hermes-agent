@@ -1454,16 +1454,15 @@ class APIServerAdapter(OpenAICompatRoutesMixin, BasePlatformAdapter):
 
     @staticmethod
     def _resolve_model_name(explicit: str) -> str:
-        """Advertised /v1/models name: explicit override > active profile name > "hermes-agent"
-        (precedence owned by ``hermes_cli.model_switch.resolve_effective_model``)."""
-        from hermes_cli.model_switch import resolve_effective_model
+        """Advertised /v1/models name: explicit override > active profile name > "hermes-agent"."""
+        from gateway.model_resolution import effective_model_candidate
         profile_name = ""
         with suppress(Exception):
             from hermes_cli.profiles import get_active_profile_name
             profile = get_active_profile_name()  # launch profile, pre-identity (advertised model name)
             if profile and profile not in {"default", "custom"}:
                 profile_name = profile
-        return resolve_effective_model(explicit, profile_name, "hermes-agent")
+        return effective_model_candidate(explicit, profile_name, "hermes-agent")
 
     def _cors_headers_for_origin(self, origin: str) -> Optional[Dict[str, str]]:
         """Return CORS headers for an allowed browser origin."""
@@ -2287,11 +2286,11 @@ class APIServerAdapter(OpenAICompatRoutesMixin, BasePlatformAdapter):
         session_row_model = _clean_request_string(session_model)
         current_provider = _clean_request_string(runtime_kwargs.get("provider"))
         session_override = None if confirmed_runtime_lock else self._session_model_override_for(session_key)
-        # Model-string precedence (override > session-persisted > global) is owned by
-        # hermes_cli.model_switch.resolve_effective_model.
-        from hermes_cli.model_switch import resolve_effective_model
+        # Gateway application precedence: session override > session-persisted > request/global.
+        # This chooses only the candidate string; provider/model semantics remain lower-owned.
+        from gateway.model_resolution import effective_model_candidate
         if session_override:
-            model = resolve_effective_model(session_override, None, model)
+            model = effective_model_candidate(session_override, model)
             self._apply_provider_runtime(
                 runtime_kwargs,
                 _clean_request_string(session_override.get("provider")) or current_provider,
@@ -2306,7 +2305,7 @@ class APIServerAdapter(OpenAICompatRoutesMixin, BasePlatformAdapter):
             # this session's turns ahead of per-request body values.
             self._apply_provider_runtime(
                 runtime_kwargs, current_provider, target_model=session_row_model)
-            model = resolve_effective_model(None, session_row_model, model)
+            model = effective_model_candidate(session_row_model, model)
             if request_model or request_provider:
                 logger.debug(
                     "api_server request selection skipped: session-persisted model wins for %s",

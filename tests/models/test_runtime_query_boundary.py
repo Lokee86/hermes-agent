@@ -326,3 +326,19 @@ def test_phase_5_8_4_auxiliary_final_owners_are_present():
     assert "resolve_supports_vision" in _definitions(
         ROOT / "models" / "metadata" / "capabilities.py"
     )
+
+
+def test_phase_5_8_5_gateway_effective_model_precedence_is_application_owned():
+    helper = ROOT / "gateway" / "model_resolution.py"
+    assert helper.exists()
+    assert "effective_model_candidate" in _definitions(helper)
+
+    offenders = []
+    for path in (
+        ROOT / "gateway" / "run_config_loaders.py",
+        ROOT / "gateway" / "platforms" / "api_server.py",
+    ):
+        source = path.read_text(encoding="utf-8")
+        if "resolve_effective_model" in source:
+            offenders.append(str(path.relative_to(ROOT)))
+    assert offenders == []
