@@ -121,6 +121,16 @@ with tempfile.TemporaryDirectory() as temp:
             old.close()
             assert legacy._live_connections[str(db.resolve())] == 1
             assert current.read_header_bytes_preopen(db) is None
+
+            # Reciprocal ordering: an old reader retained after the swap must
+            # observe a NEW tracked connection and refuse its own raw probe.
+            fresh.execute("BEGIN IMMEDIATE")
+            fresh.execute("INSERT INTO t VALUES ('new-writer')")
+            assert legacy.has_live_connection(db)
+            assert legacy.has_live_connection(str(db) + "-wal")
+            assert legacy.read_header_bytes_preopen(db) is None
+            assert intruder(db) == "BLOCKED", "old reader cancelled new writer's lock"
+            fresh.execute("ROLLBACK")
         finally:
             fresh.close()
         assert not current.has_live_connection(db)

@@ -33,6 +33,22 @@ def untrack_connection(path: Path | str) -> None:
         _track_key(_key(path), -1)
 
 
+def has_live_connection(path: Path | str) -> bool:
+    key = _key(path)
+    with _live_lock:
+        return (key in _live_connections
+                or any(key.endswith(suffix) and key[:-len(suffix)] in _live_connections
+                       for suffix in ("-wal", "-shm")))
+
+
+def read_header_bytes_preopen(path: Path | str, *, length: int = 100) -> bytes | None:
+    with _live_lock:
+        if has_live_connection(path):
+            return None
+        with open(path, "rb") as handle:
+            return handle.read(length)
+
+
 class _TrackingMixin:
     _hermes_tracked_path: str | None = None
 

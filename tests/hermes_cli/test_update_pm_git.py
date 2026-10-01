@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import os
-from types import SimpleNamespace
 
 import pm
 import pm.paths
@@ -14,6 +13,9 @@ from pm.package import Runner
 from runtime import git_subprocess
 
 
+pytestmark = pytest.mark.platforms("windows")
+
+
 @pytest.fixture
 def windows(monkeypatch, tmp_path):
     store = tmp_path / "tools"
@@ -21,8 +23,6 @@ def windows(monkeypatch, tmp_path):
     staged_git.parent.mkdir(parents=True)
     staged_git.touch()
     (tmp_path / "checkout" / ".git").mkdir(parents=True)
-    # Patch only the owner: mutating process-wide sys.platform affects pytest.
-    monkeypatch.setattr(git_subprocess, "sys", SimpleNamespace(platform="win32"))
     monkeypatch.setattr(pm.paths, "store_root", lambda: store)
     monkeypatch.setenv("PATH", r"C:\Windows\System32")
     return tmp_path, staged_git
