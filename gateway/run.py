@@ -2322,13 +2322,12 @@ def _resolve_runtime_agent_kwargs() -> dict:
     An ``AuthError`` from the primary walks the configured fallback chain through the shared
     ``resolve_runtime_with_fallback`` (the gateway keeps no resolver loop of its own)."""
     from hermes_cli.runtime_provider import (
-        resolve_runtime_with_fallback, format_runtime_provider_error, _get_model_config)
+        resolve_runtime_with_fallback, format_runtime_provider_error)
+    from gateway.model_resolution import configured_model_facts
 
-    # Capture primary provider/model from config before the try block so we
-    # can include it in the fallback notice if the primary fails (#74349).
-    _model_cfg = _get_model_config()
-    _primary_model = (_model_cfg.get("default") or "").strip()
-    _primary_provider = (_model_cfg.get("provider") or "").strip()
+    # Capture primary provider/model from already-loaded gateway config before the
+    # try block so the fallback notice does not depend on CLI model semantics.
+    _primary_model, _primary_provider = configured_model_facts(_load_gateway_config())
 
     try:
         runtime, fallback_entry = resolve_runtime_with_fallback(_load_gateway_config())

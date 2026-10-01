@@ -346,7 +346,7 @@ def _apply_runtime_agent_overrides(
 def _resolve_request_runtime_agent_kwargs(provider: str, target_model: Optional[str] = None) -> Dict[str, Any]:
     """gateway.run._resolve_runtime_agent_kwargs() for an explicit provider/model, so an API
     caller uses the same authenticated provider catalog without mutating config.yaml."""
-    from hermes_cli.runtime_provider import resolve_runtime_provider, format_runtime_provider_error, _get_model_config
+    from hermes_cli.runtime_provider import resolve_runtime_provider, format_runtime_provider_error
     try:
         runtime = resolve_runtime_provider(requested=provider, target_model=target_model)
     except Exception as exc:

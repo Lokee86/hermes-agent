@@ -1164,9 +1164,9 @@ def _select_switch_target(st: _Switch) -> Optional[ModelSwitchResult]:
                     f"Provider '{pdef.display_name}' has no base URL configured. "
                     f"Specify a model: /model <model-name> --provider {st.explicit_provider}"
                 )
-            from hermes_cli.runtime_provider import _auto_detect_local_model
+            from models.catalog_probe import detect_single_openai_model
 
-            raw = _auto_detect_local_model(pdef.base_url)
+            raw = detect_single_openai_model(pdef.base_url)
             if not raw:
                 st.target_provider = explicit_target
                 return st.fail_on_target(

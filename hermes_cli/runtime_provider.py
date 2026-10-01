@@ -271,23 +271,6 @@ def _resolve_nous_creds() -> Dict[str, Any]:
 # ── model config ───────────────────────────────────────────────────────────────────────────
 
 
-def _auto_detect_local_model(base_url: str) -> str:
-    """Query a local server for its model name when only one model is loaded."""
-    if not base_url:
-        return ""
-    try:
-        import requests
-        url = base_url.rstrip("/")
-        resp = requests.get((url if url.endswith("/v1") else url + "/v1") + "/models", timeout=(2, 3))
-        if resp.ok:
-            models = resp.json().get("data", [])
-            if len(models) == 1 and models[0].get("id", ""):
-                return models[0]["id"]
-    except Exception as exc:
-        logger.debug("Auto-detect model from %s failed: %s", base_url, exc)
-    return ""
-
-
 def _get_model_config() -> Dict[str, Any]:
     """``model`` config section with ``model`` accepted as an alias for ``default``, a dict
     ``default`` split into model/provider, and a local single-model server auto-detected."""
@@ -310,7 +293,8 @@ def _get_model_config() -> Dict[str, Any]:
         _default = cfg_model
     base_url = (cfg.get("base_url") or "").strip()
     if not str(_default or "").strip() and base_url and base_url_hostname(base_url) in ("localhost", "127.0.0.1"):
-        detected = _auto_detect_local_model(base_url)
+        from models.catalog_probe import detect_single_openai_model
+        detected = detect_single_openai_model(base_url)
         if detected:
             cfg["default"] = detected
     return cfg

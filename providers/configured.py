@@ -130,6 +130,84 @@ def match_configured_provider(
     return None
 
 
+def configured_custom_identity(
+    *,
+    base_url: str = "",
+    model: str = "",
+    config_provider: str = "",
+    providers: Mapping[Any, Any] | None = None,
+    custom_providers: Sequence[Any] | None = None,
+) -> str:
+    """Recover the durable identity of a configured custom route from supplied facts."""
+
+    target_url = _clean(base_url).rstrip("/").lower()
+    target_model = _clean(model).lower()
+
+    def serves_model(entry: Mapping[str, Any]) -> bool:
+        if not target_model:
+            return False
+        if target_model in {
+            _clean(entry.get("model")).lower(),
+            _clean(entry.get("default_model")).lower(),
+        }:
+            return True
+        values = entry.get("models")
+        if isinstance(values, Mapping):
+            return any(_clean(value).lower() == target_model for value in values)
+        if isinstance(values, Sequence) and not isinstance(values, (str, bytes)):
+            for value in values:
+                candidate = (
+                    _clean(value.get("id") or value.get("name"))
+                    if isinstance(value, Mapping)
+                    else _clean(value)
+                )
+                if candidate.lower() == target_model:
+                    return True
+        return False
+
+    if isinstance(providers, Mapping):
+        for stored_key, entry in providers.items():
+            if not isinstance(entry, Mapping) or not _enabled(entry):
+                continue
+            projected = _project(entry, provider_key=_clean(stored_key), source="providers")
+            if (
+                target_url
+                and projected.base_url.rstrip("/").lower() == target_url
+            ) or serves_model(entry):
+                return projected.identity
+
+    if isinstance(custom_providers, Sequence) and not isinstance(
+        custom_providers, (str, bytes)
+    ):
+        for entry in custom_providers:
+            if not isinstance(entry, Mapping):
+                continue
+            name = _clean(entry.get("name"))
+            if not name:
+                continue
+            projected = _project(
+                entry,
+                provider_key=_clean(entry.get("provider_key")),
+                source="custom_providers",
+            )
+            if (
+                target_url
+                and projected.base_url.rstrip("/").lower() == target_url
+            ) or serves_model(entry):
+                return projected.identity
+
+    candidate = _normalized_name(config_provider)
+    if candidate and candidate not in {"custom", "auto", "openrouter"}:
+        match = match_configured_provider(
+            candidate,
+            providers=providers,
+            custom_providers=custom_providers,
+        )
+        if match is not None:
+            return match.identity
+    return ""
+
+
 def resolves_to_custom_provider(provider: str) -> bool:
     """Whether a registered provider alias resolves to the generic custom profile."""
 

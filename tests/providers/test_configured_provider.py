@@ -1,4 +1,5 @@
 from providers.configured import (
+    configured_custom_identity,
     expand_direct_api_alias,
     match_configured_provider,
     resolves_to_custom_provider,
@@ -97,3 +98,36 @@ def test_configured_openai_provider_is_not_rewritten():
         configured_provider=True,
         preferred_base_url="https://proxy.example/v1",
     ) == ("openai", None)
+
+
+def test_configured_custom_identity_uses_lower_provider_facts():
+    providers = {
+        "alpha": {
+            "name": "Alpha",
+            "api": "https://alpha.example/v1",
+            "default_model": "alpha-model",
+        }
+    }
+    legacy = [
+        {
+            "name": "Beta",
+            "base_url": "https://beta.example/v1",
+            "models": ["beta-model"],
+        }
+    ]
+
+    assert configured_custom_identity(
+        base_url="https://alpha.example/v1/",
+        providers=providers,
+        custom_providers=legacy,
+    ) == "custom:alpha"
+    assert configured_custom_identity(
+        model="beta-model",
+        providers=providers,
+        custom_providers=legacy,
+    ) == "custom:beta"
+    assert configured_custom_identity(
+        config_provider="alpha",
+        providers=providers,
+        custom_providers=legacy,
+    ) == "custom:alpha"

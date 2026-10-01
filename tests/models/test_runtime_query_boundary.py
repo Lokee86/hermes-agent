@@ -10,6 +10,7 @@ ROOT = Path(__file__).resolve().parents[2]
 LOWER_QUERY_FILES = (
     ROOT / "models" / "catalog_static.py",
     ROOT / "models" / "catalog_local.py",
+    ROOT / "models" / "catalog_probe.py",
     ROOT / "models" / "catalog_github.py",
     ROOT / "models" / "catalog_manifest.py",
     ROOT / "models" / "catalog_runtime.py",
@@ -545,3 +546,115 @@ def test_phase_5_8_5_catalogue_picker_runtime_has_lower_semantic_owners():
     assert "get_catalog" not in compat_source
     assert "refresh_catalogs" not in compat_source
     assert "get_curated_openrouter_models" not in compat_source
+
+
+def test_phase_5_8_5_gateway_semantic_boundary_is_closed():
+    forbidden_modules = {
+        "hermes_cli.model_switch",
+        "hermes_cli.model_selection_defaults",
+        "hermes_cli.model_selection_guards",
+        "hermes_cli.model_switch_providers",
+        "hermes_cli.models",
+        "hermes_cli.model_catalog",
+    }
+    offenders = []
+    for path in (ROOT / "gateway").rglob("*.py"):
+        for module in sorted(_imports(path)):
+            if module in forbidden_modules:
+                offenders.append(f"{path.relative_to(ROOT)} -> {module}")
+    assert offenders == []
+
+    assert "detect_single_openai_model" in _definitions(
+        ROOT / "models" / "catalog_probe.py"
+    )
+    assert "configured_custom_identity" in _definitions(
+        ROOT / "providers" / "configured.py"
+    )
+    assert "configured_model_facts" in _definitions(
+        ROOT / "gateway" / "model_resolution.py"
+    )
+
+
+def test_phase_5_8_5_gateway_runtime_provider_exceptions_are_exact():
+    # Phase 6 debt only: credential/runtime acquisition and its error projection.
+    allowed = {
+        (
+            "gateway/platforms/api_server.py",
+            "_resolve_request_runtime_agent_kwargs",
+            "hermes_cli.runtime_provider",
+            "resolve_runtime_provider",
+        ),
+        (
+            "gateway/platforms/api_server.py",
+            "_resolve_request_runtime_agent_kwargs",
+            "hermes_cli.runtime_provider",
+            "format_runtime_provider_error",
+        ),
+        (
+            "gateway/run.py",
+            "_resolve_runtime_agent_kwargs",
+            "hermes_cli.runtime_provider",
+            "resolve_runtime_with_fallback",
+        ),
+        (
+            "gateway/run.py",
+            "_resolve_runtime_agent_kwargs",
+            "hermes_cli.runtime_provider",
+            "format_runtime_provider_error",
+        ),
+        (
+            "gateway/run.py",
+            "_resolve_runtime_agent_kwargs_for_provider",
+            "hermes_cli.runtime_provider",
+            "resolve_runtime_provider",
+        ),
+        (
+            "gateway/run.py",
+            "_resolve_runtime_agent_kwargs_for_provider",
+            "hermes_cli.runtime_provider",
+            "format_runtime_provider_error",
+        ),
+        (
+            "gateway/run_turn_prepare.py",
+            "_resolve_session_agent_runtime",
+            "hermes_cli.runtime_provider_custom",
+            "_resolve_named_custom_runtime",
+        ),
+        (
+            "gateway/run_turn_prepare.py",
+            "_resolve_session_agent_runtime",
+            "hermes_cli.runtime_provider",
+            "resolve_runtime_with_fallback",
+        ),
+        (
+            "gateway/session_model_resolution.py",
+            "_resolve_runtime_credentials",
+            "hermes_cli.runtime_provider",
+            "resolve_runtime_provider",
+        ),
+    }
+
+    found = set()
+
+    def collect(path: Path, node: ast.AST, scope: str = "<module>") -> None:
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            scope = node.name
+        if (
+            isinstance(node, ast.ImportFrom)
+            and node.module
+            and node.module.startswith("hermes_cli.runtime_provider")
+        ):
+            rel = path.relative_to(ROOT).as_posix()
+            found.update((rel, scope, node.module, alias.name) for alias in node.names)
+        elif isinstance(node, ast.Import):
+            rel = path.relative_to(ROOT).as_posix()
+            for alias in node.names:
+                if alias.name.startswith("hermes_cli.runtime_provider"):
+                    found.add((rel, scope, alias.name, alias.name))
+        for child in ast.iter_child_nodes(node):
+            collect(path, child, scope)
+
+    for path in (ROOT / "gateway").rglob("*.py"):
+        collect(path, _tree(path))
+
+    assert found == allowed

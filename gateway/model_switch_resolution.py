@@ -72,9 +72,9 @@ def _provider_only_model(
     )
     if base_url:
         try:
-            from hermes_cli.runtime_provider import _auto_detect_local_model
+            from models.catalog_probe import detect_single_openai_model
 
-            if model := _auto_detect_local_model(base_url):
+            if model := detect_single_openai_model(base_url):
                 return str(model)
         except Exception:
             pass

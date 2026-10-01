@@ -29,4 +29,24 @@ def effective_model_candidate(*tiers: Any) -> str:
     return ""
 
 
-__all__ = ["effective_model_candidate"]
+def configured_model_facts(config: Any) -> tuple[str, str]:
+    """Project the configured model/provider strings without interpreting their identity."""
+    if not isinstance(config, dict):
+        return "", ""
+    section = config.get("model")
+    if isinstance(section, str):
+        return section.strip(), ""
+    if not isinstance(section, dict):
+        return "", ""
+
+    provider = str(section.get("provider") or "").strip()
+    raw_default = section.get("default", section.get("model", ""))
+    if isinstance(raw_default, dict):
+        from hermes_cli.config import split_model_config_default
+
+        model, embedded_provider = split_model_config_default(raw_default)
+        return str(model or "").strip(), provider or str(embedded_provider or "").strip()
+    return str(raw_default or "").strip(), provider
+
+
+__all__ = ["configured_model_facts", "effective_model_candidate"]

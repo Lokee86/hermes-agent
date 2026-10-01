@@ -23,6 +23,7 @@ from providers.model_normalizers import vendor_for_model
 from providers.github import COPILOT_EDITOR_VERSION, copilot_request_headers
 from providers.configured import (
     ConfiguredProvider,
+    configured_custom_identity,
     expand_direct_api_alias,
     match_configured_provider,
     resolves_to_custom_provider,
@@ -77,6 +78,7 @@ __all__ = [
     "custom_provider_slug",
     "custom_provider_aliases",
     "match_configured_provider",
+    "configured_custom_identity",
     "resolves_to_custom_provider",
     "expand_direct_api_alias",
     "vendor_for_model",
