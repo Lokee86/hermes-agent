@@ -8,8 +8,8 @@ import re
 from collections.abc import Callable, Mapping, Sequence
 from typing import Any
 
-from hermes_cli.commands import (
-    COMMAND_REGISTRY, _is_gateway_available, _iter_plugin_command_entries, _resolve_config_gates)
+from commands import COMMAND_REGISTRY, is_gateway_available as _is_gateway_available, plugin_command_entries as _iter_plugin_command_entries
+from gateway.command_presentation import resolve_config_gates as _resolve_config_gates
 
 # Logger name parity with the origin module (tests capture "hermes_cli.commands").
 logger = logging.getLogger("hermes_cli.commands")

@@ -39,7 +39,7 @@ it leaks as literal `?[K` under prompt_toolkit's `patch_stdout`; space-pad inste
 `f"\r{line}{' ' * pad}"`. Wrapper CLIs extend via the protected hooks in `cli_tui_mixin.py`
 (`website/docs/developer-guide/extending-the-cli.md`), not by overriding `run()`.
 
-## Slash command registry (`hermes_cli/commands.py`)
+## Slash command registry (`commands/__init__.py`)
 
 `COMMAND_REGISTRY` (list of `CommandDef`) is the single source; everything derives from it: CLI
 dispatch (`resolve_command()`), gateway `GATEWAY_KNOWN_COMMANDS` + dispatch, `gateway_help_lines()`,
@@ -49,6 +49,11 @@ dispatch (`resolve_command()`), gateway `GATEWAY_KNOWN_COMMANDS` + dispatch, `ga
 `cli_only`, `gateway_only`, `gateway_config_gate` (config dotpath; a `cli_only` command becomes
 gateway-available when truthy — `GATEWAY_KNOWN_COMMANDS` always includes gated commands so the
 gateway can dispatch them; help/menus show them only when the gate is open).
+
+Canonical lookup, aliases, availability, and Desktop metadata live in `commands`. CLI help
+projections live in `hermes_cli/commands_presentation.py`; Gateway help rendering and profile-scoped
+configuration-gate loading live in `gateway/command_presentation.py`. The domain accepts supplied
+gate names and never loads configuration. `hermes_cli/commands.py` is external compatibility only.
 
 **Adding a command:** (1) `CommandDef("mycommand", "What it does", "Session", aliases=("mc",),
 args_hint="[arg]")` in `COMMAND_REGISTRY`; (2) `_handle_mycommand_command(self, cmd_original)` on the

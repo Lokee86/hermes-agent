@@ -104,7 +104,7 @@ def _skill_commands() -> dict:
 def _exec_help(ctx: CommandContext) -> CommandReply:
     """Core gateway /help body (pre platform mention decoration)."""
     from agent.i18n import t
-    from hermes_cli.commands import gateway_help_lines
+    from gateway.command_presentation import gateway_help_lines
     # ``allowed_commands`` (gateway, non-admin caller): only the commands the slash-access
     # policy lets this user run; skill commands are hidden too since the gate refuses them.
     allowed = ctx.options.get("allowed_commands")
@@ -129,7 +129,7 @@ def _exec_commands(ctx: CommandContext) -> CommandReply:
     ``ctx.options["page_size"]`` is a surface parameter (Telegram uses 15, everything else 20).
     """
     from agent.i18n import t
-    from hermes_cli.commands import gateway_help_lines
+    from gateway.command_presentation import gateway_help_lines
     try:
         requested_page = int((ctx.args or "").strip() or 1)
     except ValueError:
@@ -195,7 +195,7 @@ def run_execute(cmd_def: Any, ctx: CommandContext) -> CommandReply | None:
 
 def execute_command(name: str, ctx: CommandContext) -> CommandReply:
     """Run the shared executor for ``name``; ``LookupError`` when unknown or not migrated."""
-    from hermes_cli.commands import resolve_command
+    from commands import resolve_command
     cmd_def = resolve_command(name)
     reply = run_execute(cmd_def, ctx) if cmd_def is not None else None
     if reply is None:

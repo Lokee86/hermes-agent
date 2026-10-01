@@ -5,7 +5,7 @@ Every ``CommandDef`` with ``execute`` set must name a key that exists in
 through to "unknown command" on every surface.
 """
 
-from hermes_cli.commands import COMMAND_REGISTRY
+from commands import COMMAND_REGISTRY
 from hermes_cli.slash_exec import resolve_executor
 
 

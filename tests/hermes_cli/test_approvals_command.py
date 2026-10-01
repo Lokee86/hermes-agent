@@ -1,7 +1,8 @@
 """Cross-surface contract for the persistent /approvals mode command."""
 
 
-from hermes_cli.commands import GATEWAY_KNOWN_COMMANDS, SUBCOMMANDS, gateway_help_lines, resolve_command
+from commands import GATEWAY_KNOWN_COMMANDS, SUBCOMMANDS, resolve_command
+from gateway.command_presentation import gateway_help_lines
 from hermes_cli.commands_completion import SlashCommandCompleter
 from hermes_cli.commands_platforms import telegram_bot_commands
 from prompt_toolkit.completion import CompleteEvent

@@ -85,7 +85,8 @@ def inventory():
 
 
 def behaviour():
-    c = importlib.import_module("hermes_cli.commands")
+    c = importlib.import_module("commands")
+    presentation = importlib.import_module("hermes_cli.commands_presentation")
     e = importlib.import_module("hermes_cli.slash_exec")
     tc = importlib.import_module("hermes_cli.tools_config")
     from toolsets import TOOLSETS, resolve_toolset
@@ -98,9 +99,9 @@ def behaviour():
         "definitions": commands, "lookup": aliases,
         "desktop": c.desktop_surface_registry(),
         "desktop_metadata": {x.name: c.command_desktop_meta(x) for x in c.COMMAND_REGISTRY},
-        "gateway_available_closed": [x.name for x in c.COMMAND_REGISTRY if c._is_gateway_available(x, set())],
-        "gateway_available_open": [x.name for x in c.COMMAND_REGISTRY if c._is_gateway_available(x, gates)],
-        "cli_catalog": c.COMMANDS,
+        "gateway_available_closed": [x.name for x in c.COMMAND_REGISTRY if c.is_gateway_available(x, set())],
+        "gateway_available_open": [x.name for x in c.COMMAND_REGISTRY if c.is_gateway_available(x, gates)],
+        "cli_catalog": presentation.COMMANDS,
         "gateway_known": sorted(c.GATEWAY_KNOWN_COMMANDS),
         "executors": {k: v.__name__ for k, v in e.EXECUTORS.items()},
         "execution_contracts": {x.__name__: [f.name for f in fields(x)]

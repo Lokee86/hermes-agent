@@ -1,6 +1,6 @@
 # Phase 7.1 — baseline and dependency inventory
 
-Status: inventory and executable baseline complete. No runtime ownership migration yet.
+Status at 7.1 capture: inventory and executable baseline complete. The subsequent\n[7.2 implementation and verification receipt](phase7.2.md) records the command ownership cut.
 Captured 2026-10-01 on Windows, Python 3.11.15.
 
 ## Foundation and isolation

@@ -1,5 +1,5 @@
 """prompt_toolkit completer + inline auto-suggest for slash commands. Kept out of
-:mod:`hermes_cli.commands` (which re-exports both classes) so the registry module stays
+:mod:`commands` so the registry module stays
 prompt_toolkit-free for the gateway."""
 
 from __future__ import annotations
@@ -16,7 +16,8 @@ from typing import Any, Dict, Optional, Tuple
 from prompt_toolkit.auto_suggest import AutoSuggest, Suggestion
 from prompt_toolkit.completion import Completer, Completion
 
-from hermes_cli.commands import COMMANDS, SUBCOMMANDS
+from hermes_cli.commands_presentation import COMMANDS
+from commands import SUBCOMMANDS
 
 # (config-file signature, personalities) memo for /personality completion.
 _personalities_memo: Optional[

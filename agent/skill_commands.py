@@ -350,7 +350,7 @@ def skill_command_collision_note(name: str) -> Optional[str]:
     built-in handlers), and the ``/skills`` listing plus the command palette render the note so
     the skipped skill is explained where the user looks, not only in the log.
     """
-    from hermes_cli.commands import resolve_command
+    from commands import resolve_command
     cmd_name = slugify_skill_name(name)
     if not cmd_name or resolve_command(cmd_name) is None:
         return None

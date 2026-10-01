@@ -4467,7 +4467,8 @@ class DiscordAdapter(DiscordAuthorizationMixin, DiscordMediaMixin, BasePlatformA
                 # e.g. name conflict with a subcommand group.
                 pass
         try:
-            from hermes_cli.commands import COMMAND_REGISTRY, _is_gateway_available, _resolve_config_gates
+            from commands import COMMAND_REGISTRY, is_gateway_available as _is_gateway_available
+            from gateway.command_presentation import resolve_config_gates as _resolve_config_gates
             try:
                 already_registered = {cmd.name for cmd in tree.get_commands()}
             except Exception:
@@ -4481,7 +4482,7 @@ class DiscordAdapter(DiscordAuthorizationMixin, DiscordMediaMixin, BasePlatformA
             logger.warning("Discord auto-register from COMMAND_REGISTRY failed: %s", e)
         # Mirror PluginContext.register_command() commands into the native slash picker.
         try:
-            from hermes_cli.commands import _iter_plugin_command_entries
+            from commands import plugin_command_entries as _iter_plugin_command_entries
             for plugin_name, plugin_desc, plugin_args_hint in _iter_plugin_command_entries():
                 _auto_register(plugin_name, plugin_desc, plugin_args_hint)
         except Exception as e:

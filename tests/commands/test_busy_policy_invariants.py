@@ -7,11 +7,7 @@ every command's mid-run behavior is declared on its CommandDef via
 rather than hand-maintained.
 """
 
-from hermes_cli.commands import (
-    ACTIVE_SESSION_BYPASS_COMMANDS,
-    COMMAND_REGISTRY,
-    is_interrupt_then_dispatch,
-)
+from commands import ACTIVE_SESSION_BYPASS_COMMANDS, COMMAND_REGISTRY, is_interrupt_then_dispatch
 
 def test_bypass_set_is_derived_from_registry():
     expected = frozenset(

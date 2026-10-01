@@ -442,7 +442,7 @@ def _(rid, params: dict) -> dict:
 
 @_rpc("command.resolve", 5012)
 def _(rid, params: dict) -> dict:
-    r = _tools_mod("hermes_cli.commands").resolve_command(params.get("name", ""))
+    r = _tools_mod("commands").resolve_command(params.get("name", ""))
     if r:
         return _ok(rid, {"canonical": r.name, "description": r.description, "category": r.category})
     return _err(rid, 4011, f"unknown command: {params.get('name')}")
@@ -552,7 +552,7 @@ def _is_registry_command(base: str) -> bool:
     built-in cannot be the skill whose prompt the worker would drop.
     """
     try:
-        return _tools_mod("hermes_cli.commands").resolve_command(base) is not None
+        return _tools_mod("commands").resolve_command(base) is not None
     except Exception:
         return False
 
@@ -567,7 +567,7 @@ def _dispatch_plugin(rid, params, session, name, arg):
 def _bundle_key_for(name: str):
     """Skill-bundle key for ``name`` when it is NOT a registry command; None otherwise / on failure."""
     try:
-        if _tools_mod("hermes_cli.commands").resolve_command(name) is None:
+        if _tools_mod("commands").resolve_command(name) is None:
             return _tools_mod("agent.skill_bundles").resolve_bundle_command_key(name)
         return None
     except Exception:
