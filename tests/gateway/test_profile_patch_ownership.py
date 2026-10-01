@@ -37,6 +37,33 @@ MOVED_FACADE_EXPORTS = {
 }
 
 
+def _import_bindings(tree: ast.AST) -> dict[str, str]:
+    """Map local import bindings to their canonical dotted identities."""
+    bindings: dict[str, str] = {}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                local = alias.asname or alias.name.split(".", 1)[0]
+                canonical = alias.name if alias.asname else local
+                bindings[local] = canonical
+        elif isinstance(node, ast.ImportFrom) and node.module:
+            for alias in node.names:
+                if alias.name == "*":
+                    continue
+                bindings[alias.asname or alias.name] = f"{node.module}.{alias.name}"
+    return bindings
+
+
+def _canonical_name(node: ast.AST, bindings: dict[str, str]) -> str | None:
+    """Resolve a Name/Attribute expression through imports without executing it."""
+    if isinstance(node, ast.Name):
+        return bindings.get(node.id, node.id)
+    if isinstance(node, ast.Attribute):
+        parent = _canonical_name(node.value, bindings)
+        return f"{parent}.{node.attr}" if parent else None
+    return None
+
+
 def _profile_facade_aliases(tree: ast.AST) -> set[str]:
     aliases: set[str] = set()
     for node in ast.walk(tree):
@@ -75,6 +102,7 @@ def _patched_facade_names(path: Path) -> list[tuple[int, str]]:
         return []
     tree = ast.parse(source, filename=str(path))
     aliases = _profile_facade_aliases(tree)
+    bindings = _import_bindings(tree)
     offenders: list[tuple[int, str]] = []
 
     for node in ast.walk(tree):
@@ -119,8 +147,7 @@ def _patched_facade_names(path: Path) -> list[tuple[int, str]]:
             continue
 
         if (
-            isinstance(func, ast.Name)
-            and func.id == "patch"
+            _canonical_name(func, bindings) == "unittest.mock.patch"
             and node.args
             and isinstance(node.args[0], ast.Constant)
             and isinstance(node.args[0].value, str)
@@ -165,6 +192,39 @@ def test_patch_collector_detects_facade_behavior_seams(
     probe = tmp_path / "probe.py"
     probe.write_text(source, encoding="utf-8")
     assert _patched_facade_names(probe) == [(2 if "\n" in source.rstrip("\n") else 1, expected)]
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "from unittest.mock import patch\npatch('target')\n",
+        "from unittest.mock import patch as p\np('target')\n",
+        "from unittest import mock\nmock.patch('target')\n",
+        "import unittest.mock\nunittest.mock.patch('target')\n",
+        "import unittest.mock as mock\nmock.patch('target')\n",
+        "import unittest as ut\nut.mock.patch('target')\n",
+    ],
+)
+def test_import_resolution_normalizes_patch_calls(source: str) -> None:
+    tree = ast.parse(source)
+    bindings = _import_bindings(tree)
+    call = next(node for node in ast.walk(tree) if isinstance(node, ast.Call))
+    assert _canonical_name(call.func, bindings) == "unittest.mock.patch"
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "from unittest import mock\n"
+        "mock.patch('hermes_cli.profiles.profile_exists', return_value=True)\n",
+        "import unittest.mock\n"
+        "unittest.mock.patch('hermes_cli.profiles.profile_exists', return_value=True)\n",
+    ],
+)
+def test_patch_collector_uses_canonical_patch_identity(tmp_path: Path, source: str) -> None:
+    probe = tmp_path / "probe.py"
+    probe.write_text(source, encoding="utf-8")
+    assert _patched_facade_names(probe) == [(2, "profile_exists")]
 
 
 def test_patch_collector_allows_canonical_owner(tmp_path: Path) -> None:
