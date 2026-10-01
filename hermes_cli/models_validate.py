@@ -483,15 +483,16 @@ def _validate_anthropic_messages(req: _Request) -> dict[str, Any]:
 
 def _nous_portal_recommended_names() -> set[str]:
     """Lower-cased ids from the Portal's live recommended-models feed (empty on any failure)."""
-    from hermes_cli import models as _m
+    from application_nous_recommendations import fetch_recommended_models
 
     try:
-        payload = _m.fetch_nous_recommended_models(_m._resolve_nous_portal_url())
+        payload = fetch_recommended_models()
         return {
             name.lower()
             for tier in ("freeRecommendedModels", "paidRecommendedModels")
             for entry in (payload.get(tier) or [])
-            if (name := _m._extract_model_name(entry))
+            if isinstance(entry, dict) and isinstance(entry.get("modelName"), str)
+            and (name := entry["modelName"].strip())
         }
     except Exception:
         return set()

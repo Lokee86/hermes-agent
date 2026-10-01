@@ -22,26 +22,34 @@ class NousProfile(VendorQualifiedModelIdsMixin, ProviderProfile):
         wire = str((options or {}).get("anthropic_wire") or "chat").strip().lower()
         return "anthropic_messages" if wire == "native" else "chat_completions"
 
-    def resolve_aux_model(self, *, vision: bool = False, force_refresh: bool = False) -> str:
-        """Portal's tier-aware recommended auxiliary model (cached, offline-safe)."""
-        try:
-            from hermes_cli.models import (
-                _resolve_nous_portal_url,
-                check_nous_free_tier,
-                fetch_nous_recommended_models,
-            )
-            from providers.nous_recommendations import recommended_aux_model
+    def fetch_recommended_models(
+        self, *, base_url: str = "https://portal.nousresearch.com", timeout: float = 5.0
+    ) -> dict[str, Any] | None:
+        """Provider-owned public Portal fetch (no account credential or model selection)."""
+        import gzip
+        import json
+        import urllib.request
 
-            payload = fetch_nous_recommended_models(
-                _resolve_nous_portal_url(), force_refresh=force_refresh,
-            )
-            try:
-                free_tier = check_nous_free_tier()
-            except Exception:
-                free_tier = False
-            return recommended_aux_model(
-                payload, vision=vision, free_tier=free_tier,
-            ) or ""
+        from hermes_cli.urllib_security import open_credentialed_url
+        from models.catalog_nous_recommendations import RECOMMENDED_MODELS_PATH
+
+        req = urllib.request.Request(
+            base_url.rstrip("/") + RECOMMENDED_MODELS_PATH,
+            headers={"Accept": "application/json", "Accept-Encoding": "gzip"},
+        )
+        with open_credentialed_url(req, timeout=timeout) as response:
+            body = response.read()
+            if response.headers.get("Content-Encoding", "").lower() == "gzip":
+                body = gzip.decompress(body)
+        payload = json.loads(body.decode("utf-8"))
+        return payload if isinstance(payload, dict) else None
+
+    def resolve_aux_model(self, *, vision: bool = False, force_refresh: bool = False) -> str:
+        """Use application-resolved Portal/account facts; never import CLI model policy."""
+        try:
+            from application_nous_recommendations import auxiliary_model
+
+            return auxiliary_model(vision=vision, force_refresh=force_refresh)
         except Exception:
             return ""
 

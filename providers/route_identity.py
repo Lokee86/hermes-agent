@@ -75,8 +75,38 @@ def is_actual_route(provider: str = "", base_url: str = "") -> bool:
     return hostname == "api.actual.inc"
 
 
+def is_actual_local_base_url(base_url: str) -> bool:
+    """Actual's local no-auth transport is restricted to loopback hosts."""
+    try:
+        hostname = (urlsplit(str(base_url or "")).hostname or "").lower().rstrip(".")
+    except (TypeError, ValueError):
+        return False
+    return hostname in {"localhost", "127.0.0.1", "::1", "0.0.0.0"}
+
+
+def normalize_actual_base_url(base_url: str) -> str:
+    """Actual's OpenAI-compatible hosted and loopback endpoints require /v1."""
+    url = str(base_url or "").strip().rstrip("/")
+    if not url:
+        from providers.registry import get_provider_profile
+
+        profile = get_provider_profile("actual")
+        return str(getattr(profile, "base_url", "") or "https://api.actual.inc/v1")
+    try:
+        parts = urlsplit(url)
+        hostname = (parts.hostname or "").lower().rstrip(".")
+        path = parts.path.rstrip("/")
+    except (TypeError, ValueError):
+        return url
+    if path in {"", "/"} and (hostname == "api.actual.inc" or is_actual_local_base_url(url)):
+        return url + "/v1"
+    return url
+
+
 __all__ = [
+    "is_actual_local_base_url",
     "is_actual_route",
     "is_foreign_provider_endpoint",
+    "normalize_actual_base_url",
     "normalize_route_base_url",
 ]

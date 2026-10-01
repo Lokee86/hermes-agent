@@ -75,18 +75,13 @@ def select_nous_recommended_default() -> tuple[ModelSelection, bool]:
 
     from hermes_cli import models as catalog
     from hermes_cli import models_pricing as pricing_mod
-    from hermes_cli.auth import get_provider_auth_state
+    from application_nous_recommendations import fetch_recommended_models
 
     curated = catalog.get_curated_nous_model_ids()
     pricing = pricing_mod.get_pricing_for_provider("nous") or {}
     free_tier = bool(catalog.check_nous_free_tier(force_fresh=True))
     try:
-        portal_url = (get_provider_auth_state("nous") or {}).get("portal_base_url", "") or ""
-    except Exception:
-        portal_url = ""
-
-    try:
-        payload = catalog.fetch_nous_recommended_models(portal_url)
+        payload = fetch_recommended_models()
     except Exception:
         payload = None
     portal_key = "freeRecommendedModels" if free_tier else "paidRecommendedModels"

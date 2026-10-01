@@ -186,7 +186,7 @@ def free_account(monkeypatch):
     from hermes_cli import models as m
     from hermes_cli import models_pricing as mp
     monkeypatch.setattr(m, "check_nous_free_tier", lambda **kw: True)
-    monkeypatch.setattr(m, "fetch_nous_recommended_models", lambda *a, **kw: {
+    monkeypatch.setattr("application_nous_recommendations.fetch_recommended_models", lambda *a, **kw: {
         "freeRecommendedModels": [{"modelName": FREE_PICK}]})
     monkeypatch.setattr(mp, "get_pricing_for_provider", lambda *a, **kw: {})
     monkeypatch.setattr(mp, "nous_policy_allowed_ids", lambda **kw: None)
@@ -227,7 +227,7 @@ class TestSignInCompletionSettlesTheModel:
 
     def test_no_eligible_recommendation_leaves_no_default_rather_than_a_model_the_account_may_not_use(
             self, portal, free_account, monkeypatch, capsys):
-        from hermes_cli import model_selection_defaults as defaults
+        import application_model_selection_defaults as defaults
         anon_auth.ensure_portal_identity(explicit=True)
         _write_model_config({"provider": "nous", "default": anon_auth.GUEST_MODEL, "base_url": WELCOME})
         def _portal_down():

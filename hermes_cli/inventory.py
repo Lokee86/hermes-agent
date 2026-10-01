@@ -788,10 +788,8 @@ def _moa_provider_row(current_provider: str = "") -> dict | None:
 
 def refresh_picker_catalog_sources() -> None:
     """Eagerly warm the remote provider catalogues used by picker inventory."""
-    from hermes_cli.models import (
-        fetch_nous_recommended_models,
-        fetch_openrouter_models,
-    )
+    from application_nous_recommendations import fetch_recommended_models
+    from hermes_cli.models import fetch_openrouter_models
 
     fetch_openrouter_models(force_refresh=True)
-    fetch_nous_recommended_models(force_refresh=True)
+    fetch_recommended_models(force_refresh=True)

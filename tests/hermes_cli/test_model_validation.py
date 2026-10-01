@@ -691,8 +691,8 @@ class TestValidateRequestedModelNousPortalRecommendations:
 
         with patch("hermes_cli.models.fetch_api_models", return_value=api_models), \
              patch("hermes_cli.models.probe_api_models", return_value=probe_payload), \
-             patch("hermes_cli.models.fetch_nous_recommended_models", side_effect=_fetch_portal), \
-             patch("hermes_cli.models._resolve_nous_portal_url", return_value="https://portal.nousresearch.com"), \
+             patch("application_nous_recommendations.fetch_recommended_models", side_effect=_fetch_portal), \
+             patch("application_nous_recommendations.portal_base_url", return_value="https://portal.nousresearch.com"), \
              patch("hermes_cli.models._model_in_provider_catalog", return_value=False):
             return validate_requested_model(model, "nous")
 
@@ -758,7 +758,7 @@ class TestValidateRequestedModelNousPortalRecommendations:
         }
         with patch("hermes_cli.models.fetch_api_models", return_value=["some/other-model"]), \
              patch("hermes_cli.models.probe_api_models", return_value=probe_payload), \
-             patch("hermes_cli.models.fetch_nous_recommended_models") as mock_portal, \
+             patch("application_nous_recommendations.fetch_recommended_models") as mock_portal, \
              patch("hermes_cli.models._model_in_provider_catalog", return_value=False):
             result = validate_requested_model("inclusionai/ling-3.0-flash:free", "openrouter")
         mock_portal.assert_not_called()

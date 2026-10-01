@@ -253,7 +253,9 @@ def _union_with_portal_recommendations(
     silently return the inputs unchanged — never block the picker on a Portal-side hiccup.
     """
     try:
-        payload = fetch_nous_recommended_models(portal_base_url, force_refresh=force_refresh)
+        from application_nous_recommendations import fetch_recommended_models
+
+        payload = fetch_recommended_models(portal_base_url, force_refresh=force_refresh)
     except Exception:
         payload = None
     block = payload.get(tier_key) if isinstance(payload, dict) else None
@@ -329,100 +331,6 @@ def check_nous_free_tier(*, force_fresh: bool = False, cached_only: bool = False
         result = False  # default to paid on error — don't block users
     _free_tier_cache[profile_key] = (result, now)
     return result
-
-
-# ---------------------------------------------------------------------------
-# Nous Portal recommended models — curated paid/free suggestions plus dedicated compaction (aux)
-# and vision picks, TTL-cached per process. Fields read: {paid,free}RecommendedModels:
-# [{modelName}], {paid,free}Recommended{Compaction,Vision}Model: {modelName} | null
-# ---------------------------------------------------------------------------
-
-NOUS_RECOMMENDED_MODELS_PATH = "/api/nous/recommended-models"
-_NOUS_RECOMMENDED_CACHE_TTL: int = 600  # seconds (10 minutes)
-# (result_dict, monotonic timestamp), scoped to the profile and portal.
-_nous_recommended_cache: dict[tuple[str, str], tuple[dict[str, Any], float]] = {}
-
-
-def _nous_recommended_disk_path() -> "Path":
-    from hermes_constants import get_hermes_home
-    return get_hermes_home() / "cache" / "nous_recommended_cache.json"
-
-
-def _read_nous_recommended_disk(base: str) -> tuple[dict[str, Any], float] | None:
-    """Return the last good payload and its age for the freshness check."""
-    blob = _read_json_cache(_nous_recommended_disk_path(), errors=(OSError, json.JSONDecodeError, UnicodeDecodeError))
-    entry = (blob or {}).get(base)
-    data = entry.get("data") if isinstance(entry, dict) else None
-    if not isinstance(data, dict) or not data:
-        return None
-    try:
-        age = time.time() - float(entry.get("ts", 0))
-    except (TypeError, ValueError, OverflowError):
-        age = float("inf")
-    return data, age
-
-
-def _write_nous_recommended_disk(base: str, data: dict[str, Any]) -> None:
-    """Merge ``data`` into the per-base disk map atomically; failures are debug-logged (the in-process
-    cache still works)."""
-    if not data:
-        return
-    path = _nous_recommended_disk_path()
-    try:
-        blob = _read_json_cache(path, errors=(OSError, json.JSONDecodeError, UnicodeDecodeError)) or {}
-        blob[base] = {"data": data, "ts": time.time()}
-        _write_json_cache(path, blob, indent=2)
-    except OSError as exc:
-        logger.debug("nous recommended-models disk cache write failed: %s", exc)
-
-
-def fetch_nous_recommended_models(
-    portal_base_url: str = "", timeout: float = 5.0, *, force_refresh: bool = False
-) -> dict[str, Any]:
-    """Fetch the Portal's public ``/api/nous/recommended-models`` payload (no auth).
-
-    Reuse successful results for ``_NOUS_RECOMMENDED_CACHE_TTL`` seconds, including across
-    process restarts. ``force_refresh`` bypasses both caches. Stale disk data remains a fallback
-    on live failure; reading it never renews its freshness.
-    """
-    base = (portal_base_url or "https://portal.nousresearch.com").rstrip("/")
-    now = time.monotonic()
-    cache_key = (_pricing_profile_key(), base)
-    cached = _nous_recommended_cache.get(cache_key)
-    if not force_refresh and cached is not None and now - cached[1] < _NOUS_RECOMMENDED_CACHE_TTL:
-        return cached[0]
-    disk = _read_nous_recommended_disk(base)
-    if not force_refresh and disk is not None and 0 <= disk[1] < _NOUS_RECOMMENDED_CACHE_TTL:
-        data, age = disk
-        _nous_recommended_cache[cache_key] = (data, now - age)
-        return data
-    try:
-        data = _get_json(
-            f"{base}{NOUS_RECOMMENDED_MODELS_PATH}", timeout=timeout,
-            headers={"Accept": "application/json", "Accept-Encoding": "gzip"}
-        )
-        if not isinstance(data, dict):
-            data = {}
-    except Exception:
-        data = {}
-    if data:
-        _write_nous_recommended_disk(base, data)
-    else:
-        data = disk[0] if disk is not None else data
-    _nous_recommended_cache[cache_key] = (data, now)
-    return data
-
-
-def _resolve_nous_portal_url() -> str:
-    """Best-effort lookup of the Portal base URL the user is authed against."""
-    try:
-        from hermes_cli.auth import DEFAULT_NOUS_PORTAL_URL, get_provider_auth_state
-
-        state = get_provider_auth_state("nous") or {}
-        portal = str(state.get("portal_base_url") or "").strip()
-        return (portal or str(DEFAULT_NOUS_PORTAL_URL)).rstrip("/")
-    except Exception:
-        return "https://portal.nousresearch.com"
 
 
 def _extract_model_name(entry: Any) -> Optional[str]:

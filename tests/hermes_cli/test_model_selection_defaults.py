@@ -72,8 +72,7 @@ def _patch_nous_default_facts(monkeypatch, *, allowed):
     )
     monkeypatch.setattr(catalog, "check_nous_free_tier", lambda **_kwargs: False)
     monkeypatch.setattr(
-        catalog,
-        "fetch_nous_recommended_models",
+        "application_nous_recommendations.fetch_recommended_models",
         lambda *_args, **_kwargs: {},
     )
     monkeypatch.setattr(pricing, "get_pricing_for_provider", lambda _provider: {})

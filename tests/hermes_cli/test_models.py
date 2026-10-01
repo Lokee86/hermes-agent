@@ -149,12 +149,12 @@ class TestPartitionNousModelsByTier:
 
     def test_free_tier_default_prefers_a_free_model_over_a_subscription_billed_one(self, monkeypatch):
         import hermes_cli.models as m
-        from hermes_cli import model_selection_defaults as defaults
+        import application_model_selection_defaults as defaults
         from hermes_cli import models_pricing as mp
         pricing = {"openai/gpt-5.4": {**self._PAID, "billing_mode": "subscription"}, "free/model": self._FREE}
         monkeypatch.setattr(m, "get_curated_nous_model_ids", lambda: list(pricing))
         monkeypatch.setattr(m, "check_nous_free_tier", lambda **kw: True)
-        monkeypatch.setattr(m, "fetch_nous_recommended_models", lambda *a, **kw: {})
+        monkeypatch.setattr("application_nous_recommendations.fetch_recommended_models", lambda *a, **kw: {})
         monkeypatch.setattr(defaults, "preferred_silent_default_model", lambda provider="": "not/listed")
         monkeypatch.setattr(mp, "get_pricing_for_provider", lambda slug, **kw: pricing)
         monkeypatch.setattr(mp, "nous_policy_allowed_ids", lambda **kw: None)
@@ -197,7 +197,7 @@ class TestUnionWithPortalFreeRecommendations:
         curated = ["anthropic/claude-opus-4.6"]
         pricing = {"anthropic/claude-opus-4.6": self._PAID}
         with patch(
-            "hermes_cli.models.fetch_nous_recommended_models",
+            "application_nous_recommendations.fetch_recommended_models",
             return_value=self._payload(["qwen/qwen3.6-plus"]),
         ):
             ids, p = union_with_portal_free_recommendations(curated, pricing, "")
@@ -216,7 +216,7 @@ class TestUnionWithPortalFreeRecommendations:
         curated = ["a"]
         pricing = {"a": self._PAID}
         with patch(
-            "hermes_cli.models.fetch_nous_recommended_models",
+            "application_nous_recommendations.fetch_recommended_models",
             side_effect=RuntimeError("network down"),
         ):
             ids, p = union_with_portal_free_recommendations(curated, pricing, "")
@@ -251,7 +251,7 @@ class TestUnionWithPortalPaidRecommendations:
         curated = ["anthropic/claude-opus-4.6"]
         pricing = {"anthropic/claude-opus-4.6": self._PAID}
         with patch(
-            "hermes_cli.models.fetch_nous_recommended_models",
+            "application_nous_recommendations.fetch_recommended_models",
             return_value=self._payload(["openai/gpt-5.4", "openai/gpt-5.5"]),
         ):
             ids, _ = union_with_portal_paid_recommendations(curated, pricing, "")
@@ -359,10 +359,14 @@ class TestNousRecommendedModels:
     }
 
     def setup_method(self):
-        _models_mod._nous_recommended_cache.clear()
+        from models.catalog_nous_recommendations import reset_cache
+
+        reset_cache()
 
     def teardown_method(self):
-        _models_mod._nous_recommended_cache.clear()
+        from models.catalog_nous_recommendations import reset_cache
+
+        reset_cache()
 
     def _mock_urlopen(self, payload):
         """Return a context-manager mock mimicking urllib.request.urlopen()."""
@@ -375,11 +379,11 @@ class TestNousRecommendedModels:
         return cm
 
     def test_fetch_caches_per_portal_url(self):
-        from hermes_cli.models import fetch_nous_recommended_models
+        from application_nous_recommendations import fetch_recommended_models
         mock_cm = self._mock_urlopen(self._SAMPLE_PAYLOAD)
-        with patch("hermes_cli.models._urlopen_model_catalog_request", return_value=mock_cm) as mock_urlopen:
-            a = fetch_nous_recommended_models("https://portal.example.com")
-            b = fetch_nous_recommended_models("https://portal.example.com")
+        with patch("hermes_cli.urllib_security.open_credentialed_url", return_value=mock_cm) as mock_urlopen:
+            a = fetch_recommended_models("https://portal.example.com")
+            b = fetch_recommended_models("https://portal.example.com")
         assert a == self._SAMPLE_PAYLOAD
         assert b == self._SAMPLE_PAYLOAD
         assert mock_urlopen.call_count == 1  # second call served from cache
@@ -410,8 +414,8 @@ class TestNousRecommendedModels:
             "freeRecommendedCompactionModel": {"modelName": "free-model"},
         }
         with (
-            patch("hermes_cli.models.fetch_nous_recommended_models", return_value=payload),
-            patch("hermes_cli.models._resolve_nous_portal_url", return_value="https://portal.example.com"),
+            patch("application_nous_recommendations.fetch_recommended_models", return_value=payload),
+            patch("application_nous_recommendations.portal_base_url", return_value="https://portal.example.com"),
             patch("hermes_cli.models.check_nous_free_tier", side_effect=RuntimeError("boom")),
         ):
             assert get_provider_profile("nous").resolve_aux_model(vision=False) == "paid-model"
