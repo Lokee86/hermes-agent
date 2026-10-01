@@ -15,8 +15,8 @@ from providers import match_configured_provider, normalize_provider
 from providers.routing import InvocationRequest, resolve_invocation_route
 from utils import base_url_origin
 
-from gateway.model_aliases import alias_api_key, model_aliases_from_config, provider_reference_context
-from gateway.session_model_facts import configured_model_matches, provider_facts, static_detection
+from application_model_aliases import alias_api_key, model_aliases_from_config, provider_reference_context
+from application_model_facts import configured_model_matches, provider_facts, static_detection
 
 
 @dataclass(frozen=True, slots=True)

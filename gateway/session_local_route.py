@@ -8,7 +8,7 @@ from models.selection import ExplicitAlias, explicit_provider_hint, select_expli
 from providers import is_aggregator, is_routing_aggregator, normalize_provider
 from providers.routing import InvocationRequest, resolve_invocation_route
 
-from gateway.model_aliases import (
+from application_model_aliases import (
     alias_api_key,
     configured_provider_ids,
     model_aliases_from_config,

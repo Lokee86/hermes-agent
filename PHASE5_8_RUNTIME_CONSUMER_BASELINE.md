@@ -544,4 +544,6 @@ passed**; gateway catalogue/picker behavior **40 passed**. Ruff and
 `git diff --check` are clean. The two new lower production modules remain
 within the small-file boundary (`catalog_runtime.py` 199 lines).
 
-5.8.5.7 remains next.
+5.8.5.7 closed at `3f3ddeeefc`. Phase 5.8.6.1 TUI startup and rehydration
+closeout is recorded in `PHASE5_8_6_1_TUI_STARTUP_CLOSEOUT.md`; 5.8.6.2
+(TUI model-switch orchestration) follows.

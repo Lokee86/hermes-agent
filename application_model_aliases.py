@@ -1,4 +1,4 @@
-"""Gateway projection of configured model aliases.
+"""Application projection of configured model aliases.
 
 Alias syntax and credential lookup are application configuration concerns. Model
 identity is represented as :class:`models.ModelRef`; provider/model selection

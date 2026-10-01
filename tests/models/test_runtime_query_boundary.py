@@ -354,7 +354,7 @@ def test_phase_5_8_5_gateway_effective_model_precedence_is_application_owned():
 
 def test_phase_5_8_5_session_launch_resolution_uses_lower_domains():
     route = ROOT / "gateway" / "session_local_route.py"
-    aliases = ROOT / "gateway" / "model_aliases.py"
+    aliases = ROOT / "application_model_aliases.py"
     route_source = route.read_text(encoding="utf-8")
     alias_source = aliases.read_text(encoding="utf-8")
 
@@ -371,7 +371,7 @@ def test_phase_5_8_5_session_launch_resolution_uses_lower_domains():
 def test_phase_5_8_5_session_mutation_is_gateway_owned():
     mutation = ROOT / "gateway" / "session_mutation_model.py"
     resolver = ROOT / "gateway" / "session_model_resolution.py"
-    facts = ROOT / "gateway" / "session_model_facts.py"
+    facts = ROOT / "application_model_facts.py"
 
     for path in (mutation, resolver, facts):
         source = path.read_text(encoding="utf-8")

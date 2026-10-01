@@ -1,4 +1,4 @@
-"""Caller-owned facts for canonical gateway session model selection."""
+"""Caller-owned facts for canonical application model selection."""
 
 from __future__ import annotations
 
