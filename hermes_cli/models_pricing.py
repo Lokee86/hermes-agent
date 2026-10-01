@@ -497,10 +497,9 @@ def pricing_cache_scope(provider: str, *, current_provider: str = "", current_ba
 
 def _cached_only_pricing(normalized: str) -> dict[str, dict[str, str]]:
     """Process-resident pricing for *normalized* without any provider I/O."""
-    from hermes_cli.models import _deepinfra_catalog_cache, _deepinfra_catalog_url, _pricing_profile_key
+    from hermes_cli.models import _pricing_profile_key
     if normalized == "deepinfra":
-        cache_key, _url = _deepinfra_catalog_url()
-        return _fetch_deepinfra_pricing() if cache_key in _deepinfra_catalog_cache else {}
+        return _fetch_deepinfra_pricing(cached_only=True)
     cache_key = _pricing_provider_cache_keys.get((_pricing_profile_key(), normalized))
     if cache_key is None and normalized in ("openrouter", "ai-gateway", "fireworks"):
         cache_key = _STATIC_PRICING_SCOPES[normalized]()
@@ -586,12 +585,13 @@ def _fetch_novita_pricing(timeout: float = 8.0, *, force_refresh: bool = False) 
     return _cache_catalog(cache_key, result)
 
 
-def _fetch_deepinfra_pricing(timeout: float = 5.0, *, force_refresh: bool = False) -> dict[str, dict[str, str]]:
-    """DeepInfra chat-model pricing: ``input_tokens`` / ``output_tokens`` / ``cache_read_tokens`` in
-    $/MTok → per-token ``prompt`` / ``completion`` / ``input_cache_read`` (cached by the by-tag
-    helper)."""
-    from hermes_cli.models import _fetch_deepinfra_models_by_tag
-    items = _fetch_deepinfra_models_by_tag("chat", timeout=timeout, force_refresh=force_refresh)
+def _fetch_deepinfra_pricing(
+    timeout: float = 5.0, *, force_refresh: bool = False, cached_only: bool = False
+) -> dict[str, dict[str, str]]:
+    """DeepInfra pricing projected from the same canonical tagged catalogue as every surface."""
+    from application_deepinfra_catalog import models_by_tag
+
+    items = models_by_tag("chat", timeout=timeout, force_refresh=force_refresh, cached_only=cached_only)
     result: dict[str, dict[str, str]] = {}
     for item in items or []:
         metadata = item.get("metadata") or {}

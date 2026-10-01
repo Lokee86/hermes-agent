@@ -64,20 +64,21 @@ def test_deepinfra_catalog_is_fetched_with_each_profiles_key(homes, monkeypatch)
     a, b = homes
     (a / ".env").write_text("DEEPINFRA_API_KEY=key-A\n", encoding="utf-8")
     (b / ".env").write_text("DEEPINFRA_API_KEY=key-B\n", encoding="utf-8")
-    import hermes_cli.models as models
+    from application_deepinfra_catalog import deepinfra_model_ids
+    from models.catalog_deepinfra import reset_catalog_cache
+    from providers import get_provider_profile
 
-    monkeypatch.setattr(models, "_deepinfra_catalog_cache", {})
-    monkeypatch.setattr(models, "_deepinfra_catalog_neg_cache", {})
+    reset_catalog_cache()
 
-    def transport(req, *, timeout, **kw):
-        who = req.headers.get("Authorization", "").rsplit("-", 1)[-1] or "anon"
-        return _json_resp({"data": [{"id": f"di/model-{who}", "metadata": {"tags": ["chat"]}}]})
+    def fetch_catalog(*, api_key="", base_url="", timeout=5.0):
+        who = api_key.rsplit("-", 1)[-1] or "anon"
+        return [{"id": f"di/model-{who}", "metadata": {"tags": ["chat"]}}]
 
-    monkeypatch.setattr(models, "_urlopen_model_catalog_request", transport)
+    monkeypatch.setattr(get_provider_profile("deepinfra"), "fetch_catalog", fetch_catalog)
     with _Scoped(a):
-        assert models._fetch_deepinfra_models() == ["di/model-A"]
+        assert deepinfra_model_ids("chat") == ["di/model-A"]
     with _Scoped(b):
-        assert models._fetch_deepinfra_models() == ["di/model-B"]
+        assert deepinfra_model_ids("chat") == ["di/model-B"]
 
 
 def test_copilot_context_cache_hit_requires_same_api_key(homes, monkeypatch):

@@ -777,190 +777,131 @@ class TestMinimaxOAuthProvider:
 
 
 @pytest.fixture
-def _deepinfra_cache_isolation(monkeypatch):
-    """Reset the module-level catalog cache around each DeepInfra test.
+def _deepinfra_cache_isolation():
+    """Each DeepInfra test starts with the canonical model-domain cache empty."""
+    from models.catalog_deepinfra import reset_catalog_cache
 
-    The cache is keyed by base URL and would otherwise leak fixture data
-    from one test into the next in the same session. The negative cache is
-    reset too, so a test that simulates an unreachable catalog can't suppress
-    a later test's fetch within the failure TTL.
-    """
-    import hermes_cli.models as _models_mod
-    monkeypatch.setattr(_models_mod, "_deepinfra_catalog_cache", {})
-    monkeypatch.setattr(_models_mod, "_deepinfra_catalog_neg_cache", {})
+    reset_catalog_cache()
     yield
+    reset_catalog_cache()
+
+
+def _mock_deepinfra_catalog(monkeypatch, rows):
+    from providers import get_provider_profile
+
+    profile = get_provider_profile("deepinfra")
+    assert profile is not None
+    monkeypatch.setattr(profile, "fetch_catalog", lambda **_kw: rows)
+    return profile
 
 
 @pytest.mark.usefixtures("_deepinfra_cache_isolation")
 class TestFetchDeepInfraModels:
-    """Tests for _fetch_deepinfra_models() live model discovery."""
-
     def test_returns_filtered_models_on_success(self, monkeypatch):
-        monkeypatch.setenv("DEEPINFRA_API_KEY", "test-key")
+        from application_deepinfra_catalog import models_by_tag
 
-        class _Resp:
-            def __enter__(self):
-                return self
-            def __exit__(self, *a):
-                return False
-            def read(self):
-                return json.dumps({"data": [
-                    {"id": "meta-llama/Llama-3-70B-Instruct", "metadata": {}},
-                    {"id": "mistralai/Mistral-Nemo-Instruct-2407", "metadata": {}},
-                    {"id": "BAAI/bge-large-en-v1.5-embed", "metadata": {}},
-                    {"id": "stabilityai/stable-diffusion-xl-base-1.0", "metadata": {}},
-                ]}).encode()
-
-        import hermes_cli.models as models
-        monkeypatch.setattr(
-            models, "_urlopen_model_catalog_request", lambda *a, **kw: _Resp()
-        )
-        from hermes_cli.models import _fetch_deepinfra_models
-        result = _fetch_deepinfra_models()
-
-        assert result is not None
-        assert "meta-llama/Llama-3-70B-Instruct" in result
-        assert "mistralai/Mistral-Nemo-Instruct-2407" in result
-        # Embedding and image models should be excluded
-        assert not any("embed" in m.lower() for m in result)
-        assert not any("stable-diffusion" in m.lower() for m in result)
-
+        rows = [
+            {"id": "meta-llama/Llama-3-70B-Instruct", "metadata": {}},
+            {"id": "mistralai/Mistral-Nemo-Instruct-2407", "metadata": {}},
+            {"id": "BAAI/bge-large-en-v1.5-embed", "metadata": {}},
+            {"id": "stabilityai/stable-diffusion-xl-base-1.0", "metadata": {}},
+        ]
+        _mock_deepinfra_catalog(monkeypatch, rows)
+        result = models_by_tag("chat")
+        ids = [item["id"] for item in result]
+        assert "meta-llama/Llama-3-70B-Instruct" in ids
+        assert "mistralai/Mistral-Nemo-Instruct-2407" in ids
+        assert not any("embed" in model.lower() or "stable-diffusion" in model.lower() for model in ids)
 
     def test_catalog_uses_credential_safe_opener(self, monkeypatch):
-        import hermes_cli.models as models
+        from providers import get_provider_profile
 
+        profile = get_provider_profile("deepinfra")
+        assert profile is not None
         seen = {}
 
         class _Resp:
             def __enter__(self):
                 return self
 
-            def __exit__(self, *args):
+            def __exit__(self, *_args):
                 return False
 
             def read(self):
-                return json.dumps({"data": []}).encode()
+                return b'{"data": []}'
 
         def _safe_open(request, *, timeout):
             seen["authorization"] = request.get_header("Authorization")
             seen["timeout"] = timeout
             return _Resp()
 
-        monkeypatch.setenv("DEEPINFRA_API_KEY", "test-key")
-        monkeypatch.setattr(models, "_urlopen_model_catalog_request", _safe_open)
-
-        assert models._fetch_deepinfra_catalog(force_refresh=True) == []
+        # Patch the provider-specific HTTP seam, not a deleted CLI catalogue helper.
+        monkeypatch.setitem(profile.fetch_catalog.__func__.__globals__, "open_credentialed_url", _safe_open)
+        assert profile.fetch_catalog(api_key="test-key", timeout=5.0) == []
         assert seen == {"authorization": "Bearer test-key", "timeout": 5.0}
-
-
-def _make_urlopen_returning(payload):
-    """Helper: build a urlopen() shim returning a fixed JSON payload."""
-    import json as _json
-
-    class _Resp:
-        def __enter__(self):
-            return self
-
-        def __exit__(self, *a):
-            return False
-
-        def read(self):
-            return _json.dumps(payload).encode()
-
-    return lambda *a, **kw: _Resp()
 
 
 @pytest.mark.usefixtures("_deepinfra_cache_isolation")
 class TestDeepInfraTagFiltering:
-    """Contract tests for the shared _fetch_deepinfra_models_by_tag helper."""
-
     def test_filters_by_surface_tag_and_handles_rollout_states(self, monkeypatch):
-        # One payload, several invariants in one test:
-        #  - explicit surface tags are honored (chat / image-gen / tts / stt / embed)
-        #  - capability-tags-only items fall through to the regex fallback
-        #    (used during the surface-tag rollout)
-        #  - the regex excludes id-name matches (whisper, embed, …)
-        #  - a surface tag takes priority over the regex
-        #  - ``metadata: None`` stubs are dropped
-        payload = {"data": [
+        from application_deepinfra_catalog import models_by_tag
+        from providers import get_provider_profile
+
+        rows = [
             {"id": "vendor/chat-tagged", "metadata": {"tags": ["chat"]}},
             {"id": "vendor/image-tagged", "metadata": {"tags": ["image-gen"]}},
             {"id": "vendor/tts-tagged", "metadata": {"tags": ["tts"]}},
             {"id": "vendor/stt-tagged", "metadata": {"tags": ["stt"]}},
             {"id": "vendor/embed-tagged", "metadata": {"tags": ["embed"]}},
-            # capability-only — rolls through regex fallback
             {"id": "Qwen/Qwen3-30B", "metadata": {"tags": ["reasoning", "vision"]}},
             {"id": "openai/whisper-large", "metadata": {"tags": ["reasoning"]}},
-            # surface tag overrides legacy regex exclusion
             {"id": "some-org/whisper-finetune-chat", "metadata": {"tags": ["chat"]}},
-            # null metadata — stub model, must be skipped
             {"id": "stub-model", "metadata": None},
-        ]}
-        from hermes_cli.models import _fetch_deepinfra_models_by_tag
-        import hermes_cli.models as _m
+        ]
+        count = []
+        profile = get_provider_profile("deepinfra")
+        assert profile is not None
 
+        def fetch(**_kwargs):
+            count.append(1)
+            return rows
+
+        monkeypatch.setattr(profile, "fetch_catalog", fetch)
         for surface in ("chat", "image-gen", "tts", "stt", "embed"):
-            monkeypatch.setattr(
-                _m,
-                "_urlopen_model_catalog_request",
-                _make_urlopen_returning(payload),
-            )
-            # Reset cache between iterations so each surface re-parses the payload.
-            _m._deepinfra_catalog_cache.clear()
-            got = _fetch_deepinfra_models_by_tag(surface)
-            assert got is not None
-            ids = {item["id"] for item in got}
-            assert "stub-model" not in ids  # null-metadata always skipped
+            items = models_by_tag(surface)
+            assert items is not None
+            ids = {item["id"] for item in items}
+            assert "stub-model" not in ids
             if surface == "chat":
-                # explicit chat + capability-only (Qwen) + surface-tag-over-regex
-                assert "vendor/chat-tagged" in ids
-                assert "Qwen/Qwen3-30B" in ids
-                assert "some-org/whisper-finetune-chat" in ids
-                # regex still excludes capability-only items that match the excluder
+                assert {"vendor/chat-tagged", "Qwen/Qwen3-30B",
+                        "some-org/whisper-finetune-chat"} <= ids
                 assert "openai/whisper-large" not in ids
             else:
-                # non-chat surfaces only see explicit surface-tagged items
-                for item in got:
-                    assert surface in item["metadata"]["tags"]
+                assert all(surface in item["metadata"]["tags"] for item in items)
+        # All media and pricing views share one canonical catalogue fetch.
+        assert len(count) == 1
 
 
 @pytest.mark.usefixtures("_deepinfra_cache_isolation")
 class TestDeepInfraPricingFetcher:
-    """_fetch_deepinfra_pricing reshapes $/MTok values into per-token strings
-    and is wired into the get_pricing_for_provider dispatch."""
-
     def test_pricing_shape_and_dispatch(self, monkeypatch):
-        payload = {"data": [
-            {
-                "id": "vendor/model-a",
-                "metadata": {
-                    "tags": ["chat", "prompt_cache"],
-                    "pricing": {
-                        "input_tokens": 0.1,
-                        "output_tokens": 0.3,
-                        "cache_read_tokens": 0.02,
-                    },
-                },
-            },
-            {
-                "id": "vendor/model-b",
-                "metadata": {"tags": ["chat"], "pricing": {"input_tokens": 1.0, "output_tokens": 5.0}},
-            },
-            # non-chat — must not appear
-            {"id": "vendor/model-image", "metadata": {"tags": ["image-gen"], "pricing": {"per_image_unit": 0.05}}},
-        ]}
-        import hermes_cli.models as models
-        monkeypatch.setattr(
-            models,
-            "_urlopen_model_catalog_request",
-            _make_urlopen_returning(payload),
-        )
         from hermes_cli.models_pricing import get_pricing_for_provider
 
-        # get_pricing_for_provider → _fetch_deepinfra_pricing dispatch path
-        result = get_pricing_for_provider("deepinfra")
+        rows = [
+            {"id": "vendor/model-a", "metadata": {
+                "tags": ["chat", "prompt_cache"],
+                "pricing": {"input_tokens": 0.1, "output_tokens": 0.3, "cache_read_tokens": 0.02},
+            }},
+            {"id": "vendor/model-b", "metadata": {
+                "tags": ["chat"], "pricing": {"input_tokens": 1.0, "output_tokens": 5.0},
+            }},
+            {"id": "vendor/model-image", "metadata": {
+                "tags": ["image-gen"], "pricing": {"per_image_unit": 0.05},
+            }},
+        ]
+        _mock_deepinfra_catalog(monkeypatch, rows)
+        result = get_pricing_for_provider("deepinfra", force_refresh=True)
         assert set(result) == {"vendor/model-a", "vendor/model-b"}
-        # Picker-shape: per-token strings under prompt/completion (+ cache_read when source had it)
         assert float(result["vendor/model-a"]["prompt"]) == pytest.approx(0.1 / 1_000_000)
         assert float(result["vendor/model-a"]["completion"]) == pytest.approx(0.3 / 1_000_000)
         assert "input_cache_read" in result["vendor/model-a"]

@@ -28,6 +28,7 @@ if TYPE_CHECKING:
     from typing import TypeGuard
 
 from models import AmbiguousModelAliasError, MODEL_ALIASES, normalize_model_id, resolve_model_alias
+from application_deepinfra_catalog import deepinfra_model_ids
 from models.catalog_github import fetch_github_model_catalog as _fetch_github_model_catalog
 
 from providers import (
@@ -688,33 +689,6 @@ def _base_url_looks_like_anthropic_messages(base_url: str) -> bool:
     return urllib.parse.urlparse(normalized).path.rstrip("/").endswith(("/anthropic", "/anthropic/v1"))
 
 
-def _anthropic_models_url(base_url: Optional[str] = None, *, after_id: Optional[str] = None) -> str:
-    """Anthropic ``/v1/models`` page URL. The endpoint is cursor-paginated with a default page of
-    20 (smaller than the live catalog), so every request asks for the maximum page size and
-    ``after_id`` continues from a previous page's ``last_id``."""
-    endpoint = str(base_url or "https://api.anthropic.com").strip().rstrip("/")
-    url = endpoint + ("/models" if endpoint.endswith("/v1") else "/v1/models")
-    params = {"limit": "1000"}
-    if after_id:
-        params["after_id"] = after_id
-    return url + ("&" if "?" in url else "?") + urllib.parse.urlencode(params)
-
-
-_ANTHROPIC_MODELS_MAX_PAGES = 20
-
-
-def _anthropic_next_cursor(page: Any, seen_cursors: set[str]) -> Optional[str]:
-    """``last_id`` to continue from, or None when the page is final or the server repeats a
-    cursor (which would otherwise loop forever)."""
-    if not isinstance(page, dict) or page.get("has_more") is not True:
-        return None
-    last_id = page.get("last_id")
-    if not isinstance(last_id, str) or not last_id or last_id in seen_cursors:
-        return None
-    seen_cursors.add(last_id)
-    return last_id
-
-
 def curated_models_for_provider(
     provider: Optional[str],
     *,
@@ -1322,7 +1296,7 @@ _PROVIDER_CATALOG_FETCHERS: dict[str, Any] = {
     "ai-gateway": lambda normalized, force_refresh: _fetch_ai_gateway_models() or None,
     # DeepInfra's generic /models mixes chat, image, video, speech and embedding models; the tagged
     # catalog helper is the only safe source for the chat picker, including its empty/failure result.
-    "deepinfra": lambda normalized, force_refresh: _fetch_deepinfra_models(force_refresh=force_refresh) or [],
+    "deepinfra": lambda normalized, force_refresh: deepinfra_model_ids("chat", force_refresh=force_refresh),
     "ollama-cloud": lambda normalized, force_refresh: fetch_ollama_cloud_models(force_refresh=force_refresh) or None,
     "openai": _openai_catalog,
     "openai-api": _openai_catalog,
@@ -1905,9 +1879,7 @@ def _resolve_anthropic_pool_catalog_credentials() -> tuple[str, str]:
 def _fetch_anthropic_models(
     timeout: float = 5.0, *, base_url: Optional[str] = None, api_key: Optional[str] = None
 ) -> Optional[list[str]]:
-    """Sorted model ids from the Anthropic /v1/models endpoint, or None. Credentials: explicit
-    ``api_key``, else ``resolve_anthropic_token()`` (env / OAuth / Claude Code), else a read-only
-    API-key credential_pool entry."""
+    """Application-owned credential resolution; provider plugin owns catalogue pagination."""
     try:
         from agent.anthropic_credentials import resolve_anthropic_token, _is_oauth_token
     except ImportError:
@@ -1916,53 +1888,31 @@ def _fetch_anthropic_models(
     resolved_base_url = base_url
     token = (api_key or "").strip() or resolve_anthropic_token()
     if not token:
-        # A pool credential and its endpoint are one security boundary — never pair the pool key
-        # with a caller-provided endpoint.
+        # Never pair a pool credential with a caller-supplied endpoint.
         token, resolved_base_url = _resolve_anthropic_pool_catalog_credentials()
     if not token:
         return None
 
-    headers: dict[str, str] = {"anthropic-version": "2023-06-01"}
-    is_oauth = _is_oauth_token(token)
-    if is_oauth:
-        headers["Authorization"] = f"Bearer {token}"
-        from agent.anthropic_adapter import _COMMON_BETAS, _OAUTH_ONLY_BETAS, _CONTEXT_1M_BETA
-        headers["anthropic-beta"] = ",".join(_COMMON_BETAS + _OAUTH_ONLY_BETAS)
-    else:
-        headers["x-api-key"] = token
-
-    url = _anthropic_models_url(resolved_base_url)
     try:
-        try:
-            data = _get_json(url, timeout=timeout, headers=headers)
-        except urllib.error.HTTPError as http_err:
-            # OAuth subscriptions that 400 the 1M context beta ("long context beta is not yet
-            # available for this subscription"): retry once without it; re-raise anything else.
-            if not (is_oauth and http_err.code == 400):
-                raise
-            try:
-                body_text = http_err.read().decode(errors="ignore").lower()
-            except Exception:
-                body_text = ""
-            if not ("long context beta" in body_text and "not yet available" in body_text):
-                raise
-            headers["anthropic-beta"] = ",".join(
-                [b for b in _COMMON_BETAS if b != _CONTEXT_1M_BETA] + list(_OAUTH_ONLY_BETAS)
+        profile = get_provider_profile("anthropic")
+        if profile is None:
+            return None
+        fetch = getattr(profile, "fetch_catalog_models", None)
+        if callable(fetch):
+            models = fetch(
+                api_key=token, base_url=resolved_base_url, timeout=timeout,
+                oauth=_is_oauth_token(token), request_json=_get_json,
             )
-            data = _get_json(url, timeout=timeout, headers=headers)
-        models = [m["id"] for m in data.get("data", []) if m.get("id")]
-        seen_cursors: set[str] = set()
-        for _page in range(_ANTHROPIC_MODELS_MAX_PAGES):
-            cursor = _anthropic_next_cursor(data, seen_cursors)
-            if cursor is None:
-                break
-            data = _get_json(_anthropic_models_url(resolved_base_url, after_id=cursor), timeout=timeout, headers=headers)
-            models.extend(m["id"] for m in data.get("data", []) if m.get("id"))
-        models = list(dict.fromkeys(models))
-        # opus, then sonnet, then haiku; alphabetical within tier.
+        elif not _is_oauth_token(token):
+            models = profile.fetch_models(api_key=token, base_url=resolved_base_url, timeout=timeout)
+        else:
+            return None
+        if models is None:
+            return None
+        # Preserve the existing CLI picker presentation ordering.
         return sorted(models, key=lambda m: ("opus" not in m, "sonnet" not in m, "haiku" not in m, m))
-    except Exception as e:
-        logger.debug("Failed to fetch Anthropic models: %s", e)
+    except Exception as exc:
+        logger.debug("Failed to fetch Anthropic models: %s", exc)
         return None
 
 
@@ -2118,122 +2068,6 @@ def probe_api_models(
     return _probe_result(
         None, tried[0] if tried else normalized.rstrip("/") + "/models", normalized,
         alternate_base if alternate_base != normalized else None)
-
-
-# Legacy id-regex filter for items with no surface tag; unreachable (deletable) once every catalog
-# entry carries an explicit ``chat``/``embed``/``image-gen``/``tts``/``stt`` tag.
-_DEEPINFRA_EXCLUDE_RE = re.compile(
-    r"(?i)(embed|rerank|whisper|stable-diffusion|flux|sdxl|"
-    r"tts|bark|speech|image-gen|clip|vit-|dpt-)")
-
-# Surface tags say *what kind of model* this is. Absent all of them, the tags array only carries
-# capability tags (``reasoning``, ``vision``, …) and the chat surface falls back to id-regex inference.
-_DEEPINFRA_SURFACE_TAGS: frozenset[str] = frozenset({
-    "chat", "embed", "image-gen", "tts", "stt", "video-gen"})
-
-_DEEPINFRA_DEFAULT_BASE_URL = "https://api.deepinfra.com/v1/openai"
-_DEEPINFRA_MODELS_QUERY = "filter=true&sort_by=hermes"
-
-# Full tagged catalog keyed by base URL; every surface filter reads it so one round-trip serves all.
-_deepinfra_catalog_cache: dict[str, list[dict]] = {}
-
-# Negative cache (monotonic time of the last failed fetch per base URL) so an unreachable catalog
-# doesn't make every surface helper eat the full timeout in turn. Short TTL so connectivity recovers.
-_deepinfra_catalog_neg_cache: dict[str, float] = {}
-_DEEPINFRA_CATALOG_NEG_TTL = 60.0  # seconds
-
-
-def _deepinfra_env(key: str) -> str:
-    """Profile-scoped ``.env``/environ read: under a multiplexed turn the launch env is not this profile's."""
-    from hermes_cli.config import get_env_value_prefer_dotenv
-    return (get_env_value_prefer_dotenv(key) or "").strip()
-
-
-def _deepinfra_catalog_url() -> tuple[str, str]:
-    """Return ``(cache_key, full_url)`` for the DeepInfra catalog endpoint. The key carries the
-    api-key fingerprint: the catalog is user-scoped (private fine-tunes), so two profiles with
-    different keys must not share an entry."""
-    base = (_deepinfra_env("DEEPINFRA_BASE_URL") or _DEEPINFRA_DEFAULT_BASE_URL).rstrip("/")
-    from agent.credential_persistence import fingerprint_secret_value
-    fp = fingerprint_secret_value(_deepinfra_env("DEEPINFRA_API_KEY")) or "anon"
-    return f"{base}#{fp}", f"{base}/models?{_DEEPINFRA_MODELS_QUERY}"
-
-
-def _fetch_deepinfra_catalog(
-    *, timeout: float = 5.0, force_refresh: bool = False) -> Optional[list[dict]]:
-    """Raw DeepInfra catalog list (chat, embed, image-gen, TTS, STT in one response), cached per base
-    URL. A Bearer token is attached when available so user-scoped catalogs (private fine-tunes) show."""
-    cache_key, url = _deepinfra_catalog_url()
-    if not force_refresh:
-        if cache_key in _deepinfra_catalog_cache:
-            return _deepinfra_catalog_cache[cache_key]
-        last_fail = _deepinfra_catalog_neg_cache.get(cache_key)
-        if last_fail is not None and (time.monotonic() - last_fail) < _DEEPINFRA_CATALOG_NEG_TTL:
-            return None
-
-    headers: dict[str, str] = {"User-Agent": _HERMES_USER_AGENT}
-    api_key = _deepinfra_env("DEEPINFRA_API_KEY")
-    if api_key:
-        headers["Authorization"] = f"Bearer {api_key}"
-    try:
-        payload = _get_json(url, timeout=timeout, headers=headers)
-    except Exception:
-        _deepinfra_catalog_neg_cache[cache_key] = time.monotonic()
-        return None
-    data = payload.get("data")
-    if not isinstance(data, list):
-        _deepinfra_catalog_neg_cache[cache_key] = time.monotonic()
-        return None
-    _deepinfra_catalog_cache[cache_key] = data
-    _deepinfra_catalog_neg_cache.pop(cache_key, None)
-    return data
-
-
-def _fetch_deepinfra_models_by_tag(
-    tag: str, *, timeout: float = 5.0, force_refresh: bool = False) -> Optional[list[dict]]:
-    """DeepInfra ``{"id", "metadata"}`` items whose ``metadata.tags`` includes *tag*. Items with no
-    surface tag fall through to the legacy id-regex exclusion (chat surface only — embed/image-gen/
-    tts/stt cannot be inferred from an id). ``None`` on network failure."""
-    data = _fetch_deepinfra_catalog(timeout=timeout, force_refresh=force_refresh)
-    if data is None:
-        return None
-    matched: list[dict] = []
-    for item in data:
-        mid = item.get("id")
-        raw_metadata = item.get("metadata")
-        if not mid or raw_metadata is None:  # metadata None = listed-but-not-served stub
-            continue
-        metadata = raw_metadata if isinstance(raw_metadata, dict) else {}
-        raw_tags = metadata.get("tags")
-        tags = raw_tags if isinstance(raw_tags, list) else []
-        if any(t in _DEEPINFRA_SURFACE_TAGS for t in tags):
-            hit = tag in tags
-        else:
-            hit = tag == "chat" and not _DEEPINFRA_EXCLUDE_RE.search(mid)
-        if hit:
-            matched.append({"id": mid, "metadata": metadata})
-    return matched
-
-
-def _fetch_deepinfra_models(
-    timeout: float = 5.0, *, force_refresh: bool = False) -> Optional[list[str]]:
-    """DeepInfra chat-model ids (string-list contract for :func:`provider_model_ids`); ``None`` on
-    network failure or when no chat-tagged id exists."""
-    items = _fetch_deepinfra_models_by_tag("chat", timeout=timeout, force_refresh=force_refresh)
-    return ([item["id"] for item in items] or None) if items is not None else None
-
-
-def deepinfra_model_ids(tag: str, *, force_refresh: bool = False) -> list[str]:
-    """Return DeepInfra model ids carrying surface *tag* (``[]`` on failure)."""
-    items = _fetch_deepinfra_models_by_tag(tag, force_refresh=force_refresh)
-    return [item["id"] for item in items] if items else []
-
-
-def deepinfra_base_url(section: Optional[dict] = None) -> str:
-    """DeepInfra base URL: config-section ``base_url`` → ``DEEPINFRA_BASE_URL`` env → default; stripped."""
-    candidate = section.get("base_url") if isinstance(section, dict) else None
-    value = candidate or _deepinfra_env("DEEPINFRA_BASE_URL") or _DEEPINFRA_DEFAULT_BASE_URL
-    return str(value).strip().rstrip("/")
 
 
 def _fetch_ai_gateway_models(timeout: float = 5.0) -> Optional[list[str]]:
