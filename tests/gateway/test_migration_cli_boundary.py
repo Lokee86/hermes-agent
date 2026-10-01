@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import ast
 from pathlib import Path
+import subprocess
 
 import gateway.migration as migration
 
@@ -17,6 +18,50 @@ def _import_refs(path: Path) -> list[str]:
             refs.append(node.module)
             refs.extend(f"{node.module}.{alias.name}" for alias in node.names)
     return refs
+
+
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+RETIRED_GATEWAY_CLIENT = "hermes_cli.gateway_client"
+
+
+def _retired_gateway_client_refs(path: Path) -> list[int]:
+    """Return source lines that still name the deleted Phase 2 client owner."""
+    return [
+        lineno
+        for lineno, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1)
+        if RETIRED_GATEWAY_CLIENT in line
+    ]
+
+
+def test_embedded_python_imports_cannot_hide_retired_gateway_client(tmp_path: Path) -> None:
+    probe = tmp_path / "probe.ts"
+    probe.write_text(
+        "const SCRIPT = `\n"
+        "from hermes_cli.gateway_client import _session_ticket\n"
+        "`\n",
+        encoding="utf-8",
+    )
+    assert _retired_gateway_client_refs(probe) == [2]
+
+
+def test_tracked_source_never_names_retired_gateway_client() -> None:
+    tracked = subprocess.run(
+        ["git", "grep", "-l", RETIRED_GATEWAY_CLIENT, "--", "*.py", "*.ts", "*.tsx"],
+        cwd=PROJECT_ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+    ).stdout.splitlines()
+    this_file = Path(__file__).resolve()
+    offenders: list[tuple[str, int]] = []
+    for relative_text in tracked:
+        path = (PROJECT_ROOT / relative_text).resolve()
+        if path == this_file:
+            continue
+        for lineno in _retired_gateway_client_refs(path):
+            offenders.append((relative_text, lineno))
+
+    assert offenders == []
 
 
 def test_gateway_python_never_imports_phase2_cli_owners() -> None:
