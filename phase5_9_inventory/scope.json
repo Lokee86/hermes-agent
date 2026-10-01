@@ -1,0 +1,8 @@
+{
+  "base": "50dc83cfb4",
+  "external_exceptions": [
+    "hermes_cli.model_catalog.seed_cache_from_checkout: tests/compat/old_updater_surface.json and shipped updater import",
+    "Existing PLUGIN-COMPAT pointers: compat_manifest.json; retarget only, never use in-tree"
+  ],
+  "migration_window": "5.9.2 through 5.9.6; final integration must reconcile all remaining leaves"
+}

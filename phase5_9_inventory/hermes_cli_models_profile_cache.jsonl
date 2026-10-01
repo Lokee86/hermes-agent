@@ -1,0 +1,2 @@
+{"module": "hermes_cli.models_profile_cache", "symbol": "profile_slot_get", "line": 21, "production_consumers": ["hermes_cli\\models.py"], "disposition": "retain application acquisition, scoped observations, validation presentation or Phase 6 credential mechanics; inspect before deletion"}
+{"module": "hermes_cli.models_profile_cache", "symbol": "profile_slot_set", "line": 28, "production_consumers": ["hermes_cli\\models.py"], "disposition": "retain application acquisition, scoped observations, validation presentation or Phase 6 credential mechanics; inspect before deletion"}
