@@ -1181,7 +1181,7 @@ def _confirm_startup_expensive_model_override(args) -> None:
 
     try:
         from hermes_cli.config import load_config
-        from hermes_cli.model_selection_guards import (
+        from application_model_selection_guards import (
             combined_message,
             selection_warnings,
         )

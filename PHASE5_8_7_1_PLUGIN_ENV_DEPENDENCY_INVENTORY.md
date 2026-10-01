@@ -124,3 +124,49 @@ dependencies; preserve their separate contracts unless they are independently re
 
 5.8.7.1 changes only this inventory. Do not add compatibility wrappers, fallback
 registries, synchronized caches, or tests enforcing the abandoned internal shapes.
+
+## Final reconciliation — Phase 5.8.7.6
+
+The rows above describe the **historical 5.8.7.1 baseline**, not
+still-active imports. Source-backed dispositions are recorded in:
+
+- 5.8.7.2: `PHASE5_8_7_2_PROVIDER_CATALOG_CLOSEOUT.md` — Anthropic discovery
+  and one DeepInfra catalogue shared across chat, media and pricing.
+- 5.8.7.3: `PHASE5_8_7_3_PROVIDER_RECOMMENDATIONS_CLOSEOUT.md` — Nous
+  recommendations, existing Copilot/OpenRouter reasoning metadata, Actual URL semantics.
+- 5.8.7.4: `PHASE5_8_7_4_PLATFORM_CONSUMER_CLOSEOUT.md` — shared
+  Discord/Telegram selection warnings, canonical platform labels, application grouping;
+  Slack/Matrix labels added after the original inventory.
+- 5.8.7.5: `PHASE5_8_7_5_ENVIRONMENT_INVENTORY_CLOSEOUT.md` — declarative
+  profile endpoint interpretation; one read-only application discovery owner,
+  explicit catalogue persistence and the three TUI recovery carryovers.
+- 5.8.7.6: `PHASE5_8_7_6_FINAL_OWNERSHIP_CLOSEOUT.md` — final static and
+  literal-lazy-import gate, unified CLI/platform warning registry, scoped Router
+  credential miss, cross-surface regression and exact remaining-owner ledger.
+
+The current scoped audit covers **69 tracked Python files** (the original
+scope plus Slack/Matrix adapters); the checked plugin files no longer import
+CLI-owned provider/model semantic modules. The old
+`hermes_cli.model_switch_providers`, `hermes_cli.provider_groups` and
+`hermes_cli.model_selection_guards` modules have no new compatibility
+facades. This is a **scoped 5.8.7 closure**, not a claim that all `hermes_cli`
+modules or all plugin families have already undergone Phase 6/5.9.
+
+**Narrow Phase 6 imports within this scoped plugin set:** Actual and OpenCode
+Go use `resolve_api_key_provider_credentials`; Copilot ACP uses
+`resolve_external_process_provider_credentials`. The Router profile now
+reads keys through `application_provider_secret_inputs.scoped_key_env`,
+which honours the current profile's secret scope and checks its declared
+alias. Anthropic guarded HTTP/OAuth, Nous account-tier/auth state and
+DeepInfra scoped key acquisition remain credential/application mechanics,
+not provider/model policy.
+
+**Additional adjacent findings outside the original audited plugin set:**
+OpenAI image generation's named endpoint helper still calls
+`hermes_cli.runtime_provider._get_named_custom_provider`; OpenRouter image
+and video plugins still call the bundled CLI
+`resolve_runtime_provider` to obtain credentials and endpoint facts.
+Their credential and route separation needs its own Phase 6/application
+consumer cut. These are explicitly **not** counted as cleared by the scoped
+5.8.7 audit. Existing command/configuration/setup and plugin lifecycle
+imports are separate application integration, not hidden selection owners.

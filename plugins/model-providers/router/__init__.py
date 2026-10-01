@@ -71,20 +71,13 @@ def _base_url() -> str:
 
 
 def _resolve_api_key() -> str:
-    """Router key (documented var, then alias), preferring dotenv; plain os.environ
-    is the fallback when the dotenv resolver is unavailable or raises."""
-    try:
-        from hermes_cli.config import get_env_value_prefer_dotenv as prefer_dotenv
-    except Exception:
-        prefer_dotenv = None
-    for resolve in filter(None, (prefer_dotenv, os.environ.get)):
-        for var in ("RAMP_ROUTER_API_KEY", "ROUTER_API_KEY"):
-            try:
-                value = str(resolve(var) or "").strip()
-            except Exception:
-                value = ""
-            if value:
-                return value
+    """Documented key then alias, using the active profile's authoritative secret scope."""
+    from application_provider_secret_inputs import scoped_key_env
+
+    for var in ("RAMP_ROUTER_API_KEY", "ROUTER_API_KEY"):
+        key = scoped_key_env(var)
+        if key:
+            return key
     return ""
 
 

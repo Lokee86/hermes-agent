@@ -128,7 +128,7 @@ def test_model_options_cold_pricing_fetch_runs_off_the_request_path(monkeypatch)
     }
     monkeypatch.setattr(models_pricing, "get_pricing_for_provider", fake_pricing)
     monkeypatch.setattr(
-        "hermes_cli.model_switch.list_authenticated_providers",
+        "application_provider_discovery.list_authenticated_providers",
         lambda **_kwargs: [row],
     )
     monkeypatch.setattr(inv, "_moa_provider_row", lambda *_args, **_kwargs: None)

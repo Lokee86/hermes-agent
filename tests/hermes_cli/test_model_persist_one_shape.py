@@ -101,7 +101,7 @@ def test_every_persist_surface_writes_the_same_model_block(seeded_home, monkeypa
         )
     monkeypatch.setattr("cli.HermesCLI._persist_model_switch_to_session", lambda *a, **k: None)
     monkeypatch.setattr("hermes_cli.cli_model_switch_mixin._print_switch_summary", lambda *a, **k: None)
-    monkeypatch.setattr("hermes_cli.model_selection_guards.combined_selection_warning",
+    monkeypatch.setattr("application_model_selection_guards.combined_selection_warning",
                         lambda *a, **k: None, raising=False)
     monkeypatch.setattr("cli._cprint", lambda *a, **k: None, raising=False)
 

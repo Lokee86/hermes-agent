@@ -525,7 +525,7 @@ class CLIModelSwitchMixin:
         if not getattr(result, "success", False):
             return True
         try:
-            from hermes_cli.model_selection_guards import (
+            from application_model_selection_guards import (
                 combined_selection_warning, selection_context_for_agent)
             warning = combined_selection_warning(
                 result.new_model, provider=result.target_provider,

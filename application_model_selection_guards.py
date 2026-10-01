@@ -104,6 +104,9 @@ def _context_warning(model, provider, _base_url, _api_key, _model_info, ctx, thr
     return SelectionWarning("context_cache", "Large Context Switch Warning", target, provider or "", message)
 
 
+DEFAULT_CONTEXT_CACHE_SWITCH_THRESHOLD = 100_000
+
+
 def _context_threshold_from_config() -> int:
     """Read the active profile's cache-switch confirmation threshold (0 disables)."""
     try:
@@ -111,68 +114,77 @@ def _context_threshold_from_config() -> int:
         config = load_config() or {}
         section = config.get("model") if isinstance(config, dict) else None
         value = section.get("switch_context_confirm_tokens") if isinstance(section, dict) else None
-        return max(0, int(value)) if value is not None else 100_000
+        return max(0, int(value)) if value is not None else DEFAULT_CONTEXT_CACHE_SWITCH_THRESHOLD
     except Exception:
-        return 100_000
+        return DEFAULT_CONTEXT_CACHE_SWITCH_THRESHOLD
 
 
-def combined_selection_warning(
-    model_name: str,
-    *,
-    provider: str = "",
-    base_url: str = "",
-    api_key: str = "",
-    model_info=None,
-    selection_context: Optional[SelectionContext] = None,
-    context_threshold: int | None = None,
+def _context_cache_guard(model, provider, base_url, api_key, model_info, ctx):
+    """The single context guard policy, including active profile threshold."""
+    return _context_warning(
+        model, provider, base_url, api_key, model_info, ctx, _context_threshold_from_config(),
+    )
+
+
+def selection_warnings(
+    model_name: str, *, provider: str = "", base_url: str = "", api_key: str = "",
+    model_info=None, selection_context: Optional[SelectionContext] = None,
     include_kinds: Optional[Iterable[str]] = None,
-) -> Optional[SelectionWarning]:
-    if context_threshold is None:
-        context_threshold = _context_threshold_from_config()
+    context_threshold: int | None = None,
+) -> list[SelectionWarning]:
+    """One application-owned, ordered warning registry for every selection surface."""
     wanted = set(include_kinds) if include_kinds is not None else None
     warnings = []
-    for kind, fn in (
-        ("cost", _cost_warning),
-        ("data_policy", _data_warning),
-    ):
+    for kind, fn in (("cost", _cost_warning), ("data_policy", _data_warning)):
         if wanted is not None and kind not in wanted:
             continue
         try:
-            warning = fn(
-                model_name, provider, base_url, api_key, model_info, selection_context
-            )
+            warning = fn(model_name, provider, base_url, api_key, model_info, selection_context)
         except Exception:
             warning = None
         if warning is not None:
             warnings.append(warning)
     if wanted is None or "context_cache" in wanted:
-        warning = _context_warning(
-            model_name,
-            provider,
-            base_url,
-            api_key,
-            model_info,
-            selection_context,
-            context_threshold,
-        )
+        try:
+            threshold = _context_threshold_from_config() if context_threshold is None else context_threshold
+            warning = _context_warning(
+                model_name, provider, base_url, api_key, model_info, selection_context, threshold,
+            )
+        except Exception:
+            warning = None
         if warning is not None:
             warnings.append(warning)
+    return warnings
+
+
+def combined_message(warnings: Iterable[SelectionWarning]) -> str:
+    return "\n\n".join(warning.message for warning in warnings)
+
+
+def combined_selection_warning(
+    model_name: str, *, provider: str = "", base_url: str = "", api_key: str = "",
+    model_info=None, selection_context: Optional[SelectionContext] = None,
+    context_threshold: int | None = None,
+    include_kinds: Optional[Iterable[str]] = None,
+) -> Optional[SelectionWarning]:
+    warnings = selection_warnings(
+        model_name, provider=provider, base_url=base_url, api_key=api_key,
+        model_info=model_info, selection_context=selection_context,
+        include_kinds=include_kinds, context_threshold=context_threshold,
+    )
     if not warnings:
         return None
     if len(warnings) == 1:
         return warnings[0]
     return SelectionWarning(
-        "multiple",
-        "Model Selection Warning",
-        warnings[0].model,
-        warnings[0].provider,
-        "\n\n".join(w.message for w in warnings),
+        "multiple", "Model Selection Warning", warnings[0].model,
+        warnings[0].provider, combined_message(warnings),
     )
 
 
 __all__ = [
-    "SelectionContext",
-    "SelectionWarning",
-    "combined_selection_warning",
+    "DEFAULT_CONTEXT_CACHE_SWITCH_THRESHOLD",
+    "SelectionContext", "SelectionWarning", "_context_cache_guard",
+    "selection_warnings", "combined_message", "combined_selection_warning",
     "selection_context_for_agent",
 ]

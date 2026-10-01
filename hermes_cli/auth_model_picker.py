@@ -27,7 +27,7 @@ def _confirm_selection_guards(
     Shows one [y/N] confirm listing every warning that fired. Returns True to proceed.
     """
     try:
-        from hermes_cli.model_selection_guards import combined_message, selection_warnings
+        from application_model_selection_guards import combined_message, selection_warnings
         warnings = selection_warnings(
             model_id, provider=provider, base_url=base_url, api_key=api_key, include_kinds=include_kinds,
         )
