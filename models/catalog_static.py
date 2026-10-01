@@ -325,6 +325,31 @@ def static_provider_model_ids(provider: str) -> tuple[str, ...]:
     return tuple(_PROVIDER_MODELS.get(normalize_provider(provider), ()))
 
 
+def find_static_provider_model_id(provider: str, model_name: str) -> str | None:
+    """Match an exact or bare model ID against the provider's offline catalogue."""
+    from providers import normalize_provider
+
+    canonical = normalize_provider(provider)
+    if canonical == "openrouter":
+        ids = tuple(model_id for model_id, _ in OPENROUTER_MODELS)
+    else:
+        ids = static_provider_model_ids(canonical)
+    wanted = str(model_name or "").strip().lower()
+    if not wanted:
+        return None
+    return (
+        next((model_id for model_id in ids if wanted == model_id.lower()), None)
+        or next(
+            (
+                model_id
+                for model_id in ids
+                if "/" in model_id and wanted == model_id.split("/", 1)[1].lower()
+            ),
+            None,
+        )
+    )
+
+
 # Subscription/OAuth providers whose catalogs RE-EXPOSE other vendors' models; tried only as a last
 # resort for bare short-alias resolution (after every native-vendor catalog) so they never hijack
 # an alias from the model's native vendor. None currently defined.

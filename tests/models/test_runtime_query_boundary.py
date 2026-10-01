@@ -342,3 +342,19 @@ def test_phase_5_8_5_gateway_effective_model_precedence_is_application_owned():
         if "resolve_effective_model" in source:
             offenders.append(str(path.relative_to(ROOT)))
     assert offenders == []
+
+
+def test_phase_5_8_5_session_launch_resolution_uses_lower_domains():
+    route = ROOT / "gateway" / "session_local_route.py"
+    aliases = ROOT / "gateway" / "model_aliases.py"
+    route_source = route.read_text(encoding="utf-8")
+    alias_source = aliases.read_text(encoding="utf-8")
+
+    assert "hermes_cli.model_switch" not in route_source
+    assert "hermes_cli.model_switch" not in alias_source
+    assert "select_explicit_model" in route_source
+    assert "resolve_invocation_route" in route_source
+    assert "model_aliases_from_config" in route_source
+    assert "find_static_provider_model_id" in _definitions(
+        ROOT / "models" / "catalog_static.py"
+    )

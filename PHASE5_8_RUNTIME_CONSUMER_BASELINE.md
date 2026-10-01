@@ -368,4 +368,33 @@ Verification: gateway/API focused set **129 passed**; runtime ownership gate
 **15 passed**; Ruff, `py_compile`, `git diff --check`, and the gateway
 `resolve_effective_model` search are clean.
 
-5.8.5.2 remains next.
+### 5.8.5.2 — session launch model resolution
+
+`gateway/session_local_route.py` no longer delegates startup model interpretation
+to `hermes_cli.model_switch.resolve_startup_model_route`.
+
+- Gateway projects profile-local `model_aliases` / `model.aliases` configuration
+  through `gateway/model_aliases.py`; this is application config/credential
+  acquisition, not provider/model semantic ownership.
+- Alias and qualified-model identity flows through
+  `models.selection.select_explicit_model`.
+- Invocation semantics flow through `providers.routing.resolve_invocation_route`.
+- URL-bearing aliases retain the security invariant that their credential is
+  resolved for the alias endpoint rather than borrowing a vendor-labelled key.
+- Explicit provider launches still override an alias provider label without
+  inheriting the alias credential.
+- Configured provider/model syntax retains the configured request key needed for
+  later credential acquisition while routing semantics are resolved canonically.
+- Aggregator-native slash IDs are protected by the lower-owned static catalogue
+  query `models.catalog_static.find_static_provider_model_id`; gateway carries no
+  OpenRouter model table or model-membership heuristic.
+- Plain model IDs and launches already carrying explicit endpoint/credential
+  facts remain pass-through.
+
+Verification: launch/session/runtime ownership set **33 passed, 1 skipped**;
+Ruff, `py_compile`, `git diff --check`, and the scoped
+`resolve_startup_model_route` / CLI model-switch search are clean for the
+5.8.5.2 surface. Remaining gateway `hermes_cli.model_switch` imports belong to
+5.8.5.3-5.8.5.6.
+
+5.8.5.3 remains next.
