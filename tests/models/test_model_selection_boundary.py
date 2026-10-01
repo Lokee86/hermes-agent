@@ -241,7 +241,7 @@ def test_picker_and_setup_surfaces_consume_selection_candidate_projection():
         "hermes_cli/auth_model_picker.py",
         "hermes_cli/cli_model_switch_mixin.py",
         "hermes_cli/inventory.py",
-        "hermes_cli/model_switch_providers.py",
+        "application_provider_discovery.py",
     ):
         source = (ROOT / relative).read_text(encoding="utf-8")
         assert "model_selection_picker" in source

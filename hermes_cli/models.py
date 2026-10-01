@@ -2066,7 +2066,7 @@ def cached_fetch_api_models(
     opens that must not block on a stopped local endpoint) still get a warm catalog instead of
     collapsing to the config-declared subset. ``fetch_models`` supplies native-aware discovery
     without minting a command token before cache admission."""
-    from hermes_cli.model_switch_providers import _NativePickerModelList
+    from application_provider_discovery import _NativePickerModelList
 
     def _catalog(entry):
         rows = (_NativePickerModelList if entry.get("native_catalog") else list)(entry["models"])

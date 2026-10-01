@@ -23,7 +23,7 @@ def test_acp_catalogue_has_no_cli_private_model_imports():
     assert not [
         module for module in modules
         if any(module == name or module.startswith(name + ".") for name in (
-            "hermes_cli.model_switch", "hermes_cli.model_switch_providers",
+            "hermes_cli.model_switch", "application_provider_discovery",
             "hermes_cli.models", "hermes_cli.models_local",
         ))
     ]

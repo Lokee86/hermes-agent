@@ -79,10 +79,10 @@ class OpenCodeGoProfile(ProviderProfile):
         import httpx
 
         from agent.account_usage import AccountUsageSnapshot, AccountUsageWindow
-        from hermes_cli.runtime_provider import resolve_runtime_provider
+        # Account usage needs only an API key, never a CLI-computed model route.
+        from hermes_cli.auth import resolve_api_key_provider_credentials
 
-        runtime = resolve_runtime_provider(requested=self.name, explicit_base_url=base_url, explicit_api_key=api_key)
-        token = str(runtime.get("api_key", "") or "").strip()
+        token = str(api_key or resolve_api_key_provider_credentials(self.name).get("api_key") or "").strip()
         if not token:
             return None
         with httpx.Client(timeout=10.0) as client:

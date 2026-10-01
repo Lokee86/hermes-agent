@@ -93,7 +93,7 @@ def test_astra_900k_opt_in_preserves_live_limits_and_wire_contract(monkeypatch, 
 def test_picker_revalidates_cached_astra_and_never_injects_saved_entitlement(monkeypatch, tmp_path, provider, model):
     from hermes_cli import models
     from hermes_cli.inventory import ConfigContext, _append_unconfigured_rows
-    from hermes_cli.model_switch_providers import _finalize_picker_rows
+    from application_provider_discovery import _finalize_picker_rows
 
     monkeypatch.setenv("HERMES_HOME", str(tmp_path))
     monkeypatch.setattr(models, "_credential_fingerprint", lambda _: "synthetic-account")

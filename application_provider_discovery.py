@@ -1,8 +1,9 @@
-"""Picker provider listing: credential discovery, curated/live model lists, row builders for
-list_authenticated_providers / list_picker_providers, and the parallel cache prefetch.
+"""Shared application provider discovery for CLI and GUI picker observations.
 
-Split out of ``hermes_cli/model_switch.py``; every moved name is re-imported there so
-``hermes_cli.model_switch.<name>`` keeps resolving (and monkeypatching) as before."""
+Read-time provider probes never persist configuration. Explicit application
+setup owns durable catalogue writes; credentials remain application-scoped
+until Phase 6.
+"""
 
 from __future__ import annotations
 
@@ -30,65 +31,6 @@ logger = logging.getLogger("hermes_cli.model_switch")
 
 # Aggregators whose full catalogs (70+ models) must stay visible: never capped by max_models.
 _UNCAPPED_PICKER_PROVIDERS: frozenset[str] = frozenset({"opencode-zen", "opencode-go"})
-
-
-def _save_discovered_models_to_config(
-    api_url: str, model_ids: list[str], *, api_mode: Optional[str] = None,
-    headers: Optional[dict[str, str]] = None, credential_identity: str | None = None) -> None:
-    """Persist a successful ``/v1/models`` probe into the matching ``custom_providers`` entry.
-
-    Matches by base_url (slash-normalised), api_mode and headers. A failed config write is
-    swallowed — the picker still shows the live models for this session."""
-    from hermes_cli.model_switch import _extra_headers_from_config
-    if not api_url or not model_ids:
-        return
-    try:
-        from hermes_cli.config import load_config, save_config
-        cfg = load_config()
-        providers = cfg.get("custom_providers") or []
-        if not isinstance(providers, list):
-            return
-
-        norm_url = api_url.strip().rstrip("/").lower()
-        changed = False
-        for entry in providers:
-            if not isinstance(entry, dict):
-                continue
-            entry_url = (entry.get("base_url", "") or entry.get("url", "")).strip()
-            if entry_url.rstrip("/").lower() != norm_url or _entry_api_mode(entry) != api_mode:
-                continue
-            if headers is not None and _extra_headers_from_config(entry) != headers:
-                continue
-            if credential_identity is not None and _entry_credentials(entry, "key_env", "api_key_env")[2] != credential_identity:
-                continue
-            if not _discovered_catalog_stale(entry, model_ids):
-                continue
-            entry["models"] = {model_id: {} for model_id in model_ids}
-            entry["models_discovered"] = True
-            changed = True
-
-        if changed:
-            cfg["custom_providers"] = providers
-            save_config(cfg)
-    except Exception:
-        pass
-
-
-def _discovered_catalog_stale(entry: dict, model_ids: list[str]) -> bool:
-    """Whether a live probe may overwrite ``entry["models"]``.
-
-    A ``models`` mapping or list of dicts is user-curated per-model metadata — never replaced.
-    A mapping Hermes itself discovered (entry flag or legacy in-mapping sentinel) is ours to
-    refresh, but only when stale; a legacy-shape entry is always rewritten so the save migrates
-    it to the clean entry-level flag."""
-    existing = entry.get("models")
-    legacy_discovered = isinstance(existing, dict) and existing.get("__discovered_model_catalog__") is True
-    entry_discovered = entry.get("models_discovered") is True or legacy_discovered
-    if isinstance(existing, dict):
-        return entry_discovered and (legacy_discovered or list(existing) != model_ids)
-    if isinstance(existing, list):
-        return not any(isinstance(m, dict) for m in existing) and existing != model_ids
-    return True
 
 
 class _NativePickerModelList(list[str]):
@@ -605,7 +547,7 @@ def _collect_authed_provider_slugs(
     but never calls ``cached_provider_model_ids``; feeds :func:`_prefetch_provider_models_parallel`.
     Env vars are read through the per-profile secret scope. AWS SDK providers are skipped
     (heavier detection)."""
-    from hermes_cli.model_switch import _scoped_key_env
+    from application_provider_secret_inputs import scoped_key_env as _scoped_key_env
     from hermes_cli.provider_catalog import provider_slugs
     excluded_set = {str(p).strip().lower() for p in excluded if p}
     slugs: list[str] = []
@@ -773,7 +715,7 @@ def _lap_lmstudio_row(b: _PickerBuild, user_providers: dict) -> None:
     is_current = b.current_provider_norm == "lmstudio"
     if not (is_current or isinstance(configured, dict)):
         return
-    from hermes_cli.model_switch import _declared_model_ids
+    from models.catalog_configured import declared_model_ids as _declared_model_ids
     configured_models = _declared_model_ids(configured.get("models")) if isinstance(configured, dict) else []
     model_ids = list(dict.fromkeys([*configured_models, *b.curated.get("lmstudio", [])]))
     b.add_builtin_row("lmstudio", get_provider_label("lmstudio"), is_current, model_ids, "hermes")
@@ -781,7 +723,8 @@ def _lap_lmstudio_row(b: _PickerBuild, user_providers: dict) -> None:
 
 def _lap_builtin_rows(b: _PickerBuild, data: dict, user_providers: dict) -> None:
     """Section 1: models.dev-mapped providers with api_key auth."""
-    from hermes_cli.model_switch import _declared_model_ids, _scoped_key_env
+    from models.catalog_configured import declared_model_ids as _declared_model_ids
+    from application_provider_secret_inputs import scoped_key_env as _scoped_key_env
     from agent.models_dev import get_provider_info
     for hermes_id, mdev_id, pconfig, env_vars in _iter_builtin_candidates(data, b.excluded, b.seen_slugs):
         # Per-profile scope, never raw os.environ: a secondary profile's picker otherwise listed the
@@ -838,7 +781,7 @@ def _profile_has_creds(b: _PickerBuild, pid: str, hermes_slug: str, profile) -> 
     if profile.auth_type == "aws_sdk":
         has_creds = _has_aws_sdk_creds_for_listing(hermes_slug, b.current_provider)
     else:
-        from hermes_cli.model_switch import _scoped_key_env
+        from application_provider_secret_inputs import scoped_key_env as _scoped_key_env
         has_creds = _profile_has_env_creds(pid, hermes_slug, profile, _scoped_key_env)
     # External-process providers (copilot-acp) hold no key/token/pool entry by design — the
     # spawned ACP subprocess brings its own auth. "Configured" means the executable resolves.
@@ -887,7 +830,8 @@ def _profile_has_creds(b: _PickerBuild, pid: str, hermes_slug: str, profile) -> 
 
 def _lap_profile_rows(b: _PickerBuild, data: dict, user_providers: dict) -> None:
     """Section 2: registered provider profiles not already emitted by models.dev-backed rows."""
-    from hermes_cli.model_switch import _declared_model_ids, _scoped_key_env
+    from models.catalog_configured import declared_model_ids as _declared_model_ids
+    from application_provider_secret_inputs import scoped_key_env as _scoped_key_env
 
     for profile in list_providers():
         pid = hermes_slug = profile.name
@@ -970,7 +914,7 @@ def _lap_user_provider_rows(b: _PickerBuild, user_providers: dict) -> None:
     extra_headers) so keyed providers on one endpoint with the same wire protocol collapse into
     one row (two Palantir Claude entries -> one "Palantir Claude" row); a different
     key_env/api_mode/headers keeps distinct rows since the wire protocol or tenant differs."""
-    from hermes_cli.model_switch import _extra_headers_from_config, _scoped_key_env
+    from application_provider_secret_inputs import (extra_headers_from_config as _extra_headers_from_config, scoped_key_env as _scoped_key_env)
     from hermes_cli.config import coerce_provider_id, is_provider_enabled
     ep_groups: dict[tuple, dict] = {}
     for ep_name, ep_cfg in user_providers.items():
@@ -1057,7 +1001,7 @@ def _lap_custom_provider_rows(b: _PickerBuild, custom_providers: list) -> None:
     (endpoint, credential identity, api_mode, extra_headers, display prefix). Four "Ollama — X"
     entries on one host become one "Ollama" row; distinct prefixes sharing a proxy URL keep
     their own rows."""
-    from hermes_cli.model_switch import _extra_headers_from_config, _scoped_key_env
+    from application_provider_secret_inputs import (extra_headers_from_config as _extra_headers_from_config, scoped_key_env as _scoped_key_env)
     from hermes_cli.config import coerce_provider_id
     groups: dict[tuple, dict] = {}
     for entry in custom_providers:
@@ -1122,13 +1066,6 @@ def _lap_custom_provider_rows(b: _PickerBuild, custom_providers: list) -> None:
             is_current=is_current)
         if discovered is not None:
             grp["models"] = discovered
-            if probe_live:  # a successful live probe persists the catalog for no-probe surfaces
-                try:
-                    _save_discovered_models_to_config(
-                        api_url, discovered, api_mode=grp.get("api_mode"), headers=grp.get("extra_headers") or None,
-                        credential_identity=grp["credential_identity"])
-                except Exception:
-                    pass
         b.add_endpoint_row(slug, grp["name"], grp["api_url"], grp["models"], is_current, native_catalog_empty)
         section4_slugs.add(slug.lower())
 
@@ -1326,7 +1263,6 @@ def list_picker_providers(
     custom endpoints, where the user may supply their own model set through config.
     ``non_blocking_catalogs`` makes every catalog read cache-only: provider catalogs warm in the
     background, OpenRouter's stale disk copy is served as-is; the ``probe_*`` flags are forwarded."""
-    from hermes_cli.model_switch import list_authenticated_providers
     from hermes_cli.models import fetch_openrouter_models
     providers = list_authenticated_providers(
         current_provider=current_provider, current_base_url=current_base_url,

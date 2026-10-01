@@ -930,7 +930,7 @@ def _build_provider_picker_rows(config: dict, active: str, provider_labels: dict
             if slug == "nous":
                 # Same free-tier rule as the gateway/TUI pickers: relabel for a guest, hide
                 # when nous.guest is off, untouched for a real account.
-                from hermes_cli.model_switch_providers import _free_tier_nous_row
+                from application_provider_discovery import _free_tier_nous_row
                 tier_row = _free_tier_nous_row({"name": label, "models": []})
                 if tier_row is None:
                     continue

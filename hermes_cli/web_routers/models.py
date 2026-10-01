@@ -208,8 +208,7 @@ def get_recommended_default_model(provider: str = "", profile: Optional[str] = N
             selected_model_id,
         )
 
-        # build_models_payload -> list_authenticated_providers -> _save_discovered_models_to_config:
-        # this GET lazily PERSISTS discovered custom-provider models, so it needs the scope too.
+        # This scoped GET observes model catalogues but never persists configuration.
         with _config_profile_scope(profile):
             payload = build_models_payload(load_picker_context())
         for row in payload.get("providers", []):

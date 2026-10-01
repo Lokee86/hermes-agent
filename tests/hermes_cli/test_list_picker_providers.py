@@ -18,8 +18,8 @@ network or auth state is required.
 import pytest
 from hermes_cli import model_switch
 import hermes_cli.models as models_mod
-import hermes_cli.model_switch_providers as hermes_cli_model_switch_providers
-from hermes_cli import model_switch_providers
+import application_provider_discovery as hermes_cli_model_switch_providers
+import application_provider_discovery as model_switch_providers
 
 
 @pytest.fixture(autouse=True)

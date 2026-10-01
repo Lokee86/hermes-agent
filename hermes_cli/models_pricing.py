@@ -468,7 +468,7 @@ def pricing_cache_scope(provider: str, *, current_provider: str = "", current_ba
     """The current endpoint identity a provider's pricing cache is keyed on. Resolves local configuration
     only, never fetches: picker prewarm single-flight uses it so an endpoint rotation can start a new
     worker while the previous endpoint is still slow or unreachable."""
-    from hermes_cli.models import _deepinfra_catalog_url, _pricing_profile_key
+    from hermes_cli.models import _pricing_profile_key
     from providers import normalize_provider
 
     normalized = normalize_provider(provider)
@@ -476,7 +476,9 @@ def pricing_cache_scope(provider: str, *, current_provider: str = "", current_ba
     if static:
         return static()
     if normalized == "deepinfra":
-        return _deepinfra_catalog_url()[0]
+        from application_deepinfra_catalog import deepinfra_base_url
+
+        return deepinfra_base_url()
     if normalized == "nous":
         try:
             from hermes_cli.auth import _nous_inference_env_override

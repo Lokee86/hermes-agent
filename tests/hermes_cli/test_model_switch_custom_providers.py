@@ -12,15 +12,15 @@ the behavior under test.
 
 import time
 
-import hermes_cli.model_switch_providers as provider_picker_mod
+import application_provider_discovery as provider_picker_mod
 import pytest
 import hermes_yaml as yaml
 from hermes_cli.model_switch import list_authenticated_providers, switch_model
-from hermes_cli.model_switch_providers import (
+from application_provider_discovery import (
     _fetch_picker_live_models,
     _NativePickerModelList,
-    _save_discovered_models_to_config,
 )
+from application_discovered_catalog_persistence import _save_discovered_models_to_config
 from hermes_cli.providers import resolve_provider_full
 from providers import is_aggregator
 
@@ -297,7 +297,6 @@ def test_list_splits_comma_chain_custom_provider_model(monkeypatch):
     stays first so the server-side fallback behaviour remains the default pick.
     """
     monkeypatch.setattr("agent.models_dev.fetch_models_dev", lambda: {})
-    monkeypatch.setattr(providers_mod, "HERMES_OVERLAYS", {})
 
     providers = list_authenticated_providers(
         current_provider="openai-codex",
@@ -1129,7 +1128,7 @@ def test_list_authenticated_providers_current_endpoint_uses_current_slug(monkeyp
 
 
 def test_picker_endpoint_authorization_overrides_inferred_bearer(monkeypatch):
-    from hermes_cli.model_switch_providers import _fetch_picker_live_models
+    from application_provider_discovery import _fetch_picker_live_models
 
     captured: dict[str, str] = {}
 
@@ -1469,7 +1468,7 @@ def test_lmstudio_providers_block_with_explicit_endpoint_still_uses_section3(mon
         return ["remote-model"], False
 
     monkeypatch.setattr(
-        "hermes_cli.model_switch_providers._discover_endpoint_models", _fake_discover
+        "application_provider_discovery._discover_endpoint_models", _fake_discover
     )
 
     providers = list_authenticated_providers(
@@ -1642,13 +1641,8 @@ def test_resolve_custom_provider_passes_key_env():
     assert resolved.base_url == "https://token-plan-sgp.xiaomimimo.com/v1"
 
 
-def test_discovered_models_auto_saved_to_cache(monkeypatch):
-    """Discovered models are persisted to config so ``discover_models: false``
-    has a populated cache on the next read (#65652).
-
-    When a successful probe returns live models, ``_save_discovered_models_to_config``
-    must be called with the provider's base_url and the discovered model list.
-    """
+def test_discovery_observes_models_without_implicit_config_save(monkeypatch):
+    """An inventory probe returns live observations but never persists config."""
     monkeypatch.setattr("agent.models_dev.fetch_models_dev", lambda: {})
     monkeypatch.setattr(provider_picker_mod, "list_providers", lambda: [])
 
@@ -1659,7 +1653,7 @@ def test_discovered_models_auto_saved_to_cache(monkeypatch):
 
     monkeypatch.setattr("hermes_cli.models.fetch_api_models", fake_fetch_api_models)
     monkeypatch.setattr(
-        "hermes_cli.model_switch_providers._save_discovered_models_to_config",
+        "application_discovered_catalog_persistence._save_discovered_models_to_config",
         lambda api_url, model_ids, **kwargs: save_calls.append((api_url, model_ids)),
     )
 
@@ -1682,11 +1676,7 @@ def test_discovered_models_auto_saved_to_cache(monkeypatch):
         probe_custom_providers=True,
     )
 
-    assert len(save_calls) == 1, (
-        "_save_discovered_models_to_config must be called after a successful probe"
-    )
-    assert save_calls[0][0] == "https://gateway.example.com/v1"
-    assert save_calls[0][1] == ["discovered-a", "discovered-b", "discovered-c"]
+    assert save_calls == []
 
     gateway_prov = next(
         (p for p in providers if p.get("api_url") == "https://gateway.example.com/v1"),
@@ -1702,7 +1692,7 @@ def test_save_discovered_models_preserves_dict_form(monkeypatch):
     """``_save_discovered_models_to_config`` must not replace a dict-form
     ``models`` mapping (per-model metadata like ``context_length``) with
     a flat list of strings (#67841)."""
-    from hermes_cli.model_switch_providers import _save_discovered_models_to_config
+    from application_discovered_catalog_persistence import _save_discovered_models_to_config
 
     save_calls = []
 
@@ -1771,7 +1761,7 @@ def test_model_flow_named_custom_persists_discovered_models(monkeypatch):
 
     save_calls = []
     monkeypatch.setattr(
-        "hermes_cli.model_switch_providers._save_discovered_models_to_config",
+        "application_discovered_catalog_persistence._save_discovered_models_to_config",
         lambda api_url, model_ids, **kwargs: save_calls.append(
             (api_url, model_ids, kwargs)
         ),
@@ -2139,7 +2129,7 @@ def test_cached_catalog_is_not_written_back_to_config(monkeypatch):
     _seed_custom_model_cache(monkeypatch, _LOCAL_CATALOG)
     saves = []
     monkeypatch.setattr(
-        "hermes_cli.model_switch_providers._save_discovered_models_to_config",
+        "application_discovered_catalog_persistence._save_discovered_models_to_config",
         lambda api_url, model_ids, **kwargs: saves.append((api_url, model_ids)),
     )
 

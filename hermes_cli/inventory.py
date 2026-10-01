@@ -85,7 +85,7 @@ def build_models_payload(
     in process caches (normal picker opens, while a background worker warms cold endpoints).
     ``non_blocking_catalogs``: provider catalogs come from the disk cache only — a degraded provider
     cannot stall the response (GUI picker opens)."""
-    from hermes_cli.model_switch import list_authenticated_providers
+    from application_provider_discovery import list_authenticated_providers
 
     rows = list_authenticated_providers(
         current_provider=ctx.current_provider, current_base_url=ctx.current_base_url,

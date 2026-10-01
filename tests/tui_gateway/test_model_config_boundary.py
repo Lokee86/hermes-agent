@@ -12,7 +12,7 @@ TARGETS = (
     "tui_gateway/methods_session_model_guard.py",
 )
 FORBIDDEN = (
-    "hermes_cli.models", "hermes_cli.model_switch_providers",
+    "hermes_cli.models", "application_provider_discovery",
     "hermes_cli.model_selection_guards", "hermes_cli.models_validate",
 )
 
@@ -60,7 +60,7 @@ def test_final_shared_owners_do_not_import_old_cli_model_authority():
     )
     forbidden = (
         "hermes_cli.models", "hermes_cli.model_switch",
-        "hermes_cli.model_switch_providers", "hermes_cli.models_validate",
+        "application_provider_discovery", "hermes_cli.models_validate",
     )
     for name in owners:
         tree = ast.parse((ROOT / name).read_text(encoding="utf-8"))

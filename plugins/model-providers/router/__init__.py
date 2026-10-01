@@ -64,19 +64,10 @@ def _state() -> Any:
 
 
 def _base_url() -> str:
-    """Router base URL: profile ``.env`` first (scope-aware), plain os.environ as the fallback."""
-    try:
-        from hermes_cli.config import get_env_value_prefer_dotenv as prefer_dotenv
-    except Exception:
-        prefer_dotenv = None
-    for resolve in filter(None, (prefer_dotenv, os.environ.get)):
-        try:
-            value = str(resolve("RAMP_ROUTER_BASE_URL") or "").strip().rstrip("/")
-        except Exception:
-            value = ""
-        if value:
-            return value
-    return ROUTER_DEFAULT_BASE_URL
+    """Use the registered profile's declared, profile-scoped endpoint fact."""
+    from application_provider_environment import scoped_endpoint_override
+
+    return scoped_endpoint_override("router") or ROUTER_DEFAULT_BASE_URL
 
 
 def _resolve_api_key() -> str:

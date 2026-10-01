@@ -216,7 +216,7 @@ def test_models_dev_persistence_is_lower_owned():
 
 
 def test_provider_grouping_is_application_owned():
-    presentation = ROOT / "hermes_cli" / "provider_groups.py"
+    presentation = ROOT / "application_provider_groups.py"
     assert presentation.exists()
     assert {"PROVIDER_GROUPS", "group_providers", "provider_group_for_slug"} <= (
         _definitions(presentation)
@@ -512,7 +512,7 @@ def test_phase_5_8_5_catalogue_picker_runtime_has_lower_semantic_owners():
         "hermes_cli.models",
         "hermes_cli.model_selection",
         "hermes_cli.model_catalog",
-        "hermes_cli.model_switch_providers",
+        "application_provider_discovery",
     )
     offenders = []
     for source_path in paths:
@@ -553,7 +553,7 @@ def test_phase_5_8_5_gateway_semantic_boundary_is_closed():
         "hermes_cli.model_switch",
         "hermes_cli.model_selection_defaults",
         "hermes_cli.model_selection_guards",
-        "hermes_cli.model_switch_providers",
+        "application_provider_discovery",
         "hermes_cli.models",
         "hermes_cli.model_catalog",
     }
@@ -667,7 +667,7 @@ def test_phase_5_8_6_2_tui_switch_owns_application_mutation():
     )
     forbidden = {
         "hermes_cli.model_switch",
-        "hermes_cli.model_switch_providers",
+        "application_provider_discovery",
         "hermes_cli.model_selection_guards",
         "hermes_cli.context_switch_guard",
     }

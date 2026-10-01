@@ -37,7 +37,7 @@ def guest_home(monkeypatch, tmp_path):
     # No network from any lap: models.dev, the Portal catalog, and Ollama Cloud all stubbed.
     from agent import models_dev
     from hermes_cli import models as models_mod
-    from hermes_cli import model_switch_providers as msp
+    import application_provider_discovery as msp
     monkeypatch.setattr(models_dev, "fetch_models_dev", lambda *a, **k: {})
     monkeypatch.setattr(models_mod, "get_curated_nous_model_ids", lambda *a, **k: ["anthropic/claude-x", "openai/gpt-y"])
     monkeypatch.setattr(models_mod, "fetch_ollama_cloud_models", lambda *a, **k: [])
@@ -64,7 +64,7 @@ def _cli_nous_rows(config):
 
 
 def test_guest_identity_shows_free_tier_row_with_only_welcome_model(guest_home, monkeypatch):
-    from hermes_cli.model_switch_providers import list_picker_providers
+    from application_provider_discovery import list_picker_providers
     rows = _nous_rows(list_picker_providers("nous", "", None, None, 50, "nous/welcome"))
     assert len(rows) == 1
     row = rows[0]
@@ -86,7 +86,7 @@ def test_guest_identity_with_guest_off_hides_the_nous_row(guest_home, monkeypatc
     from hermes_cli import anon_auth
     assert anon_auth.has_guest() and not anon_auth.guest_enabled()
 
-    from hermes_cli.model_switch_providers import list_picker_providers
+    from application_provider_discovery import list_picker_providers
     assert _nous_rows(list_picker_providers("nous", "", None, None, 50, "nous/welcome")) == []
     assert _cli_nous_rows({"nous": {"guest": False}}) == []
 

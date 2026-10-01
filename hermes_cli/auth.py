@@ -1781,15 +1781,12 @@ def get_xai_oauth_auth_status() -> Dict[str, Any]:
 
 
 def _provider_env_base_url(pconfig: ProviderConfig) -> str:
-    if pconfig.id == "actual":
-        from providers import normalize_provider
+    """Endpoint facts are scoped application inputs, not auth-owned policy."""
+    from application_provider_environment import scoped_endpoint_override
 
-        model = read_raw_config().get("model")
-        if isinstance(model, dict) and normalize_provider(str(model.get("provider") or "")) == "actual":
-            configured_url = str(model.get("base_url") or "").strip()
-            if configured_url:
-                return configured_url
-    return os.getenv(pconfig.base_url_env_var, "").strip() if pconfig.base_url_env_var else ""
+    return scoped_endpoint_override(
+        pconfig.id, base_url_env_var=pconfig.base_url_env_var,
+    )
 
 
 def get_api_key_provider_status(provider_id: str) -> Dict[str, Any]:
