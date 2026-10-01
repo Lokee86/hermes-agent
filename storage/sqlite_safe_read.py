@@ -12,17 +12,32 @@ import contextlib
 import logging
 import os
 import sqlite3
+import sys
 import threading
 from pathlib import Path
 from typing import Optional
 
 logger = logging.getLogger(__name__)
 
-# Guards BOTH the registry and the lifecycle syscalls it describes. Reentrant
-# because connect_tracked -> _canonical_db_path -> ... stays on one thread.
-_live_lock = threading.RLock()
-# canonical path -> number of live connections opened by this process
-_live_connections: dict[str, int] = {}
+# A running pre-upgrade process can retain the old module and an open TrackedConnection
+# while newly loaded consumers import this storage owner from the replaced checkout.
+# Both modules MUST use the same lock and mutable registry: otherwise a new raw fd's
+# close() can cancel the retained connection's POSIX advisory locks mid-transaction.
+# Inspect only the already-cached module; importing the retired module would create
+# a second owner or a cycle through its post-upgrade forwarding surface.
+_legacy = sys.modules.get("hermes_cli.sqlite_safe_read")
+_legacy_registry = getattr(_legacy, "_live_connections", None)
+_legacy_lock = getattr(_legacy, "_live_lock", None)
+if (isinstance(_legacy_registry, dict)
+        and callable(getattr(_legacy_lock, "acquire", None))
+        and callable(getattr(_legacy_lock, "release", None))):
+    _live_lock = _legacy_lock
+    _live_connections: dict[str, int] = _legacy_registry
+else:
+    # Cold start or post-upgrade CLI facade: the storage owner creates the only registry.
+    _live_lock = threading.RLock()
+    _live_connections: dict[str, int] = {}
+del _legacy, _legacy_registry, _legacy_lock
 
 
 class UntrackableConnectionError(RuntimeError):

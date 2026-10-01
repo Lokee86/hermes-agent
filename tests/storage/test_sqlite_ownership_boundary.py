@@ -79,13 +79,20 @@ def test_no_source_references_retired_sqlite_cli_modules():
     safe_read_needle = "hermes_cli" + ".sqlite_safe_read"
     violations = []
     compatibility_facades = {SAFE_READ_COMPAT, RUNTIME_COMPAT}
+    registry_owner = ROOT / "storage" / "sqlite_safe_read.py"
     for path in _python_sources():
         if path in compatibility_facades:
             continue
         source = path.read_text(encoding="utf-8")
         for needle in (runtime_needle, util_needle, safe_read_needle):
+            # The one exception is a cached-module identity lookup needed when
+            # an old daemon still has a live SQLite descriptor across the update.
+            if path == registry_owner and needle == safe_read_needle:
+                continue
             if needle in source:
                 violations.append((str(path.relative_to(ROOT)), needle))
+    owner_source = registry_owner.read_text(encoding="utf-8")
+    assert owner_source.count('sys.modules.get("hermes_cli.sqlite_safe_read")') == 1
     assert violations == []
 
 
