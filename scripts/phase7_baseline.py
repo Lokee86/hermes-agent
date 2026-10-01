@@ -87,7 +87,7 @@ def inventory():
 def behaviour():
     c = importlib.import_module("commands")
     presentation = importlib.import_module("hermes_cli.commands_presentation")
-    e = importlib.import_module("hermes_cli.slash_exec")
+    e = importlib.import_module("commands.execution")
     tc = importlib.import_module("hermes_cli.tools_config")
     from toolsets import TOOLSETS, resolve_toolset
     commands = [asdict(x) for x in c.COMMAND_REGISTRY]

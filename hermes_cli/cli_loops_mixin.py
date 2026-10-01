@@ -211,8 +211,10 @@ class CLILoopsMixin:
             self._handle_skills_command(cmd_original)
 
     def _cmd_egress(self, cmd_original: str):
-        from hermes_cli.slash_exec import CommandContext, execute_command
-        text = execute_command("egress", CommandContext(surface="cli")).text
+        from commands.execution import CommandContext, execute_command
+        from hermes_cli.proxy_cli import format_status_text
+        text = execute_command("egress", CommandContext(
+            surface="cli", options={"egress_status": format_status_text})).text
         self._console_print(text, highlight=False, markup=False)
 
     def _cmd_statusbar(self, cmd_original: str):

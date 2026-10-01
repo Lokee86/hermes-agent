@@ -1109,8 +1109,10 @@ class CLICommandsMixin:
 
     def _handle_profile_command(self):
         """Display active profile name and home directory."""
-        from hermes_cli.slash_exec import CommandContext, execute_command
-        reply = execute_command("profile", CommandContext(surface="cli"))
+        from commands.execution import CommandContext, execute_command
+        from hermes_cli.profiles import profile_command_details
+        reply = execute_command("profile", CommandContext(
+            surface="cli", options=profile_command_details()))
         _say_block(f"  Profile: {reply.data['profile']}", f"  Home:    {reply.data['home']}")
 
     # ---- /handoff -------------------------------------------------------------------------
@@ -2149,7 +2151,7 @@ class CLICommandsMixin:
         """In-session ``/bundles`` — show installed skill bundles (``hermes bundles list`` rendered
         inside the running CLI). Bundles are loaded via ``/<bundle-name>``."""
         from cli import ChatConsole, _BOLD, _RST, _accent_hex
-        from hermes_cli.slash_exec import CommandContext, execute_command
+        from commands.execution import CommandContext, execute_command
         reply = execute_command("bundles", CommandContext(surface="cli"))
         if "error" in reply.data:
             return _cp(f"\033[1;31mBundle subsystem unavailable: {reply.data['error']}{_RST}")
