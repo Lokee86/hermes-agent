@@ -169,9 +169,10 @@ def _credential_pool_is_usable(provider: str, *, raw_pool_present: bool = False)
     Legacy opaque ``auth.json`` pool values that do not deserialize into ``PooledCredential``
     stay visible (``raw_pool_present``); a real pool's availability is authoritative — an
     all-exhausted/dead pool is not authenticated."""
+    from hermes_cli.config_credentials import credential_pool_environment
     try:
-        from agent.credential_pool import load_pool
-        pool = load_pool(provider)
+        from auth.credential_pool import load_pool
+        pool = load_pool(provider, environment=credential_pool_environment())
         if pool.has_credentials():
             return pool.has_available()
     except Exception:
@@ -307,7 +308,7 @@ def _iter_builtin_candidates(models_dev_data: dict, excluded: set, seen: set):
 def _auth_store_has_provider(*keys: str) -> bool:
     """True when ``auth.json`` has a ``providers`` entry under any of *keys*."""
     try:
-        from hermes_cli.auth import _load_auth_store
+        from auth.store import _load_auth_store
         store = _load_auth_store()
         providers_store = store.get("providers", {})
         return bool(store and any(k in providers_store for k in keys))
@@ -319,7 +320,7 @@ def _auth_store_has_provider(*keys: str) -> bool:
 def _raw_pool_usable(hermes_id: str) -> bool:
     """Section-1 pool check: only consult the pool when auth.json lists a raw entry."""
     try:
-        from hermes_cli.auth import _load_auth_store
+        from auth.store import _load_auth_store
         store = _load_auth_store()
         if store and store.get("credential_pool", {}).get(hermes_id):
             return _credential_pool_is_usable(hermes_id, raw_pool_present=True)
@@ -456,7 +457,7 @@ def _nous_picker_model_ids(curated: dict, force_fresh_nous_tier: bool) -> list:
             union_with_portal_free_recommendations,
             union_with_portal_paid_recommendations,
         )
-        from hermes_cli.auth import get_provider_auth_state
+        from auth.provider_state import get_provider_auth_state
         # Cache-only: both Portal unions below discard the pricing map (``model_ids, _ = ...``);
         # only the appended ids matter, so a live catalog fetch here buys nothing but latency.
         pricing = get_pricing_for_provider("nous", cached_only=True) or {}
@@ -837,6 +838,7 @@ def _lap_builtin_rows(b: _PickerBuild, data: dict, user_providers: dict) -> None
 def _overlay_has_creds(b: _PickerBuild, pid: str, hermes_slug: str, overlay) -> bool:
     """Section-2 credential ladder: env/SDK, external-process executable, auth store, pool,
     anthropic's external credential files."""
+    from hermes_cli.config_credentials import credential_pool_environment
     if overlay.auth_type == "aws_sdk":
         has_creds = _has_aws_sdk_creds_for_listing(hermes_slug, b.current_provider)
     else:
@@ -867,8 +869,8 @@ def _overlay_has_creds(b: _PickerBuild, pid: str, hermes_slug: str, overlay) -> 
                 # Show providers whose pool is entirely in cooldown: limits are per-model for
                 # many providers, so another model may work.
                 try:
-                    from agent.credential_pool import load_pool
-                    has_creds = load_pool(hermes_slug).has_credentials()
+                    from auth.credential_pool import load_pool
+                    has_creds = load_pool(hermes_slug, environment=credential_pool_environment()).has_credentials()
                 except Exception:
                     pass
         except Exception as exc:
@@ -1165,7 +1167,7 @@ def _build_curated_lists(current_provider: str, current_base_url: str, current_m
     is_current_lmstudio = current_provider.strip().lower() == "lmstudio"
     if "lmstudio" not in curated and (os.environ.get("LM_API_KEY") or os.environ.get("LM_BASE_URL") or is_current_lmstudio):
         from hermes_cli.models_local import fetch_lmstudio_models
-        from hermes_cli.auth import AuthError
+        from auth.errors import AuthError
         lm_base = (
             os.environ.get("LM_BASE_URL")
             or (current_base_url if is_current_lmstudio and current_base_url else None)

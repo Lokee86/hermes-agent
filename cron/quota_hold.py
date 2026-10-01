@@ -40,7 +40,8 @@ def hold_seconds_from_failure(exc: BaseException) -> Optional[float]:
     cause chain) is not a rate-limited ``AuthError`` carrying a wait hint. Anchored on the
     AuthError itself, never on arbitrary text, so an unrelated "retry after" in an agent's
     output cannot park a job."""
-    from hermes_cli.auth import AuthError, is_rate_limited_auth_error
+    from auth.errors import AuthError
+    from hermes_cli.auth import is_rate_limited_auth_error
 
     seen: set[int] = set()
     cur: Optional[BaseException] = exc

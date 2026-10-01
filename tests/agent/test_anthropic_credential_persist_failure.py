@@ -35,7 +35,7 @@ import pytest
 
 from agent import anthropic_credentials as AA
 from agent.anthropic_credentials import CredentialPersistError
-from agent.credential_pool import (
+from auth.credential_pool import (
     AUTH_TYPE_OAUTH,
     CREDENTIAL_PERSIST_FAILED_REASON,
     STATUS_DEAD,
@@ -250,11 +250,12 @@ def test_direct_resolver_fails_closed_when_rotation_cannot_commit(
 def test_pool_claude_code_fails_closed_and_reload_cannot_resurrect(
     hermes_home, claude_credentials, monkeypatch
 ):
+    from hermes_cli.config_credentials import credential_pool_environment
     monkeypatch.setattr(AA, "refresh_anthropic_oauth_pure", _rotating_refresh)
     _break_durable_write(monkeypatch)
 
     entry = _entry("claude_code")
-    pool = CredentialPool("anthropic", [entry])
+    pool = CredentialPool("anthropic", [entry], environment=credential_pool_environment())
 
     assert pool._refresh_entry(entry, force=True) is None, (
         "an uncommitted rotation must not be returned as a refreshed credential"
@@ -271,7 +272,7 @@ def test_pool_claude_code_fails_closed_and_reload_cannot_resurrect(
     assert _read_claude_pair(claude_credentials) == (_STALE_ACCESS, _STALE_REFRESH)
 
     reloaded = [
-        e for e in load_pool("anthropic").entries() if e.source == "claude_code"
+        e for e in load_pool("anthropic", environment=credential_pool_environment()).entries() if e.source == "claude_code"
     ]
     assert reloaded, "the entry should still exist after reload"
     assert reloaded[0].refresh_token == _STALE_REFRESH
@@ -290,11 +291,12 @@ def test_reauthentication_clears_the_persist_failure_quarantine(
     new access token; ``_upsert_entry`` sees the token change and clears the
     terminal status, so the user recovers without hand-editing auth.json.
     """
+    from hermes_cli.config_credentials import credential_pool_environment
     monkeypatch.setattr(AA, "refresh_anthropic_oauth_pure", _rotating_refresh)
     _break_durable_write(monkeypatch)
 
     entry = _entry("claude_code")
-    pool = CredentialPool("anthropic", [entry])
+    pool = CredentialPool("anthropic", [entry], environment=credential_pool_environment())
     assert pool._refresh_entry(entry, force=True) is None
     assert pool.entries()[0].last_status == STATUS_DEAD
 
@@ -324,7 +326,7 @@ def test_reauthentication_clears_the_persist_failure_quarantine(
     )
 
     reloaded = [
-        e for e in load_pool("anthropic").entries() if e.source == "claude_code"
+        e for e in load_pool("anthropic", environment=credential_pool_environment()).entries() if e.source == "claude_code"
     ]
     assert reloaded
     assert reloaded[0].refresh_token == "sk-ant-ort01-relogin"
@@ -339,6 +341,7 @@ def test_reauthentication_clears_the_persist_failure_quarantine(
 def test_pool_hermes_pkce_fails_closed_and_reload_cannot_resurrect(
     hermes_home, monkeypatch
 ):
+    from hermes_cli.config_credentials import credential_pool_environment
     oauth_file = hermes_home / ".anthropic_oauth.json"
     oauth_file.write_text(
         json.dumps(
@@ -355,7 +358,7 @@ def test_pool_hermes_pkce_fails_closed_and_reload_cannot_resurrect(
     _break_durable_write(monkeypatch)
 
     entry = _entry("hermes_pkce")
-    pool = CredentialPool("anthropic", [entry])
+    pool = CredentialPool("anthropic", [entry], environment=credential_pool_environment())
 
     assert pool._refresh_entry(entry, force=True) is None
 
@@ -368,7 +371,7 @@ def test_pool_hermes_pkce_fails_closed_and_reload_cannot_resurrect(
     assert on_disk["refreshToken"] == _STALE_REFRESH
 
     reloaded = [
-        e for e in load_pool("anthropic").entries() if e.source == "hermes_pkce"
+        e for e in load_pool("anthropic", environment=credential_pool_environment()).entries() if e.source == "hermes_pkce"
     ]
     assert reloaded
     assert reloaded[0].refresh_token == _STALE_REFRESH
@@ -394,6 +397,7 @@ def test_retry_path_fails_closed_when_rotation_cannot_commit(
     ``_refresh_entry`` would adopt the newer file pair and return before ever
     reaching this branch.
     """
+    from hermes_cli.config_credentials import credential_pool_environment
     posts: list[str] = []
 
     def _refresh(refresh_token, use_json=False):
@@ -420,7 +424,7 @@ def test_retry_path_fails_closed_when_rotation_cannot_commit(
     _break_durable_write(monkeypatch)
 
     entry = _entry("claude_code")
-    pool = CredentialPool("anthropic", [entry])
+    pool = CredentialPool("anthropic", [entry], environment=credential_pool_environment())
 
     assert pool._refresh_entry_impl(entry, force=True) is None
     assert posts == [_STALE_REFRESH, "sk-ant-ort01-winner"], (

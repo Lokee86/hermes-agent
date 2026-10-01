@@ -84,7 +84,7 @@ def _begin_model_config(selected: str, provider: str) -> tuple[dict, dict]:
 
 def _commit_model_config(cfg: dict) -> None:
     """Persist *cfg* and deactivate any OAuth provider."""
-    from hermes_cli.auth import deactivate_provider
+    from auth.provider_state import deactivate_provider
     from hermes_cli.config import save_config
     save_config(cfg)
     deactivate_provider()
@@ -248,9 +248,10 @@ def _prune_replaced_custom_model_config_credentials(base_url: str, *, provider_n
     """Drop stale ``model_config`` ("the credential under ``model.api_key``") entries from inactive
     custom pools: after an explicit custom-endpoint switch an old pool still carrying that source
     points at the previous endpoint and could be selected before the fresh config."""
+    from hermes_cli.config_credentials import credential_pool_environment
     try:
-        from agent.credential_pool import CUSTOM_POOL_PREFIX, custom_provider_pool_key_candidates
-        from hermes_cli.auth import read_credential_pool, write_credential_pool
+        from auth.credential_pool import CUSTOM_POOL_PREFIX, custom_provider_pool_key_candidates
+        from auth.pool_persistence import read_credential_pool, write_credential_pool
 
         # A keyed ``providers.<key>`` endpoint stores under the durable slug while
         # legacy pools keep ``custom:<display-name>``; every identity the active
@@ -258,7 +259,7 @@ def _prune_replaced_custom_model_config_credentials(base_url: str, *, provider_n
         # See #100413.
         active_pool_keys = {
             str(key).strip().lower()
-            for key in custom_provider_pool_key_candidates(base_url, provider_name=provider_name or None)}
+            for key in custom_provider_pool_key_candidates(base_url, provider_name=provider_name or None, environment=credential_pool_environment())}
         if not active_pool_keys:
             return
         pools = read_credential_pool(None)

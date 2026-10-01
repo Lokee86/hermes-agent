@@ -1,6 +1,8 @@
 """Helpers for Nous subscription managed-tool capabilities."""
 
 from __future__ import annotations
+import auth.provider_state as auth_provider_state
+import auth.store as auth_storage
 
 from dataclasses import dataclass
 from typing import Dict, Iterable, Optional, Set
@@ -671,22 +673,22 @@ def _run_nous_portal_login_only(*, capability: str) -> bool:
         return False
     try:
         # Snapshot active_provider so a tool-config login never silently switches inference to Nous.
-        with auth._auth_store_lock():
-            prior_active_provider = auth._load_auth_store().get("active_provider")
+        with auth_storage._auth_store_lock():
+            prior_active_provider = auth_storage._load_auth_store().get("active_provider")
         auth_state = None
         # Interrupting the import question defaults to importing.
         if auth._read_shared_nous_state() and _confirm("  Found existing Nous OAuth credentials. Import them? [Y/n]: ") is not False:
             auth_state = auth._try_import_shared_nous_state(timeout_seconds=15.0)
         if auth_state is None:
             auth_state = auth._nous_device_code_login()
-        with auth._auth_store_lock():
-            auth_store = auth._load_auth_store()
-            auth._save_provider_state(auth_store, "nous", auth_state)
+        with auth_storage._auth_store_lock():
+            auth_store = auth_storage._load_auth_store()
+            auth_provider_state._save_provider_state(auth_store, "nous", auth_state)
             if prior_active_provider:
                 auth_store["active_provider"] = prior_active_provider
             else:
                 auth_store.pop("active_provider", None)
-            auth._save_auth_store(auth_store)
+            auth_storage._save_auth_store(auth_store)
         auth._write_shared_nous_state(auth_state)
         auth._sync_nous_pool_from_auth_store()
         print("  Nous Portal login successful.")

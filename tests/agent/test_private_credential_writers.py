@@ -9,6 +9,7 @@ with mode 0600 (``O_EXCL``) BEFORE any byte lands and the final file carries 060
 """
 
 from __future__ import annotations
+import auth.store as auth_storage
 
 import json
 import os
@@ -62,8 +63,8 @@ def _writers(home: Path, monkeypatch):
     vault = VaultStore(home / "vault")
     meet_node = NodeServer(token_path=home / "meetings" / "node_token.json")
     return [
-        ("auth.json", lambda: auth_mod._save_auth_store({"version": auth_mod.AUTH_STORE_VERSION, "providers": {}}),
-         auth_mod._auth_file_path()),
+        ("auth.json", lambda: auth_storage._save_auth_store({"version": auth_storage.AUTH_STORE_VERSION, "providers": {}}),
+         auth_storage._auth_file_path()),
         ("third-party credentials", lambda: anthropic_credentials._atomic_write_private_json(
             home / "cc" / ".credentials.json", {"tok": 1}), home / "cc" / ".credentials.json"),
         ("mcp oauth tokens", lambda: mcp_oauth._write_json(home / "mcp" / "probe.tokens.json", {"access_token": "x"}),

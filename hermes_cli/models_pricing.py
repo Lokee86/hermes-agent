@@ -436,9 +436,9 @@ def _novita_pricing_scope() -> str:
 def get_cached_nous_inference_base_url() -> str:
     """The profile's persisted Nous endpoint (bare origin, no ``/v1``) without refreshing auth."""
     try:
-        from hermes_cli.auth import (
-            _load_auth_store, _load_provider_state, _optional_base_url, _validate_nous_inference_url_from_network,
-        )
+        from auth.store import _load_auth_store
+        from auth.provider_state import _load_provider_state
+        from hermes_cli.auth import _optional_base_url, _validate_nous_inference_url_from_network
 
         state = _load_provider_state(_load_auth_store(), "nous") or {}
         url = _validate_nous_inference_url_from_network(_optional_base_url(state.get("inference_base_url"))) or ""

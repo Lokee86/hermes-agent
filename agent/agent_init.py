@@ -423,6 +423,7 @@ def _resolve_api_mode(agent, api_mode, provider_name, base_url):
 
 
 def _finalize_routing(agent, api_mode, credential_pool):
+    from hermes_cli.config_credentials import credential_pool_environment
     from hermes_cli.providers import is_actual_route
     # Credential-pool validation runs AFTER provider auto-detection so a pool scoped to
     # "anthropic" isn't rejected for provider=None + anthropic.com URL.
@@ -430,10 +431,10 @@ def _finalize_routing(agent, api_mode, credential_pool):
     # #63425).
     if credential_pool is not None:
         try:
-            from agent.credential_pool import credential_pool_matches_provider
+            from auth.credential_pool import credential_pool_matches_provider
             if not credential_pool_matches_provider(
                 credential_pool, agent.provider, base_url=agent.base_url,
-            ):
+            environment=credential_pool_environment()):
                 agent._credential_pool = None
         except Exception:
             agent._credential_pool = None
@@ -834,6 +835,7 @@ def _routed_client_kwargs(agent, fallback_model, _provider_timeout) -> Optional[
     no-provider diagnostic. ``None`` when the chain landed on a MoA preset: the facade is
     already bound and there is no OpenAI client to construct.
     """
+    from hermes_cli.config_credentials import credential_pool_environment
     from agent.auxiliary_client import resolve_provider_client
     _routed_client, _ = resolve_provider_client(
         agent.provider or "auto", model=agent.model, raw_codex=True)
@@ -890,8 +892,8 @@ def _routed_client_kwargs(agent, fallback_model, _provider_timeout) -> Optional[
     _pool = None
     if _explicit and _explicit != "auto":
         with suppress(Exception):
-            from agent.credential_pool import load_pool
-            _pool = load_pool(_explicit)
+            from auth.credential_pool import load_pool
+            _pool = load_pool(_explicit, environment=credential_pool_environment())
             _pool_exhausted = _pool.has_credentials() and not _pool.has_available(model=agent.model)
     if _refused_entries or _pool_exhausted:
         # Neutral wording: the explicit-provider branch below raises the provider-specific

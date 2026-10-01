@@ -16,6 +16,7 @@ enforcement does not exist on Windows.
 """
 
 from __future__ import annotations
+import auth.store as auth_storage
 
 import json
 import os
@@ -41,11 +42,11 @@ def test_save_auth_store_writes_0o600_with_0o700_parent(tmp_path, monkeypatch):
         from hermes_cli import auth as auth_mod
 
         auth_store = {
-            "version": auth_mod.AUTH_STORE_VERSION,
+            "version": auth_storage.AUTH_STORE_VERSION,
             "providers": {"openai-codex": {"tokens": {"access_token": "secret-x"}}},
             "active_provider": "openai-codex",
         }
-        auth_path = auth_mod._save_auth_store(auth_store)
+        auth_path = auth_storage._save_auth_store(auth_store)
     finally:
         os.umask(old_umask)
 

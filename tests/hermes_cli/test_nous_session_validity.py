@@ -1,4 +1,5 @@
 """Tests for the local-only Nous session classifier exposed on /api/status."""
+import auth.provider_state as auth_provider_state
 
 import base64
 import json
@@ -55,7 +56,7 @@ def _block_live_auth(monkeypatch):
 
 def test_local_status_not_logged_in_after_terminal_quarantine(monkeypatch):
     monkeypatch.setattr(
-        auth,
+        auth_provider_state,
         "get_provider_auth_state",
         lambda provider: {
             "last_auth_error": {
@@ -74,7 +75,7 @@ def test_local_status_not_logged_in_after_terminal_quarantine(monkeypatch):
 
 def test_local_status_repeated_polling_never_uses_live_auth(monkeypatch):
     monkeypatch.setattr(
-        auth,
+        auth_provider_state,
         "get_provider_auth_state",
         lambda provider: {
             "access_token": _invoke_jwt(),

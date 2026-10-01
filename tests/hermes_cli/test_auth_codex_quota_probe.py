@@ -16,14 +16,8 @@ import pytest
 
 import hermes_cli.auth as auth_mod
 import hermes_cli.auth_codex as auth_codex
-from hermes_cli.auth import (
-    AuthError,
-    _codex_usage_probe_url,
-    _is_codex_rate_limit_shaped,
-    _probe_codex_quota_restored,
-    clear_codex_pool_quota_cooldowns,
-    resolve_codex_runtime_credentials,
-)
+from auth.errors import AuthError
+from hermes_cli.auth import _codex_usage_probe_url, _is_codex_rate_limit_shaped, _probe_codex_quota_restored, clear_codex_pool_quota_cooldowns, resolve_codex_runtime_credentials
 
 
 @pytest.fixture(autouse=True)
@@ -285,6 +279,7 @@ def test_resolver_selects_entry_with_expired_millisecond_reset(tmp_path, monkeyp
 
 def test_pool_probe_not_fired_for_non_quota_exhaustion(tmp_path, monkeypatch):
     """Entries frozen by auth-shaped failures must not trigger the probe."""
+    from hermes_cli.config_credentials import credential_pool_environment
     now = time.time()
     store = _pool_only_rate_limited_store(now)
     entry = store["credential_pool"]["openai-codex"][0]
@@ -294,9 +289,9 @@ def test_pool_probe_not_fired_for_non_quota_exhaustion(tmp_path, monkeypatch):
     monkeypatch.setenv("HERMES_HOME", str(tmp_path / "hermes"))
     _write_auth_store(tmp_path / "hermes", store)
 
-    from agent.credential_pool import load_pool
+    from auth.credential_pool import load_pool
 
-    pool = load_pool("openai-codex")
+    pool = load_pool("openai-codex", environment=credential_pool_environment())
     probes = []
 
     def _spy(token, **kw):
@@ -386,6 +381,7 @@ def test_pool_selection_refreshes_expired_token_before_probe(tmp_path, monkeypat
     -> cooldown stays, the rotated (single-use) pair is what the probe used and it is persisted
     on BOTH sides (pool row + ``providers.openai-codex`` singleton) so the next selection's
     auth-store sync cannot re-adopt the consumed pair and lift the cooldown with it."""
+    from hermes_cli.config_credentials import credential_pool_environment
     now = time.time()
     hermes_home = tmp_path / "hermes"
     store = _expired_jwt_pool_store(now)
@@ -398,9 +394,9 @@ def test_pool_selection_refreshes_expired_token_before_probe(tmp_path, monkeypat
     refresh_calls: list = []
     _fake_refresh(monkeypatch, fresh, refresh_calls)
     http_calls = _patch_expiry_aware_httpx(monkeypatch, _StubResponse(200, _usage_payload(0.0, 100.0)))
-    from agent.credential_pool import load_pool
+    from auth.credential_pool import load_pool
 
-    pool = load_pool("openai-codex")
+    pool = load_pool("openai-codex", environment=credential_pool_environment())
 
     assert pool.select() is None
     assert pool.select() is None  # second pass: auth-store sync must not resurrect rf-old
@@ -418,6 +414,7 @@ def test_pool_selection_throttles_failing_pre_probe_refresh(tmp_path, monkeypatc
     """Regression control: a frozen entry whose refresh keeps failing (revoked grant, network
     down) must not POST to the token endpoint on every selection — at most one attempt per
     probe interval, the same budget the probe itself has (<= 1 network call per 5 min)."""
+    from hermes_cli.config_credentials import credential_pool_environment
     now = time.time()
     hermes_home = tmp_path / "hermes"
     _write_auth_store(hermes_home, _expired_jwt_pool_store(now))
@@ -430,9 +427,9 @@ def test_pool_selection_throttles_failing_pre_probe_refresh(tmp_path, monkeypatc
 
     monkeypatch.setattr(auth_codex, "refresh_codex_oauth_pure", _failing_refresh)
     http_calls = _patch_expiry_aware_httpx(monkeypatch, _StubResponse(200, _usage_payload(0.0, 0.0)))
-    from agent.credential_pool import load_pool
+    from auth.credential_pool import load_pool
 
-    pool = load_pool("openai-codex")
+    pool = load_pool("openai-codex", environment=credential_pool_environment())
     for _ in range(5):
         assert pool.select() is None
 

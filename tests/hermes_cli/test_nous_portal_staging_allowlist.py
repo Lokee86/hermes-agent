@@ -31,9 +31,7 @@ from __future__ import annotations
 import json
 import logging
 
-from hermes_cli.auth import (
-    DEFAULT_NOUS_PORTAL_URL,
-)
+from auth.store_migrations import DEFAULT_NOUS_PORTAL_URL
 
 
 class TestResolveAccessTokenEnvOverrideWins:

@@ -21,7 +21,7 @@ import logging
 
 import hermes_cli.auth as auth_mod
 import hermes_cli.auth_nous as auth_nous
-from agent.credential_pool import CredentialPool, PooledCredential
+from auth.credential_pool import CredentialPool, PooledCredential
 
 from tests.hermes_cli.test_auth_nous_provider import _invoke_jwt, _setup_nous_auth
 
@@ -88,6 +88,9 @@ def test_lock_timeout_during_nous_refresh_does_not_bench_entry(monkeypatch, capl
     pool._max_concurrent = 2
     pool._unmatched_rotation_streak = 0
     pool.provider = "nous"
+    from hermes_cli.config_credentials import credential_pool_environment
+    pool.environment = credential_pool_environment()
+    pool._provider_hooks = pool.environment.provider_hooks(pool.provider)
 
     monkeypatch.setattr(pool, "_sync_nous_entry_from_auth_store", lambda e: e)
     monkeypatch.setattr(pool, "_persist", lambda *a, **k: None)

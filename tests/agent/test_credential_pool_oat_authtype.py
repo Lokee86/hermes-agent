@@ -3,7 +3,7 @@
 import json
 from pathlib import Path
 
-from agent.credential_pool import (
+from auth.credential_pool import (
     AUTH_TYPE_API_KEY,
     AUTH_TYPE_OAUTH,
     CredentialPool,
@@ -28,6 +28,7 @@ def test_anthropic_real_api_key_unchanged():
 
 
 def test_load_heals_legacy_row_and_exposes_it_to_resolver(tmp_path, monkeypatch):
+    from hermes_cli.config_credentials import credential_pool_environment
     hermes_home = tmp_path / "hermes"
     hermes_home.mkdir()
     monkeypatch.setenv("HERMES_HOME", str(hermes_home))
@@ -54,9 +55,9 @@ def test_load_heals_legacy_row_and_exposes_it_to_resolver(tmp_path, monkeypatch)
     }))
 
     from agent.anthropic_credentials import resolve_anthropic_token
-    from agent.credential_pool import load_pool
+    from auth.credential_pool import load_pool
 
-    entry = load_pool("anthropic").entries()[0]
+    entry = load_pool("anthropic", environment=credential_pool_environment()).entries()[0]
     persisted = json.loads(auth_file.read_text())
     assert entry.auth_type == AUTH_TYPE_OAUTH
     assert persisted["credential_pool"]["anthropic"][0]["auth_type"] == AUTH_TYPE_OAUTH

@@ -13,7 +13,7 @@ from pathlib import Path
 
 import pytest
 
-from hermes_cli.auth import _save_auth_store
+from auth.store import _save_auth_store
 
 GUEST_STATE = {
     "auth_method": "anonymous",

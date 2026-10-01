@@ -1,4 +1,6 @@
 """Regression tests for Nous OAuth refresh and inference JWT interactions."""
+import auth.provider_state as auth_provider_state
+import auth.store_migrations as auth_store_migrations
 
 import base64
 import json
@@ -11,7 +13,7 @@ from pathlib import Path
 import httpx
 import pytest
 
-from hermes_cli.auth import AuthError
+from auth.errors import AuthError
 
 
 # =============================================================================
@@ -341,6 +343,7 @@ def test_get_nous_auth_status_checks_credential_pool(tmp_path, monkeypatch):
     case when login happened via the dashboard device-code flow which
     saves to the pool only.
     """
+    from hermes_cli.config_credentials import credential_pool_environment
     from hermes_cli.auth import get_nous_auth_status
 
     hermes_home = tmp_path / "hermes"
@@ -352,8 +355,8 @@ def test_get_nous_auth_status_checks_credential_pool(tmp_path, monkeypatch):
     monkeypatch.setenv("HERMES_HOME", str(hermes_home))
 
     # Seed the credential pool with a Nous entry
-    from agent.credential_pool import PooledCredential, load_pool
-    pool = load_pool("nous")
+    from auth.credential_pool import PooledCredential, load_pool
+    pool = load_pool("nous", environment=credential_pool_environment())
     token = _invoke_jwt(seconds=3600)
     expires_at = _future_iso(3600)
     entry = PooledCredential.from_dict("nous", {
@@ -793,7 +796,7 @@ def test_runtime_refresh_503_preserves_nous_oauth_credentials(
     with pytest.raises(AuthError) as exc_info:
         auth_mod.resolve_nous_runtime_credentials(force_refresh=True)
 
-    state = auth_mod.get_provider_auth_state("nous")
+    state = auth_provider_state.get_provider_auth_state("nous")
     assert state["access_token"] == access_token
     assert state["refresh_token"] == refresh_token
     assert "last_auth_error" not in state
@@ -977,7 +980,8 @@ class TestStalePortalBaseUrlMigration:
     """_migrate_stale_nous_portal_url auto-corrects stale portal_base_url on load."""
 
     def test_migrates_stale_portal_url_on_load(self, tmp_path, monkeypatch):
-        from hermes_cli.auth import _load_auth_store, DEFAULT_NOUS_PORTAL_URL
+        from auth.store import _load_auth_store
+        from auth.store_migrations import DEFAULT_NOUS_PORTAL_URL
 
         monkeypatch.setenv("HERMES_HOME", str(tmp_path))
         auth_file = tmp_path / "auth.json"
@@ -1042,7 +1046,7 @@ class TestStalePortalBaseUrlMigration:
         )
 
         auth_mod.resolve_nous_runtime_credentials()
-        assert refresh_calls == [auth_mod.DEFAULT_NOUS_PORTAL_URL]
+        assert refresh_calls == [auth_store_migrations.DEFAULT_NOUS_PORTAL_URL]
 
 
 # =============================================================================

@@ -7,17 +7,8 @@ from pathlib import Path
 
 import pytest
 
-from hermes_cli.auth import (
-    AuthError,
-    DEFAULT_XAI_OAUTH_BASE_URL,
-    _read_xai_oauth_tokens,
-    _refresh_xai_oauth_tokens,
-    _save_xai_oauth_tokens,
-    get_xai_oauth_auth_status,
-    refresh_xai_oauth_pure,
-    resolve_provider,
-    resolve_xai_oauth_runtime_credentials,
-)
+from auth.errors import AuthError
+from hermes_cli.auth import DEFAULT_XAI_OAUTH_BASE_URL, _read_xai_oauth_tokens, _refresh_xai_oauth_tokens, _save_xai_oauth_tokens, get_xai_oauth_auth_status, refresh_xai_oauth_pure, resolve_provider, resolve_xai_oauth_runtime_credentials
 
 
 # ---------------------------------------------------------------------------
@@ -495,14 +486,15 @@ def test_credential_pool_seeds_xai_oauth_from_singleton(tmp_path, monkeypatch):
 
     Device code is the only supported xAI OAuth flow, so the singleton is
     always surfaced as ``device_code``."""
-    from agent.credential_pool import load_pool
+    from hermes_cli.config_credentials import credential_pool_environment
+    from auth.credential_pool import load_pool
 
     hermes_home = tmp_path / "hermes"
     fresh = _jwt_with_exp(int(time.time()) + 2 * 60 * 60)
     _setup_hermes_auth(hermes_home, access_token=fresh, refresh_token="rt-1")
     monkeypatch.setenv("HERMES_HOME", str(hermes_home))
 
-    pool = load_pool("xai-oauth")
+    pool = load_pool("xai-oauth", environment=credential_pool_environment())
     assert pool.has_credentials()
     entries = pool.entries()
     assert len(entries) == 1
@@ -514,8 +506,9 @@ def test_credential_pool_seeds_xai_oauth_from_singleton(tmp_path, monkeypatch):
 
 
 def test_credential_pool_device_code_seed_respects_suppression(tmp_path, monkeypatch):
-    from agent.credential_pool import load_pool
-    from hermes_cli.auth import suppress_credential_source
+    from hermes_cli.config_credentials import credential_pool_environment
+    from auth.credential_pool import load_pool
+    from auth.sources import suppress_credential_source
 
     hermes_home = tmp_path / "hermes"
     fresh = _jwt_with_exp(int(time.time()) + 2 * 60 * 60)
@@ -528,7 +521,7 @@ def test_credential_pool_device_code_seed_respects_suppression(tmp_path, monkeyp
 
     suppress_credential_source("xai-oauth", "device_code")
 
-    pool = load_pool("xai-oauth")
+    pool = load_pool("xai-oauth", environment=credential_pool_environment())
     assert not pool.has_credentials()
 
 
@@ -546,7 +539,8 @@ def test_auth_remove_xai_oauth_clears_singleton_and_sticks(tmp_path, monkeypatch
     nothing to clean up" branch. That branch is correct for ``manual``
     entries (pool-only) but wrong for singleton-seeded ``device_code``
     entries (auth.json singleton survives the in-memory removal)."""
-    from agent.credential_pool import load_pool
+    from hermes_cli.config_credentials import credential_pool_environment
+    from auth.credential_pool import load_pool
     from hermes_cli.auth_commands import auth_remove_command
     from types import SimpleNamespace
 
@@ -556,7 +550,7 @@ def test_auth_remove_xai_oauth_clears_singleton_and_sticks(tmp_path, monkeypatch
     monkeypatch.setenv("HERMES_HOME", str(hermes_home))
 
     # Confirm pre-state: pool sees the seeded entry, auth.json has the singleton.
-    pool = load_pool("xai-oauth")
+    pool = load_pool("xai-oauth", environment=credential_pool_environment())
     assert pool.has_credentials()
     raw = json.loads((hermes_home / "auth.json").read_text())
     assert "xai-oauth" in raw.get("providers", {})
@@ -574,7 +568,7 @@ def test_auth_remove_xai_oauth_clears_singleton_and_sticks(tmp_path, monkeypatch
     )
 
     # And the next load must not reseed the entry from anywhere.
-    pool_after = load_pool("xai-oauth")
+    pool_after = load_pool("xai-oauth", environment=credential_pool_environment())
     assert not pool_after.has_credentials(), (
         "Removal must stick across load_pool() calls — without the "
         "device_code RemovalStep, the seed function reads the singleton "
@@ -594,14 +588,12 @@ def test_login_xai_oauth_relogin_clears_suppression_and_reseeds(tmp_path, monkey
     singleton fallback. The fix calls ``unsuppress_credential_source`` on
     explicit interactive login success.
     """
+    from hermes_cli.config_credentials import credential_pool_environment
     from types import SimpleNamespace
 
-    from agent.credential_pool import load_pool
-    from hermes_cli.auth import (
-        _login_xai_oauth,
-        is_source_suppressed,
-        suppress_credential_source,
-    )
+    from auth.credential_pool import load_pool
+    from hermes_cli.auth import _login_xai_oauth
+    from auth.sources import is_source_suppressed, suppress_credential_source
 
     hermes_home = tmp_path / "hermes"
     hermes_home.mkdir(parents=True, exist_ok=True)
@@ -614,7 +606,7 @@ def test_login_xai_oauth_relogin_clears_suppression_and_reseeds(tmp_path, monkey
     # seed is gated off and the pool is empty.
     suppress_credential_source("xai-oauth", "device_code")
     assert is_source_suppressed("xai-oauth", "device_code") is True
-    assert not load_pool("xai-oauth").has_credentials()
+    assert not load_pool("xai-oauth", environment=credential_pool_environment()).has_credentials()
 
     new_access = _jwt_with_exp(int(time.time()) + 2 * 60 * 60)
     monkeypatch.setattr(
@@ -647,7 +639,7 @@ def test_login_xai_oauth_relogin_clears_suppression_and_reseeds(tmp_path, monkey
     # The explicit interactive login cleared the suppression marker...
     assert is_source_suppressed("xai-oauth", "device_code") is False
     # ...so the singleton seed re-creates the canonical pool entry.
-    pool = load_pool("xai-oauth")
+    pool = load_pool("xai-oauth", environment=credential_pool_environment())
     assert pool.has_credentials()
     entry = next(e for e in pool.entries() if e.source == "device_code")
     assert entry.access_token == new_access
@@ -695,14 +687,15 @@ def test_pool_refresh_recovers_when_other_process_already_refreshed(tmp_path, mo
     consumed-token error; we must re-check auth.json, find the fresh pair
     (written by the racing process), and adopt it instead of marking the
     entry exhausted."""
-    from agent.credential_pool import load_pool
+    from hermes_cli.config_credentials import credential_pool_environment
+    from auth.credential_pool import load_pool
 
     hermes_home = tmp_path / "hermes"
     in_memory_at = _jwt_with_exp(int(time.time()) + 30)
     _setup_hermes_auth(hermes_home, access_token=in_memory_at, refresh_token="rt-shared")
     monkeypatch.setenv("HERMES_HOME", str(hermes_home))
 
-    pool = load_pool("xai-oauth")
+    pool = load_pool("xai-oauth", environment=credential_pool_environment())
 
     other_process_at = _jwt_with_exp(int(time.time()) + 2 * 60 * 60)
 
@@ -741,7 +734,8 @@ def test_pool_manual_entry_does_not_sync_back_to_singleton(tmp_path, monkeypatch
     independent credentials and must NOT write to the singleton.  Sync-back
     is restricted to entries seeded from the singleton.  Otherwise adding a
     second pool credential would silently overwrite the user's main login."""
-    from agent.credential_pool import load_pool, AUTH_TYPE_OAUTH, PooledCredential
+    from hermes_cli.config_credentials import credential_pool_environment
+    from auth.credential_pool import load_pool, AUTH_TYPE_OAUTH, PooledCredential
     import uuid
 
     hermes_home = tmp_path / "hermes"
@@ -766,7 +760,7 @@ def test_pool_manual_entry_does_not_sync_back_to_singleton(tmp_path, monkeypatch
 
     monkeypatch.setattr("hermes_cli.auth.refresh_xai_oauth_pure", _fake_refresh)
 
-    pool = load_pool("xai-oauth")
+    pool = load_pool("xai-oauth", environment=credential_pool_environment())
     pool.add_entry(
         PooledCredential(
             provider="xai-oauth",
@@ -864,7 +858,8 @@ def test_pool_sync_back_preserves_active_provider(tmp_path, monkeypatch):
     provider (visible to ``hermes auth status``, ``hermes setup``, and the
     ``hermes`` no-arg dispatcher).  Pin the ``set_active=False`` contract so
     no future refactor regresses to the legacy semantic."""
-    from agent.credential_pool import load_pool
+    from hermes_cli.config_credentials import credential_pool_environment
+    from auth.credential_pool import load_pool
 
     hermes_home = tmp_path / "hermes"
     near_expiry = _jwt_with_exp(int(time.time()) + 30)
@@ -892,7 +887,7 @@ def test_pool_sync_back_preserves_active_provider(tmp_path, monkeypatch):
 
     monkeypatch.setattr("hermes_cli.auth.refresh_xai_oauth_pure", _fake_refresh)
 
-    pool = load_pool("xai-oauth")
+    pool = load_pool("xai-oauth", environment=credential_pool_environment())
     selected = pool.select()
     assert selected is not None
     assert selected.access_token == new_access

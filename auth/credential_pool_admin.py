@@ -1,16 +1,17 @@
 """Locked credential-pool administration and target resolution."""
 from __future__ import annotations
+import auth.pool_persistence as auth_pool_persistence
 
 import time
 from dataclasses import replace
 from typing import Any, Optional, Tuple, TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from agent.credential_pool import PooledCredential
+    from auth.credential_pool import PooledCredential
 
 
 def _cleared_status_copy(entry: PooledCredential) -> PooledCredential:
-    from agent.credential_pool import _CLEAR_STATUS
+    from auth.credential_pool import _CLEAR_STATUS
 
     # The reset marker lets a live pool in another process tell "reset after my cooldown" from
     # "never had a status" — both read as bare None on disk (#89415).
@@ -21,6 +22,7 @@ def _cleared_status_copy(entry: PooledCredential) -> PooledCredential:
 class CredentialPoolAdminMixin:
     def reset_status(self, credential_id: str) -> Optional[PooledCredential]:
         """Clear only the target's local error state, preserving sibling cooldowns."""
+        self.environment.require_current_scope()
         with self._lock:
             entry = self._find(lambda e: e.id == credential_id)
             if entry is None:
@@ -37,7 +39,8 @@ class CredentialPoolAdminMixin:
         disk-recency merge reads a cleared ``last_status_at`` (None -> epoch 0)
         as a stale snapshot and would copy a still-binding cooldown back.
         """
-        from agent.credential_pool import _CLEAR_STATUS
+        self.environment.require_current_scope()
+        from auth.credential_pool import _CLEAR_STATUS
 
         with self._lock:
             stale = [
@@ -54,6 +57,7 @@ class CredentialPoolAdminMixin:
             return len(stale)
 
     def remove_index(self, index: int) -> Optional[PooledCredential]:
+        self.environment.require_current_scope()
         with self._lock:
             if index < 1 or index > len(self._entries):
                 return None
@@ -66,7 +70,8 @@ class CredentialPoolAdminMixin:
 
     def move_entry(self, credential_id: str, priority: int) -> Optional[PooledCredential]:
         """Place an entry at a clamped zero-based position and persist contiguous priorities."""
-        from agent.credential_pool import _normalize_pool_priorities
+        self.environment.require_current_scope()
+        from auth.credential_pool import _normalize_pool_priorities
 
         with self._lock:
             entry = self._find(lambda e: e.id == credential_id)
@@ -82,6 +87,7 @@ class CredentialPoolAdminMixin:
             return self._find(lambda e: e.id == credential_id)
 
     def resolve_target(self, target: Any) -> Tuple[Optional[int], Optional[PooledCredential], Optional[str]]:
+        self.environment.require_current_scope()
         raw = str(target or "").strip()
         if not raw:
             return None, None, "No credential target provided."
@@ -108,8 +114,9 @@ class CredentialPoolAdminMixin:
             return None, None, f'No credential matching "{raw}".'
 
     def add_entry(self, entry: PooledCredential) -> PooledCredential:
-        from agent.credential_pool import _next_priority, write_credential_pool
-        from hermes_cli import auth as auth_mod
+        self.environment.require_current_scope()
+        from auth.credential_pool import _next_priority
+        from auth.pool_persistence import write_credential_pool
 
         with self._lock:
             entry = replace(entry, priority=_next_priority(self._entries))
@@ -126,7 +133,7 @@ class CredentialPoolAdminMixin:
                     self.provider, [e.to_dict() for e in self._entries],
                     token_bases=self._persisted_token_pairs,
                 )
-                self._persisted_token_pairs = auth_mod._token_pairs_by_id(written)
+                self._persisted_token_pairs = auth_pool_persistence._token_pairs_by_id(written)
                 self._borrowed_root_ids = set()
             else:
                 self._persist()

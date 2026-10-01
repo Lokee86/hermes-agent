@@ -7,6 +7,7 @@ contract and reads downstream as "not logged in".
 """
 
 from __future__ import annotations
+import auth.provider_state as auth_provider_state
 
 import io
 import json
@@ -172,7 +173,7 @@ def test_billing_token_cache_is_scoped_per_profile_home(monkeypatch, tmp_path):
     import hermes_cli.auth as auth
 
     monkeypatch.setattr(nb, "_token_cache", {}, raising=False)
-    monkeypatch.setattr(auth, "get_provider_auth_state", lambda provider: {})
+    monkeypatch.setattr(auth_provider_state, "get_provider_auth_state", lambda provider: {})
     monkeypatch.setattr(
         auth, "resolve_nous_access_token",
         lambda **kw: f"tok-{hermes_constants.get_hermes_home().name}")

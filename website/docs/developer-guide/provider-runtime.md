@@ -18,6 +18,14 @@ Primary implementation:
 
 - `hermes_cli/runtime_provider.py` — credential resolution, custom-endpoint runtime resolution
 - `hermes_cli/auth.py` — provider registry, `resolve_provider()`
+- `auth/store.py`, `auth/provider_state.py` — auth.json loading, locking, atomic writes and provider-state transactions
+- `auth/credential_pool.py`, `auth/credential_pool_admin.py`, `auth/credential_pool_model_cooldowns.py` — pool selection, administration, rotation and cooldowns
+- `auth/pool_sources.py`, `auth/pool_refresh.py`, `auth/credential_pool_plugin.py` — source ingestion, refresh coordination and registered plugin refresh invocation
+- `auth/pool_environment.py` — explicit application configuration, metadata and protocol callbacks bound to the profile
+- `auth/oauth_grants.py`, `auth/token_validation.py`, `auth/errors.py` — shared grant hygiene, token validation and authentication errors
+- `auth/pool_persistence.py`, `auth/persistence.py` — durable pool snapshots, concurrent token/cooldown merges and borrowed-secret sanitization
+- `auth/sources.py`, `auth/source_removal.py` — source suppression, credential save/removal policy and the single removal registry
+- `hermes_cli/config_credentials.py` — application-supplied configuration/mirror and cache callbacks; auth imports no CLI configuration
 - `hermes_cli/model_switch.py` — shared `/model` switch pipeline (CLI + gateway)
 - `agent/auxiliary_client.py` — auxiliary model routing
 - `providers/` — ABC + registry entry points (`ProviderProfile`, `register_provider`, `get_provider_profile`, `list_providers`)

@@ -880,7 +880,7 @@ class TestLocalOllamaModelDiscovery:
             with patch("hermes_cli.config.load_config", return_value=config), patch(
                 "hermes_cli.config.save_config"
             ), patch("hermes_cli.auth._save_model_choice"), patch(
-                "hermes_cli.auth.deactivate_provider"
+                'auth.provider_state.deactivate_provider'
             ), patch("hermes_cli.main_provider_setup._save_custom_provider"), patch(
                 "hermes_cli.curses_ui.curses_radiolist",
                 side_effect=cancel_after_capturing_models,

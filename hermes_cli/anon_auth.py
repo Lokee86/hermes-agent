@@ -34,8 +34,10 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, Dict, Optional
 
 from agent.retry_utils import parse_retry_after_seconds
-from hermes_cli.auth_constants import (
-    AuthError, DEFAULT_NOUS_PORTAL_URL, DEFAULT_NOUS_WELCOME_URL, _decode_jwt_claims, httpx)
+from auth.errors import AuthError
+from hermes_cli.auth_constants import DEFAULT_NOUS_WELCOME_URL, httpx
+from auth.token_validation import _decode_jwt_claims
+from auth.store_migrations import DEFAULT_NOUS_PORTAL_URL
 
 logger = logging.getLogger("hermes_cli.auth")
 
@@ -168,7 +170,7 @@ def is_anonymous_request(provider: Any, api_key: Any) -> bool:
     This is display/recovery metadata, not token verification; the gateway authenticates the JWT.
     Named free accounts and opaque API keys must retain normal provider errors.
     """
-    from hermes_cli.auth_constants import _decode_jwt_claims
+    from auth.token_validation import _decode_jwt_claims
     return provider == "nous" and _decode_jwt_claims(api_key).get("account_tier") == ANON_ACCOUNT_TIER
 
 
@@ -179,7 +181,8 @@ def is_anonymous_agent(agent: Any) -> bool:
 
 def current_nous_state() -> Optional[Dict[str, Any]]:
     """The profile's ``providers.nous`` state without locking or network (status/picker reads)."""
-    from hermes_cli.auth import _load_auth_store, _load_provider_state
+    from auth.store import _load_auth_store
+    from auth.provider_state import _load_provider_state
     try:
         return _load_provider_state(_load_auth_store(), "nous")
     except Exception as exc:
@@ -380,7 +383,8 @@ def _mint_locked(
     ``carries_inference`` decides whether the new identity also becomes ``active_provider``. The
     bootstrap passes False when its inventory found another usable provider: the identity exists for
     connectors, the user's own provider keeps carrying inference (NS-845 Q1.3)."""
-    from hermes_cli.auth import _store_provider_state, _save_auth_store
+    from auth.provider_state import _store_provider_state
+    from auth.store import _save_auth_store
     from hermes_cli.auth_nous import _write_shared_nous_state
     minted = mint_guest(client, portal)
     state: Dict[str, Any] = {
@@ -506,9 +510,9 @@ def _reconcile_and_provision(*, timeout_seconds: float, carries_inference: bool 
     2. Otherwise the profile's own identity stands.
     3. Nothing anywhere: mint, persisting the credential before exchanging it.
     """
-    from hermes_cli.auth import (
-        _auth_store_lock, _load_auth_store, _load_provider_state, _save_auth_store,
-        _store_provider_state, _resolve_verify)
+    from auth.store import _auth_store_lock, _load_auth_store, _save_auth_store
+    from auth.provider_state import _load_provider_state, _store_provider_state
+    from hermes_cli.auth import _resolve_verify
     from hermes_cli.auth_nous import (
         _nous_http_client, _nous_shared_store_lock, _read_shared_nous_state, _write_shared_nous_state)
     portal = _portal_base_url()
@@ -602,8 +606,8 @@ def clear_dead_guest(reason: str, *, dead_token: Optional[str] = None) -> None:
     must not erase a sibling profile's newer sign-in or replacement guest from the shared store. When
     *dead_token* is None the profile's current guest is treated as the failed one.
     """
-    from hermes_cli.auth import (
-        _auth_store_lock, _load_auth_store, _load_provider_state, _save_auth_store, _store_section)
+    from auth.store import _auth_store_lock, _load_auth_store, _save_auth_store, _store_section
+    from auth.provider_state import _load_provider_state
     from hermes_cli.auth_nous import _clear_shared_nous_state, _nous_shared_store_lock, _read_shared_nous_state
     with _auth_store_lock():
         auth_store = _load_auth_store()
@@ -837,9 +841,8 @@ def mark_guest_notice_shown() -> bool:
     """Persist ``guest_notice_shown`` on the guest's ``providers.nous`` state (whichever store holds it).
 
     Returns True when a flag was written; False when there is no guest to mark."""
-    from hermes_cli.auth import (
-        _auth_file_path, _load_auth_store, _provider_state_transaction, _same_path, _save_auth_store,
-        _store_section)
+    from auth.store import _auth_file_path, _load_auth_store, _same_path, _save_auth_store, _store_section
+    from auth.provider_state import _provider_state_transaction
     with _provider_state_transaction("nous") as (auth_store, state, source_path):
         if not is_guest_state(state) or source_path is None:
             return False

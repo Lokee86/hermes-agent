@@ -15,9 +15,10 @@ import time
 
 import pytest
 
-from agent import credential_pool
-from agent.credential_pool import load_pool
-from hermes_cli.auth import AuthError, DEFAULT_CODEX_BASE_URL, get_codex_auth_status
+from auth import credential_pool
+from auth.credential_pool import load_pool
+from auth.errors import AuthError
+from hermes_cli.auth import DEFAULT_CODEX_BASE_URL, get_codex_auth_status
 
 
 def _jwt_with_exp(offset_seconds: int) -> str:
@@ -62,6 +63,7 @@ def _persisted_pool(home) -> list:
 
 
 def test_status_snapshot_does_not_refresh_or_bench_an_expiring_pool_entry(tmp_path, monkeypatch):
+    from hermes_cli.config_credentials import credential_pool_environment
     home, refresh_calls = _pool_only_codex_home(tmp_path, monkeypatch, access_tokens=[_jwt_with_exp(-3600)])
 
     status = get_codex_auth_status()
@@ -69,7 +71,7 @@ def test_status_snapshot_does_not_refresh_or_bench_an_expiring_pool_entry(tmp_pa
     assert refresh_calls == [], "a status read spent the single-use pool refresh token"
     assert status["logged_in"] is True, status
     assert [e.get("last_status") for e in _persisted_pool(home)] == [None]
-    assert load_pool("openai-codex").has_available() is True
+    assert load_pool("openai-codex", environment=credential_pool_environment()).has_available() is True
 
     from hermes_cli.model_switch import list_authenticated_providers
 
@@ -78,21 +80,22 @@ def test_status_snapshot_does_not_refresh_or_bench_an_expiring_pool_entry(tmp_pa
     assert rows and rows[0]["total_models"] > 0, rows
 
     # Control: the runtime lease still refreshes the same entry.
-    load_pool("openai-codex").select()
+    load_pool("openai-codex", environment=credential_pool_environment()).select()
     assert refresh_calls == ["codex-refresh-token-0"]
 
 
 def test_status_snapshot_leaves_round_robin_order_and_counts_untouched(tmp_path, monkeypatch):
+    from hermes_cli.config_credentials import credential_pool_environment
     home, _ = _pool_only_codex_home(
         tmp_path, monkeypatch, access_tokens=[_jwt_with_exp(3600), _jwt_with_exp(3600)])
-    monkeypatch.setattr(credential_pool, "get_pool_strategy", lambda provider: credential_pool.STRATEGY_ROUND_ROBIN)
+    monkeypatch.setattr(credential_pool, "get_pool_strategy", lambda provider, environment=None: credential_pool.STRATEGY_ROUND_ROBIN)
     before = _persisted_pool(home)
 
     assert get_codex_auth_status()["logged_in"] is True
     assert _persisted_pool(home) == before, "a status read rotated or re-counted the persisted pool"
 
     # Control: a runtime selection still rotates and persists the new order.
-    load_pool("openai-codex").select()
+    load_pool("openai-codex", environment=credential_pool_environment()).select()
     assert _persisted_pool(home) != before
 
 

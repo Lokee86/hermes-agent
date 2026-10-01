@@ -11,7 +11,7 @@ import gateway.run as gateway_run
 from gateway.config import HomeChannel, Platform
 from gateway.platforms.base import SendResult
 from hermes_cli import anon_auth
-from hermes_cli.auth import _auth_store_lock, _load_auth_store, _save_auth_store
+from auth.store import _auth_store_lock, _load_auth_store, _save_auth_store
 from tests.gateway.restart_test_helpers import make_restart_runner
 
 

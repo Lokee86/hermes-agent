@@ -317,7 +317,7 @@ def test_actual_runtime_transitions_reach_chat_completions(
             agent._fallback_activated = True
             assert agent._restore_primary_runtime()
         elif entrypoint == "rotation":
-            from agent.credential_pool import PooledCredential
+            from auth.credential_pool import PooledCredential
 
             agent._swap_credential(
                 PooledCredential.from_dict(

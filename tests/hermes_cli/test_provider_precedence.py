@@ -8,12 +8,13 @@ OPENAI_API_KEY exported (or model.provider set) got routed to Anthropic.
 """
 import pytest
 
-from hermes_cli.auth import resolve_provider, AuthError
+from hermes_cli.auth import resolve_provider
+from auth.errors import AuthError
 
 
 def _login(monkeypatch, provider_id):
     """Simulate a logged-in OAuth active_provider in auth.json."""
-    monkeypatch.setattr("hermes_cli.auth._load_auth_store",
+    monkeypatch.setattr('auth.store._load_auth_store',
                         lambda: {"active_provider": provider_id})
     monkeypatch.setattr("hermes_cli.auth.get_auth_status",
                         lambda p: {"logged_in": p == provider_id})
@@ -77,12 +78,12 @@ class TestProviderPrecedence:
             def has_credentials(self):
                 return True
 
-        monkeypatch.setattr("agent.credential_pool.load_pool", lambda name: _Pool())
+        monkeypatch.setattr("auth.credential_pool.load_pool", lambda name, environment=None: _Pool())
         assert resolve_provider("auto") == "openrouter"
 
 
 def _logged_out(monkeypatch):
-    monkeypatch.setattr("hermes_cli.auth._load_auth_store", lambda: {})
+    monkeypatch.setattr('auth.store._load_auth_store', lambda: {})
     monkeypatch.setattr("hermes_cli.auth.get_auth_status", lambda p: {"logged_in": False})
 
 

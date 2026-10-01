@@ -410,10 +410,9 @@ def _xai_device_poller(session_id: str, sess: Dict[str, Any]) -> None:
     """Background poller for xAI's OAuth device-code flow."""
     from hermes_cli.web_server_profiles import _profile_scope
     import httpx
-    from hermes_cli.auth import (
-        _save_xai_oauth_tokens, _xai_oauth_discovery, _xai_oauth_poll_device_token,
-        mark_provider_active_if_unset, unsuppress_credential_source,
-    )
+    from hermes_cli.auth import _save_xai_oauth_tokens, _xai_oauth_discovery, _xai_oauth_poll_device_token
+    from auth.provider_state import mark_provider_active_if_unset
+    from auth.sources import unsuppress_credential_source
 
     discovery = _xai_oauth_discovery(20.0)
     with httpx.Client(timeout=httpx.Timeout(20.0), headers={"Accept": "application/json"}) as client:

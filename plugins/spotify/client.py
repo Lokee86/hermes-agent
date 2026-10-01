@@ -11,7 +11,8 @@ from urllib.parse import urlparse
 
 import httpx
 
-from hermes_cli.auth import AuthError, resolve_spotify_runtime_credentials
+from auth.errors import AuthError
+from hermes_cli.auth import resolve_spotify_runtime_credentials
 
 
 class SpotifyError(RuntimeError): """Base Spotify tool error."""
@@ -165,7 +166,6 @@ def normalize_spotify_uris(values: Iterable[str], expected_type: Optional[str] =
 # Names external plugins imported from this module before the Sep 2026 decomposition.
 # Internal code MUST NOT use these (scripts/check_compat_pointers.py fails CI if it does).
 # The whole block is removed by reverting the commit that added it.
-import json  # noqa: F401,E402
 import json  # noqa: F401,E402
 
 def compact_json(data: Any) -> str:

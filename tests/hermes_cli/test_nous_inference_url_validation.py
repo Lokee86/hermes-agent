@@ -20,6 +20,9 @@ These tests verify:
 """
 
 from __future__ import annotations
+import auth.provider_state as auth_provider_state
+import auth.store as auth_storage
+import auth.store_migrations as auth_store_migrations
 
 import logging
 
@@ -112,7 +115,7 @@ class TestHealsPoisonedStoredValue:
             "access_token": "tok",
             "refresh_token": "rtok",
             "client_id": "hermes-cli",
-            "portal_base_url": auth.DEFAULT_NOUS_PORTAL_URL,
+            "portal_base_url": auth_store_migrations.DEFAULT_NOUS_PORTAL_URL,
             "inference_base_url": poisoned,
         }
 
@@ -178,18 +181,18 @@ class TestEnvOverrideWins:
         monkeypatch.setattr(auth, "_nous_invoke_jwt_status", lambda *a, **k: None)
         monkeypatch.setattr(hermes_cli_auth_nous, "_nous_invoke_jwt_status", lambda *a, **k: None)
         monkeypatch.setattr(
-            auth, "_auth_store_lock", lambda *a, **k: contextlib.nullcontext()
+            auth_storage, "_auth_store_lock", lambda *a, **k: contextlib.nullcontext()
         )
-        monkeypatch.setattr(auth, "_load_auth_store", lambda *a, **k: {})
-        monkeypatch.setattr(auth, "_load_provider_state", lambda store, pid: state)
+        monkeypatch.setattr(auth_storage, "_load_auth_store", lambda *a, **k: {})
+        monkeypatch.setattr(auth_provider_state, "_load_provider_state", lambda store, pid: state)
         monkeypatch.setattr(
-            auth,
+            auth_provider_state,
             "_load_provider_state_with_source",
             lambda store, pid: (state, None),
         )
-        monkeypatch.setattr(auth, "_save_provider_state", lambda *a, **k: None)
-        monkeypatch.setattr(auth, "_save_provider_state_to_source", lambda *a, **k: None)
-        monkeypatch.setattr(auth, "_save_auth_store", lambda *a, **k: None)
+        monkeypatch.setattr(auth_provider_state, "_save_provider_state", lambda *a, **k: None)
+        monkeypatch.setattr(auth_provider_state, "_save_provider_state_to_source", lambda *a, **k: None)
+        monkeypatch.setattr(auth_storage, "_save_auth_store", lambda *a, **k: None)
         monkeypatch.setattr(auth, "_write_shared_nous_state", lambda *a, **k: None)
         monkeypatch.setattr(hermes_cli_auth_nous, "_write_shared_nous_state", lambda *a, **k: None)
         monkeypatch.setattr(auth, "_sync_nous_pool_from_auth_store", lambda *a, **k: None)
@@ -205,7 +208,7 @@ class TestEnvOverrideWins:
             "access_token": "tok",
             "refresh_token": "rtok",
             "client_id": "hermes-cli",
-            "portal_base_url": auth.DEFAULT_NOUS_PORTAL_URL,
+            "portal_base_url": auth_store_migrations.DEFAULT_NOUS_PORTAL_URL,
             "inference_base_url": stored,
             "agent_key": "ak-123",
         }

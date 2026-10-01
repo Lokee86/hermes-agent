@@ -36,7 +36,7 @@ def _ns(**kw):
 
 class TestFastFails:
     def test_not_logged_in_exits_1_with_setup_hint(self, capsys):
-        from hermes_cli.auth import AuthError
+        from auth.errors import AuthError
 
         err = AuthError("not logged in", provider="nous", relogin_required=True)
         with patch.object(dr, "cmd_dashboard_register", dr.cmd_dashboard_register):
@@ -381,7 +381,7 @@ class TestPortalResolution:
 
     def test_falls_back_to_stored_login_portal(self):
         with patch(
-            "hermes_cli.auth.get_provider_auth_state",
+            'auth.provider_state.get_provider_auth_state',
             return_value={"portal_base_url": "https://portal.staging-nousresearch.com"},
         ):
             assert (

@@ -6,7 +6,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from hermes_cli.auth import AuthError
+from auth.errors import AuthError
 from hermes_cli import main as hermes_main
 import hermes_cli.main_provider_setup as hermes_cli_main_provider_setup
 from hermes_cli import model_switch
@@ -327,7 +327,7 @@ def test_fallback_runtime_resolves_the_fallback_entry_model(monkeypatch, tmp_pat
     """The auth-fallback rung must resolve credentials for the ENTRY's model, exactly like the
     primary path does for `-m`: a `*-free` config default must not decide the api_mode/base_url
     a Go-only fallback entry is built with (#112600)."""
-    from hermes_cli.auth import AuthError
+    from auth.errors import AuthError
     from hermes_cli.cli_agent_setup_mixin import CLIAgentSetupMixin
 
     home = tmp_path / "hermes"
@@ -348,7 +348,8 @@ def test_fallback_runtime_resolves_the_fallback_entry_model(monkeypatch, tmp_pat
 
 
 def _quota_auth_error():
-    from hermes_cli.auth import CODEX_RATE_LIMITED_CODE, AuthError
+    from hermes_cli.auth import CODEX_RATE_LIMITED_CODE
+    from auth.errors import AuthError
     return AuthError(
         "Codex provider quota exhausted (429); retry after 1839s. Credentials are still valid.",
         provider="openai-codex",
@@ -390,7 +391,7 @@ def test_fallback_runtime_labels_quota_outage_and_bad_credentials_distinctly(mon
 
 def test_ensure_runtime_credentials_records_quota_vs_bad_key(monkeypatch, tmp_path):
     """Kanban workers need this flag: a quota wall at startup is not a worker failure (#117482)."""
-    from hermes_cli.auth import AuthError
+    from auth.errors import AuthError
     from hermes_cli.cli_agent_setup_mixin import CLIAgentSetupMixin
 
     home = tmp_path / "hermes"
@@ -467,7 +468,7 @@ def test_model_flow_nous_does_not_restore_stale_custom_api_key(tmp_path, monkeyp
     selected_model = "deepseek/deepseek-v4-flash"
 
     monkeypatch.setattr(
-        "hermes_cli.auth.get_provider_auth_state",
+        'auth.provider_state.get_provider_auth_state',
         lambda provider: {
             "access_token": "nous-token",
             "portal_base_url": "https://portal.example.com",
@@ -653,7 +654,7 @@ def test_model_flow_custom_saves_verified_v1_base_url(monkeypatch):
     saved_env = {}
     monkeypatch.setattr("hermes_cli.config.save_env_value", lambda key, value: saved_env.__setitem__(key, value))
     monkeypatch.setattr("hermes_cli.auth._save_model_choice", lambda model: saved_env.__setitem__("MODEL", model))
-    monkeypatch.setattr("hermes_cli.auth.deactivate_provider", lambda: None)
+    monkeypatch.setattr('auth.provider_state.deactivate_provider', lambda: None)
     monkeypatch.setattr("hermes_cli.main_provider_setup._save_custom_provider", lambda *args, **kwargs: None)
     monkeypatch.setattr(
         "hermes_cli.models.probe_api_models",
@@ -696,7 +697,7 @@ def test_model_flow_custom_persists_selected_api_mode(monkeypatch):
         lambda key: "" if key in {"OPENAI_BASE_URL", "OPENAI_API_KEY"} else "",
     )
     monkeypatch.setattr("hermes_cli.auth._save_model_choice", lambda model: None)
-    monkeypatch.setattr("hermes_cli.auth.deactivate_provider", lambda: None)
+    monkeypatch.setattr('auth.provider_state.deactivate_provider', lambda: None)
     monkeypatch.setattr(
         "hermes_cli.models.probe_api_models",
         lambda api_key, base_url: {
@@ -764,7 +765,7 @@ def test_cmd_model_forwards_nous_login_tls_options(monkeypatch):
     monkeypatch.setattr("hermes_cli.config.get_env_value", lambda key: "")
     monkeypatch.setattr("hermes_cli.config.save_env_value", lambda key, value: None)
     monkeypatch.setattr("hermes_cli.auth.resolve_provider", lambda requested, **kwargs: "nous")
-    monkeypatch.setattr("hermes_cli.auth.get_provider_auth_state", lambda provider_id: None)
+    monkeypatch.setattr('auth.provider_state.get_provider_auth_state', lambda provider_id: None)
     monkeypatch.setattr(hermes_main, "_prompt_provider_choice", lambda choices, **kwargs: 0)
     monkeypatch.setattr(hermes_cli_main_provider_setup, "_prompt_provider_choice", lambda choices, **kwargs: 0)
 

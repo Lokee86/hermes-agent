@@ -48,11 +48,8 @@ else:
 
 # ── Constants ───────────────────────────────────────────────────────────────────────────────────────
 
-AUTH_STORE_VERSION = 1
-AUTH_LOCK_TIMEOUT_SECONDS = 15.0
 
 # Nous Portal defaults
-DEFAULT_NOUS_PORTAL_URL = "https://portal.nousresearch.com"
 DEFAULT_NOUS_INFERENCE_URL = "https://inference-api.nousresearch.com/v1"
 # The free tier's (anonymous account) inference host. NAS hands it to the client on every token
 # exchange (``inference_base_url``); this literal is the fallback when that field is absent or fails
@@ -133,22 +130,6 @@ ACTUAL_LOCAL_NOAUTH_PLACEHOLDER = "dummy-actual-local-api-key"
 CODEX_RATE_LIMITED_CODE = "codex_rate_limited"
 
 
-class AuthError(RuntimeError):
-    """Structured auth error with UX mapping hints."""
-
-    def __init__(
-        self, message: str, *, provider: str = "", code: Optional[str] = None, relogin_required: bool = False,
-        retry_after: Optional[float] = None, retryable: Optional[bool] = None,
-    ) -> None:
-        super().__init__(message)
-        self.provider = provider
-        self.code = code
-        self.relogin_required = relogin_required
-        # Optional wait hint in seconds (a server ``Retry-After`` or a client cooldown) and whether a
-        # later attempt can succeed at all. None = the raiser did not say; callers treat None as
-        # "retryable, no hint" for transport-shaped errors and as terminal for auth refusals.
-        self.retry_after = retry_after
-        self.retryable = retryable
 
 
 def _provider_error_factory(provider: str) -> Callable[..., AuthError]:
@@ -168,14 +149,6 @@ _minimax_err = _provider_error_factory("minimax-oauth")
 _openrouter_err = _provider_error_factory("openrouter")
 
 
-def _decode_jwt_claims(token: Any) -> Dict[str, Any]:
-    if not isinstance(token, str) or token.count(".") != 2:
-        return {}
-    payload = token.split(".")[1]
-    payload += "=" * ((4 - len(payload) % 4) % 4)
-    try:
-        raw = base64.urlsafe_b64decode(payload.encode("utf-8"))
-        claims = json.loads(raw.decode("utf-8"))
-    except Exception:
-        return {}
-    return claims if isinstance(claims, dict) else {}
+
+from auth.errors import AuthError
+from auth.token_validation import _decode_jwt_claims

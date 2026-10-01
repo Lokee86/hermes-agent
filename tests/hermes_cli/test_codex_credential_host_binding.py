@@ -409,12 +409,13 @@ def test_quota_restored_probe_of_a_persisted_entry_asks_the_gateway(monkeypatch,
 
 
 def test_pool_selection_quota_probe_asks_the_gateway(monkeypatch, usage_probe_http):
+    from hermes_cli.config_credentials import credential_pool_environment
     home = _home(monkeypatch)
     _write_config(home, base_url=GW)
     _exhausted_jwt_pool(home)
-    from agent.credential_pool import load_pool
+    from auth.credential_pool import load_pool
 
-    pool = load_pool("openai-codex")
+    pool = load_pool("openai-codex", environment=credential_pool_environment())
     (entry,) = pool.entries()
     assert pool._codex_quota_restored_upstream(entry) is True
 
@@ -467,7 +468,7 @@ def test_usage_forced_refresh_keeps_the_refreshed_pool_key_on_the_gateway(monkey
         def try_refresh_matching(self, api_key_hint=None, credential_id=None):
             return SimpleNamespace(runtime_api_key="fresh-gw-key", runtime_base_url=CHATGPT)
 
-    monkeypatch.setattr("agent.credential_pool.load_pool", lambda provider: Pool())
+    monkeypatch.setattr("auth.credential_pool.load_pool", lambda provider, environment=None: Pool())
 
     token, base_url, _acct = account_usage._resolve_codex_usage_credentials(
         GW, "stale-gw-key", force_refresh=True)

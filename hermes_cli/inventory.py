@@ -501,8 +501,8 @@ def _anthropic_oauth_credentials_present() -> bool:
     # accepts them via pool.has_credentials(), so the filter must too or those rows are built then
     # silently dropped. Read-only (no load_pool) so a picker open never mutates auth.json.
     try:
-        from agent.credential_pool import AUTH_TYPE_OAUTH
-        from hermes_cli.auth import read_credential_pool
+        from auth.credential_pool import AUTH_TYPE_OAUTH
+        from auth.pool_persistence import read_credential_pool
 
         for entry in read_credential_pool("anthropic"):
             if (isinstance(entry, dict) and entry.get("auth_type") == AUTH_TYPE_OAUTH

@@ -47,7 +47,7 @@ def _read_nous_provider_state() -> Optional[dict]:
     the root identity. Reading only ``HERMES_HOME/auth.json`` made that profile look signed out to
     the connector gate alone, so ``manage_connections`` vanished from its tool list."""
     try:
-        from hermes_cli.auth import get_provider_auth_state
+        from auth.provider_state import get_provider_auth_state
 
         nous_provider = get_provider_auth_state("nous")
         if not isinstance(nous_provider, dict):

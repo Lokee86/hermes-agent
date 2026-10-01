@@ -36,10 +36,10 @@ to the public equivalent or the new module. Test monkeypatch seams are likewise 
 
 | kind | count | meaning |
 |---|---|---|
-| moved | 0 | name now defined in `new location`; re-exported from the old module |
+| moved | 1 | name now defined in `new location`; re-exported from the old module |
 | moved-lazy | 1148 | same, resolved lazily via `__getattr__` to avoid an import cycle |
 | import | 592 | a third-party/stdlib name the old module used to expose; original import restored |
-| restored-def | 290 | public name that was deleted as unused; its pre-decomposition definition is restored verbatim |
+| restored-def | 289 | public name that was deleted as unused; its pre-decomposition definition is restored verbatim |
 | restored-helper | 41 | private helper restored only because a restored-def above depends on it |
 | restored-import | 17 | import re-added only because a restored-def above depends on it |
 | module-stub | 3 | whole module deleted; stub re-exports from its replacement |
@@ -282,7 +282,7 @@ to the public equivalent or the new module. Test monkeypatch seams are likewise 
 
 | name | kind | new location |
 |---|---|---|
-| `register` | restored-def | `(deleted; BASE body restored)` |
+| `register` | moved | `auth.source_removal` |
 
 ### `agent.display`
 
@@ -1098,7 +1098,7 @@ to the public equivalent or the new module. Test monkeypatch seams are likewise 
 | `OAUTH_OVER_SSH_DOCS_URL` | moved-lazy | `hermes_cli.auth_constants` |
 | `QWEN_OAUTH_CLIENT_ID` | moved-lazy | `hermes_cli.auth_constants` |
 | `QWEN_OAUTH_TOKEN_URL` | moved-lazy | `hermes_cli.auth_constants` |
-| `SINGLE_USE_OAUTH_SINGLETON_FILES` | moved-lazy | `hermes_cli.auth_oauth_grants` |
+| `SINGLE_USE_OAUTH_SINGLETON_FILES` | moved-lazy | `auth.oauth_grants` |
 | `SPOTIFY_ACCESS_TOKEN_REFRESH_SKEW_SECONDS` | moved-lazy | `hermes_cli.auth_constants` |
 | `SPOTIFY_DASHBOARD_URL` | moved-lazy | `hermes_cli.auth_constants` |
 | `TYPE_CHECKING` | import | `typing` |

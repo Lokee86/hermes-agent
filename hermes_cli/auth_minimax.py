@@ -14,10 +14,8 @@ import time
 import uuid
 from datetime import datetime, timezone
 from typing import Any, Callable, Dict, Optional, TYPE_CHECKING
-from hermes_cli.auth_constants import (
-    AuthError, MINIMAX_OAUTH_GRANT_TYPE, MINIMAX_OAUTH_REFRESH_SKEW_SECONDS, MINIMAX_OAUTH_SCOPE,
-    _FORM_JSON_HEADERS, _minimax_err, httpx,
-)
+from auth.errors import AuthError
+from hermes_cli.auth_constants import MINIMAX_OAUTH_GRANT_TYPE, MINIMAX_OAUTH_REFRESH_SKEW_SECONDS, MINIMAX_OAUTH_SCOPE, _FORM_JSON_HEADERS, _minimax_err, httpx
 
 if TYPE_CHECKING:  # annotation-only; the runtime import would be a cycle
     from hermes_cli.auth import ProviderConfig
@@ -160,7 +158,7 @@ def _minimax_poll_token(
 
 def _minimax_save_auth_state(auth_state: Dict[str, Any]) -> None:
     """Persist MiniMax OAuth state to Hermes auth store (~/.hermes/auth.json)."""
-    from hermes_cli.auth import _save_active_provider_state
+    from auth.provider_state import _save_active_provider_state
     _save_active_provider_state("minimax-oauth", auth_state)
 
 
@@ -279,7 +277,8 @@ def _minimax_oauth_quarantine_on_terminal_refresh(state: Dict[str, Any], exc: Au
 
 def _minimax_fresh_state() -> Dict[str, Any]:
     """Load the MiniMax OAuth state and refresh it if near expiry; quarantine on terminal failure."""
-    from hermes_cli.auth import _refresh_minimax_oauth_state, get_provider_auth_state
+    from hermes_cli.auth import _refresh_minimax_oauth_state
+    from auth.provider_state import get_provider_auth_state
     state = get_provider_auth_state("minimax-oauth")
     if not state or not state.get("access_token"):
         raise _minimax_err(

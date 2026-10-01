@@ -5,6 +5,7 @@ a root-borrowed grant must land the rotated chain in root — singleton AND ``cr
 or root keeps the consumed refresh token and the next reader gets the whole family revoked.
 Token values are synthetic placeholders.
 """
+import auth.store as auth_storage
 
 import json
 import threading
@@ -123,7 +124,7 @@ def test_concurrent_refreshes_of_shared_root_grant_submit_old_token_once(profile
     monkeypatch.setattr(auth_codex, "_codex_http_client", lambda **kw: endpoint)
     # The waiter must outlive the peer's endpoint call on BOTH locks: with the default lock
     # timeout shorter than the POST, the second profile would raise TimeoutError instead of adopt.
-    monkeypatch.setattr(auth._auth_store_lock.__wrapped__, "__defaults__", (1.0,))
+    monkeypatch.setattr(auth_storage._auth_store_lock.__wrapped__, "__defaults__", (1.0,))
     monkeypatch.setattr(auth_codex, "AUTH_LOCK_TIMEOUT_SECONDS", 1.0)
 
     results, errors = {}, {}

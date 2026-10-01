@@ -1860,14 +1860,15 @@ def _scoped_key_env(name: str) -> str:
     chain ``client_lifecycle`` uses for the actual request — so a ``key_env`` that lives only in
     ``$HERMES_HOME/.env`` authenticates the ``/model`` verification probe (#109315) and a rotated
     ``.env`` beats a stale value inherited from the parent shell."""
+    from hermes_cli.config_credentials import credential_pool_environment
     if not name:
         return ""
     try:
         from agent.secret_scope import current_secret_scope, get_secret, is_multiplex_active
         if current_secret_scope() is not None or is_multiplex_active():
             return (get_secret(name, "") or "").strip()
-        from agent.credential_pool import get_env_prefer_dotenv
-        return (get_env_prefer_dotenv(name) or "").strip()
+        from auth.pool_sources import get_env_prefer_dotenv
+        return (get_env_prefer_dotenv(name, environment=credential_pool_environment()) or "").strip()
     except Exception:
         return ""
 

@@ -82,12 +82,13 @@ def _install_fake_oauth_pool(monkeypatch, oauth_token: str) -> None:
         def try_refresh_matching(self, _hint):
             return entry
 
-    def _fake_load_pool(provider_id):
+    def _fake_load_pool(provider_id, *, environment):
+        environment.require_current_scope()
         if provider_id == "xai-oauth":
             return _FakePool()
         raise KeyError(provider_id)
 
-    monkeypatch.setattr("agent.credential_pool.load_pool", _fake_load_pool)
+    monkeypatch.setattr("auth.credential_pool.load_pool", _fake_load_pool)
 
 
 def test_prefer_api_key_wins_over_available_oauth(monkeypatch):

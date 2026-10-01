@@ -89,7 +89,7 @@ def test_keepalive_refreshes_stale_pool_entry(monkeypatch):
             return _Entry()
 
     pool = _Pool()
-    monkeypatch.setattr("agent.credential_pool.load_pool", lambda provider: pool)
+    monkeypatch.setattr("auth.credential_pool.load_pool", lambda provider, environment=None: pool)
 
     assert keepalive.refresh_nous_auth_keepalive_once() is True
     assert pool.refreshed is True
@@ -110,7 +110,7 @@ def test_keepalive_falls_back_to_singleton_state(monkeypatch):
             "base_url": "https://inference-api.nousresearch.com/v1",
         }
 
-    monkeypatch.setattr("agent.credential_pool.load_pool", lambda provider: _Pool())
+    monkeypatch.setattr("auth.credential_pool.load_pool", lambda provider, environment=None: _Pool())
     monkeypatch.setattr(
         keepalive,
         "get_provider_auth_state",
@@ -139,7 +139,7 @@ def test_keepalive_binds_launch_scope_for_multiplexed_singleton_refresh(tmp_path
         encoding="utf-8",
     )
     monkeypatch.setenv("HERMES_HOME", str(launch_home))
-    monkeypatch.setattr("agent.credential_pool.load_pool", lambda provider: None)
+    monkeypatch.setattr("auth.credential_pool.load_pool", lambda provider, environment=None: None)
     monkeypatch.setattr(
         keepalive, "get_provider_auth_state", lambda provider: {"access_token": "stored-token"}
     )
@@ -194,7 +194,7 @@ def test_keepalive_binds_launch_scope_for_multiplexed_pool_refresh(tmp_path, mon
         def try_refresh_current(self):
             return _Entry()
 
-    monkeypatch.setattr("agent.credential_pool.load_pool", lambda provider: _Pool())
+    monkeypatch.setattr("auth.credential_pool.load_pool", lambda provider, environment=None: _Pool())
     previous_multiplex = is_multiplex_active()
     set_multiplex_active(True)
     try:

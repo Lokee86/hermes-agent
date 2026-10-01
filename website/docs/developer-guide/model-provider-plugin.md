@@ -396,10 +396,12 @@ from providers.base import ProviderProfile
 
 def example_auth(action: str, args) -> bool:
     """action: "add" | "status" | "logout" | "refresh"; args: parsed CLI namespace."""
+    from auth.credential_pool import AUTH_TYPE_OAUTH, PooledCredential, load_pool
+    from hermes_cli.config_credentials import credential_pool_environment
+    environment = credential_pool_environment()  # presentation/application boundary
     if action == "add":
-        from agent.credential_pool import AUTH_TYPE_OAUTH, PooledCredential, load_pool
         tokens = run_device_code_flow()                      # provider-specific
-        load_pool("example-oauth").add_entry(PooledCredential(
+        load_pool("example-oauth", environment=environment).add_entry(PooledCredential(
             provider="example-oauth", id=uuid.uuid4().hex[:6], label=tokens["account"],
             auth_type=AUTH_TYPE_OAUTH, priority=0, source="manual:example_device",
             access_token=tokens["access_token"], refresh_token=tokens["refresh_token"],
@@ -407,7 +409,7 @@ def example_auth(action: str, args) -> bool:
         print("Signed in to Example.")
         return True
     if action == "status":
-        print("example-oauth: " + ("logged in" if load_pool("example-oauth").entries() else "logged out"))
+        print("example-oauth: " + ("logged in" if load_pool("example-oauth", environment=environment).entries() else "logged out"))
         return True
     return False   # decline → this action stays with the built-in credential-pool handling
 
@@ -506,6 +508,14 @@ register_provider(ProviderProfile(name="example-oauth", auth_type="oauth_externa
 Recovery that remains name-keyed in core is behaviour with no safe generic shape (a provider-specific
 token store to re-sync, a plan-tier entitlement wall, a single-use refresh-token quarantine). A plugin
 that needs one of those owns it inside `refresh_credential` / `classify_api_error`.
+
+The pool implementation lives in `auth/`; application code supplies configuration and
+profile context through `PoolEnvironment`. The `auth_handler(action, args)` contract
+stays at the presentation boundary. Previously documented external imports of
+`AUTH_TYPE_OAUTH`, `PooledCredential` and `load_pool` from `agent.credential_pool`
+remain supported for existing plugins; in-tree code uses the canonical auth package.
+`AuthError` is defined in `auth.errors`; existing plugins importing the same class from
+`hermes_cli.auth_constants` retain exception identity.
 
 ## Discovery timing
 

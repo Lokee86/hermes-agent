@@ -13,9 +13,10 @@ callables that core consults BEFORE any built-in, name-keyed path:
   the pool has a credential row, not an argparse namespace, and needs tokens back, not a bool.
 
 Every function here late-imports ``hermes_cli.auth`` names: this module is imported by the auth facade
-right after ``PROVIDER_REGISTRY`` exists, and by ``agent.credential_pool``.
+right after ``PROVIDER_REGISTRY`` exists, and by ``auth.credential_pool``.
 """
 from __future__ import annotations
+from auth.plugin_hooks import plugin_refresh_hook
 
 import logging
 from typing import Any, Callable, Optional
@@ -165,14 +166,11 @@ def plugin_auth_handler(provider: str) -> Optional[Callable[[str, Any], Any]]:
     return _profile_hook(provider, "auth_handler")
 
 
-def plugin_refresh_hook(provider: str) -> Optional[Callable[[Any], Any]]:
-    """The profile's ``refresh_credential`` hook, i.e. whether its pooled OAuth rows are refreshable."""
-    return _profile_hook(provider, "refresh_credential")
 
 
 def is_refreshable_oauth_provider(provider: str) -> bool:
     """Built-in refreshable set OR a plugin profile shipping ``refresh_credential``."""
-    from agent.credential_pool import REFRESHABLE_OAUTH_PROVIDERS
+    from auth.credential_pool import REFRESHABLE_OAUTH_PROVIDERS
 
     return provider in REFRESHABLE_OAUTH_PROVIDERS or plugin_refresh_hook(provider) is not None
 
@@ -214,7 +212,7 @@ def plugin_missing_auth_handler_error(provider: str, action: str) -> Optional[Sy
 def _pool_entry_expired(entry: Any) -> bool:
     """A pooled OAuth row is expired when its ``expires_at_ms`` / ISO ``expires_at`` is in the past."""
     import time
-    from hermes_cli.auth import _parse_iso_timestamp
+    from auth.token_validation import _parse_iso_timestamp
 
     if entry.expires_at_ms is not None:
         return int(entry.expires_at_ms) <= int(time.time() * 1000)
@@ -232,11 +230,12 @@ def get_plugin_oauth_auth_status(provider_id: str) -> dict[str, Any]:
     exists. Bundled OAuth providers keep their bespoke builders (``_BESPOKE_STATUS_FUNCTIONS``) — this
     one is gated on the plugin-mirrored set so their status bytes never change.
     """
+    from hermes_cli.config_credentials import credential_pool_environment
     if provider_id not in PLUGIN_MIRRORED_PROVIDERS:
         return {"logged_in": False}
-    from agent.credential_pool import load_pool
+    from auth.credential_pool import load_pool
 
-    entries = [e for e in load_pool(provider_id).entries() if (e.access_token or e.agent_key or "").strip()]
+    entries = [e for e in load_pool(provider_id, environment=credential_pool_environment()).entries() if (e.access_token or e.agent_key or "").strip()]
     live = [e for e in entries if not _pool_entry_expired(e)]
     refreshable = [e for e in entries if e.refresh_token] if not live and plugin_refresh_hook(provider_id) else []
     return {

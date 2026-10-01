@@ -212,7 +212,7 @@ def _nous_model_catalog(free_tier: bool, portal_url: str, model_ids: list, prici
     if free_tier and not model_ids:
         print("No free models currently available.")
         if unavailable_models:
-            from hermes_cli.auth import DEFAULT_NOUS_PORTAL_URL
+            from auth.store_migrations import DEFAULT_NOUS_PORTAL_URL
             _url = (portal_url or DEFAULT_NOUS_PORTAL_URL).rstrip("/")
             print(unavailable_message or f"Upgrade at {_url} to access paid models.")
         return None
@@ -222,8 +222,8 @@ def _nous_model_catalog(free_tier: bool, portal_url: str, model_ids: list, prici
 def _nous_verified_credentials(creds_or_none=None):
     """Resolve Nous runtime credentials; on failure print the diagnosis (re-login when the
     session expired) and return None."""
-    from hermes_cli.auth import (
-        AuthError, PROVIDER_REGISTRY, _login_nous, format_auth_error, resolve_nous_runtime_credentials)
+    from auth.errors import AuthError
+    from hermes_cli.auth import PROVIDER_REGISTRY, _login_nous, format_auth_error, resolve_nous_runtime_credentials
 
     try:
         return resolve_nous_runtime_credentials()
@@ -275,7 +275,8 @@ def _nous_persist_selection(selected: str, creds: dict) -> dict:
 
 def _model_flow_nous(config, current_model="", args=None):
     """Nous Portal provider: ensure logged in, then pick model."""
-    from hermes_cli.auth import get_provider_auth_state, _prompt_model_selection, _login_nous, PROVIDER_REGISTRY
+    from auth.provider_state import get_provider_auth_state
+    from hermes_cli.auth import _prompt_model_selection, _login_nous, PROVIDER_REGISTRY
     from hermes_cli.config import load_config
     from hermes_cli.nous_subscription import prompt_enable_tool_gateway
     state = get_provider_auth_state("nous")
@@ -449,9 +450,9 @@ def _model_flow_qwen_oauth(_config, current_model=""):
 
 def _model_flow_minimax_oauth(config, current_model="", args=None):
     """MiniMax OAuth provider: ensure logged in, then pick model."""
-    from hermes_cli.auth import (
-        get_provider_auth_state, _prompt_model_selection, resolve_minimax_oauth_runtime_credentials, AuthError,
-        format_auth_error, _login_minimax_oauth, PROVIDER_REGISTRY)
+    from auth.provider_state import get_provider_auth_state
+    from hermes_cli.auth import _prompt_model_selection, resolve_minimax_oauth_runtime_credentials, format_auth_error, _login_minimax_oauth, PROVIDER_REGISTRY
+    from auth.errors import AuthError
 
     state = get_provider_auth_state("minimax-oauth")
     if not state or not state.get("access_token"):
@@ -827,7 +828,7 @@ def _gemini_tier_ok(existing_key: str, pconfig, base_url_env: str) -> bool:
 
 def _lmstudio_models(pconfig, curated, api_key, base_url):
     """LM Studio: live /api/v1/models probe only."""
-    from hermes_cli.auth import AuthError
+    from auth.errors import AuthError
     from hermes_cli.models_local import fetch_lmstudio_models
     try:
         model_list = fetch_lmstudio_models(api_key=api_key, base_url=base_url)
@@ -1121,6 +1122,7 @@ def _plugin_flow_external_process(provider_id: str, profile) -> tuple[str, str] 
 
 
 def _plugin_flow_oauth(provider_id: str, profile) -> tuple[str, str] | None:
+    from hermes_cli.config_credentials import credential_pool_environment
     from hermes_cli.auth import get_auth_status
     from hermes_cli.auth_plugin_providers import plugin_missing_auth_handler_error
     status = get_auth_status(provider_id)
@@ -1129,8 +1131,8 @@ def _plugin_flow_oauth(provider_id: str, profile) -> tuple[str, str] | None:
         _say(f"  ⚠ Not signed in to {profile.display_name or provider_id}.",
              f"  {missing.code if missing else status.get('hint') or f'Run `hermes auth add {provider_id}` to sign in.'}")
         return None
-    from agent.credential_pool import load_pool
-    entry = load_pool(provider_id).select()
+    from auth.credential_pool import load_pool
+    entry = load_pool(provider_id, environment=credential_pool_environment()).select()
     base_url = (entry.runtime_base_url if entry else "") or status.get("base_url") or profile.base_url or ""
     return str(base_url), (entry.runtime_api_key if entry else "") or ""
 

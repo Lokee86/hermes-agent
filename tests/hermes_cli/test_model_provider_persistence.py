@@ -97,7 +97,7 @@ class TestProviderPersistsAfterModelSave:
         # Mock the model selection prompt to return "kimi-k2.5"
         # Also mock input() for the base URL prompt and builtins.input
         with patch("hermes_cli.auth._prompt_model_selection", return_value="kimi-k2.5"), \
-             patch("hermes_cli.auth.deactivate_provider"), \
+             patch('auth.provider_state.deactivate_provider'), \
              patch("builtins.input", return_value=""):
             _model_flow_api_key_provider(load_config(), "kimi-coding", "old-model")
 
@@ -135,7 +135,7 @@ class TestBaseUrlValidation:
         from hermes_cli.config import load_config, get_env_value
 
         with patch("hermes_cli.auth._prompt_model_selection", return_value="MiniMax-M2"), \
-             patch("hermes_cli.auth.deactivate_provider"), \
+             patch('auth.provider_state.deactivate_provider'), \
              patch("builtins.input", return_value=""):
             _model_flow_api_key_provider(load_config(), "minimax", "old-model")
 
@@ -158,7 +158,7 @@ class TestZaiEndpointPicker:
 
         with patch("hermes_cli.main_provider_setup._prompt_provider_choice", return_value=custom_idx), \
              patch("hermes_cli.auth._prompt_model_selection", return_value="glm-5"), \
-             patch("hermes_cli.auth.deactivate_provider"), \
+             patch('auth.provider_state.deactivate_provider'), \
              patch("builtins.input", return_value="not-a-url"):
             _model_flow_api_key_provider(load_config(), "zai", "old-model")
 

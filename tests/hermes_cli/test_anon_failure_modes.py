@@ -13,7 +13,7 @@ import httpx
 import pytest
 
 from hermes_cli import anon_auth, anon_sign_in, free_tier_bootstrap
-from hermes_cli.auth import _load_auth_store
+from auth.store import _load_auth_store
 
 from tests.hermes_cli.anon_portal import PORTAL, WELCOME, install_portal  # noqa: F401
 
@@ -90,7 +90,7 @@ class TestNasRefusalCodes:
         assert nas.creates() == 1
 
     def test_a_locked_account_is_never_replaced_through_connectors_either(self, nas):
-        from hermes_cli.auth import _auth_store_lock, _save_auth_store
+        from auth.store import _auth_store_lock, _save_auth_store
         from tests.hermes_cli.anon_portal import make_jwt
         from tools import managed_tool_gateway as mtg
         anon_auth.ensure_portal_identity(explicit=True)

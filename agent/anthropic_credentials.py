@@ -186,7 +186,7 @@ def _append_spent_rotation_sidecar(source_path: Path, fingerprints: list) -> Non
 
 
 def _fingerprint(secret: Any) -> Optional[str]:
-    from agent.credential_persistence import fingerprint_secret_value
+    from auth.persistence import fingerprint_secret_value
     value = str(secret or "").strip()
     return fingerprint_secret_value(value) if value else None
 
@@ -355,8 +355,9 @@ def read_claude_code_credentials() -> Optional[Dict[str, Any]]:
 
     This is the only reader of the borrowed login, so ``auth.adopt_external_logins: false`` is enforced here:
     every resolver, pool seed/sync and 401 refresher then sees "no Claude Code login" and never touches the file."""
-    from agent.credential_sources import adopt_external_logins_enabled
-    if not adopt_external_logins_enabled():
+    from hermes_cli.config_credentials import credential_pool_environment
+    from auth.source_policy import adopt_external_logins_enabled
+    if not adopt_external_logins_enabled(environment=credential_pool_environment()):
         return None
     kc_creds = _read_claude_code_credentials_from_keychain()
     file_creds = _read_claude_code_credentials_from_file()
@@ -468,7 +469,8 @@ def _refresh_oauth_token(creds: Dict[str, Any]) -> Optional[str]:
     token instead of racing it into ``invalid_grant``. Read, decision, POST and write-back share the pool's
     path-keyed cross-process lock (else two profiles can spend one refresh token)."""
     try:
-        from hermes_cli.auth import AUTH_LOCK_TIMEOUT_SECONDS, _auth_store_lock, env_float
+        from auth.store import AUTH_LOCK_TIMEOUT_SECONDS, _auth_store_lock
+        from hermes_cli.auth import env_float
         refresh_timeout_seconds = env_float("HERMES_ANTHROPIC_REFRESH_TIMEOUT_SECONDS", 20)
         lock_timeout_seconds = max(float(AUTH_LOCK_TIMEOUT_SECONDS), float(refresh_timeout_seconds) + 5.0)
         cred_path = claude_code_credentials_path()
@@ -643,9 +645,10 @@ def _resolve_anthropic_pool_token(*, skip_borrowed: bool = False) -> Optional[st
     """First available Anthropic OAuth token from credential_pool, read-only: enumerates with ``clear_expired=False,
     refresh=False`` (never ``select()``) so diagnostic call sites (account_usage, ``hermes models``) never mutate
     auth.json or hit the network; refresh-on-expiry belongs to the API call path's pool recovery."""
+    from hermes_cli.config_credentials import credential_pool_environment
     try:
-        from agent.credential_pool import AUTH_TYPE_OAUTH, load_pool
-        entries, _pending = load_pool("anthropic")._available_entries(clear_expired=False, refresh=False)
+        from auth.credential_pool import AUTH_TYPE_OAUTH, load_pool
+        entries, _pending = load_pool("anthropic", environment=credential_pool_environment())._available_entries(clear_expired=False, refresh=False)
     except Exception:
         logger.debug("Failed to read Anthropic credential_pool", exc_info=True)
         return None
@@ -675,11 +678,12 @@ def _available_anthropic_token(token: Optional[str], model: Optional[str]) -> Op
     Only model-aware callers (the API-call paths) are gated: diagnostics that
     resolve a token without a model (usage display, model discovery) keep it.
     """
+    from hermes_cli.config_credentials import credential_pool_environment
     if not token or not model:
         return token or None
     try:
-        from agent.credential_pool import load_pool
-        if load_pool("anthropic").token_is_blocked(token, model=model):
+        from auth.credential_pool import load_pool
+        if load_pool("anthropic", environment=credential_pool_environment()).token_is_blocked(token, model=model):
             return None
     except Exception:
         # Credential discovery must remain available when the pool store is

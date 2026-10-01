@@ -675,7 +675,7 @@ def _clear_anthropic_auth() -> bool:
         _log.exception("disconnect anthropic OAuth file failed")
         raise
     try:
-        from hermes_cli.auth import clear_provider_auth
+        from auth.provider_state import clear_provider_auth
         cleared = clear_provider_auth("anthropic") or cleared
     except Exception:
         _log.exception("disconnect anthropic auth store failed")
@@ -718,7 +718,8 @@ async def disconnect_oauth_provider(provider_id: str, request: Request, profile:
             _log.info("oauth/disconnect: %s", provider_id)
             return {"ok": True, "provider": provider_id}
         try:
-            from hermes_cli.auth import clear_provider_auth, invalidate_nous_auth_status_cache
+            from auth.provider_state import clear_provider_auth
+            from hermes_cli.auth import invalidate_nous_auth_status_cache
             cleared = clear_provider_auth(provider_id)
             if provider_id == "nous":
                 invalidate_nous_auth_status_cache()

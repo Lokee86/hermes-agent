@@ -268,7 +268,7 @@ def test_anthropic_oauth_presence_accepts_pool_only_oauth_entry():
             return_value=None,
         ),
         patch(
-            "hermes_cli.auth.read_credential_pool",
+            'auth.pool_persistence.read_credential_pool',
             return_value=[
                 {"auth_type": "oauth", "access_token": "sk-ant-oat01-pool"}
             ],
@@ -288,7 +288,7 @@ def test_anthropic_oauth_presence_accepts_pool_only_oauth_entry():
             return_value=None,
         ),
         patch(
-            "hermes_cli.auth.read_credential_pool",
+            'auth.pool_persistence.read_credential_pool',
             return_value=[
                 {"auth_type": "api_key", "access_token": "sk-ant-api03-key"}
             ],

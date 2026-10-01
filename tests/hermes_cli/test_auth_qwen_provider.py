@@ -11,12 +11,8 @@ from unittest.mock import patch
 
 import pytest
 
-from hermes_cli.auth import (
-    AuthError,
-    DEFAULT_QWEN_BASE_URL,
-    resolve_qwen_runtime_credentials,
-    get_qwen_auth_status,
-)
+from auth.errors import AuthError
+from hermes_cli.auth import DEFAULT_QWEN_BASE_URL, resolve_qwen_runtime_credentials, get_qwen_auth_status
 
 
 # ---------------------------------------------------------------------------

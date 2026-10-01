@@ -45,7 +45,7 @@ class TestGeminiSetupFreeTierBlock:
             "hermes_cli.auth._prompt_model_selection",
             return_value="gemini-2.5-flash",
         ), patch(
-            "hermes_cli.auth.deactivate_provider",
+            'auth.provider_state.deactivate_provider',
         ), patch("builtins.input", return_value=""):
             _model_flow_api_key_provider(load_config(), "gemini", "old-model")
 
@@ -78,7 +78,7 @@ class TestGeminiSetupFreeTierBlock:
             "hermes_cli.auth._prompt_model_selection",
             return_value="gemini-2.5-flash",
         ), patch(
-            "hermes_cli.auth.deactivate_provider",
+            'auth.provider_state.deactivate_provider',
         ), patch("builtins.input", return_value=""):
             _model_flow_api_key_provider(load_config(), "gemini", "old-model")
 
@@ -107,7 +107,7 @@ class TestGeminiSetupFreeTierBlock:
             "hermes_cli.auth._prompt_model_selection",
             return_value="deepseek-chat",
         ), patch(
-            "hermes_cli.auth.deactivate_provider",
+            'auth.provider_state.deactivate_provider',
         ), patch("builtins.input", return_value=""):
             _model_flow_api_key_provider(load_config(), "deepseek", "old-model")
 

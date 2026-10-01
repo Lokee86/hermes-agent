@@ -516,7 +516,7 @@ def _tool_lifecycle_required_for_ui(name: str) -> bool:
 def _resolve_runtime_with_fallback(resolve_kwargs: dict | None = None) -> _RuntimeFallbackResolution:
     """Resolve the primary runtime or one complete provider/model fallback. Provider-only fallback entries
     are skipped so the unavailable primary model can never leak into a different runtime."""
-    from hermes_cli.auth import AuthError
+    from auth.errors import AuthError
     from hermes_cli.runtime_provider import resolve_runtime_provider
     try:
         return _RuntimeFallbackResolution(resolve_runtime_provider(**(resolve_kwargs or {})), None, False)

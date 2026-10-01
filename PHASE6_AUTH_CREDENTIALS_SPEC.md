@@ -1,6 +1,8 @@
 # Hermes Phase 6 — Authentication and Credential Ownership
 
-Status: bootstrapped, not implemented. Branch: `refactor/phase6-auth-credentials`.
+Status: 6.1–6.4 complete; built-in OAuth protocols and remaining runtime authentication cuts pending.
+See `PHASE6_AUTH_STORAGE.md` and `PHASE6_AUTH_POOL.md` for ownership cuts and verification.
+Branch: `refactor/phase6-auth-credentials`.
 Base: One Gateway `bc1b572e2c`. Phase 6 is independent of Phase 5.
 
 ## Problem
@@ -72,7 +74,7 @@ Named external persisted formats and public plugin hooks remain compatible.
 Module gate: targeted store/pool/OAuth and plugin hook tests, direct import audit.
 Consumer gate: agent/Gateway/TUI/auxiliary/CLI contract and isolation regressions.
 Final gate: whole-repo build, relevant suite baseline and wheel packaging;
-no runtime imports of retired `hermes_cli.auth*` or `agent.credential_pool*`,
+no runtime imports of retired `hermes_cli.auth*` or `agent.credential_pool*` internally,
 no auth -> CLI imports, no redundant legacy implementation, same persisted
 format and supported external hooks. Arcana supplements direct source checks
 when its graph is valid; it cannot substitute for regression tests.

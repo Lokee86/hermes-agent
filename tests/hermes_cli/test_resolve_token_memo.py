@@ -5,6 +5,7 @@ single expensive resolution: within the short TTL, repeat calls return the
 cached token without re-entering _provider_state_transaction (two
 cross-process file locks + state reads) or triggering a network refresh.
 """
+import auth.provider_state as auth_provider_state
 
 import json
 import time
@@ -46,13 +47,13 @@ def _write_valid_auth_file(tmp_path, token="memo-token"):
 
 def _count_transactions(monkeypatch):
     calls = {"n": 0}
-    real = auth._provider_state_transaction
+    real = auth_provider_state._provider_state_transaction
 
     def _counting(provider):
         calls["n"] += 1
         return real(provider)
 
-    monkeypatch.setattr(auth, "_provider_state_transaction", _counting)
+    monkeypatch.setattr(auth_provider_state, "_provider_state_transaction", _counting)
     return calls
 
 

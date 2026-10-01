@@ -23,7 +23,8 @@ import webbrowser
 from typing import Any, Dict, Optional
 from urllib.parse import urlencode
 
-from hermes_cli.auth_constants import AuthError, CODEX_OAUTH_CLIENT_ID, CODEX_OAUTH_TOKEN_URL, _codex_err
+from auth.errors import AuthError
+from hermes_cli.auth_constants import CODEX_OAUTH_CLIENT_ID, CODEX_OAUTH_TOKEN_URL, _codex_err
 from hermes_cli.auth_device_flow import (
     _bind_loopback_callback_server, _can_open_graphical_browser, _make_loopback_callback_handler,
     _pkce_code_challenge, _pkce_code_verifier, _print_loopback_ssh_hint, _serve_loopback_callback)

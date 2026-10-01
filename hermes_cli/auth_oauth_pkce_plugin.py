@@ -57,7 +57,7 @@ class OAuthPKCEConfig:
 
 
 def _err(provider: str, message: str, code: str):
-    from hermes_cli.auth_constants import AuthError
+    from auth.errors import AuthError
 
     return AuthError(f"{provider}: {message}", provider=provider, code=code)
 
@@ -207,19 +207,20 @@ def pkce_auth_handler(cfg: OAuthPKCEConfig) -> Callable[[str, Any], bool]:
     credential pool's generic refresh (which calls :func:`pkce_refresh_credential`) handles it."""
 
     def handler(action: str, args: Any) -> bool:
-        from agent.credential_pool import AUTH_TYPE_OAUTH, PooledCredential, load_pool
+        from hermes_cli.config_credentials import credential_pool_environment
+        from auth.credential_pool import AUTH_TYPE_OAUTH, PooledCredential, load_pool
 
         provider = _pool_provider(args)
         if action == "add":
             tokens = login(provider, cfg, open_browser=not getattr(args, "no_browser", False))
-            entry = load_pool(provider).add_entry(PooledCredential(
+            entry = load_pool(provider, environment=credential_pool_environment()).add_entry(PooledCredential(
                 provider=provider, id=uuid.uuid4().hex[:6], label=cfg.label or provider,
                 auth_type=AUTH_TYPE_OAUTH, priority=0, source=POOL_SOURCE, **tokens,
                 extra={"oauth_pkce": {"client_id": cfg.client_id, "scope": " ".join(cfg.scopes)}}))
             print(f"Signed in to {cfg.label or provider}; credential {entry.id} added to the pool.")
             return True
         if action == "status":
-            entries = load_pool(provider).entries()
+            entries = load_pool(provider, environment=credential_pool_environment()).entries()
             now_ms = int(time.time() * 1000)
             if not entries:
                 print(f"{provider}: logged out")
@@ -229,7 +230,7 @@ def pkce_auth_handler(cfg: OAuthPKCEConfig) -> Callable[[str, Any], bool]:
                 print(f"{provider}: expired (needs refresh) — run `hermes auth refresh {provider}`")
             return True
         if action == "logout":
-            pool = load_pool(provider)
+            pool = load_pool(provider, environment=credential_pool_environment())
             count = len(pool.entries())
             for index in range(count, 0, -1):
                 pool.remove_index(index)
@@ -248,7 +249,8 @@ def pkce_refresh_credential(cfg: OAuthPKCEConfig) -> Callable[[Any], Mapping[str
     """
 
     def refresh(entry: Any) -> Mapping[str, Any]:
-        from hermes_cli.auth import _auth_store_lock, read_credential_pool
+        from auth.store import _auth_store_lock
+        from auth.pool_persistence import read_credential_pool
 
         provider = str(entry.provider)
         validate_config(provider, cfg)

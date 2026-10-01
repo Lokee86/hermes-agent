@@ -1,4 +1,6 @@
 from __future__ import annotations
+import auth.provider_state as auth_provider_state
+import auth.store as auth_storage
 
 from types import SimpleNamespace
 
@@ -6,7 +8,8 @@ import pytest
 
 from hermes_cli import auth as auth_mod
 import hermes_cli.auth_spotify as auth_spotify
-from hermes_cli.auth import AuthError, resolve_spotify_runtime_credentials
+from auth.errors import AuthError
+from hermes_cli.auth import resolve_spotify_runtime_credentials
 
 
 
@@ -17,10 +20,10 @@ def test_resolve_spotify_runtime_credentials_refreshes_without_changing_active_p
 ) -> None:
     monkeypatch.setenv("HERMES_HOME", str(tmp_path))
 
-    with auth_mod._auth_store_lock():
-        store = auth_mod._load_auth_store()
+    with auth_storage._auth_store_lock():
+        store = auth_storage._load_auth_store()
         store["active_provider"] = "nous"
-        auth_mod._store_provider_state(
+        auth_provider_state._store_provider_state(
             store,
             "spotify",
             {
@@ -36,7 +39,7 @@ def test_resolve_spotify_runtime_credentials_refreshes_without_changing_active_p
             },
             set_active=False,
         )
-        auth_mod._save_auth_store(store)
+        auth_storage._save_auth_store(store)
 
     monkeypatch.setattr(
         auth_mod,
@@ -60,10 +63,10 @@ def test_resolve_spotify_runtime_credentials_refreshes_without_changing_active_p
     creds = auth_mod.resolve_spotify_runtime_credentials()
 
     assert creds["access_token"] == "fresh-token"
-    persisted = auth_mod.get_provider_auth_state("spotify")
+    persisted = auth_provider_state.get_provider_auth_state("spotify")
     assert persisted is not None
     assert persisted["access_token"] == "fresh-token"
-    assert auth_mod.get_active_provider() == "nous"
+    assert auth_provider_state.get_active_provider() == "nous"
 
 
 def test_auth_spotify_status_command_reports_logged_in(capsys, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -113,11 +116,11 @@ _STALE_SPOTIFY_STATE = {
 
 
 def _seed_spotify_state(tmp_path, state: dict) -> None:
-    with auth_mod._auth_store_lock():
-        store = auth_mod._load_auth_store()
+    with auth_storage._auth_store_lock():
+        store = auth_storage._load_auth_store()
         store["active_provider"] = "nous"
-        auth_mod._store_provider_state(store, "spotify", state, set_active=False)
-        auth_mod._save_auth_store(store)
+        auth_provider_state._store_provider_state(store, "spotify", state, set_active=False)
+        auth_storage._save_auth_store(store)
 
 
 def test_resolve_credentials_quarantines_dead_tokens_on_terminal_refresh_failure(
@@ -149,7 +152,7 @@ def test_resolve_credentials_quarantines_dead_tokens_on_terminal_refresh_failure
     assert exc_info.value.code == "spotify_refresh_failed"
     assert exc_info.value.relogin_required is True
 
-    persisted = auth_mod.get_provider_auth_state("spotify")
+    persisted = auth_provider_state.get_provider_auth_state("spotify")
     assert persisted is not None
 
     # Dead OAuth fields must be cleared.
@@ -174,6 +177,6 @@ def test_resolve_credentials_quarantines_dead_tokens_on_terminal_refresh_failure
     assert "at" in err
 
     # Active provider must be unchanged.
-    assert auth_mod.get_active_provider() == "nous"
+    assert auth_provider_state.get_active_provider() == "nous"
 
 

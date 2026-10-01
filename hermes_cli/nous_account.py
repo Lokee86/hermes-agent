@@ -141,7 +141,7 @@ class NousPortalAccountInfo:
 def nous_portal_billing_url(account_info: Optional[NousPortalAccountInfo] = None) -> str:
     """Return the billing URL for a normalized Nous account snapshot."""
     try:
-        from hermes_cli.auth import DEFAULT_NOUS_PORTAL_URL
+        from auth.store_migrations import DEFAULT_NOUS_PORTAL_URL
     except Exception:
         DEFAULT_NOUS_PORTAL_URL = "https://portal.nousresearch.com"
 
@@ -296,7 +296,7 @@ def get_nous_portal_account_info(*, force_fresh: bool = False, min_jwt_ttl_secon
     authoritative). ``force_fresh=True`` always calls ``/api/oauth/account`` and bypasses the cache.
     """
     try:
-        from hermes_cli.auth import get_provider_auth_state
+        from auth.provider_state import get_provider_auth_state
 
         state = get_provider_auth_state("nous") or {}
     except Exception as exc:
@@ -323,7 +323,8 @@ def nous_policy_present() -> Optional[bool]:
     ``None`` is unknown (older mint / unreadable claim) and must not be reported as "no policy".
     """
     try:
-        from hermes_cli.auth import get_provider_auth_state, _decode_jwt_claims
+        from auth.provider_state import get_provider_auth_state
+        from auth.token_validation import _decode_jwt_claims
 
         access_token = (get_provider_auth_state("nous") or {}).get("access_token")
         if not _nonblank(access_token):
@@ -353,7 +354,8 @@ def _fresh_account_info(state: dict[str, Any], force_fresh: bool, portal_base_ur
     global _account_info_cache
 
     try:
-        from hermes_cli.auth import get_provider_auth_state, resolve_nous_access_token
+        from auth.provider_state import get_provider_auth_state
+        from hermes_cli.auth import resolve_nous_access_token
 
         access_token = resolve_nous_access_token()
         refreshed_state = get_provider_auth_state("nous") or state
@@ -444,9 +446,10 @@ def _pool_entry_inference_url(entry: Any) -> Optional[str]:
 
 def _select_nous_pool_entry() -> Optional[Any]:
     """Pool entry with the latest agent-key expiry, then access expiry, then lowest priority."""
-    from agent.credential_pool import load_pool
+    from hermes_cli.config_credentials import credential_pool_environment
+    from auth.credential_pool import load_pool
 
-    pool = load_pool("nous")
+    pool = load_pool("nous", environment=credential_pool_environment())
     if not pool or not pool.has_credentials():
         return None
     entries = list(pool.entries())
@@ -481,7 +484,7 @@ def _info_from_valid_jwt(
     token: str, state: dict[str, Any], portal_base_url: Optional[str], min_jwt_ttl_seconds: int
 ) -> Optional[NousPortalAccountInfo]:
     try:
-        from hermes_cli.auth import _decode_jwt_claims
+        from auth.token_validation import _decode_jwt_claims
     except Exception:
         return None
     claims = _decode_jwt_claims(token)
@@ -585,7 +588,8 @@ def _dict_or_empty(value: Any) -> dict[str, Any]:
 
 
 def resolve_nous_portal_base_url() -> str:
-    from hermes_cli.auth import _nous_portal_base_url, get_provider_auth_state
+    from hermes_cli.auth import _nous_portal_base_url
+    from auth.provider_state import get_provider_auth_state
 
     return _nous_portal_base_url(get_provider_auth_state("nous") or {})
 

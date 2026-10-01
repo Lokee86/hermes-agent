@@ -35,7 +35,7 @@ import pytest
 
 from agent import anthropic_credentials as AA
 from agent.auxiliary_client import _refresh_provider_credentials
-from agent.credential_pool import AUTH_TYPE_OAUTH
+from auth.credential_pool import AUTH_TYPE_OAUTH
 
 _EXPIRED_MS = 1_000
 
@@ -244,7 +244,7 @@ def test_failed_commit_persists_the_verdict_to_the_sidecar(
     assert sidecar.exists(), "the terminal verdict must be durably persisted"
     payload = json.loads(sidecar.read_text(encoding="utf-8"))
     fingerprints = set(payload["fingerprints"])
-    from agent.credential_persistence import fingerprint_secret_value
+    from auth.persistence import fingerprint_secret_value
 
     assert fingerprint_secret_value(_STALE_REFRESH) in fingerprints
     assert fingerprint_secret_value(_STALE_ACCESS) in fingerprints

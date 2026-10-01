@@ -12,6 +12,7 @@ The tests drive the real ``_save_xai_oauth_tokens`` against real on-disk auth
 stores (profile + root under ``tmp_path``) rather than mocking the save
 boundary, so they exercise the actual atomic write path.
 """
+import auth.store as auth_storage
 
 import json
 
@@ -41,8 +42,8 @@ def profile_and_root(tmp_path, monkeypatch):
     profile_path = tmp_path / "profiles" / "work" / "auth.json"
     root_path = tmp_path / "root" / "auth.json"
 
-    monkeypatch.setattr(auth, "_auth_file_path", lambda: profile_path)
-    monkeypatch.setattr(auth, "_global_auth_file_path", lambda: root_path)
+    monkeypatch.setattr(auth_storage, "_auth_file_path", lambda: profile_path)
+    monkeypatch.setattr(auth_storage, "_global_auth_file_path", lambda: root_path)
     # Keep the pytest write seat belt from matching our tmp root.
     monkeypatch.setenv("HOME", str(tmp_path / "not-the-root"))
     return profile_path, root_path
@@ -55,9 +56,9 @@ def profile_and_root(tmp_path, monkeypatch):
 def test_write_through_is_noop_in_classic_mode(tmp_path, monkeypatch):
     """Classic mode (profile == root) already saves to root; no double write."""
     profile_path = tmp_path / "auth.json"
-    monkeypatch.setattr(auth, "_auth_file_path", lambda: profile_path)
+    monkeypatch.setattr(auth_storage, "_auth_file_path", lambda: profile_path)
     # Classic mode: _global_auth_file_path returns None.
-    monkeypatch.setattr(auth, "_global_auth_file_path", lambda: None)
+    monkeypatch.setattr(auth_storage, "_global_auth_file_path", lambda: None)
     _write_store(profile_path, {"version": 1, "providers": {}})
 
     # Should not raise and should persist to the single store.
@@ -75,14 +76,14 @@ def test_write_through_failure_does_not_break_profile_save(profile_and_root, mon
     _write_store(root_path, {"version": 1, "providers": {}})
 
     # Make the root write blow up; the profile save must still succeed.
-    real_save = auth._save_auth_store
+    real_save = auth_storage._save_auth_store
 
     def _exploding_save(store, target_path=None):
         if target_path is not None and target_path == root_path:
             raise OSError("simulated root write failure")
         return real_save(store, target_path)
 
-    monkeypatch.setattr(auth, "_save_auth_store", _exploding_save)
+    monkeypatch.setattr(auth_storage, "_save_auth_store", _exploding_save)
 
     auth._save_xai_oauth_tokens({"access_token": "a", "refresh_token": "r"})
 

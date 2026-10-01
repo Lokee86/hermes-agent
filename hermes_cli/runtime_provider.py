@@ -6,6 +6,7 @@ OpenRouter/bare-custom, Bedrock and external-process builders in
 ``hermes_cli.runtime_provider.<name>`` imports and test patches keep working."""
 
 from __future__ import annotations
+import auth.provider_state as auth_provider_state
 
 import logging
 import re
@@ -15,19 +16,13 @@ from typing import Any, Callable, Dict, Optional
 logger = logging.getLogger(__name__)
 
 from hermes_cli import auth as auth_mod
-from agent.credential_pool import (  # custom_provider_pool_key_candidates is read via origin by runtime_provider_custom
+from auth.credential_pool import (  # custom_provider_pool_key_candidates is read via origin by runtime_provider_custom
     CredentialPool, PooledCredential, credential_pool_matches_provider, custom_provider_pool_key_candidates,  # noqa: F401
     load_pool,
 )
 from agent.secret_scope import get_secret_str
-from hermes_cli.auth import (  # resolve_external_process_provider_credentials is read via origin by runtime_provider_backends
-    ACTUAL_LOCAL_NOAUTH_PLACEHOLDER, AuthError, DEFAULT_CODEX_BASE_URL, DEFAULT_QWEN_BASE_URL, DEFAULT_XAI_OAUTH_BASE_URL,
-    PROVIDER_REGISTRY, _agent_key_is_usable, _nous_inference_env_override, format_auth_error, resolve_provider,
-    resolve_nous_runtime_credentials, resolve_codex_runtime_credentials, resolve_xai_oauth_runtime_credentials,
-    resolve_qwen_runtime_credentials, resolve_api_key_provider_credentials,
-    resolve_external_process_provider_credentials,  # noqa: F401
-    has_usable_secret, is_actual_local_base_url, looks_like_openrouter_key, normalize_actual_base_url,
-)
+from hermes_cli.auth import ACTUAL_LOCAL_NOAUTH_PLACEHOLDER, DEFAULT_CODEX_BASE_URL, DEFAULT_QWEN_BASE_URL, DEFAULT_XAI_OAUTH_BASE_URL, PROVIDER_REGISTRY, _agent_key_is_usable, _nous_inference_env_override, format_auth_error, resolve_provider, resolve_nous_runtime_credentials, resolve_codex_runtime_credentials, resolve_xai_oauth_runtime_credentials, resolve_qwen_runtime_credentials, resolve_api_key_provider_credentials, resolve_external_process_provider_credentials, has_usable_secret, is_actual_local_base_url, looks_like_openrouter_key, normalize_actual_base_url
+from auth.errors import AuthError
 from hermes_cli import config as _config_mod
 from hermes_cli import models as _models  # attribute access keeps ``hermes_cli.models.<name>`` patches effective
 from hermes_constants import OPENROUTER_BASE_URL
@@ -623,7 +618,7 @@ def _exchange_copilot_pool_entry(entry: Any, pool_api_key: str) -> str:
         return pool_api_key  # already an exchanged API token
     api_token, enterprise_base_url = get_copilot_api_token(pool_api_key)
     if api_token == pool_api_key and not enterprise_base_url:
-        from agent.credential_pool import _warn_copilot_raw_degradation_once
+        from auth.pool_sources import _warn_copilot_raw_degradation_once
         _warn_copilot_raw_degradation_once(pool_api_key)
         return pool_api_key
     entry.access_token = api_token
@@ -635,10 +630,11 @@ def _exchange_copilot_pool_entry(entry: Any, pool_api_key: str) -> str:
 def _resolve_from_pool(provider: str, requested_provider: str, model_cfg: Dict[str, Any], explicit_api_key, explicit_base_url,
                        target_model) -> Optional[Dict[str, Any]]:
     """Runtime from the provider's credential pool, or None to continue down the ladder."""
+    from hermes_cli.config_credentials import credential_pool_environment
     should_use_pool = provider != "openrouter" or _openrouter_should_use_pool(requested_provider, model_cfg, explicit_api_key,
                                                                              explicit_base_url)
     try:
-        pool = load_pool(provider) if should_use_pool else None
+        pool = load_pool(provider, environment=credential_pool_environment()) if should_use_pool else None
     except Exception:
         pool = None
     if not (pool and pool.has_credentials()):
@@ -653,7 +649,7 @@ def _resolve_from_pool(provider: str, requested_provider: str, model_cfg: Dict[s
         pool_api_key = _exchange_copilot_pool_entry(entry, pool_api_key)
     if not has_usable_secret(pool_api_key):
         return None
-    if pool_api_key and credential_pool_matches_provider(pool, provider, base_url=_pool_entry_base_url(entry)):
+    if pool_api_key and credential_pool_matches_provider(pool, provider, base_url=_pool_entry_base_url(entry), environment=credential_pool_environment()):
         return _resolve_runtime_from_pool_entry(provider=provider, entry=entry, requested_provider=requested_provider,
                                                 model_cfg=model_cfg, pool=pool, target_model=target_model)
     return None
@@ -685,7 +681,7 @@ def _explicit_codex(requested_provider, model_cfg, api_key, explicit_base_url, t
 
 
 def _explicit_nous(requested_provider, model_cfg, api_key, explicit_base_url, target_model):
-    state = auth_mod.get_provider_auth_state("nous") or {}
+    state = auth_provider_state.get_provider_auth_state("nous") or {}
     base_url = (explicit_base_url or _nous_inference_env_override()
                 or str(state.get("inference_base_url") or auth_mod.DEFAULT_NOUS_INFERENCE_URL).strip().rstrip("/"))
     # The agent_key compatibility field is used for inference only when it holds a NAS invoke JWT;
@@ -1128,7 +1124,8 @@ def resolve_runtime_with_fallback(config: Optional[Dict[str, Any]], *, requested
     re-raised: a fallback entry's failure is not what the operator configured first (#81209). The entry's
     ``model`` is the model the caller must send.
     """
-    from hermes_cli.auth import AuthError, primary_failure_wording
+    from auth.errors import AuthError
+    from hermes_cli.auth import primary_failure_wording
     try:
         return resolve_runtime_provider(requested=requested, target_model=target_model,
                                         explicit_base_url=explicit_base_url, explicit_api_key=explicit_api_key), None

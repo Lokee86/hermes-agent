@@ -14,6 +14,7 @@ encoding (the fix) instead of relying on the locale default.
 """
 
 from __future__ import annotations
+import auth.store as auth_storage
 
 import json
 from pathlib import Path
@@ -83,7 +84,7 @@ class TestAuthStoreEncodingRoundTrip:
         wipes the store — so this test catches the bug on any platform.
         """
         store = {
-            "version": auth.AUTH_STORE_VERSION,
+            "version": auth_storage.AUTH_STORE_VERSION,
             "providers": {
                 "openai-codex": {
                     "auth_mode": "chatgpt",
@@ -95,7 +96,7 @@ class TestAuthStoreEncodingRoundTrip:
         auth_path = hermes_home / "auth.json"
         _write_utf8(auth_path, store)
 
-        loaded = auth._load_auth_store(auth_path)
+        loaded = auth_storage._load_auth_store(auth_path)
 
         # The label round-trips exactly — the provider is NOT lost.
         assert "openai-codex" in loaded["providers"]
@@ -108,13 +109,13 @@ class TestAuthStoreEncodingRoundTrip:
         fallback, and must never write a .json.corrupt sidecar.
         """
         store = {
-            "version": auth.AUTH_STORE_VERSION,
+            "version": auth_storage.AUTH_STORE_VERSION,
             "providers": {"x": {"label": "José's key"}},
         }
         auth_path = hermes_home / "auth.json"
         _write_utf8(auth_path, store)
 
-        auth._load_auth_store(auth_path)
+        auth_storage._load_auth_store(auth_path)
 
         assert not (hermes_home / "auth.json.corrupt").exists()
         # original file untouched — read it back and compare structurally
@@ -124,13 +125,13 @@ class TestAuthStoreEncodingRoundTrip:
 
     def test_load_handles_utf8_with_bom(self, hermes_home):
         """A BOM (e.g. from Notepad editing) must not break the read."""
-        store = {"version": auth.AUTH_STORE_VERSION, "providers": {"x": {"label": "café"}}}
+        store = {"version": auth_storage.AUTH_STORE_VERSION, "providers": {"x": {"label": "café"}}}
         auth_path = hermes_home / "auth.json"
         payload = json.dumps(store)
         # write with utf-8-sig to prepend the BOM
         auth_path.write_text(payload, encoding="utf-8-sig")
 
-        loaded = auth._load_auth_store(auth_path)
+        loaded = auth_storage._load_auth_store(auth_path)
         assert loaded["providers"]["x"]["label"] == "café"
 
 
@@ -155,7 +156,7 @@ class TestAuthJsonSiblingReaders:
         # No XAI_API_KEY env → force the auth.json code path.
         monkeypatch.delenv("XAI_API_KEY", raising=False)
         store = {
-            "version": auth.AUTH_STORE_VERSION,
+            "version": auth_storage.AUTH_STORE_VERSION,
             "providers": {
                 "xai-oauth": {
                     # CJK label → UTF-8 bytes (e.g. 0xE5..) that cp1252 cannot
@@ -179,7 +180,7 @@ class TestAuthJsonSiblingReaders:
         not trigger that path.
         """
         store = {
-            "version": auth.AUTH_STORE_VERSION,
+            "version": auth_storage.AUTH_STORE_VERSION,
             "active_provider": "nous",
             "providers": {"nous": {"agent_key": "k", "label": "工作账号"}},
         }
@@ -243,7 +244,7 @@ class TestAuthJsonSiblingReaders:
         look absent, wrongly re-triggering the setup wizard).
         """
         store = {
-            "version": auth.AUTH_STORE_VERSION,
+            "version": auth_storage.AUTH_STORE_VERSION,
             "active_provider": "openai-codex",
             "providers": {
                 "openai-codex": {
@@ -290,7 +291,7 @@ class TestAuthJsonSiblingReaders:
         Nous as unconfigured.
         """
         store = {
-            "version": auth.AUTH_STORE_VERSION,
+            "version": auth_storage.AUTH_STORE_VERSION,
             "providers": {
                 "nous": {
                     "agent_key": "k",

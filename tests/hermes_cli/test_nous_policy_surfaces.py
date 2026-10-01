@@ -5,6 +5,8 @@ Portal's ``recommended-models`` endpoint; neither source is authenticated.
 """
 
 from __future__ import annotations
+import auth.provider_state as auth_provider_state
+import auth.store as auth_storage
 
 import argparse
 
@@ -99,7 +101,7 @@ class TestModelSwitchPicker:
         import hermes_cli.model_switch as ms
 
         monkeypatch.setattr(
-            auth_mod,
+            auth_storage,
             "_load_auth_store",
             lambda *a, **k: {"providers": {"nous": {"access_token": "tok"}}},
         )
@@ -156,7 +158,7 @@ class TestRecommendedDefaultEndpoint:
             "union_with_portal_paid_recommendations",
             lambda ids, pricing, _portal: (list(ids), pricing),
         )
-        monkeypatch.setattr(auth_mod, "get_provider_auth_state", lambda _p: {})
+        monkeypatch.setattr(auth_provider_state, "get_provider_auth_state", lambda _p: {})
         return get_recommended_default_model(provider="nous")
 
     def test_hidden_model_is_never_the_silent_default(self, monkeypatch, policy):

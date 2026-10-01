@@ -196,6 +196,7 @@ def resolve_xai_http_credentials(
     scoping is identical to the fallback branch, and the base URL honors ``HERMES_XAI_BASE_URL`` /
     ``XAI_BASE_URL`` behind the same origin-pinning validation as the OAuth branch. See #87045, #88040.
     """
+    from hermes_cli.config_credentials import credential_pool_environment
     import hermes_cli.auth as auth_mod
     if prefer_api_key and (explicit_key := str(_resolve_explicit_xai_api_key() or "").strip()):
         # Origin-pinned so a tampered env override can't exfiltrate the bearer; rejection -> default URL.
@@ -204,8 +205,8 @@ def resolve_xai_http_credentials(
         return {"provider": "xai", "api_key": explicit_key, "base_url": base_url}
 
     try:
-        from agent.credential_pool import load_pool
-        pool = load_pool("xai-oauth")
+        from auth.credential_pool import load_pool
+        pool = load_pool("xai-oauth", environment=credential_pool_environment())
         entry = pool.try_refresh_matching(api_key_hint) if force_refresh else pool.select()
         if force_refresh and entry is None:
             # A rejected refresh may quarantine the issuing entry; continue with

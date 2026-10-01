@@ -567,7 +567,8 @@ class TestResolveXaiOAuthForAux:
         should not fall through to "no auxiliary provider configured" just
         because the singleton auth-store entry is absent.
         """
-        from agent.credential_pool import AUTH_TYPE_OAUTH, PooledCredential, load_pool
+        from hermes_cli.config_credentials import credential_pool_environment
+        from auth.credential_pool import AUTH_TYPE_OAUTH, PooledCredential, load_pool
         from hermes_cli.auth import DEFAULT_XAI_OAUTH_BASE_URL
 
         hermes_home = tmp_path / "hermes"
@@ -580,7 +581,7 @@ class TestResolveXaiOAuthForAux:
         monkeypatch.delenv("HERMES_XAI_BASE_URL", raising=False)
         monkeypatch.delenv("XAI_BASE_URL", raising=False)
 
-        pool = load_pool("xai-oauth")
+        pool = load_pool("xai-oauth", environment=credential_pool_environment())
         pool.add_entry(PooledCredential(
             provider="xai-oauth",
             id="xai123",
@@ -599,7 +600,8 @@ class TestResolveXaiOAuthForAux:
         )
 
     def test_pool_backed_credentials_honor_base_url_env_override(self, tmp_path, monkeypatch):
-        from agent.credential_pool import AUTH_TYPE_OAUTH, PooledCredential, load_pool
+        from hermes_cli.config_credentials import credential_pool_environment
+        from auth.credential_pool import AUTH_TYPE_OAUTH, PooledCredential, load_pool
         from hermes_cli.auth import DEFAULT_XAI_OAUTH_BASE_URL
 
         hermes_home = tmp_path / "hermes"
@@ -611,7 +613,7 @@ class TestResolveXaiOAuthForAux:
         monkeypatch.setenv("HERMES_HOME", str(hermes_home))
         monkeypatch.setenv("HERMES_XAI_BASE_URL", "https://example.x.ai/v1/")
 
-        pool = load_pool("xai-oauth")
+        pool = load_pool("xai-oauth", environment=credential_pool_environment())
         pool.add_entry(PooledCredential(
             provider="xai-oauth",
             id="xai456",
@@ -2746,7 +2748,7 @@ class TestAuxiliaryTaskExtraBody:
     def test_bare_custom_auth_error_does_not_fall_back_to_env_base_url(self, monkeypatch):
         """Bare 'custom' with nothing configured: the main resolver raises AuthError; aux must
         return no endpoint rather than route to a stale env OPENAI_BASE_URL with a placeholder key."""
-        from hermes_cli.auth import AuthError
+        from auth.errors import AuthError
         from agent.auxiliary_client import _resolve_custom_runtime
         monkeypatch.setenv("OPENAI_BASE_URL", "https://old-proxy.example/v1")
         monkeypatch.delenv("OPENAI_API_KEY", raising=False)

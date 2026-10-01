@@ -6,14 +6,8 @@ from types import SimpleNamespace
 
 import pytest
 
-from hermes_cli.auth import (
-    AuthError,
-    DEFAULT_CODEX_BASE_URL,
-    _read_codex_tokens,
-    _save_codex_tokens,
-    refresh_codex_oauth_pure,
-    resolve_codex_runtime_credentials,
-)
+from auth.errors import AuthError
+from hermes_cli.auth import DEFAULT_CODEX_BASE_URL, _read_codex_tokens, _save_codex_tokens, refresh_codex_oauth_pure, resolve_codex_runtime_credentials
 
 
 def _setup_hermes_auth(hermes_home: Path, *, access_token: str = "access", refresh_token: str = "refresh"):
@@ -458,7 +452,7 @@ def test_pool_only_force_refresh_rotates_the_pool_entry(tmp_path, monkeypatch):
             hints.append(api_key_hint)
             return SimpleNamespace(runtime_api_key="pool-fresh")
 
-    monkeypatch.setattr("agent.credential_pool.load_pool", lambda provider: Pool())
+    monkeypatch.setattr("auth.credential_pool.load_pool", lambda provider, environment=None: Pool())
 
     resolved = resolve_codex_runtime_credentials(force_refresh=True)
     assert resolved["api_key"] == "pool-fresh"

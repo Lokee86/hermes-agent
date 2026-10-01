@@ -4,7 +4,7 @@ module object so tests that monkeypatch that module keep working."""
 
 from datetime import datetime, timezone
 
-from hermes_cli.auth import AuthError
+from auth.errors import AuthError
 from hermes_cli.nous_account import (
     format_nous_portal_entitlement_message, get_nous_portal_account_info)
 from hermes_cli.nous_subscription import get_nous_subscription_features

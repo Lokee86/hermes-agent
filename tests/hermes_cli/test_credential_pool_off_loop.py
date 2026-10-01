@@ -8,6 +8,7 @@ so a networkless host froze the whole dashboard backend for 17 minutes.
 """
 
 from __future__ import annotations
+import auth.pool_persistence as auth_pool_persistence
 
 import threading
 import time
@@ -177,7 +178,7 @@ async def test_list_credential_pool_runs_off_event_loop(monkeypatch):
         seen["thread"] = threading.get_ident()
         return {}
 
-    monkeypatch.setattr(auth_mod, "read_credential_pool", fake_read_pool)
+    monkeypatch.setattr(auth_pool_persistence, "read_credential_pool", fake_read_pool)
     result = await _rt_ops.list_credential_pool()
 
     assert result == {"providers": []}

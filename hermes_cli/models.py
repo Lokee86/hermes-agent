@@ -405,7 +405,8 @@ def fetch_nous_recommended_models(
 def _resolve_nous_portal_url() -> str:
     """Best-effort lookup of the Portal base URL the user is authed against."""
     try:
-        from hermes_cli.auth import DEFAULT_NOUS_PORTAL_URL, get_provider_auth_state
+        from auth.store_migrations import DEFAULT_NOUS_PORTAL_URL
+        from auth.provider_state import get_provider_auth_state
 
         state = get_provider_auth_state("nous") or {}
         portal = str(state.get("portal_base_url") or "").strip()
@@ -470,7 +471,7 @@ def recommended_nous_default_model() -> dict[str, Any]:
     sign-in completion in ``hermes_cli.anon_auth`` so both land on the same model.
     """
     from hermes_cli import models_pricing as mp
-    from hermes_cli.auth import get_provider_auth_state
+    from auth.provider_state import get_provider_auth_state
 
     model_ids = get_curated_nous_model_ids()
     pricing = mp.get_pricing_for_provider("nous") or {}
@@ -1237,7 +1238,7 @@ def _resolve_copilot_catalog_api_key() -> str:
     ``~/.copilot/config.json`` ``copilotTokens`` (the ACP CLI's own store). Without the latter two,
     keyless users see the picker fall back to the stale curated list on a silent 401."""
     def _pool_token() -> str:
-        from hermes_cli.auth import read_credential_pool
+        from auth.pool_persistence import read_credential_pool
 
         return _first_exchangeable_copilot_token(
             entry.get("access_token") for entry in read_credential_pool("copilot") if isinstance(entry, dict))
@@ -2086,8 +2087,8 @@ def _resolve_anthropic_pool_catalog_credentials() -> tuple[str, str]:
     """Read-only API-key pool credential for model discovery (``resolve_anthropic_token()`` ignores
     ``api_key`` pool entries — its runtime contract is OAuth-oriented)."""
     try:
-        from agent.credential_pool import AUTH_TYPE_API_KEY
-        from hermes_cli.auth import read_credential_pool
+        from auth.credential_pool import AUTH_TYPE_API_KEY
+        from auth.pool_persistence import read_credential_pool
 
         for entry in read_credential_pool("anthropic"):
             if not isinstance(entry, dict) or entry.get("auth_type") != AUTH_TYPE_API_KEY:
@@ -2282,7 +2283,7 @@ def get_copilot_model_context(model_id: str, api_key: Optional[str] = None) -> O
 
     # Keyed on the credential like fetch_github_model_catalog: the catalog (and its limits) is
     # per-account, so another profile's token must not be served this entry.
-    from agent.credential_persistence import fingerprint_secret_value
+    from auth.persistence import fingerprint_secret_value
     key_fp = fingerprint_secret_value(api_key)
     if (_copilot_context_cache and _copilot_context_cache_key == key_fp
             and (time.time() - _copilot_context_cache_time < _COPILOT_CONTEXT_CACHE_TTL)):
@@ -2659,7 +2660,7 @@ def _deepinfra_catalog_url() -> tuple[str, str]:
     api-key fingerprint: the catalog is user-scoped (private fine-tunes), so two profiles with
     different keys must not share an entry."""
     base = (_deepinfra_env("DEEPINFRA_BASE_URL") or _DEEPINFRA_DEFAULT_BASE_URL).rstrip("/")
-    from agent.credential_persistence import fingerprint_secret_value
+    from auth.persistence import fingerprint_secret_value
     fp = fingerprint_secret_value(_deepinfra_env("DEEPINFRA_API_KEY")) or "anon"
     return f"{base}#{fp}", f"{base}/models?{_DEEPINFRA_MODELS_QUERY}"
 

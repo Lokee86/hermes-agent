@@ -15,7 +15,7 @@ import httpx
 import pytest
 
 from hermes_cli import auth_codex
-from hermes_cli.auth import AuthError
+from auth.errors import AuthError
 from hermes_cli.web_routers import oauth as web_oauth
 
 

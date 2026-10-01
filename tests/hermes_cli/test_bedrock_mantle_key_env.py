@@ -8,6 +8,7 @@ was silently dropped and every request went out as ``no-key-required``.
 These tests lock the seam the bug lived in: what the wizard writes, and what the
 runtime resolver then makes of it.
 """
+import auth.provider_state as auth_provider_state
 
 import os
 
@@ -30,7 +31,7 @@ def _run_wizard(monkeypatch, selected="openai.gpt-5.6-terra"):
         auth_mod, "_prompt_model_selection", lambda *a, **k: selected
     )
     monkeypatch.setattr(auth_mod, "_save_model_choice", lambda *a, **k: None)
-    monkeypatch.setattr(auth_mod, "deactivate_provider", lambda *a, **k: None)
+    monkeypatch.setattr(auth_provider_state, "deactivate_provider", lambda *a, **k: None)
 
     _model_flow_bedrock_api_key({}, REGION)
 

@@ -14,7 +14,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from hermes_cli import anon_auth
-from hermes_cli.auth import _load_auth_store
+from auth.store import _load_auth_store
 from hermes_cli.web_server import _SESSION_TOKEN, app
 from tests.hermes_cli.test_anon_upgrade import (
     EMAIL, FREE_PICK, INFERENCE, PORTAL, WELCOME, _model_config, _write_model_config, free_account, portal)

@@ -68,12 +68,13 @@ class TestCredentialPoolSeedsFromDotEnv:
 
     def test_deepseek_key_from_dotenv_only(self, isolated_hermes_home):
         """Key in .env but not os.environ → _seed_from_env adds a pool entry."""
+        from hermes_cli.config_credentials import credential_pool_environment
         _write_env_file(isolated_hermes_home, DEEPSEEK_API_KEY="sk-dotenv-only-12345")
         assert "DEEPSEEK_API_KEY" not in os.environ
 
-        from agent.credential_pool import _seed_from_env
+        from auth.pool_sources import _seed_from_env
         entries = []
-        changed, active_sources = _seed_from_env("deepseek", entries)
+        changed, active_sources = _seed_from_env("deepseek", entries, environment=credential_pool_environment())
 
         assert changed is True
         assert "env:DEEPSEEK_API_KEY" in active_sources
@@ -86,9 +87,10 @@ class TestCredentialPoolSeedsFromDotEnv:
 
     def test_empty_dotenv_no_entries(self, isolated_hermes_home):
         """No .env file, no env vars → no entries seeded (and no crash)."""
-        from agent.credential_pool import _seed_from_env
+        from hermes_cli.config_credentials import credential_pool_environment
+        from auth.pool_sources import _seed_from_env
         entries = []
-        changed, active_sources = _seed_from_env("deepseek", entries)
+        changed, active_sources = _seed_from_env("deepseek", entries, environment=credential_pool_environment())
         assert changed is False
         assert active_sources == set()
         assert entries == []
@@ -99,12 +101,13 @@ class TestCredentialPoolSeedsFromDotEnv:
         from Codex CLI, test runner, login profile, etc.). Without this, key
         rotation produces persistent 401s.
         """
+        from hermes_cli.config_credentials import credential_pool_environment
         _write_env_file(isolated_hermes_home, DEEPSEEK_API_KEY="sk-dotenv-fresh")
         monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-env-stale-xyz")
 
-        from agent.credential_pool import _seed_from_env
+        from auth.pool_sources import _seed_from_env
         entries = []
-        changed, _ = _seed_from_env("deepseek", entries)
+        changed, _ = _seed_from_env("deepseek", entries, environment=credential_pool_environment())
 
         assert changed is True
         seeded = [e for e in entries if e.source == "env:DEEPSEEK_API_KEY"]
@@ -178,7 +181,7 @@ class TestAuthCredentialPoolFallback:
         mock_pool.peek.return_value = mock_entry
 
         from hermes_cli.auth import _resolve_api_key_provider_secret
-        with patch("agent.credential_pool.load_pool", return_value=mock_pool):
+        with patch("auth.credential_pool.load_pool", return_value=mock_pool):
             key, source = _resolve_api_key_provider_secret(
                 provider_id="deepseek",
                 pconfig=_make_pconfig(),
@@ -192,7 +195,7 @@ class TestAuthCredentialPoolFallback:
         mock_pool.has_credentials.return_value = False
 
         from hermes_cli.auth import _resolve_api_key_provider_secret
-        with patch("agent.credential_pool.load_pool", return_value=mock_pool):
+        with patch("auth.credential_pool.load_pool", return_value=mock_pool):
             key, source = _resolve_api_key_provider_secret(
                 provider_id="deepseek",
                 pconfig=_make_pconfig(),
@@ -207,7 +210,7 @@ class TestAuthCredentialPoolFallback:
         mock_pool.has_credentials.return_value = True
 
         from hermes_cli.auth import _resolve_api_key_provider_secret
-        with patch("agent.credential_pool.load_pool", return_value=mock_pool) as mp:
+        with patch("auth.credential_pool.load_pool", return_value=mock_pool) as mp:
             key, source = _resolve_api_key_provider_secret(
                 provider_id="deepseek",
                 pconfig=_make_pconfig(),
@@ -226,7 +229,7 @@ class TestAuthCredentialPoolFallback:
         mock_pool.has_credentials.return_value = True
 
         from hermes_cli.auth import _resolve_api_key_provider_secret
-        with patch("agent.credential_pool.load_pool", return_value=mock_pool) as mp:
+        with patch("auth.credential_pool.load_pool", return_value=mock_pool) as mp:
             key, source = _resolve_api_key_provider_secret(
                 provider_id="deepseek",
                 pconfig=_make_pconfig(),
@@ -251,9 +254,10 @@ class TestAnthropicEnvAuthTypeClassification:
     """
 
     def _seed(self, env_var, token):
-        from agent.credential_pool import _seed_from_env
+        from hermes_cli.config_credentials import credential_pool_environment
+        from auth.pool_sources import _seed_from_env
         entries = []
-        _seed_from_env("anthropic", entries)
+        _seed_from_env("anthropic", entries, environment=credential_pool_environment())
         # The seeded entry whose label is the env var we wrote.
         matching = [e for e in entries if getattr(e, "label", None) == env_var]
         assert matching, f"expected a seeded entry for {env_var}, got {entries}"
@@ -261,7 +265,7 @@ class TestAnthropicEnvAuthTypeClassification:
 
     def test_oauth_token_classified_as_oauth(self, isolated_hermes_home):
         """sk-ant-oat- token from CLAUDE_CODE_OAUTH_TOKEN → AUTH_TYPE_OAUTH."""
-        from agent.credential_pool import AUTH_TYPE_OAUTH
+        from auth.credential_pool import AUTH_TYPE_OAUTH
         _write_env_file(isolated_hermes_home, CLAUDE_CODE_OAUTH_TOKEN="sk-ant-oat-fake-12345")
         entry = self._seed("CLAUDE_CODE_OAUTH_TOKEN", "sk-ant-oat-fake-12345")
         assert entry.auth_type == AUTH_TYPE_OAUTH
@@ -271,14 +275,14 @@ class TestAnthropicEnvAuthTypeClassification:
 
         This is the bug the fix targets: previously this was tagged OAuth.
         """
-        from agent.credential_pool import AUTH_TYPE_API_KEY
+        from auth.credential_pool import AUTH_TYPE_API_KEY
         _write_env_file(isolated_hermes_home, ANTHROPIC_API_KEY="sk-ant-admin-fake-12345")
         entry = self._seed("ANTHROPIC_API_KEY", "sk-ant-admin-fake-12345")
         assert entry.auth_type == AUTH_TYPE_API_KEY
 
     def test_standard_api_key_classified_as_api_key(self, isolated_hermes_home):
         """sk-ant-api- key → AUTH_TYPE_API_KEY (unchanged behaviour)."""
-        from agent.credential_pool import AUTH_TYPE_API_KEY
+        from auth.credential_pool import AUTH_TYPE_API_KEY
         _write_env_file(isolated_hermes_home, ANTHROPIC_API_KEY="sk-ant-api-fake-12345")
         entry = self._seed("ANTHROPIC_API_KEY", "sk-ant-api-fake-12345")
         assert entry.auth_type == AUTH_TYPE_API_KEY

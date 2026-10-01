@@ -19,9 +19,9 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 from typing import Any, Callable, Dict, FrozenSet, Optional
 from urllib.parse import parse_qs, urlparse
-from hermes_cli.auth_constants import (
-    AuthError, DEFAULT_NOUS_PORTAL_URL, DEVICE_AUTH_POLL_INTERVAL_CAP_SECONDS,
-    DEVICE_CODE_GRANT_TYPE, OAUTH_OVER_SSH_DOCS_URL, httpx)
+from auth.errors import AuthError
+from hermes_cli.auth_constants import DEVICE_AUTH_POLL_INTERVAL_CAP_SECONDS, DEVICE_CODE_GRANT_TYPE, OAUTH_OVER_SSH_DOCS_URL, httpx
+from auth.store_migrations import DEFAULT_NOUS_PORTAL_URL
 from utils import is_truthy_value
 
 # Log-record parity with the origin module (caplog tests pin "hermes_cli.auth").

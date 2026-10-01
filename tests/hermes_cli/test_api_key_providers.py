@@ -4,16 +4,8 @@ import json
 
 import pytest
 
-from hermes_cli.auth import (
-    PROVIDER_REGISTRY,
-    resolve_provider,
-    get_api_key_provider_status,
-    resolve_api_key_provider_credentials,
-    AuthError,
-    KIMI_CODE_BASE_URL,
-    STEPFUN_STEP_PLAN_INTL_BASE_URL,
-    _resolve_kimi_base_url,
-)
+from hermes_cli.auth import PROVIDER_REGISTRY, resolve_provider, get_api_key_provider_status, resolve_api_key_provider_credentials, KIMI_CODE_BASE_URL, STEPFUN_STEP_PLAN_INTL_BASE_URL, _resolve_kimi_base_url
+from auth.errors import AuthError
 from hermes_cli.copilot_auth import _try_gh_cli_token
 
 
@@ -54,7 +46,7 @@ PROVIDER_ENV_VARS = tuple(
 def _clear_provider_env(monkeypatch):
     for key in PROVIDER_ENV_VARS:
         monkeypatch.delenv(key, raising=False)
-    monkeypatch.setattr("hermes_cli.auth._load_auth_store", lambda: {})
+    monkeypatch.setattr('auth.store._load_auth_store', lambda: {})
 
 
 class TestResolveProvider:

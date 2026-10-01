@@ -117,7 +117,7 @@ def _env_source_suppressed(provider_id: str, env_var: str) -> bool:
     if not provider_id:
         return False
     try:
-        from hermes_cli.auth import is_source_suppressed
+        from auth.sources import is_source_suppressed
         return is_source_suppressed(provider_id, f"env:{env_var}")
     except Exception:  # pragma: no cover — auth store unreadable: keep prior behavior
         return False
@@ -135,6 +135,7 @@ def resolve_provider_secret(env_var: str, provider_id: str, config_value: str = 
     Resolution order (fixes #68003 — keys added via ``hermes auth add <provider>`` were invisible to the
     voice tools, which only consulted env/.env):
     """
+    from hermes_cli.config_credentials import credential_pool_environment
     key = str(config_value or "").strip()
     if key:
         return key
@@ -152,10 +153,10 @@ def resolve_provider_secret(env_var: str, provider_id: str, config_value: str = 
     if key or not provider_id:
         return key
     try:
-        from agent.credential_pool import load_pool
+        from auth.credential_pool import load_pool
         # config.yaml ``providers.<name>`` entries are pooled under ``custom:<name>``.
         for pool_key in (provider_id, f"custom:{provider_id}"):
-            pool = load_pool(pool_key)
+            pool = load_pool(pool_key, environment=credential_pool_environment())
             entry = pool.peek() if pool is not None and pool.has_credentials() else None
             key = str(getattr(entry, "runtime_api_key", "") or getattr(entry, "access_token", "")
                       or "").strip()

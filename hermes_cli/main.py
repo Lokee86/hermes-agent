@@ -2026,7 +2026,8 @@ def _resolve_active_provider(config, model_cfg, effective_provider, custom_provi
     the configured/env provider (named custom → canonical map key) → auto
     detection. Unknown/unauthenticated providers warn and fall back to auto.
     """
-    from hermes_cli.auth import AuthError, format_auth_error, resolve_provider
+    from auth.errors import AuthError
+    from hermes_cli.auth import format_auth_error, resolve_provider
     from hermes_cli.config import get_compatible_custom_providers, get_env_value
     from hermes_cli.providers import custom_provider_aliases, resolve_provider_full
 

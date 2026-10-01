@@ -627,7 +627,7 @@ class ClientLifecycleMixin:
             return False  # store holds the same key on the same route: nothing to adopt, no client rebuild
         if require_account is not None:
             try:
-                from hermes_cli.auth_constants import _decode_jwt_claims
+                from auth.token_validation import _decode_jwt_claims
                 new_account = _decode_jwt_claims(str(api_key)).get("sub")
             except Exception:
                 new_account = None
@@ -669,7 +669,7 @@ class ClientLifecycleMixin:
         if getattr(self, "provider", "") != "nous" or not getattr(self, "api_key", None):
             return False
         try:
-            from hermes_cli.auth_constants import _decode_jwt_claims
+            from auth.token_validation import _decode_jwt_claims
             claims = _decode_jwt_claims(self.api_key)
         except Exception:
             return False
@@ -684,19 +684,20 @@ class ClientLifecycleMixin:
 
         Covers registry api-key providers and named custom providers with ``key_env``.
         """
+        from hermes_cli.config_credentials import credential_pool_environment
         try:
-            from agent.credential_pool import get_env_prefer_dotenv
+            from auth.pool_sources import get_env_prefer_dotenv
             from hermes_cli.auth import PROVIDER_REGISTRY
         except ImportError:
             return None
         pconfig = PROVIDER_REGISTRY.get(self.provider)
         if pconfig and getattr(pconfig, "auth_type", "") == "api_key" and getattr(pconfig, "api_key_env_vars", ()):
             # First non-empty env var wins (lazy: later vars are not read).
-            api_key = next((k for k in (get_env_prefer_dotenv(v).strip() for v in pconfig.api_key_env_vars) if k), "")
+            api_key = next((k for k in (get_env_prefer_dotenv(v, environment=credential_pool_environment()).strip() for v in pconfig.api_key_env_vars) if k), "")
             if not api_key:
                 return None
             url_var = pconfig.base_url_env_var
-            env_url = get_env_prefer_dotenv(url_var).strip().rstrip("/") if url_var else ""
+            env_url = get_env_prefer_dotenv(url_var, environment=credential_pool_environment()).strip().rstrip("/") if url_var else ""
             default_base = (pconfig.inference_base_url or "").strip().rstrip("/")
             base_url = env_url or default_base
             if self.provider == "actual":
@@ -716,7 +717,7 @@ class ClientLifecycleMixin:
                 return None
             custom_provider = _get_named_custom_provider(getattr(self, "requested_provider", "") or "")
             key_env = str((custom_provider or {}).get("key_env") or "").strip()
-            api_key = get_env_prefer_dotenv(key_env).strip() if key_env else ""
+            api_key = get_env_prefer_dotenv(key_env, environment=credential_pool_environment()).strip() if key_env else ""
             if not custom_provider or not api_key:
                 return None
             # Custom providers pin base_url in config, so only key edits are adopted here.

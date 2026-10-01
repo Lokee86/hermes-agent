@@ -19,20 +19,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from hermes_cli.auth import (
-    AuthError,
-    MINIMAX_OAUTH_CLIENT_ID,
-    MINIMAX_OAUTH_GLOBAL_BASE,
-    MINIMAX_OAUTH_GLOBAL_INFERENCE,
-    MINIMAX_OAUTH_REFRESH_SKEW_SECONDS,
-    _minimax_pkce_pair,
-    _minimax_request_user_code,
-    _minimax_resolve_token_expiry_unix,
-    _refresh_minimax_oauth_state,
-    resolve_minimax_oauth_runtime_credentials,
-    get_minimax_oauth_auth_status,
-    get_auth_status,
-)
+from auth.errors import AuthError
+from hermes_cli.auth import MINIMAX_OAUTH_CLIENT_ID, MINIMAX_OAUTH_GLOBAL_BASE, MINIMAX_OAUTH_GLOBAL_INFERENCE, MINIMAX_OAUTH_REFRESH_SKEW_SECONDS, _minimax_pkce_pair, _minimax_request_user_code, _minimax_resolve_token_expiry_unix, _refresh_minimax_oauth_state, resolve_minimax_oauth_runtime_credentials, get_minimax_oauth_auth_status, get_auth_status
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -221,7 +209,7 @@ def test_resolve_credentials_quarantines_dead_tokens_on_terminal_refresh_failure
             relogin_required=True,
         )
 
-    with patch("hermes_cli.auth.get_provider_auth_state", return_value=stale_state), \
+    with patch('auth.provider_state.get_provider_auth_state', return_value=stale_state), \
          patch("hermes_cli.auth._refresh_minimax_oauth_state", side_effect=_terminal_refresh), \
          patch("hermes_cli.auth._minimax_save_auth_state", side_effect=_capture_save):
         with pytest.raises(AuthError) as exc_info:
@@ -270,7 +258,7 @@ def test_resolve_credentials_quarantines_dead_tokens_on_terminal_refresh_failure
 # ---------------------------------------------------------------------------
 
 def test_get_minimax_oauth_auth_status_not_logged_in():
-    with patch("hermes_cli.auth.get_provider_auth_state", return_value=None):
+    with patch('auth.provider_state.get_provider_auth_state', return_value=None):
         status = get_minimax_oauth_auth_status()
 
     assert status["logged_in"] is False
@@ -287,7 +275,7 @@ def test_generic_auth_status_dispatches_minimax_oauth():
         "region": "global",
     }
 
-    with patch("hermes_cli.auth.get_provider_auth_state", return_value=state):
+    with patch('auth.provider_state.get_provider_auth_state', return_value=state):
         status = get_auth_status("minimax-oauth")
 
     assert status["logged_in"] is True
@@ -316,7 +304,7 @@ def test_token_provider_returns_current_access_token_when_fresh():
 
     provider = build_minimax_oauth_token_provider()
 
-    with patch("hermes_cli.auth.get_provider_auth_state", return_value=state), \
+    with patch('auth.provider_state.get_provider_auth_state', return_value=state), \
          patch("httpx.Client") as mock_client_class:
         token = provider()
         # No network call should happen — token is fresh.
@@ -347,7 +335,7 @@ def test_token_provider_refreshes_when_near_expiry():
 
     provider = build_minimax_oauth_token_provider()
 
-    with patch("hermes_cli.auth.get_provider_auth_state", return_value=state), \
+    with patch('auth.provider_state.get_provider_auth_state', return_value=state), \
          patch("httpx.Client") as mock_client_class, \
          patch("hermes_cli.auth._minimax_save_auth_state"):
         mock_instance = MagicMock()
@@ -366,7 +354,7 @@ def test_token_provider_raises_not_logged_in_when_state_missing():
     from hermes_cli.auth import build_minimax_oauth_token_provider
 
     provider = build_minimax_oauth_token_provider()
-    with patch("hermes_cli.auth.get_provider_auth_state", return_value=None):
+    with patch('auth.provider_state.get_provider_auth_state', return_value=None):
         with pytest.raises(AuthError) as exc_info:
             provider()
 
@@ -395,7 +383,7 @@ def test_token_provider_quarantines_state_on_terminal_refresh():
     saved_states: list[dict] = []
 
     provider = build_minimax_oauth_token_provider()
-    with patch("hermes_cli.auth.get_provider_auth_state", return_value=state), \
+    with patch('auth.provider_state.get_provider_auth_state', return_value=state), \
          patch("httpx.Client") as mock_client_class, \
          patch(
              "hermes_cli.auth._minimax_save_auth_state",
@@ -431,7 +419,7 @@ def test_resolve_returns_callable_when_as_token_provider_true():
         "expires_at": _future_iso(3600),
     }
 
-    with patch("hermes_cli.auth.get_provider_auth_state", return_value=state):
+    with patch('auth.provider_state.get_provider_auth_state', return_value=state):
         creds = resolve_minimax_oauth_runtime_credentials(as_token_provider=True)
 
     assert callable(creds["api_key"])

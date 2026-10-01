@@ -6,20 +6,9 @@ import logging
 import threading
 from typing import Any, Dict, FrozenSet, Optional
 
-from hermes_cli.auth import (
-    AuthError,
-    DEFAULT_NOUS_INFERENCE_URL,
-    _load_auth_store,
-    _auth_store_lock,
-    _is_terminal_nous_refresh_error,
-    _nous_inference_env_override,
-    _quarantine_nous_oauth_state,
-    _quarantine_nous_pool_entries,
-    _save_auth_store,
-    _validate_nous_inference_url_from_network,
-    _write_shared_nous_state,
-    resolve_nous_runtime_credentials,
-)
+from auth.errors import AuthError
+from hermes_cli.auth import DEFAULT_NOUS_INFERENCE_URL, _is_terminal_nous_refresh_error, _nous_inference_env_override, _quarantine_nous_oauth_state, _quarantine_nous_pool_entries, _validate_nous_inference_url_from_network, _write_shared_nous_state, resolve_nous_runtime_credentials
+from auth.store import _load_auth_store, _auth_store_lock, _save_auth_store
 from hermes_cli.proxy.adapters.base import UpstreamAdapter, UpstreamCredential
 
 logger = logging.getLogger(__name__)

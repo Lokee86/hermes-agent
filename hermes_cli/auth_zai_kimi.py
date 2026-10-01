@@ -107,7 +107,9 @@ def _resolve_zai_base_url(api_key: str, default_url: str, env_override: str) -> 
     The detected endpoint is cached in provider state (auth.json) keyed on a hash of the API key so
     subsequent starts skip the probe.
     """
-    from hermes_cli.auth import _auth_store_lock, _load_auth_store, _load_provider_state, _save_auth_store, _store_provider_state, detect_zai_endpoint
+    from auth.store import _auth_store_lock, _load_auth_store, _save_auth_store
+    from auth.provider_state import _load_provider_state, _store_provider_state
+    from hermes_cli.auth import detect_zai_endpoint
     if env_override:
         return env_override
     # No key -> don't probe (N×M 401s); auxiliary-client auto-detection hits this for everyone.

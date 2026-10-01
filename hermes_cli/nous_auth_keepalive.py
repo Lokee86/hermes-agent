@@ -7,15 +7,10 @@ import os
 import threading
 from typing import Optional
 
-from hermes_cli.auth import (
-    ACCESS_TOKEN_REFRESH_SKEW_SECONDS,
-    NOUS_INVOKE_JWT_MIN_TTL_SECONDS,
-    AuthError,
-    _agent_key_is_usable,
-    _is_expiring,
-    get_provider_auth_state,
-    resolve_nous_runtime_credentials,
-)
+from hermes_cli.auth import ACCESS_TOKEN_REFRESH_SKEW_SECONDS, NOUS_INVOKE_JWT_MIN_TTL_SECONDS, _agent_key_is_usable, resolve_nous_runtime_credentials
+from auth.errors import AuthError
+from auth.token_validation import _is_expiring
+from auth.provider_state import get_provider_auth_state
 
 logger = logging.getLogger(__name__)
 
@@ -119,10 +114,11 @@ def _refresh_selected_pool_entry(*, min_key_ttl_seconds: int, min_access_ttl_sec
     """Refresh the current pool entry when stale. True = usable/refreshed; False = pool exists but
     no usable entry; None = no Nous pool.
     """
+    from hermes_cli.config_credentials import credential_pool_environment
     try:
-        from agent.credential_pool import load_pool
+        from auth.credential_pool import load_pool
 
-        pool = load_pool("nous")
+        pool = load_pool("nous", environment=credential_pool_environment())
     except Exception as exc:
         logger.debug("Nous auth keepalive: credential pool unavailable: %s", exc)
         return None

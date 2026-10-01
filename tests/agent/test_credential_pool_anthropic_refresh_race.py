@@ -38,7 +38,7 @@ from dataclasses import replace as dc_replace
 
 import pytest
 
-from agent.credential_pool import (
+from auth.credential_pool import (
     AUTH_TYPE_OAUTH,
     STATUS_EXHAUSTED,
     CredentialPool,
@@ -79,8 +79,8 @@ def _fake_pool_store(monkeypatch):
             return dict(store)
         return list(store.get(provider, []))
 
-    monkeypatch.setattr("agent.credential_pool.write_credential_pool", _write)
-    monkeypatch.setattr("agent.credential_pool.read_credential_pool", _read)
+    monkeypatch.setattr("auth.credential_pool.write_credential_pool", _write)
+    monkeypatch.setattr("auth.credential_pool.read_credential_pool", _read)
     return store
 
 
@@ -126,6 +126,7 @@ def test_concurrent_hermes_pkce_refresh_loses_credential_despite_valid_token_on_
     marked exhausted, because ``_sync_anthropic_entry_from_credentials_file``
     only helps ``entry.source == "claude_code"``.
     """
+    from hermes_cli.config_credentials import credential_pool_environment
     server = _SingleUseTokenServer()
     monkeypatch.setattr(
         "agent.anthropic_credentials.refresh_anthropic_oauth_pure",
@@ -145,8 +146,8 @@ def test_concurrent_hermes_pkce_refresh_loses_credential_despite_valid_token_on_
 
     # Simulate two independent OS processes, each with its own in-memory
     # pool constructed from the SAME on-disk stale entry.
-    pool_process_a = CredentialPool("anthropic", [dc_replace(shared_stale_entry)])
-    pool_process_b = CredentialPool("anthropic", [dc_replace(shared_stale_entry)])
+    pool_process_a = CredentialPool("anthropic", [dc_replace(shared_stale_entry)], environment=credential_pool_environment())
+    pool_process_b = CredentialPool("anthropic", [dc_replace(shared_stale_entry)], environment=credential_pool_environment())
 
     results: dict[str, object] = {}
 
@@ -208,6 +209,7 @@ def test_concurrent_claude_code_refresh_recovers_via_credentials_file(monkeypatc
     evidence that hermes_pkce/dashboard-sourced credentials were simply
     never given the same treatment, not that recovery is impossible.
     """
+    from hermes_cli.config_credentials import credential_pool_environment
     server = _SingleUseTokenServer()
     monkeypatch.setattr(
         "agent.anthropic_credentials.refresh_anthropic_oauth_pure",
@@ -244,8 +246,8 @@ def test_concurrent_claude_code_refresh_recovers_via_credentials_file(monkeypatc
         refresh_token="stale-rt",
         source="claude_code",
     )
-    pool_process_a = CredentialPool("anthropic", [dc_replace(shared_stale_entry)])
-    pool_process_b = CredentialPool("anthropic", [dc_replace(shared_stale_entry)])
+    pool_process_a = CredentialPool("anthropic", [dc_replace(shared_stale_entry)], environment=credential_pool_environment())
+    pool_process_b = CredentialPool("anthropic", [dc_replace(shared_stale_entry)], environment=credential_pool_environment())
 
     results: dict[str, object] = {}
 

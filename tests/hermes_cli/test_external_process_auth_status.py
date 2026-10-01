@@ -262,7 +262,7 @@ def test_catalog_key_resolves_from_copilot_cli_store(tmp_path, monkeypatch, _cle
         "hermes_cli.auth.resolve_api_key_provider_credentials",
         side_effect=Exception("no env creds"),
     ), mock_patch(
-        "hermes_cli.auth.read_credential_pool", return_value=[]
+        'auth.pool_persistence.read_credential_pool', return_value=[]
     ):
         key = models_mod._resolve_copilot_catalog_api_key()
 
@@ -280,7 +280,7 @@ def test_catalog_key_empty_when_cli_store_absent(tmp_path, monkeypatch, _clean_c
         "hermes_cli.auth.resolve_api_key_provider_credentials",
         side_effect=Exception("no env creds"),
     ), mock_patch(
-        "hermes_cli.auth.read_credential_pool", return_value=[]
+        'auth.pool_persistence.read_credential_pool', return_value=[]
     ):
         key = models_mod._resolve_copilot_catalog_api_key()
 

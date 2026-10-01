@@ -21,6 +21,8 @@ The fix:
 
 These tests pin the corrected behavior.
 """
+import auth.provider_state as auth_provider_state
+import auth.sources as auth_sources
 import json
 import time
 from unittest.mock import patch
@@ -556,7 +558,7 @@ def test_external_oauth_disconnect_rejected_before_auth_mutation(monkeypatch):
     def fail_clear_provider_auth(provider_id=None):
         raise AssertionError("external providers must not reach clear_provider_auth")
 
-    monkeypatch.setattr(auth_mod, "clear_provider_auth", fail_clear_provider_auth)
+    monkeypatch.setattr(auth_provider_state, "clear_provider_auth", fail_clear_provider_auth)
 
     resp = client.delete("/api/providers/oauth/qwen-oauth", headers=HEADERS)
     assert resp.status_code == 400, resp.text
@@ -592,8 +594,9 @@ def test_xai_dashboard_poller_seeds_single_entry_and_clears_suppression(tmp_path
     ``device_code`` suppression left by a prior ``hermes auth remove
     xai-oauth``.
     """
+    from hermes_cli.config_credentials import credential_pool_environment
     from hermes_cli import auth as auth_mod
-    from agent.credential_pool import load_pool
+    from auth.credential_pool import load_pool
 
     monkeypatch.setenv("HERMES_HOME", str(tmp_path))
     monkeypatch.delenv("HERMES_XAI_BASE_URL", raising=False)
@@ -613,8 +616,8 @@ def test_xai_dashboard_poller_seeds_single_entry_and_clears_suppression(tmp_path
     )
 
     # Prior `hermes auth remove xai-oauth` left the source suppressed.
-    auth_mod.suppress_credential_source("xai-oauth", "device_code")
-    assert auth_mod.is_source_suppressed("xai-oauth", "device_code") is True
+    auth_sources.suppress_credential_source("xai-oauth", "device_code")
+    assert auth_sources.is_source_suppressed("xai-oauth", "device_code") is True
 
     monkeypatch.setattr(
         auth_mod,
@@ -652,7 +655,7 @@ def test_xai_dashboard_poller_seeds_single_entry_and_clears_suppression(tmp_path
         _web_server_oauth._oauth_sessions.pop(session_id, None)
 
     # The interactive dashboard login cleared the suppression marker.
-    assert auth_mod.is_source_suppressed("xai-oauth", "device_code") is False
+    assert auth_sources.is_source_suppressed("xai-oauth", "device_code") is False
 
     after = json.loads(auth_path.read_text(encoding="utf-8"))
     assert after["active_provider"] == "openrouter"
@@ -661,7 +664,7 @@ def test_xai_dashboard_poller_seeds_single_entry_and_clears_suppression(tmp_path
     # The credential pool has exactly one entry, seeded from the
     # singleton as ``device_code`` — no parallel ``manual:dashboard_*``
     # duplicate sharing the single-use refresh token.
-    entries = load_pool("xai-oauth").entries()
+    entries = load_pool("xai-oauth", environment=credential_pool_environment()).entries()
     assert len(entries) == 1
     assert entries[0].source == "device_code"
     assert entries[0].refresh_token == "rt-dashboard"

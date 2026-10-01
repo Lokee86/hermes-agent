@@ -1,6 +1,10 @@
 """Credential-pool auth subcommands."""
 
 from __future__ import annotations
+from hermes_cli.config_credentials import credential_environment
+import auth.provider_state as auth_provider_state
+import auth.sources as auth_sources
+import auth.store as auth_storage
 from pm import install_hint
 from hermes_cli.cli_output import line_input
 
@@ -12,7 +16,7 @@ from types import SimpleNamespace
 from typing import Any, Callable
 import uuid
 
-from agent.credential_pool import (
+from auth.credential_pool import (
     AUTH_TYPE_API_KEY, AUTH_TYPE_OAUTH, CUSTOM_POOL_PREFIX, SOURCE_MANUAL,
     SOURCE_MANUAL_DEVICE_CODE, STATUS_EXHAUSTED, STRATEGY_FILL_FIRST, STRATEGY_ROUND_ROBIN,
     STRATEGY_RANDOM, STRATEGY_LEAST_USED, PooledCredential, _codex_principal_identity,
@@ -92,8 +96,8 @@ def _normalize_provider(provider: str) -> str:
 
 def _migrate_legacy_custom_pool_key(provider: str, legacy_key: str) -> None:
     """Move a keyed provider's old ``custom:`` pool into its runtime slug."""
-    with auth_mod._auth_store_lock():
-        auth_store = auth_mod._load_auth_store()
+    with auth_storage._auth_store_lock():
+        auth_store = auth_storage._load_auth_store()
         credential_pool = auth_store.get("credential_pool")
         if not isinstance(credential_pool, dict):
             return
@@ -111,7 +115,7 @@ def _migrate_legacy_custom_pool_key(provider: str, legacy_key: str) -> None:
                     known_ids.add(entry_id)
         credential_pool[provider] = merged
         del credential_pool[legacy_key]
-        auth_mod._save_auth_store(auth_store)
+        auth_storage._save_auth_store(auth_store)
     try:
         from hermes_cli.models import clear_provider_models_cache
         clear_provider_models_cache(legacy_key)
@@ -120,11 +124,12 @@ def _migrate_legacy_custom_pool_key(provider: str, legacy_key: str) -> None:
 
 
 def _provider_base_url(provider: str) -> str:
+    from hermes_cli.config_credentials import credential_pool_environment
     if provider == "openrouter":
         return OPENROUTER_BASE_URL
     if provider.startswith(CUSTOM_POOL_PREFIX):
-        from agent.credential_pool import _get_custom_provider_config
-        return str((_get_custom_provider_config(provider) or {}).get("base_url") or "").strip()
+        from auth.credential_pool import _get_custom_provider_config
+        return str((_get_custom_provider_config(provider, environment=credential_pool_environment()) or {}).get("base_url") or "").strip()
     configured = _configured_provider_entry(provider)
     if configured is not None:
         return str(configured.get("base_url") or "").strip()
@@ -350,9 +355,9 @@ def _unsuppress_provider_sources(provider: str) -> None:
     user wants auth re-enabled. Covers env:* (shell-exported vars), gh_cli (copilot), claude_code,
     qwen-cli, device_code (codex), etc. — one consistent re-engagement pattern."""
     try:
-        suppressed = auth_mod._load_auth_store().get("suppressed_sources", {})
+        suppressed = auth_storage._load_auth_store().get("suppressed_sources", {})
         for src in list(suppressed.get(provider, []) or []):
-            auth_mod.unsuppress_credential_source(provider, src)
+            auth_sources.unsuppress_credential_source(provider, src)
     except Exception:
         pass
 
@@ -376,6 +381,7 @@ def _add_api_key_credential(args, provider: str, pool) -> PooledCredential:
 
 
 def auth_add_command(args) -> None:
+    from hermes_cli.config_credentials import credential_pool_environment
     provider = _normalize_provider(getattr(args, "provider", ""))
     if dispatch_plugin_auth("add", args, provider):
         return
@@ -395,7 +401,7 @@ def auth_add_command(args) -> None:
         oauth_default = provider in _OAUTH_DEFAULT_PROVIDERS and not is_custom
         requested_type = AUTH_TYPE_OAUTH if oauth_default else AUTH_TYPE_API_KEY
 
-    pool = load_pool(provider)
+    pool = load_pool(provider, environment=credential_pool_environment())
     if not is_custom:
         _unsuppress_provider_sources(provider)
 
@@ -406,7 +412,7 @@ def auth_add_command(args) -> None:
         # A denied / mismatched / timed-out OAuth login is a user-facing outcome, not a crash.
         raise SystemExit(f"Login failed: {auth_mod.format_auth_error(exc)}") from exc
     if wanted_priority is not None:
-        placed_pool = load_pool(provider)
+        placed_pool = load_pool(provider, environment=credential_pool_environment())
         moved = placed_pool.move_entry(entry.id, int(wanted_priority))
         _report_priority(provider, placed_pool, moved, int(wanted_priority), "Placed", "at")
 
@@ -437,7 +443,7 @@ def _add_credential(args, provider: str, pool, requested_type: str) -> PooledCre
     # The first Codex/xAI credential becomes the active provider (as the old singleton save path
     # did implicitly); subsequent adds leave the active provider as-is.
     if spec.activate_first and not existing:
-        auth_mod.mark_provider_active_if_unset(provider)
+        auth_provider_state.mark_provider_active_if_unset(provider)
     print(f'Added {provider} OAuth credential #{len(pool.entries())}: "{entry.label}"')
     if provider == "openai-codex":
         _warn_same_codex_account(token, existing)
@@ -465,6 +471,7 @@ def _warn_same_codex_account(token: str, existing: list[PooledCredential]) -> No
 
 def _report_priority(provider: str, pool, moved, requested: int, verb: str, prep: str) -> None:
     """Print the effective priority and say why it differs from the request, if it does."""
+    from hermes_cli.config_credentials import credential_pool_environment
     print(f'{verb} {provider} credential "{moved.label}" {prep} priority {moved.priority} '
           f"(#{moved.priority + 1} in `hermes auth list {provider}`)")
     size = len(pool.entries())
@@ -475,7 +482,7 @@ def _report_priority(provider: str, pool, moved, requested: int, verb: str, prep
             reason = "anthropic keeps manually added credentials ahead of seeded ones"
         print(f"note: requested priority {requested}; effective priority is {moved.priority} "
               f"because {reason}.", file=sys.stderr)
-    strategy = get_pool_strategy(provider)
+    strategy = get_pool_strategy(provider, environment=credential_pool_environment())
     if strategy != STRATEGY_FILL_FIRST:
         print(f"note: {provider} uses the {strategy} strategy; priority only orders "
               f"fill_first selection.", file=sys.stderr)
@@ -483,8 +490,9 @@ def _report_priority(provider: str, pool, moved, requested: int, verb: str, prep
 
 def auth_priority_command(args) -> None:
     """`hermes auth priority <provider> <target> <priority>`: reorder one pooled credential."""
+    from hermes_cli.config_credentials import credential_pool_environment
     provider = _normalize_provider(getattr(args, "provider", ""))
-    pool = load_pool(provider)
+    pool = load_pool(provider, environment=credential_pool_environment())
     index, matched, error = pool.resolve_target(getattr(args, "target", None))
     if matched is None or index is None:
         raise SystemExit(f"{error} Provider: {provider}.")
@@ -507,17 +515,18 @@ def _is_free_tier_entry(entry) -> bool:
 
 
 def auth_list_command(args) -> None:
+    from hermes_cli.config_credentials import credential_pool_environment
     provider_filter = _normalize_provider(getattr(args, "provider", "") or "")
     if provider_filter:
         providers = [provider_filter]
     else:
-        credential_pool = auth_mod._load_auth_store().get("credential_pool")
+        credential_pool = auth_storage._load_auth_store().get("credential_pool")
         providers = sorted({
             *PROVIDER_REGISTRY.keys(), "openrouter", *list_custom_pool_providers(),
             *(e["provider_key"] for e in _get_custom_provider_entries() if e["provider_key"]),
             *(credential_pool.keys() if isinstance(credential_pool, dict) else ())})
     for provider in providers:
-        pool = load_pool(provider)
+        pool = load_pool(provider, environment=credential_pool_environment())
         entries = pool.entries()
         if not entries:
             continue
@@ -546,8 +555,9 @@ def auth_list_command(args) -> None:
 
 def _print_external_login_notice() -> None:
     """One line telling the user why no Codex CLI / Claude Code login shows up when adoption is off."""
-    from agent.credential_sources import EXTERNAL_LOGINS_NOT_ADOPTED_NOTICE, adopt_external_logins_enabled
-    if not adopt_external_logins_enabled():
+    from hermes_cli.config_credentials import credential_pool_environment
+    from auth.source_policy import EXTERNAL_LOGINS_NOT_ADOPTED_NOTICE, adopt_external_logins_enabled
+    if not adopt_external_logins_enabled(environment=credential_pool_environment()):
         print(EXTERNAL_LOGINS_NOT_ADOPTED_NOTICE)
 
 
@@ -561,10 +571,11 @@ def _print_oauth_heal_notices() -> None:
 
 
 def auth_remove_command(args) -> None:
+    from hermes_cli.config_credentials import credential_pool_environment
     provider = _normalize_provider(getattr(args, "provider", ""))
     target = getattr(args, "target", None)
     target = getattr(args, "index", None) if target is None else target
-    pool = load_pool(provider)
+    pool = load_pool(provider, environment=credential_pool_environment())
     index, matched, error = pool.resolve_target(target)
     if matched is None or index is None:
         raise SystemExit(f"{error} Provider: {provider}.")
@@ -574,25 +585,26 @@ def auth_remove_command(args) -> None:
     print(f"Removed {provider} credential #{index} ({removed.label})")
 
     # Every credential source Hermes reads from (env vars, external OAuth files, auth.json blocks,
-    # custom config) has a RemovalStep in agent.credential_sources; it does the source-specific
+    # custom config) has a RemovalStep in auth.source_policy; it does the source-specific
     # cleanup while suppression + user-facing output are centralised here.
-    from agent.credential_sources import find_removal_step
-    step = find_removal_step(provider, removed.source)
+    from auth.source_removal import find_removal_step
+    step = find_removal_step(provider, removed.source, environment=credential_environment())
     if step is None:  # unregistered source, e.g. "manual": nothing external to clean up
         return
     result = step.remove_fn(provider, removed)
     for line in result.cleaned:
         print(line)
     if result.suppress:
-        auth_mod.suppress_credential_source(provider, removed.source)
+        auth_sources.suppress_credential_source(provider, removed.source)
     for line in result.hints:
         print(line)
 
 
 def auth_reset_command(args) -> None:
+    from hermes_cli.config_credentials import credential_pool_environment
     provider = _normalize_provider(getattr(args, "provider", ""))
     target = getattr(args, "target", None)
-    pool = load_pool(provider)
+    pool = load_pool(provider, environment=credential_pool_environment())
     if target is None or not str(target).strip():
         count = pool.reset_statuses()
         print(f"Reset status on {count} {provider} credentials")
@@ -615,11 +627,12 @@ def auth_refresh_command(args) -> None:
     provider's quota is back: if the account is still capped, the next request
     429s and benches it again. Failure leaves the pool's own verdict in place.
     """
+    from hermes_cli.config_credentials import credential_pool_environment
     provider = _normalize_provider(getattr(args, "provider", ""))
     if dispatch_plugin_auth("refresh", args, provider):
         return
     target = getattr(args, "target", None)
-    pool = load_pool(provider)
+    pool = load_pool(provider, environment=credential_pool_environment())
     entries = pool.entries()
     if not entries:
         raise SystemExit(f"No {provider} credentials in the pool.")
@@ -663,13 +676,14 @@ def auth_refresh_command(args) -> None:
 
 
 def auth_status_command(args) -> None:
+    from hermes_cli.config_credentials import credential_pool_environment
     provider = _normalize_provider(getattr(args, "provider", "") or "")
     if not provider:
         raise SystemExit("Provider is required. Example: `hermes auth status spotify`.")
     if dispatch_plugin_auth("status", args, provider):
         return
     if provider in auth_mod.SINGLE_USE_REFRESH_POOL_PROVIDERS:
-        load_pool(provider)  # runs the forked-grant heal first so the report reflects the consolidated grant
+        load_pool(provider, environment=credential_pool_environment())  # runs the forked-grant heal first so the report reflects the consolidated grant
     status = auth_mod.get_auth_status(provider)
     _print_oauth_heal_notices()
     if status.get("free_tier"):
@@ -835,8 +849,9 @@ def _interactive_add() -> None:
 
 
 def _interactive_remove() -> None:
+    from hermes_cli.config_credentials import credential_pool_environment
     provider = _pick_provider("Provider to remove credential from")
-    pool = load_pool(provider)
+    pool = load_pool(provider, environment=credential_pool_environment())
     if not pool.has_credentials():
         print(f"No credentials for {provider}.")
         return
@@ -859,8 +874,9 @@ _STRATEGY_DESCRIPTIONS = {
 
 
 def _interactive_strategy() -> None:
+    from hermes_cli.config_credentials import credential_pool_environment
     provider = _pick_provider("Provider to set strategy for")
-    current = get_pool_strategy(provider)
+    current = get_pool_strategy(provider, environment=credential_pool_environment())
     strategies = list(_STRATEGY_DESCRIPTIONS)
 
     print(f"\nCurrent strategy for {provider}: {current}")

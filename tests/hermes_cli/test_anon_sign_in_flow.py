@@ -13,7 +13,7 @@ import time
 import pytest
 
 from hermes_cli import anon_auth
-from hermes_cli.auth import _auth_file_path
+from auth.store import _auth_file_path
 from tests.hermes_cli.test_anon_upgrade import (  # noqa: F401  (fixtures used by name)
     EMAIL, FREE_PICK, PORTAL, WELCOME, _shared_store, _write_model_config, free_account, portal)
 
@@ -106,7 +106,7 @@ def test_a_retired_identity_yields_retired_and_clears_the_free_tier(portal, monk
     assert state.kind == "retired"
     assert state.copy == anon_auth.UPGRADE_REASON_COPY["account_retired"]
     assert cleared == [("retired", guest["anon_token"])]
-    from hermes_cli.auth import _load_auth_store
+    from auth.store import _load_auth_store
     assert "nous" not in _load_auth_store().get("providers", {})
 
 def test_a_server_superseded_outcome_yields_superseded(portal, tmp_path):
@@ -206,7 +206,8 @@ def test_a_settle_failure_yields_failed_rather_than_raising(portal, free_account
     assert len(persists) == 1
 
 def test_already_signed_in_short_circuits_before_any_network(portal):
-    from hermes_cli.auth import _load_auth_store, _save_auth_store, _save_provider_state
+    from auth.store import _load_auth_store, _save_auth_store
+    from auth.provider_state import _save_provider_state
     store = _load_auth_store()
     _save_provider_state(store, "nous", {"auth_method": "oauth_device_code", "access_token": "x"})
     _save_auth_store(store)
@@ -309,7 +310,7 @@ def test_cancelling_during_a_completed_status_request_obeys_the_surface_policy(
 
     assert states[-1].kind == ("superseded" if cancel_wins else "completed")
     assert portal.token_grants == (0 if cancel_wins else 1)
-    from hermes_cli.auth import _load_auth_store
+    from auth.store import _load_auth_store
     state = _load_auth_store()["providers"]["nous"]
     assert anon_auth.is_guest_state(state) is cancel_wins
 
@@ -341,7 +342,7 @@ def test_a_gateway_style_supersede_after_a_completed_promotion_still_signs_in(
 
     assert states[-1].kind == "completed"
     assert portal.token_grants == 1
-    from hermes_cli.auth import _load_auth_store
+    from auth.store import _load_auth_store
     state = _load_auth_store()["providers"]["nous"]
     assert not anon_auth.is_guest_state(state)
 

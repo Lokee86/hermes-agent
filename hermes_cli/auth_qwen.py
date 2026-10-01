@@ -12,10 +12,8 @@ import os
 import time
 from pathlib import Path
 from typing import Any, Dict
-from hermes_cli.auth_constants import (
-    AuthError, DEFAULT_QWEN_BASE_URL, QWEN_ACCESS_TOKEN_REFRESH_SKEW_SECONDS, QWEN_OAUTH_CLIENT_ID,
-    QWEN_OAUTH_TOKEN_URL, _FORM_JSON_HEADERS, _qwen_err, httpx,
-)
+from auth.errors import AuthError
+from hermes_cli.auth_constants import DEFAULT_QWEN_BASE_URL, QWEN_ACCESS_TOKEN_REFRESH_SKEW_SECONDS, QWEN_OAUTH_CLIENT_ID, QWEN_OAUTH_TOKEN_URL, _FORM_JSON_HEADERS, _qwen_err, httpx
 
 logger = logging.getLogger("hermes_cli.auth")
 
@@ -43,7 +41,8 @@ def _read_qwen_cli_tokens() -> Dict[str, Any]:
 
 
 def _save_qwen_cli_tokens(tokens: Dict[str, Any]) -> Path:
-    from hermes_cli.auth import _qwen_cli_auth_path, _save_private_json
+    from hermes_cli.auth import _qwen_cli_auth_path
+    from auth.store import _save_private_json
     auth_path = _qwen_cli_auth_path()
     _save_private_json(auth_path, tokens, sort_keys=True)
     return auth_path
@@ -103,7 +102,8 @@ def _refresh_qwen_cli_tokens(tokens: Dict[str, Any], timeout_seconds: float = 20
 
 def _mark_qwen_oauth_active(creds: Dict[str, Any]) -> None:
     """Set active_provider to qwen-oauth with a minimal state entry (tokens stay in the Qwen CLI file)."""
-    from hermes_cli.auth import _auth_store_lock, _load_auth_store, _save_auth_store, _save_provider_state
+    from auth.store import _auth_store_lock, _load_auth_store, _save_auth_store
+    from auth.provider_state import _save_provider_state
     with _auth_store_lock():
         auth_store = _load_auth_store()
         state: Dict[str, Any] = {"base_url": str(creds["base_url"])} if creds.get("base_url") else {}

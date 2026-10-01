@@ -14,7 +14,7 @@ import pytest
 import hermes_cli.auth
 import providers
 from hermes_cli import auth_oauth_pkce_plugin as pkce
-from hermes_cli.auth_constants import AuthError
+from auth.errors import AuthError
 from providers import register_provider
 from providers.base import ProviderProfile
 from tests.providers.fake_pkce_idp import FakeIdP
@@ -43,7 +43,8 @@ def _browser_hits(url: str) -> bool:
 
 
 def test_pkce_handler_add_status_refresh_logout_against_fake_idp(idp, monkeypatch, tmp_path, request):
-    from agent.credential_pool import load_pool
+    from hermes_cli.config_credentials import credential_pool_environment
+    from auth.credential_pool import load_pool
 
     monkeypatch.setattr(pkce.webbrowser, "open", _browser_hits)
     monkeypatch.setattr("hermes_cli.auth_device_flow._can_open_graphical_browser", lambda: True)
@@ -69,20 +70,20 @@ def test_pkce_handler_add_status_refresh_logout_against_fake_idp(idp, monkeypatc
 
     # Pool-driven rotation through the real refresh path; the old single-use refresh token is gone.
     before = rows[0]["refresh_token"]
-    pool = load_pool(PROVIDER)
+    pool = load_pool(PROVIDER, environment=credential_pool_environment())
     rotated = pool.try_refresh_matching(credential_id=rows[0]["id"])
     assert rotated is not None and rotated.refresh_token != before and rotated.access_token != rows[0]["access_token"]
     assert idp.token_requests[-1] == {"grant_type": "refresh_token", "refresh_token": before, "scope": "inference",
                                       "client_id": "hermes-example"}
     assert before not in idp.refresh_tokens
     # A peer that already rotated on disk is adopted without spending the refresh token again.
-    stale = load_pool(PROVIDER).entries()[0]
+    stale = load_pool(PROVIDER, environment=credential_pool_environment()).entries()[0]
     stale.refresh_token = before
     assert refresh(stale)["refresh_token"] == rotated.refresh_token
     assert idp.token_requests[-1]["refresh_token"] == before  # no new POST
 
     assert handler("logout", args) is True
-    assert load_pool(PROVIDER).entries() == []
+    assert load_pool(PROVIDER, environment=credential_pool_environment()).entries() == []
 
     # Negative: a callback whose state is not ours is rejected and never reaches the token endpoint.
     idp.override_state = "forged"
@@ -109,7 +110,8 @@ def test_token_url_off_authorize_allowlist_refused_before_any_request(idp, monke
 
 def test_spent_refresh_token_is_grant_dead_and_marks_the_pool_row_dead(idp, monkeypatch, tmp_path, request):
     """RFC 6749 invalid_grant on refresh is terminal. The pool must DEAD the row, not EXHAUST it."""
-    from agent.credential_pool import STATUS_DEAD, load_pool
+    from hermes_cli.config_credentials import credential_pool_environment
+    from auth.credential_pool import STATUS_DEAD, load_pool
 
     monkeypatch.setattr(pkce.webbrowser, "open", _browser_hits)
     monkeypatch.setattr("hermes_cli.auth_device_flow._can_open_graphical_browser", lambda: True)
@@ -131,7 +133,7 @@ def test_spent_refresh_token_is_grant_dead_and_marks_the_pool_row_dead(idp, monk
                                 access_token=rows[0]["access_token"], expires_at_ms=None))
     assert excinfo.value.code == "invalid_grant"
 
-    pool = load_pool(PROVIDER)
+    pool = load_pool(PROVIDER, environment=credential_pool_environment())
     result = pool.try_refresh_matching(credential_id=rows[0]["id"])
     assert result is None or result.last_status == STATUS_DEAD
     disk = json.loads((tmp_path / "hermes" / "auth.json").read_text())["credential_pool"][PROVIDER][0]
@@ -140,7 +142,8 @@ def test_spent_refresh_token_is_grant_dead_and_marks_the_pool_row_dead(idp, monk
 
 def test_alias_login_stores_the_row_under_the_canonical_profile_name(idp, monkeypatch, tmp_path, request):
     """hermes auth add <alias> must write the pool under ProviderProfile.name, not the typed alias."""
-    from agent.credential_pool import load_pool
+    from hermes_cli.config_credentials import credential_pool_environment
+    from auth.credential_pool import load_pool
 
     alias = "example-pkce-alias"
     monkeypatch.setattr(pkce.webbrowser, "open", _browser_hits)
@@ -161,4 +164,4 @@ def test_alias_login_stores_the_row_under_the_canonical_profile_name(idp, monkey
     pool = json.loads((tmp_path / "hermes" / "auth.json").read_text())["credential_pool"]
     assert PROVIDER in pool and alias not in pool
     assert handler("status", args) is True
-    assert load_pool(PROVIDER).entries()[0].provider == PROVIDER
+    assert load_pool(PROVIDER, environment=credential_pool_environment()).entries()[0].provider == PROVIDER

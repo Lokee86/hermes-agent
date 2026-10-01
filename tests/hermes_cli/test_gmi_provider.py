@@ -264,7 +264,7 @@ class TestGmiMainFlow:
             "hermes_cli.auth._prompt_model_selection",
             return_value="openai/gpt-5.4-mini",
         ), patch(
-            "hermes_cli.auth.deactivate_provider",
+            'auth.provider_state.deactivate_provider',
         ), patch(
             "builtins.input",
             return_value="",

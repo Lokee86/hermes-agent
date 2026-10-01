@@ -6,6 +6,7 @@ the wire contract is exercised, never mocked away.
 """
 
 from __future__ import annotations
+import auth.store as auth_storage
 
 import json
 import os
@@ -15,7 +16,8 @@ from pathlib import Path
 import pytest
 
 from hermes_cli import anon_auth
-from hermes_cli.auth import _load_auth_store, resolve_provider
+from auth.store import _load_auth_store
+from hermes_cli.auth import resolve_provider
 from tests.hermes_cli.anon_portal import PORTAL, WELCOME, install_portal, make_jwt as _jwt  # noqa: F401
 
 
@@ -189,7 +191,7 @@ class TestRouteFallback:
 class TestTokenAcquisitionSeam:
     def test_expired_guest_jwt_reexchanges_and_never_hits_oauth_token(self, portal):
         anon_auth.ensure_portal_identity(explicit=True)
-        from hermes_cli.auth import _auth_store_lock, _save_auth_store
+        from auth.store import _auth_store_lock, _save_auth_store
         with _auth_store_lock():
             store = _load_auth_store()
             store["providers"]["nous"]["access_token"] = _jwt(exp=int(time.time()) - 10)
@@ -216,7 +218,8 @@ class TestTokenAcquisitionSeam:
 
     def test_tool_gateway_token_path_reexchanges(self, portal):
         anon_auth.ensure_portal_identity(explicit=True)
-        from hermes_cli.auth import _auth_store_lock, _save_auth_store, resolve_nous_access_token
+        from auth.store import _auth_store_lock, _save_auth_store
+        from hermes_cli.auth import resolve_nous_access_token
         with _auth_store_lock():
             store = _load_auth_store()
             store["providers"]["nous"]["expires_at"] = "2000-01-01T00:00:00+00:00"
@@ -251,7 +254,8 @@ class TestModelPin:
 class TestLogout:
     def test_logout_with_only_free_tier_is_a_true_noop(self, portal):
         from types import SimpleNamespace
-        from hermes_cli.auth import _auth_file_path, logout_command
+        from auth.store import _auth_file_path
+        from hermes_cli.auth import logout_command
         anon_auth.ensure_portal_identity(explicit=True)
         before = _auth_file_path().read_bytes()
         logout_command(SimpleNamespace(provider=None))
@@ -400,7 +404,7 @@ class TestIdentityOfRecordIsTheSharedStore:
     def test_lock_order_is_profile_then_shared(self, portal, monkeypatch):
         order = []
         from hermes_cli import auth as auth_mod, auth_nous
-        real_profile, real_shared = auth_mod._auth_store_lock, auth_nous._nous_shared_store_lock
+        real_profile, real_shared = auth_storage._auth_store_lock, auth_nous._nous_shared_store_lock
         from contextlib import contextmanager
 
         @contextmanager
@@ -414,7 +418,7 @@ class TestIdentityOfRecordIsTheSharedStore:
             order.append("shared")
             with real_shared(*a, **k):
                 yield
-        monkeypatch.setattr(auth_mod, "_auth_store_lock", profile)
+        monkeypatch.setattr(auth_storage, "_auth_store_lock", profile)
         monkeypatch.setattr(auth_nous, "_nous_shared_store_lock", shared)
         anon_auth.ensure_portal_identity(explicit=True)
         assert order[:2] == ["profile", "shared"]
@@ -433,7 +437,7 @@ class TestConnectorTokenPath:
 
     def test_connector_path_replaces_a_dead_credential_once(self, portal):
         first = anon_auth.ensure_portal_identity(explicit=True)
-        from hermes_cli.auth import _auth_store_lock, _save_auth_store
+        from auth.store import _auth_store_lock, _save_auth_store
         with _auth_store_lock():
             store = _load_auth_store()
             store["providers"]["nous"]["expires_at"] = "2000-01-01T00:00:00+00:00"

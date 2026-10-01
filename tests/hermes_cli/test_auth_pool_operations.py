@@ -9,7 +9,7 @@ from urllib.parse import parse_qs
 import pytest
 
 from hermes_cli import auth_commands
-from hermes_cli.auth import read_credential_pool, write_credential_pool
+from auth.pool_persistence import read_credential_pool, write_credential_pool
 
 
 @pytest.fixture(autouse=True)
@@ -51,7 +51,7 @@ def test_refresh_uses_target_grant_and_preserves_sibling(monkeypatch, status):
     worker = threading.Thread(target=server.serve_forever, daemon=True)
     worker.start()
     monkeypatch.setattr(auth_codex, "CODEX_OAUTH_TOKEN_URL", f"http://127.0.0.1:{server.server_port}/token")
-    from agent.credential_pool import PooledCredential
+    from auth.credential_pool import PooledCredential
     rows = [PooledCredential.from_dict("openai-codex", row).to_dict() for row in _rows()]
     write_credential_pool("openai-codex", rows)
     before = read_credential_pool("openai-codex")

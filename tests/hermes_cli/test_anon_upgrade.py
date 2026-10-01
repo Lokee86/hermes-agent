@@ -17,7 +17,7 @@ import httpx
 import pytest
 
 from hermes_cli import anon_auth
-from hermes_cli.auth import _auth_file_path, _load_auth_store
+from auth.store import _auth_file_path, _load_auth_store
 
 WELCOME = "https://welcome-api.nousresearch.com/v1"
 INFERENCE = "https://inference-api.nousresearch.com/v1"
