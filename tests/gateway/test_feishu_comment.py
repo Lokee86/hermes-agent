@@ -144,8 +144,7 @@ class TestResolveModelAndRuntime(unittest.TestCase):
         with patch("gateway.run._load_gateway_config", return_value={}), \
              patch("gateway.run._resolve_gateway_model", return_value=""), \
              patch("gateway.run._resolve_runtime_agent_kwargs", return_value={"provider": "bedrock"}), \
-             patch("hermes_cli.model_selection_defaults.select_provider_default", return_value="selection"), \
-             patch("hermes_cli.model_selection_defaults.selected_model_id", return_value="safe/default"), \
+             patch("gateway.model_runtime_facts.provider_default_model", return_value="safe/default"), \
              patch("hermes_constants.resolve_reasoning_config", return_value=None):
             model, _runtime_kwargs = _resolve_model_and_runtime()
         self.assertEqual(model, "safe/default")

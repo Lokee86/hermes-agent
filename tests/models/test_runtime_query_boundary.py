@@ -133,8 +133,13 @@ def test_route_identity_and_runtime_kind_have_lower_owners():
     assert "_is_external_process_provider" not in _definitions(
         ROOT / "hermes_cli" / "runtime_provider_backends.py"
     )
-    assert "normalize_route_base_url" in _definitions(ROOT / "providers" / "route_identity.py")
-    assert "is_actual_route" in _definitions(ROOT / "providers" / "route_identity.py")
+    route_defs = _definitions(ROOT / "providers" / "route_identity.py")
+    assert "normalize_route_base_url" in route_defs
+    assert "is_actual_route" in route_defs
+    assert "is_foreign_provider_endpoint" in route_defs
+    assert "is_foreign_provider_endpoint" not in _definitions(
+        ROOT / "hermes_cli" / "runtime_provider.py"
+    )
     assert "is_external_process_provider" in _definitions(ROOT / "providers" / "routing.py")
 
 
@@ -426,3 +431,63 @@ def test_phase_5_8_5_model_command_orchestration_is_gateway_owned():
     assert "combined_selection_warning" in _definitions(
         ROOT / "gateway" / "model_selection_guards.py"
     )
+
+
+def test_phase_5_8_5_turn_runtime_semantics_use_lower_owners():
+    paths = (
+        ROOT / "gateway" / "run_agent_cache.py",
+        ROOT / "gateway" / "run_turn_prepare.py",
+        ROOT / "gateway" / "run_turn.py",
+        ROOT / "gateway" / "platforms" / "api_server.py",
+        ROOT / "gateway" / "model_runtime_facts.py",
+        ROOT / "plugins" / "platforms" / "feishu" / "feishu_comment.py",
+    )
+    forbidden = (
+        "hermes_cli.model_selection_defaults",
+        "from hermes_cli.runtime_provider import is_foreign_provider_endpoint",
+        "hermes_cli.models_catalog_static",
+        "hermes_cli.model_switch",
+    )
+    offenders = []
+    for source_path in paths:
+        source = source_path.read_text(encoding="utf-8")
+        for dependency in forbidden:
+            if dependency in source:
+                offenders.append(f"{source_path.relative_to(ROOT)} -> {dependency}")
+    assert offenders == []
+
+    facts = ROOT / "gateway" / "model_runtime_facts.py"
+    assert {"provider_default_model", "normalize_runtime_model"} <= _definitions(facts)
+    assert "select_default_model" in facts.read_text(encoding="utf-8")
+
+    prepare_source = (ROOT / "gateway" / "run_turn_prepare.py").read_text(
+        encoding="utf-8"
+    )
+    api_source = (ROOT / "gateway" / "platforms" / "api_server.py").read_text(
+        encoding="utf-8"
+    )
+    turn_source = (ROOT / "gateway" / "run_turn.py").read_text(encoding="utf-8")
+    cache_source = (ROOT / "gateway" / "run_agent_cache.py").read_text(
+        encoding="utf-8"
+    )
+    assert "provider_default_model" in prepare_source
+    assert "provider_default_model" in api_source
+    assert "normalize_runtime_model" in turn_source
+    assert "is_foreign_provider_endpoint" in cache_source
+
+    # Deferred seams are explicit: catalogue cache acquisition moves in 5.8.5.6;
+    # credential/fallback mechanics move in Phase 6.
+    assert "hermes_cli.model_catalog" in facts.read_text(encoding="utf-8")
+    assert "resolve_runtime_with_fallback" in prepare_source
+    assert "resolve_runtime_provider" in api_source
+
+    tui_source = (ROOT / "tui_gateway" / "agent_factory.py").read_text(
+        encoding="utf-8"
+    )
+    assert "hermes_cli.model_selection_defaults" not in tui_source
+    assert (
+        "from hermes_cli.runtime_provider import is_foreign_provider_endpoint"
+        not in tui_source
+    )
+    assert "provider_default_model" in tui_source
+    assert "is_foreign_provider_endpoint" in tui_source

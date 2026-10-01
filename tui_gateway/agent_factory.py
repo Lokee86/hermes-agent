@@ -19,8 +19,8 @@ def _resolve_model() -> str:
         return m.strip()
     # No env seed / config preference: the cost-safe silent default (cache-only read), never an unpicked flagship.
     with contextlib.suppress(Exception):
-        from hermes_cli.model_selection_defaults import select_provider_default, selected_model_id
-        return selected_model_id(select_provider_default("openrouter"))
+        from gateway.model_runtime_facts import provider_default_model
+        return provider_default_model("openrouter")
     return "z-ai/glm-5.2"
 
 
@@ -155,7 +155,7 @@ def _stored_session_runtime_overrides(row: dict | None) -> dict:
         provider = billing_provider
     base_url, api_mode, service_tier = field("base_url"), field("api_mode"), field("service_tier")
     reasoning_config = model_config.get("reasoning_config")
-    from hermes_cli.runtime_provider import is_foreign_provider_endpoint
+    from providers import is_foreign_provider_endpoint
     if is_foreign_provider_endpoint(provider, base_url):
         # The endpoint and its wire belong to the provider this chat left; resolve the stored one's own.
         base_url = api_mode = ""

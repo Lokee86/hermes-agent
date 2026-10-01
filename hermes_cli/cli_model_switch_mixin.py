@@ -62,7 +62,7 @@ def stored_session_route(session_meta, *, current_model, current_provider):
         return None
     api_mode = runtime.get("api_mode") or None
     runtime_kind = runtime.get("runtime_kind") or None
-    from hermes_cli.runtime_provider import is_foreign_provider_endpoint
+    from providers import is_foreign_provider_endpoint
     if is_foreign_provider_endpoint(provider, base_url):
         # The endpoint and its wire belong to the provider this chat left; resolve the stored one's own.
         base_url = api_mode = runtime_kind = None

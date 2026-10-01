@@ -4229,11 +4229,7 @@ def test_resolve_model_uses_canonical_silent_default_when_unconfigured(monkeypat
     monkeypatch.delenv("HERMES_INFERENCE_MODEL", raising=False)
     monkeypatch.setattr(server, "_load_cfg", lambda: {})
     monkeypatch.setattr(
-        "hermes_cli.model_selection_defaults.select_provider_default",
-        lambda provider: provider,
-    )
-    monkeypatch.setattr(
-        "hermes_cli.model_selection_defaults.selected_model_id",
+        "gateway.model_runtime_facts.provider_default_model",
         lambda provider: "safe/default" if provider == "openrouter" else "",
     )
 

@@ -325,6 +325,17 @@ def static_provider_model_ids(provider: str) -> tuple[str, ...]:
     return tuple(_PROVIDER_MODELS.get(normalize_provider(provider), ()))
 
 
+def static_provider_default_preference(provider: str) -> str:
+    """Offline preferred default for providers whose curated order is not billing-safe."""
+    from providers import normalize_provider
+
+    return (
+        PREFERRED_SILENT_DEFAULT_MODEL
+        if normalize_provider(provider) in _SILENT_DEFAULT_PROVIDERS
+        else ""
+    )
+
+
 def find_static_provider_model_id(provider: str, model_name: str) -> str | None:
     """Match an exact or bare model ID against the provider's offline catalogue."""
     from providers import normalize_provider

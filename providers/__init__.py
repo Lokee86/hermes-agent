@@ -27,7 +27,11 @@ from providers.configured import (
     match_configured_provider,
     resolves_to_custom_provider,
 )
-from providers.route_identity import is_actual_route, normalize_route_base_url
+from providers.route_identity import (
+    is_actual_route,
+    is_foreign_provider_endpoint,
+    normalize_route_base_url,
+)
 from providers.opencode import (
     normalize_opencode_base_url,
     normalize_opencode_model_id,
@@ -79,6 +83,7 @@ __all__ = [
     "COPILOT_EDITOR_VERSION",
     "copilot_request_headers",
     "is_actual_route",
+    "is_foreign_provider_endpoint",
     "normalize_route_base_url",
     "opencode_provider_family",
     "normalize_opencode_model_id",

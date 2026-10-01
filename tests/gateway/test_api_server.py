@@ -3024,11 +3024,7 @@ class TestCreateAgentModelRecovery:
         )
         monkeypatch.setattr("gateway.run._resolve_gateway_model", lambda: "")
         monkeypatch.setattr(
-            "hermes_cli.model_selection_defaults.select_provider_default",
-            lambda provider: provider,
-        )
-        monkeypatch.setattr(
-            "hermes_cli.model_selection_defaults.selected_model_id",
+            "gateway.model_runtime_facts.provider_default_model",
             lambda provider: "gpt-5.5-codex" if provider == "openai-codex" else "",
         )
 

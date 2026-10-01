@@ -465,4 +465,42 @@ broader model/session gateway regression set **157 passed, 1 skipped**. Ruff,
 `py_compile`, ownership searches, and final diff checks are clean. All new
 gateway refactor modules are at or below 200 lines.
 
-5.8.5.5 remains next.
+### 5.8.5.5 — turn construction and cached-runtime rehydration
+
+Turn/session runtime consumers no longer ask CLI-owned provider/model semantics to
+interpret persisted routes, choose empty-model defaults, or normalize cached
+agent model identity.
+
+- `providers.route_identity.is_foreign_provider_endpoint` now owns the
+  cross-provider endpoint identity query. The obsolete
+  `hermes_cli.runtime_provider.is_foreign_provider_endpoint` owner is deleted.
+  Gateway rehydration, CLI resume, and TUI resume all consume the lower owner.
+- `models.catalog_static.static_provider_default_preference` exposes the
+  offline cost-safe preference fact without leaking the private static catalogue
+  tables upward.
+- `gateway/model_runtime_facts.py` is the small application projection for
+  turn construction: it feeds caller-owned catalogue facts into canonical
+  `models.selection.select_default_model` and delegates model-ID normalization
+  to `models.identity.normalize_model_id`.
+- Gateway turn preparation, API agent construction, Feishu comment agents, and
+  TUI startup all use that shared projection for an unconfigured provider/model.
+- Fallback eviction no longer reconstructs model identity inline; it uses the
+  same `normalize_runtime_model` projection before deciding whether a cached
+  agent is stale.
+- Persisted session override rehydration keeps model/provider/base URL
+  application state in gateway/TUI code while foreign-endpoint interpretation
+  is lower-owned.
+- Credential acquisition, named-custom runtime construction, and runtime
+  fallback remain the explicit Phase 6 mechanics seams.
+- The cached preferred-default catalogue read remains an application fact
+  acquisition seam through `hermes_cli.model_catalog`; catalogue ownership and
+  picker/inventory cleanup remain explicitly deferred to 5.8.5.6.
+- No compatibility facade or forwarding definition was left behind for the
+  removed runtime-provider semantic query.
+
+Verification: consolidated turn/cache/API/TUI/ownership regression set **239
+passed** (62 existing aiohttp application-key warnings). Ruff, `py_compile`,
+scoped ownership searches, and `git diff --check` are clean. New production
+seam `gateway/model_runtime_facts.py` is 47 lines.
+
+5.8.5.6 remains next.

@@ -46,6 +46,24 @@ def normalize_route_base_url(base_url: Any) -> str:
     return normalized
 
 
+def is_foreign_provider_endpoint(provider: str = "", base_url: str = "") -> bool:
+    """Whether *base_url* is another registered provider's canonical endpoint."""
+    from providers.registry import get_provider_profile, list_providers
+
+    profile = get_provider_profile(str(provider or "").strip().lower())
+    route_url = normalize_route_base_url(base_url)
+    if profile is None or not route_url:
+        return False
+    own_url = normalize_route_base_url(profile.base_url)
+    if route_url == own_url:
+        return False
+    return any(
+        route_url == normalize_route_base_url(other.base_url)
+        for other in list_providers()
+        if other.base_url
+    )
+
+
 def is_actual_route(provider: str = "", base_url: str = "") -> bool:
     """Return whether provider identity or endpoint selects the Actual runtime."""
     if normalize_provider(provider or "") == "actual":
@@ -57,4 +75,8 @@ def is_actual_route(provider: str = "", base_url: str = "") -> bool:
     return hostname == "api.actual.inc"
 
 
-__all__ = ["is_actual_route", "normalize_route_base_url"]
+__all__ = [
+    "is_actual_route",
+    "is_foreign_provider_endpoint",
+    "normalize_route_base_url",
+]
