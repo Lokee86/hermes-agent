@@ -25,7 +25,10 @@ def home(tmp_path, monkeypatch):
         "  alias-host: {model: model-alias, provider: custom, base_url: http://127.0.0.1:3/v1, api_key: sk-alias-literal}\n"
         "  alias-env: {model: model-alias-env, provider: custom, base_url: http://127.0.0.1:3/v1, key_env: ALIAS_HOST_KEY}\n",
         encoding="utf-8")
+    from gateway import run as gateway_run
     from hermes_cli import model_switch
+
+    monkeypatch.setattr(gateway_run, "_hermes_home", hermes_home)
     model_switch.DIRECT_ALIASES.clear()
     return hermes_home
 

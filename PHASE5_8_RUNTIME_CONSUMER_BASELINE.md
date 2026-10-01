@@ -397,4 +397,37 @@ Ruff, `py_compile`, `git diff --check`, and the scoped
 5.8.5.2 surface. Remaining gateway `hermes_cli.model_switch` imports belong to
 5.8.5.3-5.8.5.6.
 
-5.8.5.3 remains next.
+### 5.8.5.3 — session model mutation
+
+`gateway/session_mutation_model.py` no longer delegates session changes to
+`hermes_cli.model_switch.switch_model`.
+
+- `gateway/session_model_facts.py` materializes caller-owned selection facts
+  from frozen session config and lower-domain catalogue/provider declarations.
+- `gateway/session_model_resolution.py` performs canonical
+  `models.selection.select_explicit_model` followed by
+  `providers.routing.resolve_invocation_route`.
+- The only surviving upward dependency is the exact Phase 6 credential seam
+  `hermes_cli.runtime_provider.resolve_runtime_provider`; it supplies
+  credentials/runtime material and does not own the final model or invocation
+  route.
+- Session mutation still owns frozen-policy rewrite, restart-safe model/provider
+  persistence, config-secret rebinding, and clearing an incompatible launch
+  credential when provider identity changes.
+- Canonical `api_mode` / `runtime_kind` are resolved for the live route but
+  are not added as new durable session-policy authority.
+- Session mutation no longer reconstructs the live runtime merely to copy its
+  current API key.
+- Added direct unit coverage for same-custom-provider routing, explicit provider
+  switching, configured-provider credential keys, direct-alias endpoint/key
+  isolation, and provider-change policy/credential clearing.
+- Hardened the existing launch-route fixture so collection order cannot bind it
+  to the developer profile instead of its temporary profile.
+
+Verification: focused gateway/session ownership set **39 passed, 1 skipped**
+(the existing end-to-end mutation case is Linux-only on this Windows worktree);
+Ruff, `py_compile`, and `git diff --check` are clean. Scoped ownership guards
+reject any return of `hermes_cli.model_switch` / CLI selection ownership in the
+5.8.5.3 path and permit only the exact Phase 6 runtime-provider credential seam.
+
+5.8.5.4 remains next.

@@ -358,3 +358,33 @@ def test_phase_5_8_5_session_launch_resolution_uses_lower_domains():
     assert "find_static_provider_model_id" in _definitions(
         ROOT / "models" / "catalog_static.py"
     )
+
+
+def test_phase_5_8_5_session_mutation_is_gateway_owned():
+    mutation = ROOT / "gateway" / "session_mutation_model.py"
+    resolver = ROOT / "gateway" / "session_model_resolution.py"
+    facts = ROOT / "gateway" / "session_model_facts.py"
+
+    for path in (mutation, resolver, facts):
+        source = path.read_text(encoding="utf-8")
+        assert "hermes_cli.model_switch" not in source
+        assert "hermes_cli.model_selection" not in source
+
+    mutation_source = mutation.read_text(encoding="utf-8")
+    resolver_source = resolver.read_text(encoding="utf-8")
+    assert "resolve_session_model" in mutation_source
+    assert "select_explicit_model" in resolver_source
+    assert "resolve_invocation_route" in resolver_source
+
+    # Phase 6 exception: session mutation may acquire credentials through the
+    # existing runtime provider, but that module cannot choose model identity
+    # or invocation semantics for this path.
+    tree = _tree(resolver)
+    runtime_imports = []
+    for node in ast.walk(tree):
+        if (
+            isinstance(node, ast.ImportFrom)
+            and node.module == "hermes_cli.runtime_provider"
+        ):
+            runtime_imports.extend(alias.name for alias in node.names)
+    assert runtime_imports == ["resolve_runtime_provider"]
