@@ -1,4 +1,4 @@
-from hermes_cli import model_selection_defaults as defaults
+import application_model_selection_defaults as defaults
 from models import catalog_static as static
 
 

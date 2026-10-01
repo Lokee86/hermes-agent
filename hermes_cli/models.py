@@ -516,7 +516,7 @@ def fetch_openrouter_models(
     _seed_reasoning_caps(_OPENROUTER_CATALOG_URL, live_items)
 
     curated: list[tuple[str, str]] = []
-    from hermes_cli.model_selection_defaults import preferred_silent_default_model
+    from application_model_selection_defaults import preferred_silent_default_model
     silent_default = preferred_silent_default_model("openrouter")
     for preferred_id, _ in fallback:
         live_item = live_by_id.get(preferred_id)
@@ -817,7 +817,7 @@ def detect_static_provider_for_model(
         if resolved_provider in _known_provider_names() and default_models and resolved_provider not in current_keys:
             # Cost-safe default, not ``default_models[0]``: metered aggregators list most-capable-first,
             # so [0] would silently escalate `/model nous` to the priciest flagship.
-            from hermes_cli.model_selection_defaults import select_provider_default, selected_model_id
+            from application_model_selection_defaults import select_provider_default, selected_model_id
             default = selected_model_id(select_provider_default(resolved_provider))
             return (resolved_provider, default or default_models[0])
 

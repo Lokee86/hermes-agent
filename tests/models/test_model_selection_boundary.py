@@ -228,7 +228,7 @@ def test_application_selection_adapters_consume_canonical_domain():
     for relative in (
         "hermes_cli/model_switch.py",
         "hermes_cli/model_selection_facts.py",
-        "hermes_cli/model_selection_defaults.py",
+        "application_model_selection_defaults.py",
         "hermes_cli/model_selection_picker.py",
         "agent/auxiliary_client.py",
     ):

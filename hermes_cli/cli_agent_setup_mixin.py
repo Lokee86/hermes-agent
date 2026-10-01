@@ -320,7 +320,7 @@ class CLIAgentSetupMixin:
         # provider's first catalog model so the API doesn't reject an empty model.
         if not self.model and resolved_provider:
             try:
-                from hermes_cli.model_selection_defaults import (
+                from application_model_selection_defaults import (
                     select_provider_default,
                     selected_model_id,
                 )

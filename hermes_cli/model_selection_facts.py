@@ -22,7 +22,7 @@ def build_explicit_detection_facts(
         _resolve_provider_prefix,
         _static_catalog_matches,
     )
-    from hermes_cli.model_selection_defaults import select_provider_default, selected_model_id
+    from application_model_selection_defaults import select_provider_default, selected_model_id
     from hermes_cli.models_detect import (
         current_provider_catalog_match,
         current_provider_owns_vendor,

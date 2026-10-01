@@ -168,7 +168,7 @@ async def get_model_options(
 
 
 def _nous_recommended_default() -> dict:
-    from hermes_cli.model_selection_defaults import (
+    from application_model_selection_defaults import (
         select_nous_recommended_default,
         selected_model_id,
     )
@@ -194,14 +194,16 @@ def get_recommended_default_model(provider: str = "", profile: Optional[str] = N
 
     if slug == "nous":
         try:
-            return _nous_recommended_default()
+            # Account entitlement and OAuth facts must use the requested profile.
+            with _config_profile_scope(profile):
+                return _nous_recommended_default()
         except Exception:
             _log.exception("GET /api/model/recommended-default (nous) failed")
             return {"provider": "nous", "model": "", "free_tier": None}
 
     try:
         from hermes_cli.inventory import build_models_payload, load_picker_context
-        from hermes_cli.model_selection_defaults import (
+        from application_model_selection_defaults import (
             select_silent_default,
             selected_model_id,
         )
