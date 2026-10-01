@@ -483,7 +483,11 @@ def _absorb_entry_models(grp: dict, entry: dict, active_model: Any) -> None:
     ``models:`` ids. The active selection alone never suppresses discovery, and a dict-shaped
     ``models:`` is metadata rather than an allowlist (see ``_models_config_is_allowlist``), so only
     list/string shapes pin the row."""
-    from hermes_cli.model_switch import _declared_model_ids, _entry_models_discovered, _models_config_is_allowlist
+    from models.catalog_configured import (
+        declared_model_ids as _declared_model_ids,
+        entry_models_discovered as _entry_models_discovered,
+        models_config_is_allowlist as _models_config_is_allowlist,
+    )
     _extend_unique(grp["models"], [active_model])
     models_field = entry.get("models")
     if _models_config_is_allowlist(models_field, _entry_models_discovered(entry)):
@@ -534,12 +538,7 @@ def _entry_credentials(entry: dict, *key_env_keys: str) -> tuple[Any, str, str]:
     return inline_api_key, key_env, inline_api_key or (f"env:{key_env}" if key_env else "")
 
 
-def _discover_flag(entry: dict):
-    """``discover_models`` (default True); ``"false"/"no"/"0"`` strings mean False."""
-    discover = entry.get("discover_models", True)
-    if isinstance(discover, str):
-        discover = discover.lower() not in {"false", "no", "0"}
-    return discover
+from models.catalog_configured import discovery_enabled as _discover_flag
 
 
 def _display_prefix(name: str) -> str:

@@ -16,6 +16,7 @@ from acp_adapter.model_catalog import _named_custom_provider_catalogs
 from acp_adapter.server import HermesACPAgent
 from acp_adapter.session import SessionManager
 from acp.schema import SessionModelState
+from models.catalog_endpoint import EndpointModels
 
 
 MANTLE_URL = "https://bedrock-mantle.us-east-1.api.aws/openai/v1"
@@ -45,8 +46,8 @@ class TestNamedCustomProviderCatalogs:
             }
         )
         with patch("hermes_cli.config.load_config", return_value=cfg), patch(
-            "hermes_cli.model_switch_providers._fetch_picker_live_models",
-            return_value=["model-a", "model-b"],
+            "models.catalog_endpoint.discover_endpoint_models",
+            return_value=EndpointModels(("model-a", "model-b")),
         ):
             catalogs = _named_custom_provider_catalogs()
 
@@ -70,7 +71,7 @@ class TestNamedCustomProviderCatalogs:
             }
         )
         with patch("hermes_cli.config.load_config", return_value=cfg), patch(
-            "hermes_cli.model_switch_providers._fetch_picker_live_models", return_value=None
+            "models.catalog_endpoint.discover_endpoint_models", return_value=None
         ):
             assert _named_custom_provider_catalogs() == []
 
@@ -86,7 +87,7 @@ class TestNamedCustomProviderCatalogs:
             }
         )
         with patch("hermes_cli.config.load_config", return_value=cfg), patch(
-            "hermes_cli.model_switch_providers._fetch_picker_live_models", return_value=None
+            "models.catalog_endpoint.discover_endpoint_models", return_value=None
         ):
             assert _named_custom_provider_catalogs() == []
 
@@ -103,7 +104,7 @@ class TestNamedCustomProviderCatalogs:
             ]
         )
         with patch("hermes_cli.config.load_config", return_value=cfg), patch(
-            "hermes_cli.model_switch_providers._fetch_picker_live_models", return_value=None
+            "models.catalog_endpoint.discover_endpoint_models", return_value=None
         ):
             catalogs = _named_custom_provider_catalogs()
 
@@ -120,11 +121,8 @@ class TestNamedCustomProviderCatalogs:
             }
         )
         with patch("hermes_cli.config.load_config", return_value=cfg), patch(
-            "hermes_cli.models_local.should_use_ollama_native_catalog",
-            return_value=True,
-        ), patch(
-            "hermes_cli.model_switch_providers._fetch_picker_live_models",
-            return_value=["qwen3:1.7b"],
+            "models.catalog_endpoint.discover_endpoint_models",
+            return_value=EndpointModels(("qwen3:1.7b",), native_ollama=True),
         ):
             catalogs = _named_custom_provider_catalogs()
 
@@ -139,11 +137,8 @@ class TestNamedCustomProviderCatalogs:
             ]
         )
         with patch("hermes_cli.config.load_config", return_value=cfg), patch(
-            "hermes_cli.models_local.should_use_ollama_native_catalog",
-            return_value=True,
-        ), patch(
-            "hermes_cli.model_switch_providers._fetch_picker_live_models",
-            return_value=["qwen3:1.7b"],
+            "models.catalog_endpoint.discover_endpoint_models",
+            return_value=EndpointModels(("qwen3:1.7b",), native_ollama=True),
         ) as fetch:
             catalogs = _named_custom_provider_catalogs()
 
@@ -160,14 +155,9 @@ class TestNamedCustomProviderCatalogs:
                 }
             }
         )
-        from hermes_cli.model_switch_providers import _NativePickerModelList
-
         with patch("hermes_cli.config.load_config", return_value=cfg), patch(
-            "hermes_cli.models_local.should_use_ollama_native_catalog",
-            return_value=True,
-        ), patch(
-            "hermes_cli.model_switch_providers._fetch_picker_live_models",
-            return_value=_NativePickerModelList(),
+            "models.catalog_endpoint.discover_endpoint_models",
+            return_value=EndpointModels((), native_ollama=True),
         ):
             assert _named_custom_provider_catalogs() == [
                 ("custom:ollama", "Ollama", [])
@@ -339,3 +329,72 @@ class TestModelStateIncludesNamedProviders:
 
         assert resp.models.current_model_id == "openrouter:model-c"
         assert [m.model_id for m in resp.models.available_models] == ["openrouter:model-c", "custom:openrouter:model-a"]
+
+def test_named_catalogue_reads_the_profile_scoped_key_not_launch_environment(monkeypatch):
+    from agent import secret_scope
+
+    monkeypatch.setenv("PROFILE_KEY", "launch-profile-key")
+    config = _cfg(providers={
+        "relay": {
+            "name": "Scoped Relay", "base_url": "https://relay.example/v1",
+            "key_env": "PROFILE_KEY", "default_model": "relay-model",
+        }
+    })
+    seen = []
+
+    def scoped_key(name, default=""):
+        seen.append(name)
+        return "routed-profile-key"
+
+    def fetch(**kwargs):
+        assert kwargs["api_key"] == "routed-profile-key"
+        return EndpointModels(("relay-model", "other"))
+
+    with patch("hermes_cli.config.load_config", return_value=config), patch.object(
+        secret_scope, "get_secret", scoped_key,
+    ), patch("models.catalog_endpoint.discover_endpoint_models", fetch):
+        catalogs = _named_custom_provider_catalogs()
+    assert seen == ["PROFILE_KEY"]
+    assert catalogs[0][2] == [("relay-model", ""), ("other", "")]
+
+
+def test_catalogue_refuses_unscoped_multiplex_secret_even_if_launch_env_has_it(monkeypatch):
+    from agent import secret_scope
+
+    monkeypatch.setenv("PROFILE_KEY", "launch-profile-key")
+    config = _cfg(providers={
+        "relay": {
+            "name": "Scoped Relay", "base_url": "https://relay.example/v1",
+            "key_env": "PROFILE_KEY", "default_model": "relay-model",
+        }
+    })
+
+    def fail_closed(*_args, **_kwargs):
+        raise secret_scope.UnscopedSecretError("PROFILE_KEY")
+
+    with patch("hermes_cli.config.load_config", return_value=config), patch.object(
+        secret_scope, "get_secret", fail_closed,
+    ):
+        with pytest.raises(secret_scope.UnscopedSecretError):
+            _named_custom_provider_catalogs()
+
+
+def test_native_allowlisted_models_survive_successfully_empty_probe(monkeypatch):
+    config = _cfg(providers={
+        "custom:ollama": {
+            "name": "Ollama", "base_url": "http://127.0.0.1:11434/v1",
+            "default_model": "chosen:latest", "models": ["chosen:latest"],
+        }
+    })
+    seen = {}
+
+    def fetch(**kwargs):
+        seen.update(kwargs)
+        return EndpointModels((), native_ollama=True)
+
+    with patch("hermes_cli.config.load_config", return_value=config), patch(
+        "models.catalog_endpoint.discover_endpoint_models", fetch,
+    ):
+        catalogs = _named_custom_provider_catalogs()
+    assert seen["preserve_native_models"] is True
+    assert catalogs == [("custom:ollama", "Ollama", [("chosen:latest", "")])]
