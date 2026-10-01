@@ -55,9 +55,9 @@ def _model_switch_skew_guard() -> Optional[str]:
 
 
 async def _persist_model_switch_to_config(result, config_path) -> None:
-    """Write-through a resolved /model switch to the profile config at ``config_path``, off the
-    event loop (the route comparison can do cold-start disk I/O)."""
-    from hermes_cli.model_switch import persist_model_selection
+    """Write-through a resolved /model switch to the profile config off-loop."""
+    from gateway.model_switch_persistence import persist_model_selection
+
     await asyncio.to_thread(persist_model_selection, result, config_path)
 
 
@@ -79,6 +79,7 @@ class _ModelSwitchContext:
     user_provs: Any = None
     custom_provs: Any = None
     excluded_provs: list = dataclasses.field(default_factory=list)
+    config: dict = dataclasses.field(default_factory=dict)
 
     def read_config(self) -> None:
         """Fill the current route from ``config_path``; fail-open to the defaults."""
@@ -87,6 +88,7 @@ class _ModelSwitchContext:
             cfg = _load_gateway_config(config_path=self.config_path)
             if not cfg:
                 return
+            self.config = cfg
             model_cfg = cfg.get("model", {})
             if isinstance(model_cfg, dict):
                 self.current_model = model_cfg.get("default", "")
@@ -140,29 +142,41 @@ class GatewayModelCommandsMixin:
         self, ctx: _ModelSwitchContext, raw_input: str, explicit_provider, source
     ):
         """Resolve a /model switch off-loop. Returns ``(result, None)`` or ``(None, error_text)``."""
-        from gateway.run import _load_gateway_config
-        from hermes_cli.model_switch import switch_model
+        from gateway.model_switch_preflight import enrich_model_switch_warnings
+        from gateway.model_switch_resolution import (
+            ModelSwitchResolutionError,
+            resolve_model_switch,
+        )
 
         skew_error = _model_switch_skew_guard()
         if skew_error:
             return None, skew_error
-        # Off-loop: switch_model() can hit a synchronous models.dev fetch (15s) on a cold cache.
-        result = await asyncio.to_thread(
-            switch_model, raw_input=raw_input, current_provider=ctx.current_provider,
-            current_model=ctx.current_model, current_base_url=ctx.current_base_url,
-            current_api_key=ctx.current_api_key, is_global=ctx.persist_global,
-            explicit_provider=explicit_provider, user_providers=ctx.user_provs,
-            custom_providers=ctx.custom_provs,
-        )
+        # Off-loop: resolution may hit synchronous catalog/validation probes.
+        try:
+            result = await asyncio.to_thread(
+                resolve_model_switch,
+                config=ctx.config,
+                raw_input=raw_input,
+                current_provider=ctx.current_provider,
+                current_model=ctx.current_model,
+                current_base_url=ctx.current_base_url,
+                current_api_key=ctx.current_api_key,
+                is_global=ctx.persist_global,
+                explicit_provider=explicit_provider,
+            )
+        except ModelSwitchResolutionError as exc:
+            return None, t("gateway.model.error_prefix", error=str(exc))
         if not result.success:
             return None, t("gateway.model.error_prefix", error=result.error_message)
         try:
-            from hermes_cli.context_switch_guard import enrich_model_switch_warnings_for_gateway
-            # Off-loop: merge_preflight_compression_warning() runs the sync provider probe ladder.
             await asyncio.to_thread(
-                enrich_model_switch_warnings_for_gateway, result, self, session_key=ctx.session_key,
-                source=source, custom_providers=ctx.custom_provs,
-                load_gateway_config=_load_gateway_config,
+                enrich_model_switch_warnings,
+                result,
+                self,
+                session_key=ctx.session_key,
+                source=source,
+                custom_providers=ctx.custom_provs,
+                config=ctx.config,
             )
         except Exception as exc:
             logger.debug("preflight-compression switch warning failed: %s", exc)
@@ -202,7 +216,7 @@ class GatewayModelCommandsMixin:
         Returns the warning for a ``--global`` switch whose ``config.yaml`` write or stale-override
         cleanup failed (the switch then stays a session override), else ``None``.
         """
-        from hermes_cli.model_switch import format_model_for_display
+        from gateway.model_switch_display import format_model_for_display
 
         # Persist the new model to the session DB so the dashboard shows the updated model (#34850).
         _sess_db = getattr(self, "_session_db", None)
@@ -291,8 +305,10 @@ class GatewayModelCommandsMixin:
         global_error: Optional[str] = None,
     ) -> str:
         """Confirmation text with full metadata (display form shortens opaque Palantir IDs)."""
-        from gateway.run import _load_gateway_config
-        from hermes_cli.model_switch import format_model_for_display, resolve_display_context_length_async
+        from gateway.model_switch_display import (
+            format_model_for_display,
+            resolve_display_context_length_async,
+        )
 
         lines = [
             t("gateway.model.switched", model=format_model_for_display(result.new_model)),
@@ -302,8 +318,8 @@ class GatewayModelCommandsMixin:
         mi = result.model_info
         model_cfg: dict = {}
         config_ctx = None
-        with contextlib.suppress(Exception):  # fail-open on config read errors
-            model_cfg = _load_gateway_config().get("model", {})
+        with contextlib.suppress(Exception):
+            model_cfg = ctx.config.get("model", {})
             if isinstance(model_cfg, dict) and model_cfg.get("context_length") is not None:
                 config_ctx = int(model_cfg["context_length"])
         if not isinstance(model_cfg, dict):
@@ -419,8 +435,8 @@ class GatewayModelCommandsMixin:
         self, event: MessageEvent, ctx: _ModelSwitchContext, profile_home
     ) -> Optional[str]:
         """``/model`` with no args: interactive picker where supported, else the text list."""
-        from hermes_cli.model_switch import list_authenticated_providers
-        from hermes_cli.providers import get_label
+        from hermes_cli.model_switch_providers import list_authenticated_providers
+        from providers import get_provider_label
 
         listing_kwargs = dict(
             current_provider=ctx.current_provider, current_base_url=ctx.current_base_url,
@@ -450,7 +466,14 @@ class GatewayModelCommandsMixin:
             if await self._send_model_picker(event, ctx.source, adapter, ctx.session_key, listing_kwargs, _on_model_selected):
                 return None  # Picker sent — adapter handles the response
 
-        lines = [t("gateway.model.current_label", model=ctx.current_model or "unknown", provider=get_label(ctx.current_provider)), ""]
+        lines = [
+            t(
+                "gateway.model.current_label",
+                model=ctx.current_model or "unknown",
+                provider=get_provider_label(ctx.current_provider),
+            ),
+            "",
+        ]
         try:  # off-loop: listing still reads config/disk cache synchronously (#41289)
             providers = await asyncio.to_thread(list_authenticated_providers, max_models=5, **listing_kwargs)
             lines.extend(_model_provider_listing_lines(providers))
@@ -471,13 +494,31 @@ class GatewayModelCommandsMixin:
         rendered confirm buttons itself.
         """
         try:
-            from hermes_cli.model_selection_guards import (
-                combined_selection_warning, selection_context_for_agent)
+            from gateway.model_selection_guards import (
+                combined_selection_warning,
+                selection_context_for_agent,
+            )
+            model_cfg = ctx.config.get("model", {}) if isinstance(ctx.config, dict) else {}
+            threshold = (
+                model_cfg.get("switch_context_confirm_tokens", 100_000)
+                if isinstance(model_cfg, dict)
+                else 100_000
+            )
+            try:
+                threshold = int(threshold)
+            except (TypeError, ValueError):
+                threshold = 100_000
             warning = await asyncio.to_thread(
-                combined_selection_warning, result.new_model, provider=result.target_provider,
+                combined_selection_warning,
+                result.new_model,
+                provider=result.target_provider,
                 base_url=result.base_url or ctx.current_base_url or "",
-                api_key=result.api_key or ctx.current_api_key or "", model_info=result.model_info,
-                selection_context=selection_context_for_agent(self._cached_agent_for(ctx.session_key)),
+                api_key=result.api_key or ctx.current_api_key or "",
+                model_info=result.model_info,
+                selection_context=selection_context_for_agent(
+                    self._cached_agent_for(ctx.session_key)
+                ),
+                context_threshold=threshold,
             )
         except Exception:
             warning = None
@@ -506,13 +547,16 @@ class GatewayModelCommandsMixin:
             return await self._handle_model_command_locked(event)
 
     async def _handle_model_command_locked(self, event: MessageEvent) -> Optional[str]:
+        from gateway.model_command_request import (
+            parse_model_command,
+            resolve_model_persistence,
+        )
         from gateway.run import _hermes_home
-        from hermes_cli.model_switch import parse_model_switch_args, resolve_persist_behavior
 
         profile_home = None
         if getattr(getattr(self, "config", None), "multiplex_profiles", False):
             profile_home = self._resolve_profile_home_for_source(event.source)
-        request = parse_model_switch_args(event.get_command_args().strip())  # single-owner parser
+        request = parse_model_command(event.get_command_args().strip())
         if request.errors:
             return f"❌ {request.error_messages()[0]}"  # gateway decoration over canonical copy
         if request.force_refresh:  # bust the disk cache so the picker shows live data
@@ -540,15 +584,13 @@ class GatewayModelCommandsMixin:
             session_key=session_key,
             source=source,
             config_path=(profile_home or _hermes_home) / "config.yaml",
-            persist_global=resolve_persist_behavior(
-                request.is_global, request.is_session, is_once=request.is_once,
-                explicit_provider=request.explicit_provider,
-            ),
+            persist_global=False,
             one_turn=request.is_once,
             reasoning_effort=request.reasoning_effort,
             restore_snapshot=self._snapshot_session_model_override(session_key) if request.is_once else None,
         )
         ctx.read_config()
+        ctx.persist_global = resolve_model_persistence(ctx.config, request)
         ctx.apply_override(self._session_model_overrides.get(session_key, {}))
         if not request.target and not request.explicit_provider:
             return await self._model_listing_reply(event, ctx, profile_home)

@@ -430,4 +430,39 @@ Ruff, `py_compile`, and `git diff --check` are clean. Scoped ownership guards
 reject any return of `hermes_cli.model_switch` / CLI selection ownership in the
 5.8.5.3 path and permit only the exact Phase 6 runtime-provider credential seam.
 
-5.8.5.4 remains next.
+### 5.8.5.4 — gateway /model orchestration
+
+`gateway/slash_commands_model.py` no longer delegates model switching, parsing,
+persistence policy, confirmation guards, display formatting, or preflight
+compression warning orchestration to `hermes_cli.model_switch` or its old guard
+modules.
+
+- `gateway/model_command_request.py` owns typed `/model` parsing and
+  session/global/once persistence scope.
+- `gateway/model_switch_resolution.py` consumes the shared gateway
+  selection/routing seam from 5.8.5.3 and returns the application result shape.
+- `gateway/model_switch_enrichment.py` adds validation, display/provider facts,
+  request overrides, metadata, native-compaction capabilities, and warnings
+  without taking over canonical selection or invocation routing.
+- `gateway/model_switch_persistence.py` owns config write-through and stale
+  route/context credential clearing.
+- `gateway/model_switch_display.py` owns display normalization and asynchronous
+  context-length presentation.
+- `gateway/model_selection_guards.py` owns cost/data/context confirmation
+  policy; `gateway/model_switch_preflight.py` owns the gateway-specific
+  preflight-compression warning.
+- Cached-agent swap/rollback, DB/session override persistence, one-turn restore,
+  and global-config precedence remain in the gateway coordinator.
+- The shared session resolver now returns acquired API-key material to the
+  application coordinator while the Phase 6 credential seam remains
+  `hermes_cli.runtime_provider.resolve_runtime_provider`.
+- Picker/catalogue inventory and cache-refresh dependencies remain explicitly
+  deferred to 5.8.5.6; no compatibility facade was introduced for the removed
+  model-switch coordinator.
+
+Verification: direct gateway ownership and architecture set **24 passed**;
+broader model/session gateway regression set **157 passed, 1 skipped**. Ruff,
+`py_compile`, ownership searches, and final diff checks are clean. All new
+gateway refactor modules are at or below 200 lines.
+
+5.8.5.5 remains next.

@@ -388,3 +388,41 @@ def test_phase_5_8_5_session_mutation_is_gateway_owned():
         ):
             runtime_imports.extend(alias.name for alias in node.names)
     assert runtime_imports == ["resolve_runtime_provider"]
+
+def test_phase_5_8_5_model_command_orchestration_is_gateway_owned():
+    paths = (
+        ROOT / "gateway" / "slash_commands_model.py",
+        ROOT / "gateway" / "model_command_request.py",
+        ROOT / "gateway" / "model_switch_resolution.py",
+        ROOT / "gateway" / "model_switch_enrichment.py",
+        ROOT / "gateway" / "model_switch_persistence.py",
+        ROOT / "gateway" / "model_switch_display.py",
+        ROOT / "gateway" / "model_selection_guards.py",
+        ROOT / "gateway" / "model_switch_preflight.py",
+    )
+    forbidden = (
+        "from hermes_cli.model_switch import",
+        "import hermes_cli.model_switch",
+        "hermes_cli.model_selection_guards",
+        "hermes_cli.context_switch_guard",
+    )
+    offenders = []
+    for source_path in paths:
+        source = source_path.read_text(encoding="utf-8")
+        for dependency in forbidden:
+            if dependency in source:
+                offenders.append(f"{source_path.relative_to(ROOT)} -> {dependency}")
+    assert offenders == []
+
+    assert "parse_model_command" in _definitions(
+        ROOT / "gateway" / "model_command_request.py"
+    )
+    assert "resolve_model_switch" in _definitions(
+        ROOT / "gateway" / "model_switch_resolution.py"
+    )
+    assert "persist_model_selection" in _definitions(
+        ROOT / "gateway" / "model_switch_persistence.py"
+    )
+    assert "combined_selection_warning" in _definitions(
+        ROOT / "gateway" / "model_selection_guards.py"
+    )

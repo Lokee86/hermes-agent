@@ -15,16 +15,8 @@ from providers import match_configured_provider, normalize_provider
 from providers.routing import InvocationRequest, resolve_invocation_route
 from utils import base_url_origin
 
-from gateway.model_aliases import (
-    alias_api_key,
-    model_aliases_from_config,
-    provider_reference_context,
-)
-from gateway.session_model_facts import (
-    configured_model_matches,
-    provider_facts,
-    static_detection,
-)
+from gateway.model_aliases import alias_api_key, model_aliases_from_config, provider_reference_context
+from gateway.session_model_facts import configured_model_matches, provider_facts, static_detection
 
 
 @dataclass(frozen=True, slots=True)
@@ -35,6 +27,7 @@ class SessionModelResolution:
     api_mode: str
     runtime_kind: str
     provider_changed: bool
+    api_key: str = ""
 
 
 def _clean(value: Any) -> str:
@@ -64,6 +57,7 @@ def resolve_session_model(
     explicit_provider: str,
     current_provider: str,
     current_base_url: str,
+    current_api_key: str = "",
 ) -> SessionModelResolution:
     """Resolve one explicit session mutation without a CLI model coordinator."""
     raw = _clean(raw_model)
@@ -154,6 +148,7 @@ def resolve_session_model(
         runtime = {
             "provider": target_provider,
             "base_url": current_base_url,
+            "api_key": current_api_key,
             "api_mode": "",
             "runtime_kind": "",
         }
@@ -166,6 +161,7 @@ def resolve_session_model(
         runtime = {
             "provider": target_provider,
             "base_url": explicit_base_url,
+            "api_key": current_api_key,
             "api_mode": "",
             "runtime_kind": "",
         }
@@ -194,6 +190,7 @@ def resolve_session_model(
         api_mode=route.api_mode,
         runtime_kind=route.runtime_kind,
         provider_changed=route.provider != normalize_provider(current),
+        api_key=_clean(runtime.get("api_key")),
     )
 
 
