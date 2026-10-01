@@ -164,7 +164,7 @@ def _public_url_from_redirect(redirect_uri: Optional[str]) -> str:
 def cmd_dashboard_register(args) -> None:
     """Register a self-hosted dashboard OAuth client with Nous Portal."""
     from auth.errors import AuthError
-    from hermes_cli.auth import resolve_nous_access_token
+    from auth.providers.nous import resolve_nous_access_token
     from hermes_cli.config import is_managed, save_env_value
     # Managed installs get the client id stamped in by the orchestrator (save_env_value refuses).
     if is_managed():

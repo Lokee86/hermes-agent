@@ -38,7 +38,7 @@ def _quarantined_nous_error(exc: BaseException) -> BaseException:
     """
     from auth.errors import AuthError
     from auth.provider_state import get_provider_auth_state
-    from hermes_cli.auth_nous import _terminal_quarantine_marker
+    from auth.providers.nous import _terminal_quarantine_marker
 
     with contextlib.suppress(Exception):
         marker = _terminal_quarantine_marker(get_provider_auth_state("nous") or {})

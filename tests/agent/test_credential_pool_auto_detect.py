@@ -38,8 +38,8 @@ class TestCredentialPoolPreservedOnAutoDetect:
         with patch("agent.auxiliary_client.resolve_provider_client", return_value=(None, None)), \
              patch("model_tools.get_tool_definitions", return_value=[]), \
              patch('agent.anthropic_adapter.build_anthropic_client', return_value=MagicMock()), \
-             patch('agent.anthropic_credentials.resolve_anthropic_token', return_value=''), \
-             patch('agent.anthropic_credentials._is_oauth_token', return_value=False), \
+             patch('auth.providers.anthropic.resolve_anthropic_token', return_value=''), \
+             patch('auth.providers.anthropic._is_oauth_token', return_value=False), \
              patch('agent.azure_identity_adapter.is_token_provider', return_value=False), \
              patch('hermes_cli.model_normalize.normalize_model_for_provider', return_value='test-model'), \
              patch('auth.credential_pool.load_pool', return_value=MagicMock()), \

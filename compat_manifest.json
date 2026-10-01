@@ -156,7 +156,7 @@
    "facade": "agent.anthropic_adapter",
    "name": "CredentialPersistError",
    "kind": "moved-lazy",
-   "target": "agent.anthropic_credentials"
+   "target": "auth.providers.anthropic"
   },
   {
    "facade": "agent.anthropic_adapter",
@@ -186,7 +186,7 @@
    "facade": "agent.anthropic_adapter",
    "name": "claude_code_credentials_path",
    "kind": "moved-lazy",
-   "target": "agent.anthropic_credentials"
+   "target": "auth.providers.anthropic"
   },
   {
    "facade": "agent.anthropic_adapter",
@@ -204,13 +204,13 @@
    "facade": "agent.anthropic_adapter",
    "name": "is_claude_code_token_valid",
    "kind": "moved-lazy",
-   "target": "agent.anthropic_credentials"
+   "target": "auth.providers.anthropic"
   },
   {
    "facade": "agent.anthropic_adapter",
    "name": "is_rotation_consumed_uncommitted",
    "kind": "moved-lazy",
-   "target": "agent.anthropic_credentials"
+   "target": "auth.providers.anthropic"
   },
   {
    "facade": "agent.anthropic_adapter",
@@ -222,7 +222,7 @@
    "facade": "agent.anthropic_adapter",
    "name": "mark_rotation_consumed_uncommitted",
    "kind": "moved-lazy",
-   "target": "agent.anthropic_credentials"
+   "target": "auth.providers.anthropic"
   },
   {
    "facade": "agent.anthropic_adapter",
@@ -240,37 +240,37 @@
    "facade": "agent.anthropic_adapter",
    "name": "read_claude_code_credentials",
    "kind": "moved-lazy",
-   "target": "agent.anthropic_credentials"
+   "target": "auth.providers.anthropic"
   },
   {
    "facade": "agent.anthropic_adapter",
    "name": "read_hermes_oauth_credentials",
    "kind": "moved-lazy",
-   "target": "agent.anthropic_credentials"
+   "target": "auth.providers.anthropic"
   },
   {
    "facade": "agent.anthropic_adapter",
    "name": "refresh_anthropic_oauth_pure",
    "kind": "moved-lazy",
-   "target": "agent.anthropic_credentials"
+   "target": "auth.providers.anthropic"
   },
   {
    "facade": "agent.anthropic_adapter",
    "name": "resolve_anthropic_token",
    "kind": "moved-lazy",
-   "target": "agent.anthropic_credentials"
+   "target": "auth.providers.anthropic"
   },
   {
    "facade": "agent.anthropic_adapter",
    "name": "run_hermes_oauth_login_pure",
    "kind": "moved-lazy",
-   "target": "agent.anthropic_credentials"
+   "target": "auth.providers.anthropic"
   },
   {
    "facade": "agent.anthropic_adapter",
    "name": "run_oauth_setup_token",
    "kind": "moved-lazy",
-   "target": "agent.anthropic_credentials"
+   "target": "auth.providers.anthropic"
   },
   {
    "facade": "agent.anthropic_adapter",
@@ -2778,25 +2778,25 @@
    "facade": "hermes_cli.auth",
    "name": "CODEX_OAUTH_USER_AGENT",
    "kind": "moved-lazy",
-   "target": "hermes_cli.auth_constants"
+   "target": "hermes_cli.auth_codex"
   },
   {
    "facade": "hermes_cli.auth",
    "name": "CODEX_QUOTA_PROBE_MIN_INTERVAL_SECONDS",
    "kind": "moved-lazy",
-   "target": "hermes_cli.auth_codex"
+   "target": "auth.providers.codex_quota"
   },
   {
    "facade": "hermes_cli.auth",
    "name": "DEFAULT_SPOTIFY_REDIRECT_URI",
    "kind": "moved-lazy",
-   "target": "hermes_cli.auth_constants"
+   "target": "auth.constants"
   },
   {
    "facade": "hermes_cli.auth",
    "name": "DEVICE_AUTH_POLL_INTERVAL_CAP_SECONDS",
    "kind": "moved-lazy",
-   "target": "hermes_cli.auth_constants"
+   "target": "auth.constants"
   },
   {
    "facade": "hermes_cli.auth",
@@ -2808,37 +2808,37 @@
    "facade": "hermes_cli.auth",
    "name": "MINIMAX_OAUTH_GRANT_TYPE",
    "kind": "moved-lazy",
-   "target": "hermes_cli.auth_constants"
+   "target": "auth.constants"
   },
   {
    "facade": "hermes_cli.auth",
    "name": "NOUS_INFERENCE_INVOKE_SCOPE",
    "kind": "moved-lazy",
-   "target": "hermes_cli.auth_constants"
+   "target": "auth.constants"
   },
   {
    "facade": "hermes_cli.auth",
    "name": "NOUS_SHARED_STORE_FILENAME",
    "kind": "moved-lazy",
-   "target": "hermes_cli.auth_nous"
+   "target": "auth.providers.nous_store"
   },
   {
    "facade": "hermes_cli.auth",
    "name": "OAUTH_OVER_SSH_DOCS_URL",
    "kind": "moved-lazy",
-   "target": "hermes_cli.auth_constants"
+   "target": "auth.constants"
   },
   {
    "facade": "hermes_cli.auth",
    "name": "QWEN_OAUTH_CLIENT_ID",
    "kind": "moved-lazy",
-   "target": "hermes_cli.auth_constants"
+   "target": "auth.constants"
   },
   {
    "facade": "hermes_cli.auth",
    "name": "QWEN_OAUTH_TOKEN_URL",
    "kind": "moved-lazy",
-   "target": "hermes_cli.auth_constants"
+   "target": "auth.constants"
   },
   {
    "facade": "hermes_cli.auth",
@@ -2850,13 +2850,13 @@
    "facade": "hermes_cli.auth",
    "name": "SPOTIFY_ACCESS_TOKEN_REFRESH_SKEW_SECONDS",
    "kind": "moved-lazy",
-   "target": "hermes_cli.auth_constants"
+   "target": "auth.constants"
   },
   {
    "facade": "hermes_cli.auth",
    "name": "SPOTIFY_DASHBOARD_URL",
    "kind": "moved-lazy",
-   "target": "hermes_cli.auth_constants"
+   "target": "auth.constants"
   },
   {
    "facade": "hermes_cli.auth",
@@ -2868,19 +2868,19 @@
    "facade": "hermes_cli.auth",
    "name": "XAI_OAUTH_DEVICE_CODE_URL",
    "kind": "moved-lazy",
-   "target": "hermes_cli.auth_constants"
+   "target": "auth.constants"
   },
   {
    "facade": "hermes_cli.auth",
    "name": "XAI_OAUTH_DISCOVERY_URL",
    "kind": "moved-lazy",
-   "target": "hermes_cli.auth_constants"
+   "target": "auth.constants"
   },
   {
    "facade": "hermes_cli.auth",
    "name": "XAI_OAUTH_ISSUER",
    "kind": "moved-lazy",
-   "target": "hermes_cli.auth_constants"
+   "target": "auth.constants"
   },
   {
    "facade": "hermes_cli.auth",
@@ -2904,7 +2904,7 @@
    "facade": "hermes_cli.auth",
    "name": "refresh_nous_oauth_pure",
    "kind": "moved-lazy",
-   "target": "hermes_cli.auth_nous"
+   "target": "auth.providers.nous"
   },
   {
    "facade": "hermes_cli.auth",

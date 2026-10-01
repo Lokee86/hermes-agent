@@ -7,6 +7,8 @@ Origin module; cohesive clusters live in siblings and are re-imported here so
 """
 
 from __future__ import annotations
+from hermes_cli.config_credentials import credential_pool_environment as _phase6_auth_environment
+
 
 import contextvars
 import copy
@@ -1203,7 +1205,7 @@ def resolve_fast_mode_overrides(
 def _first_exchangeable_copilot_token(raw_tokens) -> str:
     """Exchange stored GitHub tokens in order; the first that validates AND exchanges wins (every
     entry is tried so a later valid token survives an earlier malformed one)."""
-    from hermes_cli.copilot_auth import exchange_copilot_token, validate_copilot_token
+    from auth.providers.copilot import exchange_copilot_token, validate_copilot_token
 
     for raw in raw_tokens:
         raw = str(raw or "").strip()
@@ -1313,9 +1315,9 @@ def _codex_catalog(normalized: str, force_refresh: bool) -> list[str]:
     # gateway key is only ever sent to that gateway, never to the chatgpt.com default.
     base_url = None
     try:
-        from hermes_cli.auth import _codex_access_token_is_expiring, resolve_codex_runtime_credentials
+        from auth.providers.codex import _codex_access_token_is_expiring, resolve_codex_runtime_credentials
 
-        creds = resolve_codex_runtime_credentials(read_only=True)
+        creds = resolve_codex_runtime_credentials(read_only=True, environment=_phase6_auth_environment())
         access_token, base_url = creds.get("api_key"), creds.get("base_url")
         if _codex_access_token_is_expiring(access_token, 0):
             access_token = None
@@ -1371,9 +1373,10 @@ def _copilot_catalog(normalized: str, force_refresh: bool) -> Optional[list[str]
 
 def _nous_catalog(normalized: str, force_refresh: bool) -> Optional[list[str]]:
     try:
-        from hermes_cli.auth import fetch_nous_models, resolve_nous_runtime_credentials
+        from hermes_cli.auth import fetch_nous_models
+        from auth.providers.nous import resolve_nous_runtime_credentials
 
-        creds = resolve_nous_runtime_credentials()
+        creds = resolve_nous_runtime_credentials(environment=_phase6_auth_environment())
         if creds:
             live = fetch_nous_models(api_key=creds.get("api_key", ""), inference_base_url=creds.get("base_url", ""))
             if live:
@@ -2108,12 +2111,12 @@ def _fetch_anthropic_models(
     ``api_key``, else ``resolve_anthropic_token()`` (env / OAuth / Claude Code), else a read-only
     API-key credential_pool entry."""
     try:
-        from agent.anthropic_credentials import resolve_anthropic_token, _is_oauth_token
+        from auth.providers.anthropic import resolve_anthropic_token, _is_oauth_token
     except ImportError:
         return None
 
     resolved_base_url = base_url
-    token = (api_key or "").strip() or resolve_anthropic_token()
+    token = (api_key or "").strip() or resolve_anthropic_token(environment=_phase6_auth_environment())
     if not token:
         # A pool credential and its endpoint are one security boundary — never pair the pool key
         # with a caller-provided endpoint.
@@ -2173,7 +2176,7 @@ def _payload_items(payload: Any) -> list[dict[str, Any]]:
 def copilot_default_headers(*, is_agent_turn: bool = True) -> dict[str, str]:
     """Standard headers for Copilot API requests."""
     try:
-        from hermes_cli.copilot_auth import copilot_request_headers
+        from auth.providers.copilot import copilot_request_headers
         return copilot_request_headers(is_agent_turn=is_agent_turn)
     except ImportError:
         return {

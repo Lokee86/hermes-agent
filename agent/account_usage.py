@@ -1,4 +1,6 @@
 from __future__ import annotations
+from hermes_cli.config_credentials import credential_pool_environment as _phase6_auth_environment
+
 
 import logging
 import math
@@ -8,9 +10,9 @@ from typing import TYPE_CHECKING, Any, Callable, Optional
 
 import httpx
 
-from agent.anthropic_credentials import _is_oauth_token, resolve_anthropic_token
+from auth.providers.anthropic import _is_oauth_token, resolve_anthropic_token
 from auth.errors import AuthError
-from hermes_cli.auth import _read_codex_tokens, resolve_codex_runtime_credentials
+from auth.providers.codex import _read_codex_tokens, resolve_codex_runtime_credentials
 from hermes_cli.auth_codex import _codex_pool_route_base_url
 from hermes_cli.runtime_provider import resolve_runtime_provider
 from hermes_time import safe_strftime
@@ -349,7 +351,7 @@ def _resolve_codex_usage_credentials(
         resolve_kwargs = {"refresh_if_expiring": True}
         if force_refresh:
             resolve_kwargs["force_refresh"] = True
-        creds = resolve_codex_runtime_credentials(**resolve_kwargs)
+        creds = resolve_codex_runtime_credentials(**resolve_kwargs, environment=_phase6_auth_environment())
         account_id: Optional[str] = None
         try:
             tokens = _read_codex_tokens().get("tokens") or {}
@@ -524,7 +526,7 @@ def _codex_reset_outcome(body: dict, available: int) -> CodexResetRedeemResult:
         # Quota is restored upstream — lift persisted pool cooldowns so the credential isn't frozen behind a
         # stale ``last_error_reset_at``.
         try:
-            from hermes_cli.auth import clear_codex_pool_quota_cooldowns
+            from auth.providers.codex_quota import clear_codex_pool_quota_cooldowns
             clear_codex_pool_quota_cooldowns()
         except Exception:
             logger.debug("Failed to clear Codex pool cooldowns after reset redemption", exc_info=True)
@@ -591,7 +593,7 @@ def redeem_codex_reset_credit(
 def _fetch_anthropic_account_usage(
     base_url: Optional[str] = None, api_key: Optional[str] = None
 ) -> Optional[AccountUsageSnapshot]:
-    token = (resolve_anthropic_token() or "").strip()
+    token = (resolve_anthropic_token(environment=_phase6_auth_environment()) or "").strip()
     if not token:
         return None
     if not _is_oauth_token(token):

@@ -167,7 +167,7 @@ def test_model_command_prompts_to_reuse_or_reauthenticate_codex_session(monkeypa
         lambda: {"logged_in": True, "source": "hermes-auth-store"},
     )
     monkeypatch.setattr(
-        "hermes_cli.auth.resolve_codex_runtime_credentials",
+        'auth.providers.codex.resolve_codex_runtime_credentials',
         lambda *args, **kwargs: {"api_key": "fresh-codex-token"},
     )
 

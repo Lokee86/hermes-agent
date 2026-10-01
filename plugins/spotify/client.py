@@ -5,6 +5,8 @@ endpoint paths live with their tool handlers in ``tools.py``.
 """
 
 from __future__ import annotations
+from hermes_cli.config_credentials import credential_pool_environment as _phase6_auth_environment
+
 
 from typing import Any, Dict, Iterable, Optional
 from urllib.parse import urlparse
@@ -12,7 +14,7 @@ from urllib.parse import urlparse
 import httpx
 
 from auth.errors import AuthError
-from hermes_cli.auth import resolve_spotify_runtime_credentials
+from auth.providers.spotify import resolve_spotify_runtime_credentials
 
 
 class SpotifyError(RuntimeError): """Base Spotify tool error."""
@@ -36,7 +38,7 @@ class SpotifyClient:
 
     def _resolve_runtime(self, *, force_refresh: bool = False, refresh_if_expiring: bool = True) -> Dict[str, Any]:
         try:
-            return resolve_spotify_runtime_credentials(force_refresh=force_refresh, refresh_if_expiring=refresh_if_expiring)
+            return resolve_spotify_runtime_credentials(force_refresh=force_refresh, refresh_if_expiring=refresh_if_expiring, environment=_phase6_auth_environment())
         except AuthError as exc:
             raise SpotifyAuthRequiredError(str(exc)) from exc
 

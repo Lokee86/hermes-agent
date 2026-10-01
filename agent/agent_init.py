@@ -8,6 +8,8 @@ Symbols that tests patch on ``run_agent.*`` (``OpenAI``, ``get_tool_definitions`
 """
 
 from __future__ import annotations
+from hermes_cli.config_credentials import credential_pool_environment as _phase6_auth_environment
+
 
 import logging
 import os
@@ -725,7 +727,7 @@ def _print_key_banner(key, label: str, warn_missing: bool = False) -> None:
 def _init_anthropic_client(agent, api_key, base_url, _provider_timeout):
     """anthropic_messages: native Anthropic SDK (or AnthropicBedrock for Bedrock+Claude)."""
     from agent.anthropic_adapter import build_anthropic_client
-    from agent.anthropic_credentials import resolve_anthropic_token
+    from auth.providers.anthropic import resolve_anthropic_token
     agent.client = None
     agent._client_kwargs = {}
     agent._anthropic_base_url = base_url
@@ -740,14 +742,14 @@ def _init_anthropic_client(agent, api_key, base_url, _provider_timeout):
     # must use their own key or Anthropic credentials leak to third-party endpoints.
     # Falling back would send Anthropic credentials to third-party endpoints (Fixes #1739, #minimax-401).
     _is_native_anthropic = agent.provider == "anthropic"
-    effective_key = api_key or (resolve_anthropic_token(model=getattr(agent, "model", None)) if _is_native_anthropic else None) or ""
+    effective_key = api_key or (resolve_anthropic_token(model=getattr(agent, "model", None), environment=_phase6_auth_environment()) if _is_native_anthropic else None) or ""
 
     # MiniMax OAuth tokens live ~15 min and the SDK freezes api_key at construction, so use a
     # callable provider: build_anthropic_client mints a fresh bearer per request (re-reading
     # auth.json, so other processes' refreshes are seen).
     if agent.provider == "minimax-oauth" and isinstance(effective_key, str) and effective_key:
         try:
-            from hermes_cli.auth import build_minimax_oauth_token_provider
+            from auth.providers.minimax import build_minimax_oauth_token_provider
             effective_key = build_minimax_oauth_token_provider()
         except Exception as _mm_exc:  # noqa: BLE001 — never block startup on this
             logging.getLogger(__name__).warning(
@@ -763,7 +765,7 @@ def _init_anthropic_client(agent, api_key, base_url, _provider_timeout):
     # providers (MiniMax, Kimi, GLM, LiteLLM proxies) that accept the Anthropic protocol must never
     # trip OAuth code paths — doing so injects Claude-Code identity headers and system prompts that
     # cause 401/403 on their endpoints. See #1739.
-    from agent.anthropic_credentials import anthropic_route_is_oauth
+    from auth.providers.anthropic import anthropic_route_is_oauth
     agent._is_anthropic_oauth = anthropic_route_is_oauth(base_url, effective_key, provider=agent.provider)
     agent._anthropic_client = build_anthropic_client(effective_key, base_url, timeout=_provider_timeout)
     if not agent.quiet_mode:

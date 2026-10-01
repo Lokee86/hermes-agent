@@ -1,3 +1,9 @@
+
+import auth.providers.codex_quota as _auth_auth_providers_codex_quota
+
+from hermes_cli.config_credentials import credential_pool_environment as _phase6_auth_environment
+
+import auth.providers.codex as _auth_auth_providers_codex
 """A status snapshot observes the credential pool; it never leases (refreshes / rotates) an entry.
 
 ``get_codex_auth_status`` / ``get_xai_oauth_auth_status`` back every credential-gated listing
@@ -18,7 +24,8 @@ import pytest
 from auth import credential_pool
 from auth.credential_pool import load_pool
 from auth.errors import AuthError
-from hermes_cli.auth import DEFAULT_CODEX_BASE_URL, get_codex_auth_status
+from auth.constants import DEFAULT_CODEX_BASE_URL
+from hermes_cli.auth import get_codex_auth_status
 
 
 def _jwt_with_exp(offset_seconds: int) -> str:
@@ -54,7 +61,7 @@ def _pool_only_codex_home(tmp_path, monkeypatch, *, access_tokens: list):
         raise AuthError("Codex token refresh failed with status 503.", provider="openai-codex",
                         code="codex_refresh_failed")
 
-    monkeypatch.setattr(auth, "refresh_codex_oauth_pure", _transient_failure)
+    monkeypatch.setattr(_auth_auth_providers_codex, "refresh_codex_oauth_pure", _transient_failure)
     return home, refresh_calls
 
 
@@ -101,7 +108,7 @@ def test_status_snapshot_leaves_round_robin_order_and_counts_untouched(tmp_path,
 
 def test_read_only_resolver_never_probes_or_mutates_an_exhausted_pool(tmp_path, monkeypatch):
     import hermes_cli.auth_codex as auth_codex
-    from hermes_cli.auth import resolve_codex_runtime_credentials
+    from auth.providers.codex import resolve_codex_runtime_credentials
 
     home, _ = _pool_only_codex_home(
         tmp_path, monkeypatch, access_tokens=[_jwt_with_exp(-3600)])
@@ -118,18 +125,18 @@ def test_read_only_resolver_never_probes_or_mutates_an_exhausted_pool(tmp_path, 
     calls = []
 
     monkeypatch.setattr(
-        auth_codex,
+        _auth_auth_providers_codex_quota,
         "_probe_codex_pool_entry_quota_restored",
-        lambda _entry: calls.append("probe") or True,
+        lambda _entry, **_auth_settings: calls.append("probe") or True,
     )
     monkeypatch.setattr(
-        auth_codex,
+        _auth_auth_providers_codex_quota,
         "clear_codex_pool_quota_cooldowns",
         lambda: calls.append("clear") or 1,
     )
 
     with pytest.raises(AuthError):
-        resolve_codex_runtime_credentials(read_only=True)
+        resolve_codex_runtime_credentials(read_only=True, environment=_phase6_auth_environment())
 
     assert calls == []
     assert (home / "auth.json").read_bytes() == before
@@ -158,7 +165,7 @@ def _singleton_tokens(home) -> dict:
 def test_status_snapshot_never_adopts_codex_cli_tokens(tmp_path, monkeypatch):
     """#68004: a Hermes store missing its refresh_token is recovery-eligible on the runtime path, but
     ``hermes status`` / ``hermes doctor`` must not import the Codex CLI's single-use token family."""
-    from hermes_cli.auth import resolve_codex_runtime_credentials
+    from auth.providers.codex import resolve_codex_runtime_credentials
 
     stale = {"access_token": _jwt_with_exp(-60)}
     home = _singleton_only_codex_home(
@@ -170,7 +177,7 @@ def test_status_snapshot_never_adopts_codex_cli_tokens(tmp_path, monkeypatch):
     assert _singleton_tokens(home) == stale, "a status read persisted the Codex CLI login into auth.json"
 
     # Control: the runtime resolver still self-heals from the CLI file.
-    assert resolve_codex_runtime_credentials()["source"] == "hermes-auth-store"
+    assert resolve_codex_runtime_credentials(environment=_phase6_auth_environment())["source"] == "hermes-auth-store"
     assert _singleton_tokens(home)["refresh_token"] == "cli-refresh"
 
 
@@ -182,7 +189,7 @@ def test_status_snapshot_never_refreshes_an_expired_singleton(tmp_path, monkeypa
     ``device_code`` pool entry and ``pool.peek`` would answer for a still-valid token, so only an
     expired one drives ``get_codex_auth_status()`` down to the singleton resolver under test."""
     import hermes_cli.auth as auth
-    from hermes_cli.auth import resolve_codex_runtime_credentials
+    from auth.providers.codex import resolve_codex_runtime_credentials
 
     expired = {"access_token": _jwt_with_exp(-60), "refresh_token": "singleton-refresh"}
     home = _singleton_only_codex_home(
@@ -193,7 +200,7 @@ def test_status_snapshot_never_refreshes_an_expired_singleton(tmp_path, monkeypa
         refresh_calls.append(refresh_token)
         return {"access_token": _jwt_with_exp(86400), "refresh_token": "rotated-refresh"}
 
-    monkeypatch.setattr(auth, "refresh_codex_oauth_pure", _rotate)
+    monkeypatch.setattr(_auth_auth_providers_codex, "refresh_codex_oauth_pure", _rotate)
 
     status = get_codex_auth_status()
 
@@ -203,11 +210,11 @@ def test_status_snapshot_never_refreshes_an_expired_singleton(tmp_path, monkeypa
     assert _singleton_tokens(home) == expired
 
     # Secondary: read_only wins over force_refresh on the resolver itself.
-    resolve_codex_runtime_credentials(force_refresh=True, read_only=True)
+    resolve_codex_runtime_credentials(force_refresh=True, read_only=True, environment=_phase6_auth_environment())
     assert refresh_calls == [] and _singleton_tokens(home) == expired
 
     # Control: the runtime path refreshes and persists the rotated pair.
-    resolve_codex_runtime_credentials()
+    resolve_codex_runtime_credentials(environment=_phase6_auth_environment())
     assert refresh_calls == ["singleton-refresh"]
     assert _singleton_tokens(home)["refresh_token"] == "rotated-refresh"
 
@@ -245,7 +252,7 @@ def test_model_picker_catalog_never_refreshes_the_stored_codex_login(tmp_path, m
         refresh_calls.append(refresh_token)
         return {"access_token": _jwt_with_exp(86400), "refresh_token": "rotated-refresh"}
 
-    monkeypatch.setattr(auth, "refresh_codex_oauth_pure", _rotate)
+    monkeypatch.setattr(_auth_auth_providers_codex, "refresh_codex_oauth_pure", _rotate)
     monkeypatch.setattr(codex_models, "_fetch_models_from_api", lambda token: api_tokens.append(token) or [])
 
     models = _codex_catalog("openai-codex", False)

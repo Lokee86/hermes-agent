@@ -5,6 +5,18 @@ policy is implemented directly in auth.sources.
 """
 
 from __future__ import annotations
+import auth.providers.codex_quota as _auth_auth_providers_codex_quota
+import auth.providers.nous_store as _auth_auth_providers_nous_store
+
+
+import auth.constants as _auth_auth_constants
+import auth.oauth as _auth_auth_oauth
+import auth.providers.codex as _auth_auth_providers_codex
+import auth.providers.copilot as _auth_auth_providers_copilot
+import auth.providers.nous as _auth_auth_providers_nous
+import auth.providers.qwen as _auth_auth_providers_qwen
+import auth.providers.xai as _auth_auth_providers_xai
+
 from typing import Any, List
 from auth.context import CredentialScope
 from auth.sources import CredentialEnvironment
@@ -119,49 +131,107 @@ def credential_environment() -> CredentialEnvironment:
     )
 
 
-def _pool_provider_hooks(provider: str):
+def _pool_provider_hooks(provider: str, environment):
     from auth.pool_environment import PoolProviderHooks
     from hermes_cli import auth as provider_auth
 
     def nous_hooks():
         return PoolProviderHooks(
-            resolve_credentials=lambda **kwargs: provider_auth.resolve_nous_runtime_credentials(**kwargs),
-            terminal_error=lambda exc: provider_auth._is_terminal_nous_refresh_error(exc),
-            quarantine_state=lambda *args, **kwargs: provider_auth._quarantine_nous_oauth_state(*args, **kwargs),
-            quarantine_pool=lambda *args, **kwargs: provider_auth._quarantine_nous_pool_entries(*args, **kwargs),
+            resolve_credentials=lambda **kwargs: (
+                _auth_auth_providers_nous.resolve_nous_runtime_credentials(
+                    **kwargs, environment=environment
+                )
+            ),
+            terminal_error=lambda exc: _auth_auth_oauth._is_terminal_nous_refresh_error(
+                exc
+            ),
+            quarantine_state=lambda *args, **kwargs: (
+                _auth_auth_providers_nous_store._quarantine_nous_oauth_state(
+                    *args, **kwargs
+                )
+            ),
+            quarantine_pool=lambda *args, **kwargs: (
+                _auth_auth_providers_nous_store._quarantine_nous_pool_entries(
+                    *args, **kwargs
+                )
+            ),
         )
+
     def codex_hooks():
         from hermes_cli.auth_codex import _codex_pool_route_base_url
+
         return PoolProviderHooks(
-            refresh_tokens=lambda *args: provider_auth.refresh_codex_oauth_pure(*args),
-            terminal_error=lambda exc: provider_auth._is_terminal_codex_oauth_refresh_error(exc),
-            token_expiring=lambda token: provider_auth._codex_access_token_is_expiring(
-                token, provider_auth.CODEX_ACCESS_TOKEN_REFRESH_SKEW_SECONDS),
-            quota_shaped=lambda *args: provider_auth._is_codex_rate_limit_shaped(*args),
-            refresh_probe_token=lambda *args: provider_auth._refresh_expired_codex_probe_token(*args),
-            quota_probe=lambda *args, **kwargs: provider_auth._probe_codex_quota_restored(*args, **kwargs),
+            refresh_tokens=lambda *args: (
+                _auth_auth_providers_codex.refresh_codex_oauth_pure(
+                    *args, environment=environment
+                )
+            ),
+            terminal_error=lambda exc: (
+                _auth_auth_oauth._is_terminal_codex_oauth_refresh_error(exc)
+            ),
+            token_expiring=lambda token: (
+                _auth_auth_providers_codex._codex_access_token_is_expiring(
+                    token, _auth_auth_constants.CODEX_ACCESS_TOKEN_REFRESH_SKEW_SECONDS
+                )
+            ),
+            quota_shaped=lambda *args: (
+                _auth_auth_providers_codex_quota._is_codex_rate_limit_shaped(*args)
+            ),
+            refresh_probe_token=lambda *args: (
+                _auth_auth_providers_codex_quota._refresh_expired_codex_probe_token(
+                    *args, environment=environment
+                )
+            ),
+            quota_probe=lambda *args, **kwargs: (
+                _auth_auth_providers_codex_quota._probe_codex_quota_restored(
+                    *args, **kwargs
+                )
+            ),
             route_base_url=_codex_pool_route_base_url,
         )
+
     def xai_hooks():
         return PoolProviderHooks(
-            refresh_tokens=lambda *args: provider_auth.refresh_xai_oauth_pure(*args),
-            terminal_error=lambda exc: provider_auth._is_terminal_xai_oauth_refresh_error(exc),
-            token_expiring=lambda token: provider_auth._xai_access_token_is_expiring(
-                token, provider_auth._xai_proactive_refresh_skew_seconds(token)),
+            refresh_tokens=lambda *args: (
+                _auth_auth_providers_xai.refresh_xai_oauth_pure(*args)
+            ),
+            terminal_error=lambda exc: (
+                _auth_auth_oauth._is_terminal_xai_oauth_refresh_error(exc)
+            ),
+            token_expiring=lambda token: (
+                _auth_auth_providers_xai._xai_access_token_is_expiring(
+                    token,
+                    _auth_auth_providers_xai._xai_proactive_refresh_skew_seconds(token),
+                )
+            ),
         )
+
     def qwen_hooks():
         return PoolProviderHooks(
-            resolve_credentials=lambda **kwargs: provider_auth.resolve_qwen_runtime_credentials(**kwargs))
+            resolve_credentials=lambda **kwargs: (
+                _auth_auth_providers_qwen.resolve_qwen_runtime_credentials(**kwargs)
+            )
+        )
+
     def copilot_hooks():
         from hermes_cli import copilot_auth
+
         return PoolProviderHooks(
-            resolve_external_token=lambda: copilot_auth.resolve_copilot_token(),
-            exchange_external_token=lambda token: copilot_auth.get_copilot_api_token(token),
-            external_env_vars=tuple(copilot_auth.COPILOT_ENV_VARS),
+            resolve_external_token=lambda: (
+                _auth_auth_providers_copilot.resolve_copilot_token()
+            ),
+            exchange_external_token=lambda token: (
+                _auth_auth_providers_copilot.get_copilot_api_token(token)
+            ),
+            external_env_vars=tuple(_auth_auth_providers_copilot.COPILOT_ENV_VARS),
         )
+
     builders = {
-        "nous": nous_hooks, "openai-codex": codex_hooks, "xai-oauth": xai_hooks,
-        "qwen-oauth": qwen_hooks, "copilot": copilot_hooks,
+        "nous": nous_hooks,
+        "openai-codex": codex_hooks,
+        "xai-oauth": xai_hooks,
+        "qwen-oauth": qwen_hooks,
+        "copilot": copilot_hooks,
     }
     return builders.get(provider, PoolProviderHooks)()
 
@@ -182,15 +252,38 @@ def credential_pool_environment():
         resolver = resolvers.get(provider)
         return resolver(token, fallback, override) if resolver else override or fallback
 
-    return PoolEnvironment(
+    environment = PoolEnvironment(
         scope=CredentialScope(get_hermes_home()),
         read_config=lambda: config.load_config_readonly(),
         custom_providers=config.get_compatible_custom_providers,
         read_env=lambda: config.load_env(),
         secret_source=get_secret_source,
         provider_config=lambda provider: provider_auth.PROVIDER_REGISTRY.get(provider),
-        provider_configured=lambda provider: provider_auth.is_provider_explicitly_configured(provider),
+        provider_configured=lambda provider: (
+            provider_auth.is_provider_explicitly_configured(provider)
+        ),
         key_endpoint=key_endpoint,
         normalize_endpoint=normalize_route_base_url,
-        provider_hooks=_pool_provider_hooks,
+        provider_hooks=lambda provider: _pool_provider_hooks(provider, environment),
+        oauth_user_agent=_codex_oauth_user_agent,
+        entitlement_message=lambda capability: _nous_entitlement_message(
+            capability, environment
+        ),
     )
+    return environment
+
+
+def _codex_oauth_user_agent():
+    from hermes_cli.version_info import get_version_info
+
+    return f"hermes-cli/{get_version_info().base_version}"
+
+
+def _nous_entitlement_message(capability, environment):
+    from hermes_cli.nous_account import (
+        get_nous_portal_account_info,
+        format_nous_portal_entitlement_message,
+    )
+
+    info = get_nous_portal_account_info(force_fresh=True)
+    return format_nous_portal_entitlement_message(info, capability=capability) or ""

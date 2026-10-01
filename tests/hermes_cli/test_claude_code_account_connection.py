@@ -1,3 +1,5 @@
+
+import auth.providers.anthropic as _auth_auth_providers_anthropic
 """Accounts Connected must follow Claude Code token validity, not token presence."""
 import auth.provider_state as auth_provider_state
 
@@ -10,12 +12,11 @@ HEADERS = {"X-Hermes-Session-Token": _SESSION_TOKEN}
 
 def test_expired_claude_code_token_is_not_connected(monkeypatch):
     """A present but expired access token must not mark the account Connected."""
-    from agent import anthropic_credentials
-
+    import auth.providers.anthropic as anthropic_credentials
     monkeypatch.setattr(
-        anthropic_credentials,
+        _auth_auth_providers_anthropic,
         "read_claude_code_credentials",
-        lambda: {"accessToken": "stale-token", "expiresAt": 1},
+        lambda**_auth_settings: {"accessToken": "stale-token", "expiresAt": 1},
     )
 
     resp = client.get("/api/providers/oauth", headers=HEADERS)

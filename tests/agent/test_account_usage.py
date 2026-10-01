@@ -226,6 +226,8 @@ def test_codex_usage_retries_401_with_forced_refresh(monkeypatch, codex_usage_pa
     responses = [_FakeResponse({}, status_code=401), _FakeResponse(codex_usage_payload)]
 
     def resolve(**kwargs):
+        settings = kwargs.pop("environment")
+        settings.require_current_scope()
         credential_calls.append(kwargs)
         token = "fresh-token" if kwargs.get("force_refresh") else "revoked-token"
         return {"api_key": token, "base_url": "https://chatgpt.com/backend-api/codex"}
@@ -314,7 +316,7 @@ def test_redeem_retries_401_with_forced_refresh(monkeypatch):
     client_count = 0
     payload = _usage_payload_with_resets(100, 40, 1)
 
-    def resolve(base_url, api_key, *, force_refresh=False):
+    def resolve(base_url, api_key, *, force_refresh=False, **_auth_settings):
         credential_calls.append(force_refresh)
         token = "fresh-token" if force_refresh else "revoked-token"
         return token, "https://chatgpt.com/backend-api/codex", None

@@ -1,6 +1,8 @@
 """Shared helpers for tool backend selection."""
 
 from __future__ import annotations
+from hermes_cli.config_credentials import credential_pool_environment as _phase6_auth_environment
+
 
 import logging
 import os
@@ -32,8 +34,7 @@ def nous_tool_gateway_unavailable_message(capability: str = "the Nous Tool Gatew
                                           force_fresh: bool = False) -> str:
     """Return account-aware guidance for an unavailable Nous Tool Gateway path."""
     try:
-        from hermes_cli.nous_account import (
-            format_nous_portal_entitlement_message, get_nous_portal_account_info)
+        from hermes_cli.nous_account import format_nous_portal_entitlement_message, get_nous_portal_account_info
         message = format_nous_portal_entitlement_message(
             get_nous_portal_account_info(force_fresh=force_fresh), capability=capability,
             in_chat=True)

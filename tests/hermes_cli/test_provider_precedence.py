@@ -90,9 +90,9 @@ def _logged_out(monkeypatch):
 def _free_tier(monkeypatch, *, on=True, identity=False):
     """Free tier switch + whether a free-tier identity already exists. The resolver is a READ: any
     call into the creator from inside it is a bug, so the stub fails loudly."""
-    monkeypatch.setattr("hermes_cli.anon_auth.guest_enabled", lambda: on)
-    monkeypatch.setattr("hermes_cli.anon_auth.has_guest", lambda: identity)
-    monkeypatch.setattr("hermes_cli.anon_auth.ensure_portal_identity",
+    monkeypatch.setattr('auth.providers.nous_guest.guest_enabled', lambda**_auth_settings: on)
+    monkeypatch.setattr('auth.providers.nous_guest.has_guest', lambda: identity)
+    monkeypatch.setattr('auth.providers.nous_guest.ensure_portal_identity',
                         lambda **kw: (_ for _ in ()).throw(AssertionError("resolve_provider must not mint")))
 
 

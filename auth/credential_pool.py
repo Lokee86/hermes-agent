@@ -1,6 +1,16 @@
 """Persistent multi-credential pool for same-provider failover."""
 
 from __future__ import annotations
+import re  # noqa: F401 (pool collaborators consume these bindings)
+from datetime import timezone  # noqa: F401 (pool collaborators consume these bindings)
+from hermes_constants import OPENROUTER_BASE_URL  # noqa: F401 (pool collaborators consume these bindings)
+from agent.secret_scope import get_secret as _get_secret  # noqa: F401 (pool collaborators consume these bindings)
+from auth.plugin_hooks import plugin_refresh_hook  # noqa: F401 (pool collaborators consume these bindings)
+from auth.credential_pool_plugin import apply_plugin_refresh_result, recover_failed_plugin_refresh  # noqa: F401 (pool collaborators consume these bindings)
+from auth.persistence import is_borrowed_credential_source  # noqa: F401 (pool collaborators consume these bindings)
+from auth.store import _same_path  # noqa: F401 (pool collaborators consume these bindings)
+from auth.provider_state import _load_provider_state, _load_provider_state_with_source, _save_provider_state, _store_provider_state  # noqa: F401 (pool collaborators consume these bindings)
+
 import auth.pool_persistence as auth_pool_persistence
 import auth.provider_state as auth_provider_state
 import auth.store as auth_storage
@@ -8,7 +18,10 @@ import auth.store as auth_storage
 from auth.credential_pool_admin import CredentialPoolAdminMixin
 from auth.pool_refresh import CredentialPoolRefreshMixin
 from auth import pool_sources
-from auth.credential_pool_model_cooldowns import CredentialPoolModelCooldownMixin, model_cooldown_until
+from auth.credential_pool_model_cooldowns import (
+    CredentialPoolModelCooldownMixin,
+    model_cooldown_until,
+)
 
 import logging
 import os
@@ -16,27 +29,29 @@ import random
 import threading
 import time
 import uuid
-import re
 from dataclasses import dataclass, fields, replace
-from datetime import datetime, timezone
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, List, Optional, Set, Tuple
 
-from hermes_constants import OPENROUTER_BASE_URL
-from agent.secret_scope import get_secret as _get_secret, get_secret_str
+from agent.secret_scope import get_secret_str
 from agent.retry_utils import reset_delay_from_message
-from auth.plugin_hooks import plugin_refresh_hook
-from auth.credential_pool_plugin import apply_plugin_refresh_result, recover_failed_plugin_refresh
 from auth.persistence import (
     fingerprint_secret_value,
-    is_borrowed_credential_source,
     sanitize_borrowed_credential_payload,
 )
 from auth.pool_environment import PoolEnvironment
-from auth.oauth_grants import SINGLE_USE_REFRESH_POOL_PROVIDERS, heal_forked_single_use_oauth_grants
+from auth.oauth_grants import (
+    SINGLE_USE_REFRESH_POOL_PROVIDERS,
+    heal_forked_single_use_oauth_grants,
+)
 from auth.token_validation import _decode_jwt_claims, _nous_invoke_jwt_is_usable
-from auth.store import _auth_store_lock, _global_auth_file_path, _load_auth_store, _same_path, _save_auth_store
-from auth.provider_state import _load_provider_state, _load_provider_state_with_source, _save_provider_state, _store_provider_state
+from auth.store import (
+    _auth_store_lock,
+    _global_auth_file_path,
+    _load_auth_store,
+    _save_auth_store,
+)
 from auth.pool_persistence import read_credential_pool, write_credential_pool
 
 logger = logging.getLogger(__name__)
@@ -49,6 +64,7 @@ def _load_config_safe(environment: PoolEnvironment) -> Optional[dict]:
     call; the picker calls ``load_pool()`` once per provider row, which made
     that copy the dominant cost of ``model.options``.
     """
+    environment.require_current_scope()
     try:
         environment.require_current_scope()
         return environment.read_config()
@@ -156,11 +172,25 @@ CUSTOM_POOL_PREFIX = "custom:"
 
 # Fields only round-tripped through JSON — never used for logic as attributes.
 _EXTRA_KEYS = frozenset({
-    "token_type", "scope", "client_id", "portal_base_url", "obtained_at",
-    "expires_in", "agent_key_id", "agent_key_expires_in", "agent_key_reused",
-    "agent_key_obtained_at", "tls", "secret_source", "secret_fingerprint",
+    "token_type",
+    "scope",
+    "client_id",
+    "portal_base_url",
+    "obtained_at",
+    "expires_in",
+    "agent_key_id",
+    "agent_key_expires_in",
+    "agent_key_reused",
+    "agent_key_obtained_at",
+    "tls",
+    "secret_source",
+    "secret_fingerprint",
     # Nous guest identity (``auth_method: anonymous``): the anon_ credential is the refresh material.
-    "auth_method", "account_tier", "anon_token", "user_id", "org_id",
+    "auth_method",
+    "account_tier",
+    "anon_token",
+    "user_id",
+    "org_id",
     # Classified failure semantics for the last exhaustion (agent/error_classifier.py).
     # Providers return 403 for both an edge throttle and a spending limit, so the
     # raw status cannot size a cooldown; persisted so a restart doesn't downgrade
@@ -170,9 +200,17 @@ _EXTRA_KEYS = frozenset({
 
 # Nous singleton metadata mirrored between auth.json state and ``entry.extra``.
 _NOUS_EXTRA_STATE_KEYS = (
-    "obtained_at", "expires_in", "agent_key_id",
-    "agent_key_expires_in", "agent_key_reused", "agent_key_obtained_at",
-    "auth_method", "account_tier", "anon_token", "user_id", "org_id",
+    "obtained_at",
+    "expires_in",
+    "agent_key_id",
+    "agent_key_expires_in",
+    "agent_key_reused",
+    "agent_key_obtained_at",
+    "auth_method",
+    "account_tier",
+    "anon_token",
+    "user_id",
+    "org_id",
 )
 
 # ``replace(entry, **_CLEAR_STATUS)`` returns an entry with no error state.
@@ -480,8 +518,11 @@ def _norm_url(url: Any) -> str:
     return str(url or "").strip().rstrip("/")
 
 
-def _iter_custom_providers(config: Optional[dict] = None, *, environment: PoolEnvironment):
+def _iter_custom_providers(
+    config: Optional[dict] = None, *, environment: PoolEnvironment
+):
     """Yield ``(normalized_name, entry)`` from the merged custom-provider config view."""
+    environment.require_current_scope()
     if config is None:
         config = _load_config_safe(environment=environment)
     if config is None:
@@ -527,7 +568,9 @@ def _pool_keys_for_custom_entry(norm_name: str, entry: Dict[str, Any]) -> List[s
 def custom_provider_pool_key_candidates(
     base_url: Optional[str],
     provider_name: Optional[str] = None,
- *, environment: PoolEnvironment) -> List[str]:
+    *,
+    environment: PoolEnvironment,
+) -> List[str]:
     """Return pool keys to try for a custom endpoint.
 
     ``hermes auth add <key>`` stores ``providers.<key>`` credentials under the
@@ -536,10 +579,13 @@ def custom_provider_pool_key_candidates(
     namespace, so a populated pool is not skipped in favour of the
     ``no-key-required`` placeholder.
     """
+    environment.require_current_scope()
     if not base_url:
         return []
     normalized_url = _norm_url(base_url)
-    requested_aliases = _requested_custom_name_aliases(provider_name) if provider_name else set()
+    requested_aliases = (
+        _requested_custom_name_aliases(provider_name) if provider_name else set()
+    )
 
     if requested_aliases:
         for norm_name, entry in _iter_custom_providers(environment=environment):
@@ -553,13 +599,21 @@ def custom_provider_pool_key_candidates(
     return []
 
 
-def get_custom_provider_pool_key(base_url: Optional[str], provider_name: Optional[str] = None, *, environment: PoolEnvironment) -> Optional[str]:
+def get_custom_provider_pool_key(
+    base_url: Optional[str],
+    provider_name: Optional[str] = None,
+    *,
+    environment: PoolEnvironment,
+) -> Optional[str]:
     """Preferred pool key for a custom provider: durable slug, else ``custom:<name>``.
 
     When provider_name is given, match by name first so two custom providers
     sharing a base_url keep separate keys.
     """
-    candidates = custom_provider_pool_key_candidates(base_url, provider_name, environment=environment)
+    environment.require_current_scope()
+    candidates = custom_provider_pool_key_candidates(
+        base_url, provider_name, environment=environment
+    )
     return candidates[0] if candidates else None
 
 
@@ -574,16 +628,27 @@ def list_custom_pool_providers() -> List[str]:
     )
 
 
-def _get_custom_provider_config(pool_key: str, *, environment: PoolEnvironment) -> Optional[Dict[str, Any]]:
+def _get_custom_provider_config(
+    pool_key: str, *, environment: PoolEnvironment
+) -> Optional[Dict[str, Any]]:
     """Return the custom_providers config entry matching a pool key like 'custom:together.ai'."""
+    environment.require_current_scope()
     if not pool_key.startswith(CUSTOM_POOL_PREFIX):
         return None
-    suffix = pool_key[len(CUSTOM_POOL_PREFIX):]
-    return next((entry for norm_name, entry in _iter_custom_providers(environment=environment) if norm_name == suffix), None)
+    suffix = pool_key[len(CUSTOM_POOL_PREFIX) :]
+    return next(
+        (
+            entry
+            for norm_name, entry in _iter_custom_providers(environment=environment)
+            if norm_name == suffix
+        ),
+        None,
+    )
 
 
 def get_pool_strategy(provider: str, *, environment: PoolEnvironment) -> str:
     """Return the configured selection strategy for a provider."""
+    environment.require_current_scope()
     config = _load_config_safe(environment=environment)
     strategies = config.get("credential_pool_strategies") if config else None
     if not isinstance(strategies, dict):
@@ -596,14 +661,19 @@ def _keyed_custom_pool_matches(
     pool_provider: str,
     provider_norm: str,
     base_url: Optional[str],
- *, environment: PoolEnvironment) -> bool:
+    *,
+    environment: PoolEnvironment,
+) -> bool:
     """Match a durable ``providers.<key>`` pool against runtime identities."""
+    environment.require_current_scope()
     runtime_url = _norm_url(base_url)
     if not runtime_url:
         return False
     try:
         for normalized_name, entry in _iter_custom_providers(environment=environment):
-            provider_key = _normalize_custom_pool_name(str(entry.get("provider_key") or ""))
+            provider_key = _normalize_custom_pool_name(
+                str(entry.get("provider_key") or "")
+            )
             if provider_key != pool_provider:
                 continue
             aliases = _custom_entry_name_aliases(normalized_name, entry)
@@ -624,8 +694,11 @@ def _legacy_custom_pool_matches(
     pool_provider: str,
     provider_norm: str,
     runtime_url: str,
- *, environment: PoolEnvironment) -> bool:
+    *,
+    environment: PoolEnvironment,
+) -> bool:
     """Match a legacy ``custom:<name>`` pool against a named runtime identity."""
+    environment.require_current_scope()
     try:
         for normalized_name, entry in _iter_custom_providers(environment=environment):
             if f"{CUSTOM_POOL_PREFIX}{normalized_name}" != pool_provider:
@@ -636,11 +709,15 @@ def _legacy_custom_pool_matches(
                 if alias:
                     aliases.add(alias)
                     if alias.startswith(CUSTOM_POOL_PREFIX):
-                        aliases.add(alias[len(CUSTOM_POOL_PREFIX):])
+                        aliases.add(alias[len(CUSTOM_POOL_PREFIX) :])
             configured_url = _norm_url(entry.get("base_url"))
             runtime_aliases = {_normalize_custom_pool_name(provider_norm)}
             if provider_norm.startswith(CUSTOM_POOL_PREFIX):
-                runtime_aliases.add(_normalize_custom_pool_name(provider_norm[len(CUSTOM_POOL_PREFIX):]))
+                runtime_aliases.add(
+                    _normalize_custom_pool_name(
+                        provider_norm[len(CUSTOM_POOL_PREFIX) :]
+                    )
+                )
             return bool(runtime_aliases & aliases) and runtime_url == configured_url
     except Exception:
         return False
@@ -665,7 +742,8 @@ def credential_pool_matches_provider(
     provider: Optional[str],
     *,
     base_url: Optional[str] = None,
- environment: PoolEnvironment) -> bool:
+    environment: PoolEnvironment,
+) -> bool:
     """Return whether a pool belongs to the requested runtime provider.
 
     Named custom endpoints may use three identities: the live agent can retain
@@ -676,6 +754,7 @@ def credential_pool_matches_provider(
     identities fail closed. Legacy pool adapters without a ``provider``
     attribute remain compatible; production pools are scoped.
     """
+    environment.require_current_scope()
     raw_pool_provider = getattr(pool_or_provider, "provider", None)
     if raw_pool_provider is None:
         if not isinstance(pool_or_provider, str):
@@ -690,13 +769,19 @@ def credential_pool_matches_provider(
     if not pool_provider.startswith(CUSTOM_POOL_PREFIX):
         if pool_provider == provider_norm:
             return True
-        return _keyed_custom_pool_matches(pool_provider, provider_norm, base_url, environment=environment)
+        return _keyed_custom_pool_matches(
+            pool_provider, provider_norm, base_url, environment=environment
+        )
     if provider_norm == "custom":
         try:
-            matched_pool = get_custom_provider_pool_key(base_url or "", environment=environment)
+            matched_pool = get_custom_provider_pool_key(
+                base_url or "", environment=environment
+            )
             if str(matched_pool or "").strip().lower() == pool_provider:
                 return True
-            candidates = custom_provider_pool_key_candidates(base_url or "", environment=environment)
+            candidates = custom_provider_pool_key_candidates(
+                base_url or "", environment=environment
+            )
         except Exception:
             return False
         return pool_provider in {str(key).strip().lower() for key in candidates}
@@ -704,10 +789,14 @@ def credential_pool_matches_provider(
     runtime_url = _norm_url(base_url)
     if not runtime_url:
         return False
-    return _legacy_custom_pool_matches(pool_provider, provider_norm, runtime_url, environment=environment)
+    return _legacy_custom_pool_matches(
+        pool_provider, provider_norm, runtime_url, environment=environment
+    )
 
 
-def resolve_runtime_pool_key(provider: Optional[str], base_url: Optional[str], *, environment: PoolEnvironment) -> str:
+def resolve_runtime_pool_key(
+    provider: Optional[str], base_url: Optional[str], *, environment: PoolEnvironment
+) -> str:
     """Resolve the credential-pool key for a runtime provider identity.
 
     Named custom runtimes retain their configured alias while their pool may
@@ -716,12 +805,15 @@ def resolve_runtime_pool_key(provider: Optional[str], base_url: Optional[str], *
     provider/endpoint boundary accepts it; otherwise preserve the normalized
     runtime identity so callers fail closed.
     """
+    environment.require_current_scope()
     provider_norm = str(provider or "").strip().lower()
     if not provider_norm:
         return ""
 
     def _accepts(candidate: str) -> bool:
-        return credential_pool_matches_provider(candidate, provider_norm, base_url=base_url, environment=environment)
+        return credential_pool_matches_provider(
+            candidate, provider_norm, base_url=base_url, environment=environment
+        )
 
     try:
         if provider_norm == "custom":
@@ -732,7 +824,9 @@ def resolve_runtime_pool_key(provider: Optional[str], base_url: Optional[str], *
             # Named/exact custom runtimes are keyed by identity: search the
             # configured candidates by identity before endpoint so a sibling
             # sharing the URL cannot lend its pool.
-            for normalized_name, entry in _iter_custom_providers(environment=environment):
+            for normalized_name, entry in _iter_custom_providers(
+                environment=environment
+            ):
                 for candidate in _pool_keys_for_custom_entry(normalized_name, entry):
                     if _accepts(candidate):
                         return candidate
@@ -774,23 +868,7 @@ def _guarded_global_root(global_path: Optional[Path]) -> Optional[Path]:
 def _write_through_provider_state_to_global_root(
     provider_id: str, state: Dict[str, Any]
 ) -> None:
-    """Persist a rotated OAuth ``state`` into the global-root auth.json.
-
-    Best-effort write-through for the multi-profile rotation hazard: nous,
-    openai-codex, and xai-oauth rotate the refresh_token on refresh, so when
-    a profile pool refresh rotates a grant it resolved from the root fallback,
-    the rotated chain must land back in root. Otherwise root keeps a revoked
-    refresh token and every other profile dies with ``refresh_token_reused``
-    / ``invalid_grant`` once its access token expires.
-
-    Only updates ``providers.<provider_id>`` in the root store; never touches
-    the profile store (the caller already saved that). Swallows all errors —
-    a failed write-through degrades to root-stale and must never break the
-    profile's own successful save. Mirrors
-    ``hermes_cli.auth._write_through_xai_oauth_to_global_root``.
-
-    See #48415.
-    """
+    "Persist a rotated OAuth ``state`` into the global-root auth.json.\n\n    Best-effort write-through for the multi-profile rotation hazard: nous,\n    openai-codex, and xai-oauth rotate the refresh_token on refresh, so when\n    a profile pool refresh rotates a grant it resolved from the root fallback,\n    the rotated chain must land back in root. Otherwise root keeps a revoked\n    refresh token and every other profile dies with ``refresh_token_reused``\n    / ``invalid_grant`` once its access token expires.\n\n    Only updates ``providers.<provider_id>`` in the root store; never touches\n    the profile store (the caller already saved that). Swallows all errors —\n    a failed write-through degrades to root-stale and must never break the\n    profile's own successful save. Mirrors\n    ``auth.providers.xai._write_through_xai_oauth_to_global_root``.\n\n    See #48415.\n"
     try:
         global_path = _guarded_global_root(auth_storage._global_auth_file_path())
     except Exception:
@@ -798,17 +876,26 @@ def _write_through_provider_state_to_global_root(
     if global_path is None:
         return
     try:
-        auth_provider_state._persist_provider_state_to_store(provider_id, state, global_path, set_active=False)
+        auth_provider_state._persist_provider_state_to_store(
+            provider_id, state, global_path, set_active=False
+        )
     except Exception as exc:  # pragma: no cover - best effort
-        logger.debug("%s pool refresh: write-through to global root failed: %s", provider_id, exc)
+        logger.debug(
+            "%s pool refresh: write-through to global root failed: %s", provider_id, exc
+        )
 
 
-def _singleton_target_for_entry(pool: "CredentialPool", entry: "PooledCredential") -> Optional[Path]:
+def _singleton_target_for_entry(
+    pool: "CredentialPool", entry: "PooledCredential"
+) -> Optional[Path]:
     """Root ``.anthropic_oauth.json`` when *entry* is a borrowed hermes_pkce row, else None."""
-    if entry.source != "hermes_pkce" or entry.id not in getattr(pool, "_borrowed_root_ids", ()):
+    if entry.source != "hermes_pkce" or entry.id not in getattr(
+        pool, "_borrowed_root_ids", ()
+    ):
         return None
     try:
-        from agent.anthropic_credentials import _root_hermes_oauth_file
+        from auth.providers.anthropic import _root_hermes_oauth_file
+
         return _root_hermes_oauth_file()
     except Exception:
         return None
@@ -943,15 +1030,29 @@ def persist_pool_entries(
 # ``hermes_cli.auth`` refresh function and terminal-error predicate (looked
 # up at call time so tests can patch them).
 _TOKENS_SINGLETON_PROVIDERS: Dict[str, Tuple[str, str, str, str]] = {
-    "openai-codex": ("Codex", "Codex", "refresh_codex_oauth_pure", "_is_terminal_codex_oauth_refresh_error"),
-    "xai-oauth": ("xAI OAuth", "xAI", "refresh_xai_oauth_pure", "_is_terminal_xai_oauth_refresh_error"),
+    "openai-codex": (
+        "Codex",
+        "Codex",
+        "refresh_codex_oauth_pure",
+        "_is_terminal_codex_oauth_refresh_error",
+    ),
+    "xai-oauth": (
+        "xAI OAuth",
+        "xAI",
+        "refresh_xai_oauth_pure",
+        "_is_terminal_xai_oauth_refresh_error",
+    ),
 }
 
 # Built-in providers whose pooled OAuth entries ``_refresh_entry_impl`` can actually refresh. Plugin
 # providers are refreshable when their profile ships ``refresh_credential`` (see
 # ``hermes_cli.auth_plugin_providers.is_refreshable_oauth_provider``); any other provider is returned
 # unchanged by that path, so callers must not report a refresh for them.
-REFRESHABLE_OAUTH_PROVIDERS = frozenset({"anthropic", "nous", *_TOKENS_SINGLETON_PROVIDERS})
+REFRESHABLE_OAUTH_PROVIDERS = frozenset({
+    "anthropic",
+    "nous",
+    *_TOKENS_SINGLETON_PROVIDERS,
+})
 
 # Providers whose refresh tokens are single-use: the sync -> POST -> write-back
 # sequence must be serialized across processes under the auth-store flock.
@@ -1699,7 +1800,6 @@ class CredentialPool(CredentialPoolRefreshMixin, CredentialPoolAdminMixin, Crede
         return refreshed
 
 
-
 # --- Seeding --------------------------------------------------------------
 
 
@@ -1799,6 +1899,7 @@ def _retain_sources_not_in(entries: List[PooledCredential], drop: Set[str]) -> b
 
 def load_pool(provider: str, *, environment: PoolEnvironment) -> CredentialPool:
     environment.require_current_scope()
+    environment.require_current_scope()
     provider = (provider or "").strip().lower()
     if provider in SINGLE_USE_REFRESH_POOL_PROVIDERS:
         # One-time heal for installs that forked this grant across profiles
@@ -1809,15 +1910,19 @@ def load_pool(provider: str, *, environment: PoolEnvironment) -> CredentialPool:
     # Ownership (auth.json read) after the heal above; re-read at the tail only if _persist() ran.
     owns_provider: Optional[bool] = None
     changed = any(
-        isinstance(payload, dict) and sanitize_borrowed_credential_payload(payload, provider) != payload
+        isinstance(payload, dict)
+        and sanitize_borrowed_credential_payload(payload, provider) != payload
         for payload in raw_entries
     )
     entries = [PooledCredential.from_dict(provider, payload) for payload in raw_entries]
     raw_needs_auth_normalization = any(
         isinstance(payload, dict)
         and _normalize_pool_auth_type(
-            provider, payload.get("access_token"), payload.get("auth_type", AUTH_TYPE_API_KEY),
-        ) != payload.get("auth_type", AUTH_TYPE_API_KEY)
+            provider,
+            payload.get("access_token"),
+            payload.get("auth_type", AUTH_TYPE_API_KEY),
+        )
+        != payload.get("auth_type", AUTH_TYPE_API_KEY)
         for payload in raw_entries
     )
     if raw_needs_auth_normalization:
@@ -1825,16 +1930,24 @@ def load_pool(provider: str, *, environment: PoolEnvironment) -> CredentialPool:
         # Keep that fallback read-only: only the owning store may rewrite these
         # rows; loading the default/root profile heals global rows.
         active_pool = _load_auth_store().get("credential_pool")
-        active_entries = active_pool.get(provider) if isinstance(active_pool, dict) else None
+        active_entries = (
+            active_pool.get(provider) if isinstance(active_pool, dict) else None
+        )
         changed |= bool(active_entries)
 
     if provider.startswith(CUSTOM_POOL_PREFIX):
-        custom_changed, custom_sources = pool_sources._seed_custom_pool(provider, entries, environment=environment)
+        custom_changed, custom_sources = pool_sources._seed_custom_pool(
+            provider, entries, environment=environment
+        )
         changed |= custom_changed
         changed |= pool_sources._prune_stale_seeded_entries(entries, custom_sources)
     else:
-        singleton_changed, singleton_sources = pool_sources._seed_from_singletons(provider, entries, environment=environment)
-        env_changed, env_sources = pool_sources._seed_from_env(provider, entries, environment=environment)
+        singleton_changed, singleton_sources = pool_sources._seed_from_singletons(
+            provider, entries, environment=environment
+        )
+        env_changed, env_sources = pool_sources._seed_from_env(
+            provider, entries, environment=environment
+        )
         changed |= singleton_changed or env_changed
         # ``load_pool()`` is a non-destructive read for env-seeded entries
         # (#9331); file-backed singletons still prune when their file is gone.
@@ -1848,12 +1961,16 @@ def load_pool(provider: str, *, environment: PoolEnvironment) -> CredentialPool:
             borrowed = [e for e in entries if e.id in disk_ids]
             others = [e for e in entries if e.id not in disk_ids]
             changed |= pool_sources._prune_stale_seeded_entries(
-                others, singleton_sources | env_sources, prune_env_sources=False,
+                others,
+                singleton_sources | env_sources,
+                prune_env_sources=False,
             )
             entries[:] = borrowed + others
         else:
             changed |= pool_sources._prune_stale_seeded_entries(
-                entries, singleton_sources | env_sources, prune_env_sources=False,
+                entries,
+                singleton_sources | env_sources,
+                prune_env_sources=False,
             )
         changed |= _normalize_pool_priorities(provider, entries)
 

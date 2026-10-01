@@ -1,3 +1,5 @@
+
+from hermes_cli.config_credentials import credential_pool_environment as _phase6_auth_environment
 """A generic Anthropic 429 benches only the model that was rate-limited (#111769, #61451).
 
 Real ``auth.credential_pool`` against a real temp auth store: one API-key credential,
@@ -35,7 +37,7 @@ def pool(tmp_path, monkeypatch):
 
 def test_generic_429_benches_only_the_rate_limited_model(pool, monkeypatch):
     from hermes_cli.config_credentials import credential_pool_environment
-    from agent.anthropic_credentials import resolve_anthropic_token
+    from auth.providers.anthropic import resolve_anthropic_token
     from auth.credential_pool import load_pool
 
     ctx = {"message": "This request would exceed your account's rate limit. Please try again later."}
@@ -55,9 +57,9 @@ def test_generic_429_benches_only_the_rate_limited_model(pool, monkeypatch):
     fresh = load_pool("anthropic", environment=credential_pool_environment())
     assert fresh.select(model=MODEL_A) is None and fresh.select(model=MODEL_B) is not None
     monkeypatch.setenv("ANTHROPIC_API_KEY", KEY)
-    assert resolve_anthropic_token(model=MODEL_A) is None
-    assert resolve_anthropic_token(model=MODEL_B) == KEY
-    assert resolve_anthropic_token() == KEY  # model-less diagnostics keep the key
+    assert resolve_anthropic_token(model=MODEL_A, environment=_phase6_auth_environment()) is None
+    assert resolve_anthropic_token(model=MODEL_B, environment=_phase6_auth_environment()) == KEY
+    assert resolve_anthropic_token(environment=_phase6_auth_environment()) == KEY  # model-less diagnostics keep the key
 
 
 @pytest.mark.parametrize("status_code, failure_reason", [(401, None), (402, "billing"), (429, "billing")])

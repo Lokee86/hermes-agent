@@ -84,7 +84,8 @@ def _run_xai_oauth_login_from_setup() -> bool:
     only — does **not** switch the active provider or rewrite ``model.provider`` (callers only need
     credentials for side tools). False on any failure (caller falls back)."""
     try:
-        from hermes_cli.auth import _is_remote_session, _save_xai_oauth_tokens, _xai_oauth_device_code_login
+        from hermes_cli.auth import _is_remote_session, _xai_oauth_device_code_login
+        from auth.providers.xai import _save_xai_oauth_tokens
         from auth.sources import unsuppress_credential_source
     except Exception as exc:
         _setup.print_warning(f"xAI Grok OAuth helpers unavailable: {exc}")

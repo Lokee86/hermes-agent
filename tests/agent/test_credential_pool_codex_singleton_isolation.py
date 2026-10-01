@@ -6,6 +6,8 @@ silently turned two logins into one (both then hit the same usage limit; salvage
 #106788, cluster #92198 / #95297, issue #106705).
 """
 from __future__ import annotations
+import auth.providers.codex as _auth_auth_providers_codex
+
 
 import base64
 import json
@@ -53,11 +55,11 @@ def home(tmp_path, monkeypatch):
 
 
 def _stub_refresh(monkeypatch, minted: str, minted_rt: str, posted: list) -> None:
-    def fake(access_token, refresh_token):
+    def fake(access_token, refresh_token, **_auth_settings):
         posted.append(refresh_token)
         return {"access_token": minted, "refresh_token": minted_rt, "last_refresh": _iso(time.time())}
 
-    monkeypatch.setattr(auth_mod, "refresh_codex_oauth_pure", fake)
+    monkeypatch.setattr(_auth_auth_providers_codex, "refresh_codex_oauth_pure", fake)
 
 
 def test_independent_manual_account_refreshes_with_its_own_pair(home, monkeypatch):

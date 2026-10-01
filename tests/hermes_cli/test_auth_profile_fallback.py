@@ -10,6 +10,8 @@ authenticated only at the global root.
 """
 
 from __future__ import annotations
+from hermes_cli.config_credentials import credential_pool_environment as _phase6_auth_environment
+
 import auth.store as auth_storage
 
 import json
@@ -152,7 +154,7 @@ def test_provider_auth_state_returns_none_when_neither_has_it(profile_env):
 
 def test_codex_runtime_uses_global_pool_when_profile_singleton_is_empty(profile_env):
     """Stale empty profile Codex state must not block the global credential pool."""
-    from hermes_cli.auth import resolve_codex_runtime_credentials
+    from auth.providers.codex import resolve_codex_runtime_credentials
 
     _write(profile_env["global"] / "auth.json", _make_auth_store(pool={
         "openai-codex": [{
@@ -175,7 +177,7 @@ def test_codex_runtime_uses_global_pool_when_profile_singleton_is_empty(profile_
         pool={"openai-codex": []},
     ))
 
-    creds = resolve_codex_runtime_credentials(refresh_if_expiring=False)
+    creds = resolve_codex_runtime_credentials(refresh_if_expiring=False, environment=_phase6_auth_environment())
 
     assert creds["source"] == "credential_pool"
     assert creds["api_key"] == "global-codex-access-token"
@@ -185,13 +187,13 @@ def test_codex_runtime_uses_global_pool_when_profile_singleton_is_empty(profile_
         "openai-codex": [{"id": "prof", "auth_type": "oauth", "priority": 0,
                           "access_token": "profile-codex-access-token", "refresh_token": "r"}],
     }))
-    assert resolve_codex_runtime_credentials(refresh_if_expiring=False)["api_key"] == "profile-codex-access-token"
+    assert resolve_codex_runtime_credentials(refresh_if_expiring=False, environment=_phase6_auth_environment())["api_key"] == "profile-codex-access-token"
 
 
 def test_codex_cooldown_clear_writes_to_the_store_that_owns_the_borrowed_pool(profile_env):
     """A restored quota must unfreeze the ROOT row a profile borrows; clearing the (empty)
     profile store would leave every later resolve stuck on the stale cooldown."""
-    from hermes_cli.auth_codex import clear_codex_pool_quota_cooldowns
+    from auth.providers.codex_quota import clear_codex_pool_quota_cooldowns
 
     _write(profile_env["global"] / "auth.json", _make_auth_store(pool={
         "openai-codex": [{"id": "glob", "auth_type": "oauth", "priority": 0,
@@ -209,7 +211,7 @@ def test_codex_cooldown_clear_writes_to_the_store_that_owns_the_borrowed_pool(pr
 def test_codex_cooldown_clear_never_touches_root_when_profile_owns_rows(profile_env):
     """A profile with its own Codex rows is the owner: the root's cooldown state is not ours to
     clear, even when none of the profile's rows are exhausted (0 cleared, root byte-identical)."""
-    from hermes_cli.auth_codex import clear_codex_pool_quota_cooldowns
+    from auth.providers.codex_quota import clear_codex_pool_quota_cooldowns
 
     root_file = profile_env["global"] / "auth.json"
     _write(root_file, _make_auth_store(pool={

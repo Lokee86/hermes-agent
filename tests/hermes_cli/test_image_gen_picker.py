@@ -5,6 +5,8 @@ Covers `_plugin_image_gen_providers`, `_visible_providers`, and
 """
 
 from __future__ import annotations
+import auth.providers.codex as _auth_auth_providers_codex
+
 
 from types import SimpleNamespace
 
@@ -168,7 +170,7 @@ class TestCodexOAuthBootstrapHook:
         started, saved = [], []
         monkeypatch.setattr(auth, "_codex_device_code_login",
                             lambda: started.append(1) or {"tokens": {"access_token": "t"}, "last_refresh": "x"})
-        monkeypatch.setattr(auth, "_save_codex_tokens", lambda tokens, last_refresh=None, **kw: saved.append(kw))
+        monkeypatch.setattr(_auth_auth_providers_codex, "_save_codex_tokens", lambda tokens, last_refresh=None, **kw: saved.append(kw))
 
         tools_config_post_setup._POST_SETUP_HOOKS["openai_codex"]()
 

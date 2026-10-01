@@ -1,3 +1,5 @@
+
+import auth.providers.minimax as _auth_auth_providers_minimax
 import base64
 import json
 import time
@@ -75,8 +77,8 @@ def test_runtime_selected_copilot_exchanges_ambient_pool_token(tmp_path, monkeyp
     from hermes_cli import config as _cfg
     _cfg._LOAD_CONFIG_CACHE.clear()
     _cfg._RAW_CONFIG_CACHE.clear()
-    monkeypatch.setattr("hermes_cli.copilot_auth.resolve_copilot_token", lambda: ("ghu_raw_gh_token", "gh auth token"))
-    monkeypatch.setattr("hermes_cli.copilot_auth.get_copilot_api_token",
+    monkeypatch.setattr('auth.providers.copilot.resolve_copilot_token', lambda: ("ghu_raw_gh_token", "gh auth token"))
+    monkeypatch.setattr('auth.providers.copilot.get_copilot_api_token',
                         lambda tok: ("tid=exchanged;exp=1", "https://api.enterprise.ghe.example"))
     monkeypatch.setattr(rp._models, "copilot_model_api_mode", lambda *a, **k: "chat_completions")
     monkeypatch.setattr(rp, "resolve_provider", lambda *a, **k: "copilot")
@@ -1619,7 +1621,7 @@ class TestAzureAnthropicEnvVarHint:
             called["resolve_anthropic_token"] = True
             return "token-from-resolver"
         monkeypatch.setattr(
-            "agent.anthropic_credentials.resolve_anthropic_token",
+            'auth.providers.anthropic.resolve_anthropic_token',
             _fake_resolve,
         )
 
@@ -1683,7 +1685,7 @@ class TestProviderEntryApiKeyEnvAlias:
 
 def test_minimax_oauth_runtime_returns_anthropic_messages_mode(monkeypatch):
     """resolve_runtime_provider for minimax-oauth must return api_mode='anthropic_messages'."""
-    from hermes_cli.auth import MINIMAX_OAUTH_GLOBAL_INFERENCE
+    from auth.constants import MINIMAX_OAUTH_GLOBAL_INFERENCE
 
     monkeypatch.setattr(rp, "resolve_provider", lambda *a, **k: "minimax-oauth")
     monkeypatch.setattr(rp, "_get_model_config", lambda: {"provider": "minimax-oauth"})
@@ -1707,7 +1709,7 @@ def test_minimax_oauth_runtime_returns_anthropic_messages_mode(monkeypatch):
     }
 
     import hermes_cli.auth as auth_mod
-    monkeypatch.setattr(auth_mod, "resolve_minimax_oauth_runtime_credentials",
+    monkeypatch.setattr(_auth_auth_providers_minimax, "resolve_minimax_oauth_runtime_credentials",
                         lambda **k: fake_creds)
 
     resolved = rp.resolve_runtime_provider(requested="minimax-oauth")
@@ -2202,7 +2204,7 @@ _CODEX_STORE_CREDS = {"base_url": "https://chatgpt.com/backend-api/codex", "api_
 
 def _codex_rung(monkeypatch, rung: str) -> dict:
     """Isolate one openai-codex ladder rung; returns the kwargs for resolve_runtime_provider."""
-    monkeypatch.setattr(rp, "resolve_codex_runtime_credentials", lambda: dict(_CODEX_STORE_CREDS))
+    monkeypatch.setattr(rp, "resolve_codex_runtime_credentials", lambda**_auth_settings: dict(_CODEX_STORE_CREDS))
     if rung == "pool":
         entry = SimpleNamespace(api_key="tok", runtime_api_key="tok", base_url="", source="pool")
         monkeypatch.setattr(rp, "load_pool", lambda _p, environment=None: SimpleNamespace(

@@ -10,7 +10,7 @@ import logging
 import hashlib
 import time
 from typing import Dict, Optional
-from hermes_cli.auth_constants import httpx
+from auth.constants import httpx
 
 logger = logging.getLogger("hermes_cli.auth")
 

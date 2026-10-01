@@ -7,6 +7,8 @@ boundary with genuine single-use semantics (a refresh token redeems once;
 a second POST returns ``invalid_grant``).
 """
 from __future__ import annotations
+from hermes_cli.config_credentials import credential_pool_environment as _phase6_auth_environment
+
 import auth.store as auth_storage
 
 import io
@@ -301,7 +303,7 @@ def test_first_profile_rotation_does_not_strand_root_or_siblings(fleet):
 
 def test_agent_init_resolver_sees_sibling_rotation(fleet):
     from hermes_cli.config_credentials import credential_pool_environment
-    from agent.anthropic_credentials import resolve_anthropic_token
+    from auth.providers.anthropic import resolve_anthropic_token
     from auth.credential_pool import load_pool
 
     forge = _profile(fleet, "forge")
@@ -309,7 +311,7 @@ def test_agent_init_resolver_sees_sibling_rotation(fleet):
     fleet["use"](forge)
     load_pool("anthropic", environment=credential_pool_environment()).select()
     fleet["use"](atlas)
-    assert resolve_anthropic_token() == "sk-ant-oat01-AT1"
+    assert resolve_anthropic_token(environment=_phase6_auth_environment()) == "sk-ant-oat01-AT1"
 
 
 def test_borrowing_profile_load_pool_does_not_materialize_local_copy(fleet):

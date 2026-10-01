@@ -7,6 +7,8 @@ own ``model_setup_flows_*`` modules.
 """
 
 from __future__ import annotations
+from hermes_cli.config_credentials import credential_pool_environment as _phase6_auth_environment
+
 
 import contextlib
 import argparse
@@ -223,10 +225,11 @@ def _nous_verified_credentials(creds_or_none=None):
     """Resolve Nous runtime credentials; on failure print the diagnosis (re-login when the
     session expired) and return None."""
     from auth.errors import AuthError
-    from hermes_cli.auth import PROVIDER_REGISTRY, _login_nous, format_auth_error, resolve_nous_runtime_credentials
+    from hermes_cli.auth import PROVIDER_REGISTRY, _login_nous, format_auth_error
+    from auth.providers.nous import resolve_nous_runtime_credentials
 
     try:
-        return resolve_nous_runtime_credentials()
+        return resolve_nous_runtime_credentials(environment=_phase6_auth_environment())
     except Exception as exc:
         relogin = isinstance(exc, AuthError) and exc.relogin_required
         msg = format_auth_error(exc) if isinstance(exc, AuthError) else str(exc)
@@ -326,9 +329,9 @@ def _model_flow_nous(config, current_model="", args=None):
     # Force fresh account data so recent credit purchases are reflected immediately.
     free_tier = check_nous_free_tier(force_fresh=True)
     if not free_tier:
-        from hermes_cli.auth import resolve_nous_runtime_credentials
+        from auth.providers.nous import resolve_nous_runtime_credentials
         try:
-            creds = resolve_nous_runtime_credentials(force_refresh=True) or creds
+            creds = resolve_nous_runtime_credentials(force_refresh=True, environment=_phase6_auth_environment()) or creds
         except Exception:
             # Runtime inference has its own paid-entitlement recovery; don't block.
             pass
@@ -364,9 +367,8 @@ def _model_flow_nous(config, current_model="", args=None):
 
 def _model_flow_openai_codex(config, current_model=""):
     """OpenAI Codex provider: ensure logged in, then pick model."""
-    from hermes_cli.auth import (
-        get_codex_auth_status, _prompt_model_selection, _login_openai_codex, PROVIDER_REGISTRY, DEFAULT_CODEX_BASE_URL,
-    )
+    from hermes_cli.auth import get_codex_auth_status, _prompt_model_selection, _login_openai_codex, PROVIDER_REGISTRY
+    from auth.constants import DEFAULT_CODEX_BASE_URL
     from hermes_cli.codex_models import get_codex_model_ids
     if not _oauth_gate(
         bool(get_codex_auth_status().get("logged_in")), "OpenAI Codex", _login_openai_codex, argparse.Namespace(),
@@ -384,8 +386,8 @@ def _model_flow_openai_codex(config, current_model=""):
             _codex_token, _codex_base = _codex_status.get("api_key"), _codex_status.get("base_url")
     if not _codex_token:
         with contextlib.suppress(Exception):
-            from hermes_cli.auth import resolve_codex_runtime_credentials
-            _creds = resolve_codex_runtime_credentials()
+            from auth.providers.codex import resolve_codex_runtime_credentials
+            _creds = resolve_codex_runtime_credentials(environment=_phase6_auth_environment())
             _codex_token, _codex_base = _creds.get("api_key"), _creds.get("base_url")
 
     codex_models = get_codex_model_ids(access_token=_codex_token, base_url=_codex_base)
@@ -398,9 +400,9 @@ def _model_flow_openai_codex(config, current_model=""):
 
 def _model_flow_xai_oauth(_config, current_model="", *, args=None):
     """xAI Grok OAuth (SuperGrok / Premium+) provider: ensure logged in, then pick model."""
-    from hermes_cli.auth import (
-        get_xai_oauth_auth_status, _prompt_model_selection, resolve_xai_oauth_runtime_credentials, _login_xai_oauth,
-        DEFAULT_XAI_OAUTH_BASE_URL, PROVIDER_REGISTRY)
+    from hermes_cli.auth import get_xai_oauth_auth_status, _prompt_model_selection, _login_xai_oauth, PROVIDER_REGISTRY
+    from auth.providers.xai import resolve_xai_oauth_runtime_credentials
+    from auth.constants import DEFAULT_XAI_OAUTH_BASE_URL
     from hermes_cli.models import provider_model_ids
     login_args = argparse.Namespace(no_browser=bool(getattr(args, "no_browser", False)), timeout=getattr(args, "timeout", None))
     if not _oauth_gate(
@@ -425,8 +427,9 @@ def _model_flow_xai_oauth(_config, current_model="", *, args=None):
 def _model_flow_qwen_oauth(_config, current_model=""):
     """Qwen OAuth provider: reuse local Qwen CLI login, then pick model."""
     from hermes_cli.main_provider_setup import _DEFAULT_QWEN_PORTAL_MODELS
-    from hermes_cli.auth import (
-        get_qwen_auth_status, resolve_qwen_runtime_credentials, _prompt_model_selection, DEFAULT_QWEN_BASE_URL)
+    from auth.providers.qwen import get_qwen_auth_status, resolve_qwen_runtime_credentials
+    from hermes_cli.auth import _prompt_model_selection
+    from auth.constants import DEFAULT_QWEN_BASE_URL
     from hermes_cli.models import fetch_api_models
     status = get_qwen_auth_status()
     if not status.get("logged_in"):
@@ -451,7 +454,8 @@ def _model_flow_qwen_oauth(_config, current_model=""):
 def _model_flow_minimax_oauth(config, current_model="", args=None):
     """MiniMax OAuth provider: ensure logged in, then pick model."""
     from auth.provider_state import get_provider_auth_state
-    from hermes_cli.auth import _prompt_model_selection, resolve_minimax_oauth_runtime_credentials, format_auth_error, _login_minimax_oauth, PROVIDER_REGISTRY
+    from hermes_cli.auth import _prompt_model_selection, format_auth_error, _login_minimax_oauth, PROVIDER_REGISTRY
+    from auth.providers.minimax import resolve_minimax_oauth_runtime_credentials
     from auth.errors import AuthError
 
     state = get_provider_auth_state("minimax-oauth")
@@ -536,7 +540,7 @@ def _copilot_obtain_token() -> bool:
             return False
         # Validate token type
         with contextlib.suppress(ImportError):
-            from hermes_cli.copilot_auth import validate_copilot_token
+            from auth.providers.copilot import validate_copilot_token
             valid, msg = validate_copilot_token(new_key)
             if not valid:
                 print(f"  ✗ {msg}")
@@ -1019,8 +1023,8 @@ def _model_flow_anthropic(config, current_model=""):
     existing_key = get_anthropic_key()
     cc_available = False
     with contextlib.suppress(Exception):
-        from agent.anthropic_credentials import read_claude_code_credentials, is_claude_code_token_valid, _is_oauth_token
-        cc_creds = read_claude_code_credentials()
+        from auth.providers.anthropic import read_claude_code_credentials, is_claude_code_token_valid, _is_oauth_token
+        cc_creds = read_claude_code_credentials(environment=_phase6_auth_environment())
         if cc_creds and is_claude_code_token_valid(cc_creds):
             cc_available = True
 

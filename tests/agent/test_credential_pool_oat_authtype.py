@@ -1,3 +1,5 @@
+
+from hermes_cli.config_credentials import credential_pool_environment as _phase6_auth_environment
 """Regression tests for #63737: sk-ant-oat pool entries are OAuth."""
 
 import json
@@ -35,8 +37,8 @@ def test_load_heals_legacy_row_and_exposes_it_to_resolver(tmp_path, monkeypatch)
     for key in ("ANTHROPIC_API_KEY", "ANTHROPIC_TOKEN", "CLAUDE_CODE_OAUTH_TOKEN"):
         monkeypatch.delenv(key, raising=False)
     monkeypatch.setattr(
-        "agent.anthropic_credentials.read_claude_code_credentials",
-        lambda: None,
+        'auth.providers.anthropic.read_claude_code_credentials',
+        lambda**_auth_settings: None,
     )
     token = "sk-ant-oat-legacy-manual"
     auth_file = hermes_home / "auth.json"
@@ -54,13 +56,13 @@ def test_load_heals_legacy_row_and_exposes_it_to_resolver(tmp_path, monkeypatch)
         },
     }))
 
-    from agent.anthropic_credentials import resolve_anthropic_token
+    from auth.providers.anthropic import resolve_anthropic_token
     from auth.credential_pool import load_pool
 
     entry = load_pool("anthropic", environment=credential_pool_environment()).entries()[0]
     persisted = json.loads(auth_file.read_text())
     assert entry.auth_type == AUTH_TYPE_OAUTH
     assert persisted["credential_pool"]["anthropic"][0]["auth_type"] == AUTH_TYPE_OAUTH
-    assert resolve_anthropic_token() == token
+    assert resolve_anthropic_token(environment=_phase6_auth_environment()) == token
 
 

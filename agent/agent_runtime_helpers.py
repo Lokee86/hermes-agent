@@ -5,6 +5,8 @@ Each function takes the parent ``AIAgent`` as ``agent`` except the stateless mes
 """
 
 from __future__ import annotations
+from hermes_cli.config_credentials import credential_pool_environment as _phase6_auth_environment
+
 import contextlib
 import copy
 import json
@@ -2061,18 +2063,18 @@ def _build_switched_client(agent, new_provider, api_key, base_url, api_mode, new
         return
     if api_mode == "anthropic_messages":
         from agent.anthropic_adapter import build_anthropic_client
-        from agent.anthropic_credentials import resolve_anthropic_token, anthropic_route_is_oauth
+        from auth.providers.anthropic import resolve_anthropic_token, anthropic_route_is_oauth
         # Only fall back to ANTHROPIC_TOKEN for native Anthropic; other anthropic_messages providers
         # must never receive Anthropic credentials.
         is_native_anthropic = new_provider == "anthropic"
         effective_key = api_key or agent.api_key or (
-            resolve_anthropic_token(model=getattr(agent, "model", None)) if is_native_anthropic else ""
+            resolve_anthropic_token(model=getattr(agent, "model", None), environment=_phase6_auth_environment()) if is_native_anthropic else ""
         ) or ""
         # MiniMax OAuth: per-request callable token provider survives 15-min expiry (rationale in
         # agent_init.py).
         if new_provider == "minimax-oauth" and isinstance(effective_key, str) and effective_key:
             try:
-                from hermes_cli.auth import build_minimax_oauth_token_provider
+                from auth.providers.minimax import build_minimax_oauth_token_provider
                 effective_key = build_minimax_oauth_token_provider()
             except Exception as _mm_exc:  # noqa: BLE001
                 logger.warning(

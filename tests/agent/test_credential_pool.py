@@ -44,7 +44,7 @@ def test_explicit_reset_timestamp_overrides_default_429_ttl(tmp_path, monkeypatc
     monkeypatch.setenv("HERMES_HOME", str(tmp_path / "hermes"))
     # Prevent auto-seeding from Codex CLI tokens on the host
     monkeypatch.setattr(
-        "hermes_cli.auth._import_codex_cli_tokens",
+        'auth.providers.codex._import_codex_cli_tokens',
         lambda: None,
     )
     _write_auth_store(
@@ -155,7 +155,7 @@ def test_stale_credential_id_prefers_api_key_hint(tmp_path, monkeypatch):
     """
     from hermes_cli.config_credentials import credential_pool_environment
     monkeypatch.setenv("HERMES_HOME", str(tmp_path / "hermes"))
-    monkeypatch.setattr("agent.anthropic_credentials.read_claude_code_credentials", lambda: None)
+    monkeypatch.setattr('auth.providers.anthropic.read_claude_code_credentials', lambda**_auth_settings: None)
     _write_auth_store(
         tmp_path,
         {
@@ -215,7 +215,7 @@ def test_unmatched_api_key_hint_rotates_without_benching_innocent_key(tmp_path, 
     # Keep the dev machine's live ~/.claude credentials from seeding a
     # claude_code singleton entry into this pool (same isolation as the
     # other anthropic pool tests in this file).
-    monkeypatch.setattr("agent.anthropic_credentials.read_claude_code_credentials", lambda: None)
+    monkeypatch.setattr('auth.providers.anthropic.read_claude_code_credentials', lambda**_auth_settings: None)
     _write_auth_store(
         tmp_path,
         {
@@ -1124,7 +1124,7 @@ def test_load_pool_api_key_path_skips_oauth_autodiscovery(tmp_path, monkeypatch)
             "expiresAt": int(time.time() * 1000) + 3_600_000,
         }
 
-    def _fake_cc():
+    def _fake_cc(**_auth_settings):
         cc_called["n"] += 1
         return {
             "accessToken": "sk-ant-oat01-claude-code-token",
@@ -1132,8 +1132,8 @@ def test_load_pool_api_key_path_skips_oauth_autodiscovery(tmp_path, monkeypatch)
             "expiresAt": int(time.time() * 1000) + 3_600_000,
         }
 
-    monkeypatch.setattr("agent.anthropic_credentials.read_hermes_oauth_credentials", _fake_pkce)
-    monkeypatch.setattr("agent.anthropic_credentials.read_claude_code_credentials", _fake_cc)
+    monkeypatch.setattr('auth.providers.anthropic.read_hermes_oauth_credentials', _fake_pkce)
+    monkeypatch.setattr('auth.providers.anthropic.read_claude_code_credentials', _fake_cc)
 
     from auth.credential_pool import load_pool
 
@@ -1187,8 +1187,8 @@ def test_load_pool_api_key_path_prunes_stale_oauth_entries(tmp_path, monkeypatch
         },
     )
     monkeypatch.setattr("hermes_cli.auth.is_provider_explicitly_configured", lambda pid: True)
-    monkeypatch.setattr("agent.anthropic_credentials.read_hermes_oauth_credentials", lambda: None)
-    monkeypatch.setattr("agent.anthropic_credentials.read_claude_code_credentials", lambda: None)
+    monkeypatch.setattr('auth.providers.anthropic.read_hermes_oauth_credentials', lambda: None)
+    monkeypatch.setattr('auth.providers.anthropic.read_claude_code_credentials', lambda**_auth_settings: None)
 
     from auth.credential_pool import load_pool
 
@@ -1217,12 +1217,12 @@ def test_load_pool_oauth_path_still_autodiscovers(tmp_path, monkeypatch):
     monkeypatch.setattr("hermes_cli.auth.is_provider_explicitly_configured", lambda pid: True)
 
     monkeypatch.setattr(
-        "agent.anthropic_credentials.read_hermes_oauth_credentials",
+        'auth.providers.anthropic.read_hermes_oauth_credentials',
         lambda: None,
     )
     monkeypatch.setattr(
-        "agent.anthropic_credentials.read_claude_code_credentials",
-        lambda: {
+        'auth.providers.anthropic.read_claude_code_credentials',
+        lambda**_auth_settings: {
             "accessToken": "sk-ant-oat01-autodiscovered-cc",
             "refreshToken": "cc-refresh",
             "expiresAt": int(time.time() * 1000) + 3_600_000,
@@ -1391,11 +1391,11 @@ def test_load_pool_does_not_seed_claude_code_when_anthropic_not_configured(tmp_p
 
     # Claude Code credentials exist on disk
     monkeypatch.setattr(
-        "agent.anthropic_credentials.read_claude_code_credentials",
-        lambda: {"accessToken": "sk-ant...oken", "refreshToken": "rt", "expiresAt": 9999999999999},
+        'auth.providers.anthropic.read_claude_code_credentials',
+        lambda**_auth_settings: {"accessToken": "sk-ant...oken", "refreshToken": "rt", "expiresAt": 9999999999999},
     )
     monkeypatch.setattr(
-        "agent.anthropic_credentials.read_hermes_oauth_credentials",
+        'auth.providers.anthropic.read_hermes_oauth_credentials',
         lambda: None,
     )
     # User configured kimi-coding, NOT anthropic
@@ -1418,7 +1418,7 @@ def test_load_pool_seeds_copilot_via_gh_auth_token(tmp_path, monkeypatch):
     _write_auth_store(tmp_path, {"version": 1, "credential_pool": {}})
 
     monkeypatch.setattr(
-        "hermes_cli.copilot_auth.resolve_copilot_token",
+        'auth.providers.copilot.resolve_copilot_token',
         lambda: ("gho_fake_token_abc123", "gh auth token"),
     )
 
@@ -1455,7 +1455,7 @@ def test_load_pool_skips_exchange_for_suppressed_copilot(tmp_path, monkeypatch):
     )
 
     monkeypatch.setattr(
-        "hermes_cli.copilot_auth.resolve_copilot_token",
+        'auth.providers.copilot.resolve_copilot_token',
         lambda: ("gho_fake_token_abc123", "gh auth token"),
     )
 
@@ -1467,7 +1467,7 @@ def test_load_pool_skips_exchange_for_suppressed_copilot(tmp_path, monkeypatch):
         raise AssertionError("exchange must not run for a suppressed source")
 
     monkeypatch.setattr(
-        "hermes_cli.copilot_auth.get_copilot_api_token",
+        'auth.providers.copilot.get_copilot_api_token',
         _boom,
     )
 
@@ -1499,7 +1499,7 @@ def test_load_pool_respects_env_var_copilot_suppression(tmp_path, monkeypatch):
     )
 
     monkeypatch.setattr(
-        "hermes_cli.copilot_auth.resolve_copilot_token",
+        'auth.providers.copilot.resolve_copilot_token',
         lambda: ("gho_fake_token_env", "GH_TOKEN"),
     )
 
@@ -1511,7 +1511,7 @@ def test_load_pool_respects_env_var_copilot_suppression(tmp_path, monkeypatch):
         raise AssertionError("exchange must not run for a suppressed env source")
 
     monkeypatch.setattr(
-        "hermes_cli.copilot_auth.get_copilot_api_token",
+        'auth.providers.copilot.get_copilot_api_token',
         _boom,
     )
 
@@ -1540,11 +1540,11 @@ def test_load_pool_gh_cli_suppression_does_not_block_env_tokens(tmp_path, monkey
     )
 
     monkeypatch.setattr(
-        "hermes_cli.copilot_auth.resolve_copilot_token",
+        'auth.providers.copilot.resolve_copilot_token',
         lambda: ("gho_fake_token_env", "GH_TOKEN"),
     )
     monkeypatch.setattr(
-        "hermes_cli.copilot_auth.get_copilot_api_token",
+        'auth.providers.copilot.get_copilot_api_token',
         lambda token: ("capi_exchanged_token", None),
     )
 
@@ -1559,7 +1559,7 @@ def test_load_pool_skips_resolve_when_all_copilot_sources_suppressed(tmp_path, m
     shells out to ``gh auth token``) must not run at all."""
     from hermes_cli.config_credentials import credential_pool_environment
     monkeypatch.setenv("HERMES_HOME", str(tmp_path / "hermes"))
-    from hermes_cli.copilot_auth import COPILOT_ENV_VARS
+    from auth.providers.copilot import COPILOT_ENV_VARS
     _write_auth_store(
         tmp_path,
         {
@@ -1574,7 +1574,7 @@ def test_load_pool_skips_resolve_when_all_copilot_sources_suppressed(tmp_path, m
     def _boom():
         raise AssertionError("resolve_copilot_token must not run when all sources are suppressed")
 
-    monkeypatch.setattr("hermes_cli.copilot_auth.resolve_copilot_token", _boom)
+    monkeypatch.setattr('auth.providers.copilot.resolve_copilot_token', _boom)
 
     from auth.credential_pool import load_pool
     pool = load_pool("copilot", environment=credential_pool_environment())
@@ -1594,14 +1594,14 @@ def test_load_pool_copilot_exchange_only_when_selected_and_warns_once(tmp_path, 
     from auth.pool_sources import _reset_copilot_raw_degradation_warned
     from auth.credential_pool import load_pool
     _reset_copilot_raw_degradation_warned()
-    monkeypatch.setattr("hermes_cli.copilot_auth.resolve_copilot_token", lambda: ("gho_raw_initial", "gh auth token"))
+    monkeypatch.setattr('auth.providers.copilot.resolve_copilot_token', lambda: ("gho_raw_initial", "gh auth token"))
     exchanges = []
 
     def degraded_exchange(token):
         exchanges.append(token)
         return token, None  # exchange unavailable -> RAW token, no enterprise URL
 
-    monkeypatch.setattr("hermes_cli.copilot_auth.get_copilot_api_token", degraded_exchange)
+    monkeypatch.setattr('auth.providers.copilot.get_copilot_api_token', degraded_exchange)
 
     def degradation_warnings():
         return [r for r in caplog.records if "Copilot token exchange degraded to RAW token" in r.message]
@@ -1626,7 +1626,7 @@ def test_load_pool_copilot_exchange_only_when_selected_and_warns_once(tmp_path, 
         assert len(exchanges) == 2 and len(degradation_warnings()) == 1
 
         # A different token is a different degradation: warned again, once.
-        monkeypatch.setattr("hermes_cli.copilot_auth.resolve_copilot_token", lambda: ("gho_raw_rotated", "gh auth token"))
+        monkeypatch.setattr('auth.providers.copilot.resolve_copilot_token', lambda: ("gho_raw_rotated", "gh auth token"))
         load_pool("copilot", environment=credential_pool_environment())
         assert len(degradation_warnings()) == 2
 
@@ -1638,7 +1638,7 @@ def test_load_pool_seeds_qwen_oauth_via_cli_tokens(tmp_path, monkeypatch):
     _write_auth_store(tmp_path, {"version": 1, "credential_pool": {}})
 
     monkeypatch.setattr(
-        "hermes_cli.auth.resolve_qwen_runtime_credentials",
+        'auth.providers.qwen.resolve_qwen_runtime_credentials',
         lambda **kw: {
             "provider": "qwen-oauth",
             "base_url": "https://portal.qwen.ai/v1",
@@ -1668,7 +1668,7 @@ def test_load_pool_does_not_seed_qwen_oauth_when_no_token(tmp_path, monkeypatch)
     from auth.errors import AuthError
 
     monkeypatch.setattr(
-        "hermes_cli.auth.resolve_qwen_runtime_credentials",
+        'auth.providers.qwen.resolve_qwen_runtime_credentials',
         lambda **kw: (_ for _ in ()).throw(
             AuthError("Qwen CLI credentials not found.", provider="qwen-oauth", code="qwen_auth_missing")
         ),
@@ -1804,8 +1804,8 @@ def test_persist_preserves_concurrent_disk_only_entry(tmp_path, monkeypatch):
     # Block external-credential autodiscovery: a real ~/.claude/.credentials.json
     # on a dev machine would seed an extra claude_code entry and break the
     # exact-id assertions below (passes on CI where no such file exists).
-    monkeypatch.setattr("agent.anthropic_credentials.read_hermes_oauth_credentials", lambda: None)
-    monkeypatch.setattr("agent.anthropic_credentials.read_claude_code_credentials", lambda: None)
+    monkeypatch.setattr('auth.providers.anthropic.read_hermes_oauth_credentials', lambda: None)
+    monkeypatch.setattr('auth.providers.anthropic.read_claude_code_credentials', lambda**_auth_settings: None)
     _write_auth_store(
         tmp_path,
         {
@@ -1881,12 +1881,12 @@ def _make_anthropic_claude_code_pool(tmp_path, monkeypatch, *, access_token, ref
     _write_auth_store(tmp_path, {"version": 1, "credential_pool": {}})
     monkeypatch.setattr("hermes_cli.auth.is_provider_explicitly_configured", lambda pid: pid == "anthropic")
     monkeypatch.setattr(
-        "agent.anthropic_credentials.read_hermes_oauth_credentials",
+        'auth.providers.anthropic.read_hermes_oauth_credentials',
         lambda: None,
     )
     monkeypatch.setattr(
-        "agent.anthropic_credentials.read_claude_code_credentials",
-        lambda: {"accessToken": access_token, "refreshToken": refresh_token, "expiresAt": expires_at_ms},
+        'auth.providers.anthropic.read_claude_code_credentials',
+        lambda**_auth_settings: {"accessToken": access_token, "refreshToken": refresh_token, "expiresAt": expires_at_ms},
     )
     from auth.credential_pool import load_pool
     pool = load_pool("anthropic", environment=credential_pool_environment())
@@ -1931,8 +1931,8 @@ def test_sync_anthropic_entry_clears_all_error_fields(tmp_path, monkeypatch):
     pool._replace_entry(entry, exhausted)
 
     monkeypatch.setattr(
-        "agent.anthropic_credentials.read_claude_code_credentials",
-        lambda: {"accessToken": "fresh-access", "refreshToken": "fresh-refresh", "expiresAt": 9_999_999_999_000},
+        'auth.providers.anthropic.read_claude_code_credentials',
+        lambda**_auth_settings: {"accessToken": "fresh-access", "refreshToken": "fresh-refresh", "expiresAt": 9_999_999_999_000},
     )
 
     synced = pool._sync_anthropic_entry_from_credentials_file(exhausted)

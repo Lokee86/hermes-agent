@@ -2,6 +2,8 @@
 ``ProviderProfile.auth_handler`` / ``refresh_credential``."""
 
 from __future__ import annotations
+import auth.providers.plugin_pkce as _auth_auth_providers_plugin_pkce
+
 
 import json
 from dataclasses import replace
@@ -30,8 +32,8 @@ def idp(monkeypatch, tmp_path):
     server.stop()
 
 
-def _config(idp: FakeIdP, **overrides) -> pkce.OAuthPKCEConfig:
-    base = pkce.OAuthPKCEConfig(client_id="hermes-example", authorize_url=f"{idp.base}/authorize",
+def _config(idp: FakeIdP, **overrides) -> _auth_auth_providers_plugin_pkce.OAuthPKCEConfig:
+    base = _auth_auth_providers_plugin_pkce.OAuthPKCEConfig(client_id="hermes-example", authorize_url=f"{idp.base}/authorize",
                                 token_url=f"{idp.base}/token", scopes=("inference",), timeout_seconds=5)
     return replace(base, **overrides)
 
@@ -49,7 +51,7 @@ def test_pkce_handler_add_status_refresh_logout_against_fake_idp(idp, monkeypatc
     monkeypatch.setattr(pkce.webbrowser, "open", _browser_hits)
     monkeypatch.setattr("hermes_cli.auth_device_flow._can_open_graphical_browser", lambda: True)
     cfg = _config(idp)
-    handler, refresh = pkce.pkce_auth_handler(cfg), pkce.pkce_refresh_credential(cfg)
+    handler, refresh = pkce.pkce_auth_handler(cfg), _auth_auth_providers_plugin_pkce.pkce_refresh_credential(cfg)
     # Registered like a real plugin so the credential pool finds ``refresh_credential`` through the seam.
     register_provider(ProviderProfile(name=PROVIDER, auth_type="oauth_external", base_url="https://example.invalid/v1",
                                       auth_handler=handler, refresh_credential=refresh))
@@ -63,7 +65,7 @@ def test_pkce_handler_add_status_refresh_logout_against_fake_idp(idp, monkeypatc
     assert exchange["redirect_uri"].startswith("http://127.0.0.1:")
     rows = json.loads((tmp_path / "hermes" / "auth.json").read_text())["credential_pool"][PROVIDER]
     assert [(r["auth_type"], r["source"], r["oauth_pkce"]["client_id"]) for r in rows] == [
-        ("oauth", pkce.POOL_SOURCE, "hermes-example")]
+        ("oauth", _auth_auth_providers_plugin_pkce.POOL_SOURCE, "hermes-example")]
     assert rows[0]["refresh_token"] in idp.refresh_tokens and rows[0]["expires_at_ms"]
     assert handler("status", args) is True
     assert handler("refresh", args) is False  # declined → the pool's generic refresh owns it
@@ -94,7 +96,7 @@ def test_pkce_handler_add_status_refresh_logout_against_fake_idp(idp, monkeypatc
 
 
 def test_token_url_off_authorize_allowlist_refused_before_any_request(idp, monkeypatch):
-    from hermes_cli.auth_constants import httpx
+    from auth.constants import httpx
 
     monkeypatch.setattr(httpx, "post", Mock(side_effect=AssertionError("token endpoint must not be contacted")))
     cfg = _config(idp, token_url="https://token.attacker.example/token")
@@ -102,10 +104,10 @@ def test_token_url_off_authorize_allowlist_refused_before_any_request(idp, monke
         pkce.login(PROVIDER, cfg, open_browser=False)
     entry = SimpleNamespace(provider=PROVIDER, id="abc123", refresh_token="rt", access_token="at", expires_at_ms=None)
     with pytest.raises(AuthError) as refresh_err:
-        pkce.pkce_refresh_credential(cfg)(entry)
+        _auth_auth_providers_plugin_pkce.pkce_refresh_credential(cfg)(entry)
     assert {login_err.value.code, refresh_err.value.code} == {"oauth_token_host_rejected"}
     with pytest.raises(AuthError, match="HTTPS"):
-        pkce.validate_config(PROVIDER, _config(idp, authorize_url="http://auth.example.com/authorize"))
+        _auth_auth_providers_plugin_pkce.validate_config(PROVIDER, _config(idp, authorize_url="http://auth.example.com/authorize"))
 
 
 def test_spent_refresh_token_is_grant_dead_and_marks_the_pool_row_dead(idp, monkeypatch, tmp_path, request):
@@ -116,7 +118,7 @@ def test_spent_refresh_token_is_grant_dead_and_marks_the_pool_row_dead(idp, monk
     monkeypatch.setattr(pkce.webbrowser, "open", _browser_hits)
     monkeypatch.setattr("hermes_cli.auth_device_flow._can_open_graphical_browser", lambda: True)
     cfg = _config(idp)
-    handler, refresh = pkce.pkce_auth_handler(cfg), pkce.pkce_refresh_credential(cfg)
+    handler, refresh = pkce.pkce_auth_handler(cfg), _auth_auth_providers_plugin_pkce.pkce_refresh_credential(cfg)
     register_provider(ProviderProfile(name=PROVIDER, auth_type="oauth_external",
                                       base_url="https://example.invalid/v1",
                                       auth_handler=handler, refresh_credential=refresh))
@@ -153,7 +155,7 @@ def test_alias_login_stores_the_row_under_the_canonical_profile_name(idp, monkey
     register_provider(ProviderProfile(
         name=PROVIDER, aliases=(alias,), auth_type="oauth_external",
         base_url="https://example.invalid/v1",
-        auth_handler=handler, refresh_credential=pkce.pkce_refresh_credential(cfg)))
+        auth_handler=handler, refresh_credential=_auth_auth_providers_plugin_pkce.pkce_refresh_credential(cfg)))
     request.addfinalizer(lambda: (
         providers._REGISTRY.pop(PROVIDER, None),
         providers._ALIASES.pop(alias, None),

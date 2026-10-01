@@ -26,7 +26,7 @@ class TestCopilotCatalogApiKeyResolution:
             'auth.pool_persistence.read_credential_pool',
             return_value=[{"access_token": "gho_abc123"}],
         ), patch(
-            "hermes_cli.copilot_auth.exchange_copilot_token",
+            'auth.providers.copilot.exchange_copilot_token',
             return_value=("tid_exchanged_xyz", 1234567890.0),
         ):
             assert _resolve_copilot_catalog_api_key() == "tid_exchanged_xyz"
@@ -55,7 +55,7 @@ class TestCopilotCatalogApiKeyResolution:
                 {"access_token": "gho_valid_token"},
             ],
         ), patch(
-            "hermes_cli.copilot_auth.exchange_copilot_token",
+            'auth.providers.copilot.exchange_copilot_token',
             side_effect=fake_exchange,
         ):
             assert _resolve_copilot_catalog_api_key() == "tid_from_second"

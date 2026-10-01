@@ -1,3 +1,5 @@
+
+import auth.providers.xai as _auth_auth_providers_xai
 """Regression tests for xAI OAuth refresh write-through to the global root.
 
 Companion to ``test_xai_oauth_profile_auth.py``. That file covers the READ
@@ -62,7 +64,7 @@ def test_write_through_is_noop_in_classic_mode(tmp_path, monkeypatch):
     _write_store(profile_path, {"version": 1, "providers": {}})
 
     # Should not raise and should persist to the single store.
-    auth._save_xai_oauth_tokens(
+    _auth_auth_providers_xai._save_xai_oauth_tokens(
         {"access_token": "a", "refresh_token": "r"}
     )
     store = _read_store(profile_path)
@@ -85,7 +87,7 @@ def test_write_through_failure_does_not_break_profile_save(profile_and_root, mon
 
     monkeypatch.setattr(auth_storage, "_save_auth_store", _exploding_save)
 
-    auth._save_xai_oauth_tokens({"access_token": "a", "refresh_token": "r"})
+    _auth_auth_providers_xai._save_xai_oauth_tokens({"access_token": "a", "refresh_token": "r"})
 
     profile = _read_store(profile_path)
     assert profile["providers"]["xai-oauth"]["tokens"]["refresh_token"] == "r"

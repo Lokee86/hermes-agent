@@ -3,6 +3,7 @@
 Configuration remains with the application's configuration owner. Protocol
 callbacks are supplied by provider implementations; the pool owns their invocation.
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -40,6 +41,9 @@ class PoolEnvironment:
     key_endpoint: Callable[[str, str, str, str], str] = field(repr=False)
     normalize_endpoint: Callable[[Any], str] = field(repr=False)
     provider_hooks: Callable[[str], PoolProviderHooks] = field(repr=False)
+
+    entitlement_message: Callable[[str], str] | None = field(default=None, repr=False)
+    oauth_user_agent: Callable[[], str] | None = field(default=None, repr=False)
 
     def require_current_scope(self) -> None:
         if self.scope != CredentialScope(get_hermes_home()):

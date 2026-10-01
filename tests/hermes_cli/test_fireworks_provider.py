@@ -7,6 +7,10 @@ any live network calls.
 """
 
 from __future__ import annotations
+import auth.providers.nous_status as _auth_auth_providers_nous_status
+
+import auth.providers.nous as _auth_auth_providers_nous
+
 
 import contextlib
 import io
@@ -99,7 +103,7 @@ class TestFireworksDoctor:
         with contextlib.suppress(Exception):
             from hermes_cli import auth as _auth_mod
 
-            monkeypatch.setattr(_auth_mod, "get_nous_auth_status", lambda: {})
+            monkeypatch.setattr(_auth_auth_providers_nous_status, "get_nous_auth_status", lambda**_auth_settings: {})
             monkeypatch.setattr(_auth_mod, "get_codex_auth_status", lambda: {})
 
         buf = io.StringIO()

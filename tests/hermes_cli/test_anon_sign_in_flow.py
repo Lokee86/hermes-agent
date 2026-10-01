@@ -6,6 +6,12 @@ mocked away. Each test asserts a single ruled property of the flow.
 """
 
 from __future__ import annotations
+from hermes_cli.config_credentials import credential_pool_environment as _phase6_auth_environment
+
+import auth.oauth as _auth_auth_oauth
+import auth.providers.nous as _auth_auth_providers_nous
+import auth.providers.nous_guest as _auth_auth_providers_nous_guest
+
 
 import threading
 import time
@@ -24,7 +30,7 @@ def _drain(**kwargs):
     return list(anon_auth.run_sign_in(**kwargs))
 
 def _seed_free_tier() -> dict:
-    return anon_auth.ensure_portal_identity(explicit=True)
+    return _auth_auth_providers_nous_guest.ensure_portal_identity(explicit=True, environment=_phase6_auth_environment())
 
 def _stub_wait(monkeypatch, outcome, *, before=None):
     """Replace the promotion wait with one that returns *outcome* (running *before* first)."""
@@ -39,7 +45,7 @@ def _voided(reason: str) -> dict:
 
 def test_a_completed_sign_in_yields_code_waiting_then_completed(portal, free_account):
     _seed_free_tier()
-    _write_model_config({"provider": "nous", "default": anon_auth.GUEST_MODEL, "base_url": WELCOME})
+    _write_model_config({"provider": "nous", "default": _auth_auth_providers_nous_guest.GUEST_MODEL, "base_url": WELCOME})
 
     states = _drain()
 
@@ -77,12 +83,12 @@ def test_a_timeout_yields_timed_out_and_keeps_the_enriched_detail(portal, monkey
 
     # The token poll can time out too, and its guidance is enriched at the source.
     from hermes_cli import auth_device_flow
-    enriched = auth_device_flow._nous_device_auth_timeout_message(PORTAL)
+    enriched = _auth_auth_oauth._nous_device_auth_timeout_message(PORTAL)
     _stub_wait(monkeypatch, {"status": "completed", "account_email": EMAIL})
 
     def _timeout(**kwargs):
         raise TimeoutError(enriched)
-    monkeypatch.setattr(auth_device_flow, "_poll_for_token", _timeout)
+    monkeypatch.setattr(_auth_auth_oauth, "_poll_for_token", _timeout)
 
     state = _drain()[-1]
     assert state.kind == "timed_out"
@@ -93,12 +99,12 @@ def test_a_timeout_yields_timed_out_and_keeps_the_enriched_detail(portal, monkey
 def test_a_retired_identity_yields_retired_and_clears_the_free_tier(portal, monkeypatch):
     guest = _seed_free_tier()
     cleared = []
-    real_clear = anon_auth.clear_dead_guest
+    real_clear = _auth_auth_providers_nous_guest.clear_dead_guest
 
     def _spy(reason, *, dead_token=None):
         cleared.append((reason, dead_token))
         real_clear(reason, dead_token=dead_token)
-    monkeypatch.setattr(anon_auth, "clear_dead_guest", _spy)
+    monkeypatch.setattr(_auth_auth_providers_nous_guest, "clear_dead_guest", _spy)
     portal.status_sequence = [_voided("account_not_anonymous")]
 
     state = _drain()[-1]
@@ -125,13 +131,13 @@ def test_a_retired_identity_yields_retired_even_when_cleanup_fails(portal, monke
     _seed_free_tier()
 
     def _retired(*args, **kwargs):
-        raise anon_auth.AnonCredentialDead("retired")
+        raise _auth_auth_providers_nous_guest.AnonCredentialDead("retired")
 
     def _read_only(*args, **kwargs):
         raise OSError("read-only store")
 
     monkeypatch.setattr(anon_auth, "register_promotion_intent", _retired)
-    monkeypatch.setattr(anon_auth, "clear_dead_guest", _read_only)
+    monkeypatch.setattr(_auth_auth_providers_nous_guest, "clear_dead_guest", _read_only)
 
     states = _drain()
 
@@ -176,7 +182,7 @@ def test_a_persist_failure_yields_failed_rather_than_raising(portal, free_accoun
     settles = []
     from hermes_cli import auth_nous
     monkeypatch.setattr(
-        auth_nous, "persist_nous_credentials", lambda *a, **kw: (_ for _ in ()).throw(OSError("read-only home")))
+        _auth_auth_providers_nous, "persist_nous_credentials", lambda *a, **kw: (_ for _ in ()).throw(OSError("read-only home")))
     monkeypatch.setattr(anon_auth, "settle_after_upgrade", lambda state: settles.append(state) or {})
 
     states = _drain()
@@ -190,9 +196,9 @@ def test_a_settle_failure_yields_failed_rather_than_raising(portal, free_account
     _seed_free_tier()
     persists = []
     from hermes_cli import auth_nous
-    real_persist = auth_nous.persist_nous_credentials
+    real_persist = _auth_auth_providers_nous.persist_nous_credentials
     monkeypatch.setattr(
-        auth_nous, "persist_nous_credentials",
+        _auth_auth_providers_nous, "persist_nous_credentials",
         lambda state, **kw: (persists.append(state), real_persist(state, **kw))[1])
 
     def _boom(state):
@@ -221,7 +227,7 @@ def test_already_signed_in_short_circuits_before_any_network(portal):
     assert portal.calls == []
 
 def test_free_tier_off_yields_unavailable(portal, monkeypatch):
-    monkeypatch.setattr(anon_auth, "guest_enabled", lambda: False)
+    monkeypatch.setattr(_auth_auth_providers_nous_guest, "guest_enabled", lambda**_auth_settings: False)
     portal.calls.clear()
 
     states = _drain()
@@ -234,9 +240,9 @@ def test_free_tier_off_yields_unavailable(portal, monkeypatch):
 def test_no_identity_on_disk_yields_unavailable_without_touching_the_portal(portal, monkeypatch):
     """A sign-in never creates the identity it signs in from: the boot bootstrap is the only creator.
     With nothing on disk the flow yields ``Unavailable`` and makes no portal call and no mint attempt."""
-    monkeypatch.setattr(anon_auth, "ensure_portal_identity",
+    monkeypatch.setattr(_auth_auth_providers_nous_guest, "ensure_portal_identity",
                         lambda **kwargs: (_ for _ in ()).throw(AssertionError("run_sign_in must not mint")))
-    monkeypatch.setattr(anon_auth, "mint_guest",
+    monkeypatch.setattr(_auth_auth_providers_nous_guest, "mint_guest",
                         lambda *a, **k: (_ for _ in ()).throw(AssertionError("run_sign_in must not mint")))
 
     states = _drain()
@@ -312,7 +318,7 @@ def test_cancelling_during_a_completed_status_request_obeys_the_surface_policy(
     assert portal.token_grants == (0 if cancel_wins else 1)
     from auth.store import _load_auth_store
     state = _load_auth_store()["providers"]["nous"]
-    assert anon_auth.is_guest_state(state) is cancel_wins
+    assert _auth_auth_providers_nous_guest.is_guest_state(state) is cancel_wins
 
 def _cancel_after_a_completed_promotion(portal, monkeypatch, *, cancel_wins: bool):
     _seed_free_tier()
@@ -344,7 +350,7 @@ def test_a_gateway_style_supersede_after_a_completed_promotion_still_signs_in(
     assert portal.token_grants == 1
     from auth.store import _load_auth_store
     state = _load_auth_store()["providers"]["nous"]
-    assert not anon_auth.is_guest_state(state)
+    assert not _auth_auth_providers_nous_guest.is_guest_state(state)
 
 def test_a_persist_guard_that_refuses_persists_nothing_and_never_settles(
         portal, free_account, monkeypatch, tmp_path):
@@ -402,6 +408,7 @@ def test_the_scope_is_entered_for_the_preconditions_and_the_persist_but_never_ar
     yields = []
     for state in anon_auth.run_sign_in(scope=_scope):
         yields.append(time.monotonic())
+        events.append(("yield", yields[-1], threading.get_ident()))
         states.append(state)
 
     assert states[-1].kind == "completed"
@@ -414,4 +421,5 @@ def test_the_scope_is_entered_for_the_preconditions_and_the_persist_but_never_ar
     for first, second in (pairs[0:2], pairs[2:4]):
         assert not (first[1] <= wait_start and wait_end <= second[1])
         # and never held across a yield, which would hand the scope to the consumer's thread
-        assert not any(first[1] <= at <= second[1] for at in yields)
+        between = events[events.index(first) + 1:events.index(second)]
+        assert not any(event[0] == "yield" for event in between)

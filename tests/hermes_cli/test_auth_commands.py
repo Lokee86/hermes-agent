@@ -1,6 +1,10 @@
 """Tests for auth subcommands backed by the credential pool."""
 
 from __future__ import annotations
+from hermes_cli.config_credentials import credential_pool_environment as _phase6_auth_environment
+
+import auth.providers.anthropic as _auth_auth_providers_anthropic
+
 
 import base64
 import json
@@ -588,10 +592,11 @@ def test_codex_runtime_pool_only_rate_limit_is_not_missing_auth(tmp_path, monkey
     _write_auth_store(tmp_path, _codex_pool_only_store(exhausted=True))
 
     from auth.errors import AuthError
-    from hermes_cli.auth import CODEX_RATE_LIMITED_CODE, resolve_codex_runtime_credentials
+    from auth.constants import CODEX_RATE_LIMITED_CODE
+    from auth.providers.codex import resolve_codex_runtime_credentials
 
     with pytest.raises(AuthError) as exc_info:
-        resolve_codex_runtime_credentials()
+        resolve_codex_runtime_credentials(environment=_phase6_auth_environment())
 
     assert exc_info.value.code == CODEX_RATE_LIMITED_CODE
     assert exc_info.value.relogin_required is False
@@ -900,11 +905,11 @@ def test_seed_from_singletons_respects_hermes_pkce_suppression(tmp_path, monkeyp
     }))
 
     # Stub the readers so only hermes_pkce is "available"; claude_code returns None
-    import agent.anthropic_credentials as aa
-    monkeypatch.setattr(aa, "read_hermes_oauth_credentials", lambda: {
+    import auth.providers.anthropic as aa
+    monkeypatch.setattr(_auth_auth_providers_anthropic, "read_hermes_oauth_credentials", lambda: {
         "accessToken": "tok", "refreshToken": "r", "expiresAt": 9999999999000,
     })
-    monkeypatch.setattr(aa, "read_claude_code_credentials", lambda: None)
+    monkeypatch.setattr(_auth_auth_providers_anthropic, "read_claude_code_credentials", lambda**_auth_settings: None)
 
     from auth.pool_sources import _seed_from_singletons
     entries = []
@@ -940,10 +945,10 @@ def test_auth_remove_copilot_suppresses_all_variants(tmp_path, monkeypatch):
     from hermes_cli.auth_commands import auth_remove_command
 
     with patch(
-        "hermes_cli.copilot_auth.resolve_copilot_token",
+        'auth.providers.copilot.resolve_copilot_token',
         return_value=("ghp_fake", "gh"),
     ), patch(
-        "hermes_cli.copilot_auth.get_copilot_api_token",
+        'auth.providers.copilot.get_copilot_api_token',
         return_value=("ghu_fake_api", None),
     ):
         auth_remove_command(SimpleNamespace(provider="copilot", target="1"))

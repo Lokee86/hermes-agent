@@ -1,6 +1,12 @@
 """Helpers for Nous subscription managed-tool capabilities."""
 
 from __future__ import annotations
+import auth.providers.nous_store as _auth_auth_providers_nous_store
+
+from hermes_cli.config_credentials import credential_pool_environment as _phase6_auth_environment
+
+import auth.providers.nous as _auth_auth_providers_nous
+
 import auth.provider_state as auth_provider_state
 import auth.store as auth_storage
 
@@ -8,9 +14,7 @@ from dataclasses import dataclass
 from typing import Dict, Iterable, Optional, Set
 
 from hermes_cli.config import get_env_value, load_config
-from hermes_cli.nous_account import (
-    NousPortalAccountInfo, format_nous_portal_entitlement_message, get_nous_portal_account_info,
-)
+from hermes_cli.nous_account import NousPortalAccountInfo, format_nous_portal_entitlement_message, get_nous_portal_account_info
 from tools.managed_tool_gateway import is_managed_tool_gateway_ready
 from utils import is_truthy_value
 from tools.tool_backend_helpers import (
@@ -677,8 +681,8 @@ def _run_nous_portal_login_only(*, capability: str) -> bool:
             prior_active_provider = auth_storage._load_auth_store().get("active_provider")
         auth_state = None
         # Interrupting the import question defaults to importing.
-        if auth._read_shared_nous_state() and _confirm("  Found existing Nous OAuth credentials. Import them? [Y/n]: ") is not False:
-            auth_state = auth._try_import_shared_nous_state(timeout_seconds=15.0)
+        if _auth_auth_providers_nous_store._read_shared_nous_state() and _confirm("  Found existing Nous OAuth credentials. Import them? [Y/n]: ") is not False:
+            auth_state = _auth_auth_providers_nous_store._try_import_shared_nous_state(timeout_seconds=15.0)
         if auth_state is None:
             auth_state = auth._nous_device_code_login()
         with auth_storage._auth_store_lock():
@@ -689,8 +693,8 @@ def _run_nous_portal_login_only(*, capability: str) -> bool:
             else:
                 auth_store.pop("active_provider", None)
             auth_storage._save_auth_store(auth_store)
-        auth._write_shared_nous_state(auth_state)
-        auth._sync_nous_pool_from_auth_store()
+        _auth_auth_providers_nous_store._write_shared_nous_state(auth_state)
+        _auth_auth_providers_nous._sync_nous_pool_from_auth_store(environment=_phase6_auth_environment())
         print("  Nous Portal login successful.")
         return True
     except KeyboardInterrupt:

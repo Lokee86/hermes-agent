@@ -1,13 +1,16 @@
 """Background keepalive for long-lived Nous Portal sessions."""
 
 from __future__ import annotations
+from hermes_cli.config_credentials import credential_pool_environment as _phase6_auth_environment
+
 
 import logging
 import os
 import threading
 from typing import Optional
 
-from hermes_cli.auth import ACCESS_TOKEN_REFRESH_SKEW_SECONDS, NOUS_INVOKE_JWT_MIN_TTL_SECONDS, _agent_key_is_usable, resolve_nous_runtime_credentials
+from auth.constants import ACCESS_TOKEN_REFRESH_SKEW_SECONDS, NOUS_INVOKE_JWT_MIN_TTL_SECONDS
+from auth.providers.nous import _agent_key_is_usable, resolve_nous_runtime_credentials
 from auth.errors import AuthError
 from auth.token_validation import _is_expiring
 from auth.provider_state import get_provider_auth_state
@@ -161,7 +164,7 @@ def refresh_nous_auth_keepalive_once(
         if not get_provider_auth_state("nous"):
             return False
         try:
-            resolve_nous_runtime_credentials(timeout_seconds=_timeout_seconds(timeout_seconds))
+            resolve_nous_runtime_credentials(timeout_seconds=_timeout_seconds(timeout_seconds), environment=_phase6_auth_environment())
             logger.debug("Nous auth keepalive: refreshed singleton auth state")
             return True
         except Exception as exc:
@@ -200,7 +203,7 @@ def start_nous_auth_keepalive(
         return None
     # The free tier has no refresh token to keep alive: its access token is re-minted from the
     # anon credential on demand by the request path, so a background refresher has nothing to do.
-    from hermes_cli.anon_auth import is_guest_state
+    from auth.providers.nous_guest import is_guest_state
     try:
         if is_guest_state(get_provider_auth_state("nous")):
             logger.debug("Nous auth keepalive skipped: free tier has no refresh token")

@@ -12,7 +12,8 @@ from unittest.mock import patch
 import pytest
 
 from auth.errors import AuthError
-from hermes_cli.auth import DEFAULT_QWEN_BASE_URL, resolve_qwen_runtime_credentials, get_qwen_auth_status
+from auth.constants import DEFAULT_QWEN_BASE_URL
+from auth.providers.qwen import resolve_qwen_runtime_credentials, get_qwen_auth_status
 
 
 # ---------------------------------------------------------------------------
@@ -56,7 +57,7 @@ def qwen_env(tmp_path, monkeypatch):
     """Redirect _qwen_cli_auth_path to tmp_path/.qwen/oauth_creds.json."""
     creds_path = tmp_path / ".qwen" / "oauth_creds.json"
     monkeypatch.setattr(
-        "hermes_cli.auth._qwen_cli_auth_path", lambda: creds_path
+        'auth.providers.qwen._qwen_cli_auth_path', lambda: creds_path
     )
     return tmp_path
 
@@ -144,7 +145,7 @@ def test_get_qwen_auth_status_refreshes_expired_token(qwen_env):
     refreshed = _make_qwen_tokens(access_token="refreshed-at")
 
     with patch(
-        "hermes_cli.auth._refresh_qwen_cli_tokens", return_value=refreshed
+        'auth.providers.qwen._refresh_qwen_cli_tokens', return_value=refreshed
     ) as mock_refresh:
         status = get_qwen_auth_status()
 
@@ -161,7 +162,7 @@ def test_model_flow_qwen_oauth_stale_token_shows_reauth_guidance(qwen_env, monke
     _write_qwen_creds(qwen_env, tokens)
 
     monkeypatch.setattr(
-        "hermes_cli.auth._refresh_qwen_cli_tokens",
+        'auth.providers.qwen._refresh_qwen_cli_tokens',
         lambda *args, **kwargs: (_ for _ in ()).throw(
             AuthError(
                 "Qwen refresh rejected. Re-run 'qwen auth qwen-oauth'.",

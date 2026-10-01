@@ -1,3 +1,9 @@
+
+import auth.providers.nous_status as _auth_auth_providers_nous_status
+
+from hermes_cli.config_credentials import credential_pool_environment as _phase6_auth_environment
+
+import auth.providers.nous as _auth_auth_providers_nous
 """Credential sections of `hermes status`, run through ``status._SECTIONS`` with its shared context.
 Origin helpers (``_row``, ``_first_env_value``, ...) are resolved through the ``hermes_cli.status``
 module object so tests that monkeypatch that module keep working."""
@@ -5,8 +11,7 @@ module object so tests that monkeypatch that module keep working."""
 from datetime import datetime, timezone
 
 from auth.errors import AuthError
-from hermes_cli.nous_account import (
-    format_nous_portal_entitlement_message, get_nous_portal_account_info)
+from hermes_cli.nous_account import format_nous_portal_entitlement_message, get_nous_portal_account_info
 from hermes_cli.nous_subscription import get_nous_subscription_features
 from tools.tool_backend_helpers import managed_nous_tools_enabled
 from hermes_cli import config
@@ -103,7 +108,7 @@ def _render_auth_providers(ctx):
     try:
         # Read-only display: the refresh-free snapshot, so `hermes status` never performs an OAuth
         # refresh or burns a single-use refresh token.
-        nous_status = auth.get_nous_auth_status_local()
+        nous_status = _auth_auth_providers_nous_status.get_nous_auth_status_local(environment=_phase6_auth_environment())
         statuses = {getter: getattr(auth, getter)() for _, getter, _, _ in _OAUTH_BLOCKS[:3]}
     except Exception:
         nous_status, statuses = {}, {}
@@ -127,7 +132,7 @@ def _render_auth_providers(ctx):
     )
     if nous_status.get("free_tier"):
         # Free tier: never rendered as an account login (no account ids, no refresh row).
-        from hermes_cli.anon_auth import FREE_TIER_LABEL, GUEST_MODEL, UPGRADE_HINT
+        from auth.providers.nous_guest import FREE_TIER_LABEL, GUEST_MODEL, UPGRADE_HINT
         _status._row("Nous Portal", True, f"{FREE_TIER_LABEL} · {GUEST_MODEL}")
         _status._detail("", UPGRADE_HINT)
         inference_url = nous_status.get("inference_base_url")

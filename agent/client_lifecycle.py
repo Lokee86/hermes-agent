@@ -1,3 +1,8 @@
+
+from hermes_cli.config_credentials import credential_pool_environment as _phase6_auth_environment
+
+import auth.providers.codex as _auth_auth_providers_codex
+import auth.providers.xai as _auth_auth_providers_xai
 """Tool-resource teardown, wire-client lifecycle and credential refresh for ``AIAgent``.
 
 ``ClientLifecycleMixin`` owns task cleanup, the shared primary client, per-request client caches
@@ -77,9 +82,9 @@ def _swap_fallback_clients(agent, fb_client, fb_provider: str, fb_model: str, fb
     credential = key_provider if callable(key_provider) else fb_client.api_key
     if fb_api_mode == "anthropic_messages":
         from agent.anthropic_adapter import build_anthropic_client
-        from agent.anthropic_credentials import resolve_anthropic_token, anthropic_route_is_oauth
+        from auth.providers.anthropic import resolve_anthropic_token, anthropic_route_is_oauth
         is_anthropic = fb_provider == "anthropic"
-        effective_key = credential or (resolve_anthropic_token(model=getattr(agent, "model", None)) if is_anthropic else None) or ""
+        effective_key = credential or (resolve_anthropic_token(model=getattr(agent, "model", None), environment=_phase6_auth_environment()) if is_anthropic else None) or ""
         agent.api_key = agent._anthropic_api_key = effective_key
         agent._anthropic_base_url = fb_base_url
         agent._anthropic_client = build_anthropic_client(effective_key, fb_base_url, timeout=timeout)
@@ -451,7 +456,7 @@ class ClientLifecycleMixin:
         request_kwargs["max_retries"] = 0
         is_copilot = base_url_host_matches(str(request_kwargs.get("base_url", "")), "githubcopilot.com")
         if is_copilot and self._api_kwargs_have_image_parts(api_kwargs or {}):
-            from hermes_cli.copilot_auth import copilot_request_headers
+            from auth.providers.copilot import copilot_request_headers
             request_kwargs["default_headers"] = copilot_request_headers(is_agent_turn=True, is_vision=True)
         cached, stale = self._checkout_request_slot(_OPENAI_SLOT, request_kwargs)
         if cached is not None:
@@ -499,7 +504,7 @@ class ClientLifecycleMixin:
 
     def _anthropic_oauth_flag(self, token: str) -> bool:
         """OAuth flag only on native Anthropic routes; third-party Anthropic-protocol endpoints must not trip OAuth paths."""
-        from agent.anthropic_credentials import anthropic_route_is_oauth
+        from auth.providers.anthropic import anthropic_route_is_oauth
         return anthropic_route_is_oauth(getattr(self, "_anthropic_base_url", None), token, provider=self.provider)
 
     def _build_anthropic_client_for_key(self, key: tuple) -> Any:
@@ -575,8 +580,8 @@ class ClientLifecycleMixin:
         try:
             from hermes_cli import auth as _auth
             resolve = (
-                _auth.resolve_codex_runtime_credentials if self.provider == "openai-codex"
-                else _auth.resolve_xai_oauth_runtime_credentials
+                _auth_auth_providers_codex.resolve_codex_runtime_credentials if self.provider == "openai-codex"
+                else _auth_auth_providers_xai.resolve_xai_oauth_runtime_credentials
             )
             singleton_now = resolve(refresh_if_expiring=False)
         except Exception as exc:
@@ -609,13 +614,13 @@ class ClientLifecycleMixin:
         if self.provider != "nous" or self.api_mode not in ("chat_completions", "anthropic_messages"):
             return False
         try:
-            from hermes_cli.auth import resolve_nous_runtime_credentials
+            from auth.providers.nous import resolve_nous_runtime_credentials
             timeout = env_float("HERMES_NOUS_TIMEOUT_SECONDS", 15)
             # Pass the bearer that just 401'd so a refresh already done by a sibling process is
             # adopted instead of rotating the grant again.
             creds = resolve_nous_runtime_credentials(
                 timeout_seconds=timeout, force_refresh=force, stale_access_token=self.api_key or None,
-            )
+             environment=_phase6_auth_environment())
         except Exception as exc:
             logger.debug("Nous credential refresh failed: %s", exc)
             return False
@@ -820,7 +825,7 @@ class ClientLifecycleMixin:
         if not self._is_copilot_provider():
             return False
         try:
-            from hermes_cli.copilot_auth import resolve_copilot_token, get_copilot_api_token, evict_cached_exchanged_token
+            from auth.providers.copilot import resolve_copilot_token, get_copilot_api_token, evict_cached_exchanged_token
             new_token, token_source = resolve_copilot_token()
         except Exception as exc:
             logger.debug("Copilot credential refresh failed: %s", exc)
@@ -850,7 +855,7 @@ class ClientLifecycleMixin:
         if not self._is_copilot_provider():
             return False
         try:
-            from hermes_cli.copilot_auth import resolve_copilot_token, get_copilot_api_token, evict_cached_exchanged_token
+            from auth.providers.copilot import resolve_copilot_token, get_copilot_api_token, evict_cached_exchanged_token
             raw_token, token_source = resolve_copilot_token()
             if not isinstance(raw_token, str) or not raw_token.strip():
                 return False
@@ -894,8 +899,8 @@ class ClientLifecycleMixin:
         if not official_host and not (current_key.startswith("sk-ant-") or getattr(self, "_is_anthropic_oauth", False)):
             return False
         try:
-            from agent.anthropic_credentials import resolve_anthropic_token
-            new_token = resolve_anthropic_token(model=self.model)
+            from auth.providers.anthropic import resolve_anthropic_token
+            new_token = resolve_anthropic_token(model=self.model, environment=_phase6_auth_environment())
         except Exception as exc:
             logger.debug("Anthropic credential refresh failed: %s", exc)
             return False
@@ -962,7 +967,7 @@ class ClientLifecycleMixin:
             runtime_base = normalize_actual_base_url(runtime_base)
         stripped_base = runtime_base.rstrip("/") if isinstance(runtime_base, str) else runtime_base
         # Refuse BEFORE any state changes below: a refused swap must leave the agent exactly as it was.
-        from hermes_cli.anon_auth import route_can_serve_model
+        from auth.providers.nous_guest import route_can_serve_model
         if not route_can_serve_model(getattr(self, "provider", None), stripped_base, getattr(self, "model", None)):
             logger.info("Credential %s skipped: its route cannot serve model %s", getattr(entry, "id", "?"), self.model)
             return False

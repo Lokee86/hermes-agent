@@ -529,7 +529,12 @@ them to the September deprecated-import manifest: that manifest disables plugins
 its deadline. The Phase 6 specification explicitly preserves demonstrated public plugin
 contracts. Structural import checks in `tests/auth/test_boundary.py` implement its
 required ownership gate and are the scoped exception to the source-reading test rule.
-Built-in protocol implementations still await 6.5; see `PHASE6_AUTH_POOL.md`.
+Shared OAuth lifecycle and built-in runtime authentication now live in `auth/oauth.py`
+and `auth/providers/`. Supply explicit settings through the application environment
+factory; auth must never import CLI configuration. Prompts, browser launching and
+plugin `auth_handler(action, args)` remain at the CLI edge. Retired implementations
+`agent.anthropic_credentials` and `hermes_cli.auth_qwen` must not return.
+See `PHASE6_AUTH_POOL.md` and `PHASE6_AUTH_OAUTH.md` for ownership and verification.
 
 ## Routing Table — working in X → read X/AGENTS.md
 

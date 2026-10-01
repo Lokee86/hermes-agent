@@ -22,7 +22,7 @@ def test_xai_model_flow_reauth_uses_standard_radio_prompt(monkeypatch):
 
     monkeypatch.setattr("hermes_cli.auth._login_xai_oauth", _fake_login)
     monkeypatch.setattr(
-        "hermes_cli.auth.resolve_xai_oauth_runtime_credentials",
+        'auth.providers.xai.resolve_xai_oauth_runtime_credentials',
         lambda *args, **kwargs: {"base_url": "https://api.x.ai/v1"},
     )
     monkeypatch.setattr(

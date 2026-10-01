@@ -27,6 +27,8 @@ reading an actually persisted, actually sanitized row.
 """
 
 from __future__ import annotations
+import auth.providers.anthropic as _auth_auth_providers_anthropic
+
 
 import json
 import time
@@ -34,7 +36,7 @@ from dataclasses import replace as dc_replace
 
 import pytest
 
-from agent import anthropic_credentials as AA
+import auth.providers.anthropic as AA
 from auth.persistence import sanitize_borrowed_credential_payload
 from auth.credential_pool import (
     AUTH_TYPE_OAUTH,
@@ -86,8 +88,8 @@ def claude_credentials(tmp_path, monkeypatch):
         ),
         encoding="utf-8",
     )
-    monkeypatch.setattr(AA, "claude_code_credentials_path", lambda: cred_path)
-    monkeypatch.setattr(AA, "_read_claude_code_credentials_from_keychain", lambda: None)
+    monkeypatch.setattr(_auth_auth_providers_anthropic, "claude_code_credentials_path", lambda: cred_path)
+    monkeypatch.setattr(_auth_auth_providers_anthropic, "_read_claude_code_credentials_from_keychain", lambda: None)
     return cred_path
 
 
@@ -164,14 +166,14 @@ def test_refresh_from_persisted_sanitized_row_keeps_the_full_pair(
         posts.append(refresh_token)
         return _rotating_refresh(refresh_token, **kwargs)
 
-    real_write = AA._write_claude_code_credentials
+    real_write = _auth_auth_providers_anthropic._write_claude_code_credentials
 
     def _counting_write(access_token, refresh_token, expires_at_ms, **kwargs):
         writes.append(refresh_token)
         return real_write(access_token, refresh_token, expires_at_ms, **kwargs)
 
-    monkeypatch.setattr(AA, "refresh_anthropic_oauth_pure", _counting_refresh)
-    monkeypatch.setattr(AA, "_write_claude_code_credentials", _counting_write)
+    monkeypatch.setattr(_auth_auth_providers_anthropic, "refresh_anthropic_oauth_pure", _counting_refresh)
+    monkeypatch.setattr(_auth_auth_providers_anthropic, "_write_claude_code_credentials", _counting_write)
 
     pool = load_pool("anthropic", environment=credential_pool_environment())
     entry = next(e for e in pool._entries if e.source == "claude_code")
@@ -204,7 +206,7 @@ def test_refresh_reaches_the_shared_credentials_lock(
         return real_lock(self)
 
     monkeypatch.setattr(CredentialPool, "_claude_code_credentials_lock", _tracking_lock)
-    monkeypatch.setattr(AA, "refresh_anthropic_oauth_pure", _rotating_refresh)
+    monkeypatch.setattr(_auth_auth_providers_anthropic, "refresh_anthropic_oauth_pure", _rotating_refresh)
 
     pool = load_pool("anthropic", environment=credential_pool_environment())
     entry = next(e for e in pool._entries if e.source == "claude_code")
@@ -238,7 +240,7 @@ def test_selection_after_refresh_leases_only_hydrated_entries(
 ):
     """End-to-end: refresh through selection leaves a usable, non-empty lease."""
     from hermes_cli.config_credentials import credential_pool_environment
-    monkeypatch.setattr(AA, "refresh_anthropic_oauth_pure", _rotating_refresh)
+    monkeypatch.setattr(_auth_auth_providers_anthropic, "refresh_anthropic_oauth_pure", _rotating_refresh)
 
     pool = load_pool("anthropic", environment=credential_pool_environment())
     available, _pending = pool._available_entries(clear_expired=True, refresh=True)

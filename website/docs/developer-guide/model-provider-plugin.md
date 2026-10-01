@@ -448,7 +448,8 @@ A provider whose IdP speaks standard OAuth 2.0 Authorization Code + PKCE does no
 hooks above by hand: declare the endpoints in `OAuthPKCEConfig` and let the two factories build them.
 
 ```python
-from hermes_cli.auth_oauth_pkce_plugin import OAuthPKCEConfig, pkce_auth_handler, pkce_refresh_credential
+from auth.providers.plugin_pkce import OAuthPKCEConfig, pkce_refresh_credential
+from hermes_cli.auth_oauth_pkce_plugin import pkce_auth_handler
 from providers import register_provider
 from providers.base import ProviderProfile
 

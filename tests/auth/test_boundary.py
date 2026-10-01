@@ -28,7 +28,8 @@ def test_auth_has_no_cli_imports():
 
 def test_runtime_has_no_retired_pool_or_grant_imports():
     retired = {
-        "agent.credential_sources",
+        "agent.credential_sources", "agent.anthropic_credentials",
+        "hermes_cli.auth_qwen",
         "agent.credential_pool", "agent.credential_pool_admin",
         "agent.credential_pool_model_cooldowns", "agent.credential_pool_plugin",
         "hermes_cli.auth_oauth_grants",

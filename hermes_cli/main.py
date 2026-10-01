@@ -1,3 +1,5 @@
+
+from hermes_cli.config_credentials import credential_pool_environment as _phase6_auth_environment
 #!/usr/bin/env python3
 """Hermes CLI - Main entry point.
 
@@ -1150,9 +1152,9 @@ def _has_any_provider_configured(*, strict_profile_scope: bool = False) -> bool:
     # configured — having Claude Code installed isn't consent to use its tokens.
     if _has_hermes_config and not strict_profile_scope:
         try:
-            from agent.anthropic_credentials import read_claude_code_credentials, is_claude_code_token_valid
+            from auth.providers.anthropic import read_claude_code_credentials, is_claude_code_token_valid
 
-            creds = read_claude_code_credentials()
+            creds = read_claude_code_credentials(environment=_phase6_auth_environment())
             if creds and (
                 is_claude_code_token_valid(creds) or creds.get("refreshToken")
             ):
@@ -1162,8 +1164,8 @@ def _has_any_provider_configured(*, strict_profile_scope: bool = False) -> bool:
 
     # Nothing explicit anywhere: an existing Nous free-tier identity counts while the tier is on.
     try:
-        from hermes_cli.anon_auth import guest_enabled, has_guest
-        return guest_enabled() and has_guest()
+        from auth.providers.nous_guest import guest_enabled, has_guest
+        return guest_enabled(environment=_phase6_auth_environment()) and has_guest()
     except Exception as exc:
         logger.debug("free tier check on first run skipped: %s", exc)
     return False

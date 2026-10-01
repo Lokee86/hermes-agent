@@ -198,7 +198,7 @@ class TestQuotaExhaustedIsNotAnAuthFailure:
         from gateway.session import SessionSource
         from gateway.turn_context import TurnContext
         from auth.errors import AuthError
-        from hermes_cli.auth_constants import CODEX_RATE_LIMITED_CODE
+        from auth.constants import CODEX_RATE_LIMITED_CODE
 
         def _resolve(**_kwargs):
             try:

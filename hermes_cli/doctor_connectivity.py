@@ -158,7 +158,7 @@ def _probe_anthropic() -> ProbeResult:
     try:
         import httpx
         from agent.anthropic_adapter import _COMMON_BETAS, _OAUTH_ONLY_BETAS, _CONTEXT_1M_BETA
-        from agent.anthropic_credentials import _is_oauth_token
+        from auth.providers.anthropic import _is_oauth_token
         is_oauth = _is_oauth_token(key)
         headers = {"anthropic-version": "2023-06-01", **({"Authorization": f"Bearer {key}", "anthropic-beta": ",".join(_COMMON_BETAS + _OAUTH_ONLY_BETAS)}
                                                          if is_oauth else {"x-api-key": key})}

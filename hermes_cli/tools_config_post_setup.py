@@ -272,7 +272,8 @@ def _post_setup_openai_codex() -> None:
     relogin = "hermes auth add openai-codex"
     _print_info("    OpenAI (Codex auth) needs credentials.")
     try:
-        from hermes_cli.auth import _codex_device_code_login, _save_codex_tokens
+        from hermes_cli.auth import _codex_device_code_login
+        from auth.providers.codex import _save_codex_tokens
         from hermes_cli.setup import is_noninteractive, prompt_choice
     except Exception as exc:
         _print_warning(f"    Could not load setup helpers: {exc}")

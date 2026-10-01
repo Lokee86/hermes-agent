@@ -1,3 +1,10 @@
+
+import auth.providers.codex_http as _auth_auth_providers_codex_http
+import auth.providers.codex_quota as _auth_auth_providers_codex_quota
+
+from hermes_cli.config_credentials import credential_pool_environment as _phase6_auth_environment
+
+import auth.providers.codex as _auth_auth_providers_codex
 """A Codex credential is only ever sent to the host it belongs to (#121486).
 
 Adversarial regressions for the catalog picker, the context probe, the auxiliary Codex client and
@@ -390,20 +397,20 @@ def usage_probe_http(monkeypatch):
     from hermes_cli import auth as auth_mod
     from hermes_cli import auth_codex
     seen = []
-    auth_mod._codex_quota_probe_cache.clear()
-    monkeypatch.setattr(auth_codex, "_codex_http_client", lambda **kw: _UsageRecorder(seen))
+    _auth_auth_providers_codex_quota._codex_quota_probe_cache.clear()
+    monkeypatch.setattr(_auth_auth_providers_codex_http, "_codex_http_client", lambda **kw: _UsageRecorder(seen))
     yield seen
-    auth_mod._codex_quota_probe_cache.clear()
+    _auth_auth_providers_codex_quota._codex_quota_probe_cache.clear()
 
 
 def test_quota_restored_probe_of_a_persisted_entry_asks_the_gateway(monkeypatch, usage_probe_http):
     home = _home(monkeypatch)
     _write_config(home, base_url=GW)
     _exhausted_jwt_pool(home)
-    from hermes_cli.auth_codex import _probe_codex_pool_entry_quota_restored
+    from auth.providers.codex_quota import _probe_codex_pool_entry_quota_restored
 
     entry = json.loads((home / "auth.json").read_text())["credential_pool"]["openai-codex"][0]
-    assert _probe_codex_pool_entry_quota_restored(entry) is True
+    assert _probe_codex_pool_entry_quota_restored(entry, environment=_phase6_auth_environment()) is True
 
     assert _authorized_hosts(usage_probe_http) == {"codex-gw.example"}
 
@@ -426,10 +433,10 @@ def test_quota_restored_probe_direct_chatgpt_positive_control(monkeypatch, usage
     home = _home(monkeypatch)
     _write_config(home)
     _exhausted_jwt_pool(home)
-    from hermes_cli.auth_codex import _probe_codex_pool_entry_quota_restored
+    from auth.providers.codex_quota import _probe_codex_pool_entry_quota_restored
 
     entry = json.loads((home / "auth.json").read_text())["credential_pool"]["openai-codex"][0]
-    _probe_codex_pool_entry_quota_restored(entry)
+    _probe_codex_pool_entry_quota_restored(entry, environment=_phase6_auth_environment())
 
     assert _authorized_hosts(usage_probe_http) == {"chatgpt.com"}
 

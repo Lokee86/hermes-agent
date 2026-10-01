@@ -5,6 +5,8 @@ Portal's ``recommended-models`` endpoint; neither source is authenticated.
 """
 
 from __future__ import annotations
+import hermes_cli.nous_account as _auth_auth_providers_nous_account
+
 import auth.provider_state as auth_provider_state
 import auth.store as auth_storage
 
@@ -209,9 +211,9 @@ class TestPolicyNoticeIsShown:
     def test_login_prints_it(self, monkeypatch, tmp_path, policy, capsys):
         import hermes_cli.nous_account as account_mod
 
-        monkeypatch.setattr(account_mod, "nous_policy_present", lambda: True)
+        monkeypatch.setattr(_auth_auth_providers_nous_account, "nous_policy_present", lambda: True)
         TestLoginNous()._run(monkeypatch, tmp_path)
-        assert account_mod.nous_policy_notice(removed=True) in capsys.readouterr().out
+        assert _auth_auth_providers_nous_account.nous_policy_notice(removed=True) in capsys.readouterr().out
 
 class TestAuxFallbackRespectsPolicy:
     """Steps 2-4 of the aux ladder are policy-blind: `resolve_aux_model` queries

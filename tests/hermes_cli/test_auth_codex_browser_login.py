@@ -5,6 +5,8 @@ ports); only the system browser is replaced by an HTTP client following the auth
 """
 
 from __future__ import annotations
+import auth.providers.codex_browser as _auth_auth_providers_codex_browser
+
 
 import base64
 import hashlib
@@ -88,8 +90,8 @@ def test_browser_flag_runs_loopback_pkce_and_stores_loopback_source(tmp_path, mo
     from hermes_cli import auth_codex_browser as browser_mod
     from hermes_cli.auth_commands import auth_add_command
 
-    monkeypatch.setattr(browser_mod, "CODEX_OAUTH_AUTHORIZE_URL", f"{fake_openai.base}/oauth/authorize")
-    monkeypatch.setattr(browser_mod, "CODEX_OAUTH_TOKEN_URL", f"{fake_openai.base}/oauth/token")
+    monkeypatch.setattr(_auth_auth_providers_codex_browser, "CODEX_OAUTH_AUTHORIZE_URL", f"{fake_openai.base}/oauth/authorize")
+    monkeypatch.setattr(_auth_auth_providers_codex_browser, "CODEX_OAUTH_TOKEN_URL", f"{fake_openai.base}/oauth/token")
     monkeypatch.setattr(browser_mod, "CODEX_BROWSER_CALLBACK_PORT", 0)  # ephemeral; production is 1455
     monkeypatch.setattr(browser_mod, "_can_open_graphical_browser", lambda: True)
     monkeypatch.setattr(

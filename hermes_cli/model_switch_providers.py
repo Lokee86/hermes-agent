@@ -5,6 +5,10 @@ Split out of ``hermes_cli/model_switch.py``; every moved name is re-imported the
 ``hermes_cli.model_switch.<name>`` keeps resolving (and monkeypatching) as before."""
 
 from __future__ import annotations
+from hermes_cli.config_credentials import credential_pool_environment as _phase6_auth_environment
+
+import auth.providers.nous_guest as _auth_auth_providers_nous_guest
+
 
 import logging
 import http.client
@@ -489,13 +493,13 @@ def _free_tier_nous_row(row: dict) -> dict | None:
     row through untouched. Builders that compute the full catalog lazily should pass
     ``models=[]`` and only compute when the returned row still has no models."""
     from hermes_cli import anon_auth
-    if not anon_auth.has_guest():
+    if not _auth_auth_providers_nous_guest.has_guest():
         return row
-    if not anon_auth.guest_enabled():
+    if not _auth_auth_providers_nous_guest.guest_enabled(environment=_phase6_auth_environment()):
         return None
     out = dict(row)
-    out["name"] = anon_auth.FREE_TIER_LABEL
-    out["models"] = [anon_auth.GUEST_MODEL]
+    out["name"] = _auth_auth_providers_nous_guest.FREE_TIER_LABEL
+    out["models"] = [_auth_auth_providers_nous_guest.GUEST_MODEL]
     out["total_models"] = 1
     # The explicit flag every consumer keys on (pricing, badges): never the display name. It also
     # tells the picker this is the free tier's identity, distinct from ``free_tier`` (an account on
@@ -879,9 +883,9 @@ def _overlay_has_creds(b: _PickerBuild, pid: str, hermes_slug: str, overlay) -> 
         # The pool gates anthropic behind is_provider_explicitly_configured() (aux tasks must not
         # consume Claude Code tokens); the picker is discovery-oriented, so read the files directly.
         try:
-            from agent.anthropic_credentials import read_claude_code_credentials, read_hermes_oauth_credentials
+            from auth.providers.anthropic import read_claude_code_credentials, read_hermes_oauth_credentials
             hermes_creds = read_hermes_oauth_credentials()
-            cc_creds = read_claude_code_credentials()
+            cc_creds = read_claude_code_credentials(environment=_phase6_auth_environment())
             if (hermes_creds and hermes_creds.get("accessToken")) or (cc_creds and cc_creds.get("accessToken")):
                 has_creds = True
         except Exception as exc:

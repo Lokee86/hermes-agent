@@ -162,7 +162,7 @@ def _resolve_token_and_base(*, use_cache: bool = True) -> tuple[str, str]:
     base = resolve_portal_base_url(state)
     try:
         from auth.errors import AuthError
-        from hermes_cli.auth import resolve_nous_access_token
+        from auth.providers.nous import resolve_nous_access_token
     except ImportError:
         # auth module unavailable — fall back to the raw stored token.
         token = state.get("access_token")

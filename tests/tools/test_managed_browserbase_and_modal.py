@@ -74,7 +74,7 @@ def _enable_managed_nous_tools(monkeypatch):
     hermes_cli.nous_account — so the function body returns True.
     """
     monkeypatch.setattr(
-        "hermes_cli.nous_account.get_nous_portal_account_info",
+        'hermes_cli.nous_account.get_nous_portal_account_info',
         lambda: NousPortalAccountInfo(
             logged_in=True,
             source="jwt",

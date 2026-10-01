@@ -1,16 +1,27 @@
 """Credential-pool source ingestion."""
+
 from __future__ import annotations
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, Set, Tuple
+from typing import Optional  # noqa: F401 (pool collaborators consume these bindings)
+
+from typing import TYPE_CHECKING, Any, Dict, List, Set, Tuple
 
 if TYPE_CHECKING:
     from auth.credential_pool import PooledCredential
 from auth.pool_environment import PoolEnvironment
 
+
 class _Seeder:
     """Accumulates ``_upsert_entry`` results for one ``load_pool`` seeding pass."""
 
-    def __init__(self, provider: str, entries: List[PooledCredential], *, environment: PoolEnvironment):
-        from auth.credential_pool import PooledCredential, _is_source_suppressed_fn
+    def __init__(
+        self,
+        provider: str,
+        entries: List[PooledCredential],
+        *,
+        environment: PoolEnvironment,
+    ):
+        from auth.credential_pool import _is_source_suppressed_fn
+
         self.environment = environment
         self.provider = provider
         self.entries = entries
@@ -21,10 +32,13 @@ class _Seeder:
     def upsert(self, source: str, payload: Dict[str, Any]) -> bool:
         """Upsert unless suppressed (``hermes auth remove`` must stay stable across loads)."""
         from auth.credential_pool import _upsert_entry
+
         if self.is_suppressed(self.provider, source):
             return False
         self.active_sources.add(source)
-        ingested = _upsert_entry(self.entries, self.provider, source, {"source": source, **payload})
+        ingested = _upsert_entry(
+            self.entries, self.provider, source, {"source": source, **payload}
+        )
         self.changed |= ingested
         return ingested
 
@@ -34,11 +48,17 @@ class _Seeder:
         return self.changed, self.active_sources
 
 
-def _seed_anthropic_singletons(seed: _Seeder) -> None:
+def _seed_anthropic_singletons(seed: _Seeder, *, environment) -> None:
     # Only auto-discover external credentials (Claude Code, Hermes PKCE) when
     # the user explicitly configured anthropic; otherwise auxiliary fallback
     # chains would read ~/.claude/.credentials.json without consent (PR #4210).
-    from auth.credential_pool import AUTH_TYPE_OAUTH, _retain_sources_not_in, label_from_token
+    environment.require_current_scope()
+    from auth.credential_pool import (
+        AUTH_TYPE_OAUTH,
+        _retain_sources_not_in,
+        label_from_token,
+    )
+
     try:
         if not seed.environment.provider_configured("anthropic"):
             return
@@ -56,16 +76,21 @@ def _seed_anthropic_singletons(seed: _Seeder) -> None:
 
     def _env_val(key: str) -> str:
         from auth.credential_pool import _get_secret
+
         return (_env_file.get(key) or _get_secret(key, "") or "").strip()
 
-    anthropic_oauth_env = _env_val("ANTHROPIC_TOKEN") or _env_val("CLAUDE_CODE_OAUTH_TOKEN")
+    anthropic_oauth_env = _env_val("ANTHROPIC_TOKEN") or _env_val(
+        "CLAUDE_CODE_OAUTH_TOKEN"
+    )
     if _env_val("ANTHROPIC_API_KEY") and not anthropic_oauth_env:
         # Prune stale autodiscovered OAuth entries from a previous OAuth
         # session so a transient 401 cannot revive them.
-        seed.changed |= _retain_sources_not_in(seed.entries, {"hermes_pkce", "claude_code"})
+        seed.changed |= _retain_sources_not_in(
+            seed.entries, {"hermes_pkce", "claude_code"}
+        )
         return
 
-    from agent.anthropic_credentials import (
+    from auth.providers.anthropic import (
         read_claude_code_credentials,
         read_hermes_oauth_credentials,
     )
@@ -73,20 +98,28 @@ def _seed_anthropic_singletons(seed: _Seeder) -> None:
 
     sources = [("hermes_pkce", read_hermes_oauth_credentials())]
     if adopt_external_logins_enabled(environment=seed.environment):
-        sources.append(("claude_code", read_claude_code_credentials()))
+        sources.append((
+            "claude_code",
+            read_claude_code_credentials(environment=environment),
+        ))
     else:
         # Singleton-seeded rows are otherwise never pruned; the opt-out must also drop the row an
         # earlier (adopting) process persisted, or it keeps rotating a login Hermes no longer reads.
         seed.changed |= _retain_sources_not_in(seed.entries, {"claude_code"})
     for source_name, creds in sources:
         if creds and creds.get("accessToken"):
-            seed.upsert(source_name, {
-                "auth_type": AUTH_TYPE_OAUTH,
-                "access_token": creds.get("accessToken", ""),
-                "refresh_token": creds.get("refreshToken"),
-                "expires_at_ms": creds.get("expiresAt"),
-                "label": label_from_token(creds.get("accessToken", ""), source_name),
-            })
+            seed.upsert(
+                source_name,
+                {
+                    "auth_type": AUTH_TYPE_OAUTH,
+                    "access_token": creds.get("accessToken", ""),
+                    "refresh_token": creds.get("refreshToken"),
+                    "expires_at_ms": creds.get("expiresAt"),
+                    "label": label_from_token(
+                        creds.get("accessToken", ""), source_name
+                    ),
+                },
+            )
 
 
 def _seed_nous_singleton(seed: _Seeder, auth_store: Dict[str, Any]) -> None:
@@ -283,12 +316,16 @@ def _seed_tokens_singleton(seed: _Seeder, auth_store: Dict[str, Any]) -> None:
     })
 
 
-def _seed_from_singletons(provider: str, entries: List[PooledCredential], *, environment: PoolEnvironment) -> Tuple[bool, Set[str]]:
-    from auth.credential_pool import PooledCredential, _TOKENS_SINGLETON_PROVIDERS, _load_auth_store
+def _seed_from_singletons(
+    provider: str, entries: List[PooledCredential], *, environment: PoolEnvironment
+) -> Tuple[bool, Set[str]]:
+    environment.require_current_scope()
+    from auth.credential_pool import _TOKENS_SINGLETON_PROVIDERS, _load_auth_store
+
     seed = _Seeder(provider, entries, environment=environment)
     auth_store = _load_auth_store()
     if provider == "anthropic":
-        _seed_anthropic_singletons(seed)
+        _seed_anthropic_singletons(seed, environment=environment)
     elif provider == "nous":
         _seed_nous_singleton(seed, auth_store)
     elif provider == "copilot":
@@ -374,8 +411,12 @@ def _env_payload(*, env_var: str, token: str, base_url: str, environment: PoolEn
 # Region-specific endpoints inferred from the key itself.
 
 
-
-def _env_key_var_candidates(env_vars: List[str], entries: List[PooledCredential], *, environment: PoolEnvironment) -> List[str]:
+def _env_key_var_candidates(
+    env_vars: List[str],
+    entries: List[PooledCredential],
+    *,
+    environment: PoolEnvironment,
+) -> List[str]:
     """*env_vars*, their numbered siblings, and the ``env:VAR`` names already persisted.
 
     ``VAR_2``, ``VAR_3``, ... are tried for every declared VAR until the first
@@ -388,7 +429,6 @@ def _env_key_var_candidates(env_vars: List[str], entries: List[PooledCredential]
     declare would otherwise stay empty forever and be silently dropped
     from rotation by ``_available_entries``.
     """
-    from auth.credential_pool import PooledCredential
     names = list(env_vars)
     for base in env_vars:
         n = 2
@@ -403,8 +443,11 @@ def _env_key_var_candidates(env_vars: List[str], entries: List[PooledCredential]
     return names
 
 
-def _seed_from_env(provider: str, entries: List[PooledCredential], *, environment: PoolEnvironment) -> Tuple[bool, Set[str]]:
-    from auth.credential_pool import AUTH_TYPE_API_KEY, OPENROUTER_BASE_URL, PooledCredential
+def _seed_from_env(
+    provider: str, entries: List[PooledCredential], *, environment: PoolEnvironment
+) -> Tuple[bool, Set[str]]:
+    from auth.credential_pool import AUTH_TYPE_API_KEY, OPENROUTER_BASE_URL
+
     seed = _Seeder(provider, entries, environment=environment)
     # Copilot's singleton branch exchanges the raw ghu_ OAuth token for the
     # api token via `get_copilot_api_token`; the generic loop would re-read
@@ -414,11 +457,18 @@ def _seed_from_env(provider: str, entries: List[PooledCredential], *, environmen
         return seed.result
 
     if provider == "openrouter":
-        for env_var in _env_key_var_candidates(["OPENROUTER_API_KEY"], entries, environment=environment):
+        for env_var in _env_key_var_candidates(
+            ["OPENROUTER_API_KEY"], entries, environment=environment
+        ):
             token = get_env_prefer_dotenv(env_var, environment=environment)
             if token and seed.upsert(
                 f"env:{env_var}",
-                _env_payload(env_var=env_var, token=token, base_url=OPENROUTER_BASE_URL, environment=environment),
+                _env_payload(
+                    env_var=env_var,
+                    token=token,
+                    base_url=OPENROUTER_BASE_URL,
+                    environment=environment,
+                ),
             ):
                 _warn_env_ingestion_once(provider, env_var)
         return seed.result
@@ -429,7 +479,9 @@ def _seed_from_env(provider: str, entries: List[PooledCredential], *, environmen
 
     env_url = ""
     if pconfig.base_url_env_var:
-        env_url = get_env_prefer_dotenv(pconfig.base_url_env_var, environment=environment).rstrip("/")
+        env_url = get_env_prefer_dotenv(
+            pconfig.base_url_env_var, environment=environment
+        ).rstrip("/")
 
     env_vars = list(pconfig.api_key_env_vars)
     if provider == "anthropic":
@@ -443,8 +495,15 @@ def _seed_from_env(provider: str, entries: List[PooledCredential], *, environmen
             continue
         base_url = env_url or pconfig.inference_base_url
         if resolve_base_url is not None:
-            base_url = resolve_base_url(provider, token, pconfig.inference_base_url, env_url)
-        seed.upsert(f"env:{env_var}", _env_payload(env_var=env_var, token=token, base_url=base_url, environment=environment))
+            base_url = resolve_base_url(
+                provider, token, pconfig.inference_base_url, env_url
+            )
+        seed.upsert(
+            f"env:{env_var}",
+            _env_payload(
+                env_var=env_var, token=token, base_url=base_url, environment=environment
+            ),
+        )
     return seed.result
 
 
@@ -455,21 +514,28 @@ def _prune_stale_seeded_entries(
     prune_env_sources: bool = True,
 ) -> bool:
     from auth.credential_pool import _is_manual_source
+
     def _is_prunable(entry: PooledCredential) -> bool:
         # ``env:*`` entries are persisted references re-hydrated on every load.
         # A process that merely lacks the env var must NOT delete the on-disk
         # entry for every other process (#9331); prune only when explicitly
         # requested (an `hermes auth` command that confirmed the source is gone).
-        from auth.credential_pool import PooledCredential, is_borrowed_credential_source
+        from auth.credential_pool import is_borrowed_credential_source
+
         if entry.source.startswith("env:"):
             return prune_env_sources
         # File-backed singletons and Hermes PKCE disappear when their backing file is gone.
-        return is_borrowed_credential_source(entry.source, entry.provider) or entry.source == "hermes_pkce"
+        return (
+            is_borrowed_credential_source(entry.source, entry.provider)
+            or entry.source == "hermes_pkce"
+        )
 
     retained = [
         entry
         for entry in entries
-        if _is_manual_source(entry.source) or entry.source in active_sources or not _is_prunable(entry)
+        if _is_manual_source(entry.source)
+        or entry.source in active_sources
+        or not _is_prunable(entry)
     ]
     if len(retained) == len(entries):
         return False
@@ -477,9 +543,19 @@ def _prune_stale_seeded_entries(
     return True
 
 
-def _seed_custom_pool(pool_key: str, entries: List[PooledCredential], *, environment: PoolEnvironment) -> Tuple[bool, Set[str]]:
+def _seed_custom_pool(
+    pool_key: str, entries: List[PooledCredential], *, environment: PoolEnvironment
+) -> Tuple[bool, Set[str]]:
     """Seed a custom endpoint pool from custom_providers config and model config."""
-    from auth.credential_pool import AUTH_TYPE_API_KEY, PooledCredential, _get_custom_provider_config, _load_config_safe, _norm_url, custom_provider_pool_key_candidates
+    environment.require_current_scope()
+    from auth.credential_pool import (
+        AUTH_TYPE_API_KEY,
+        _get_custom_provider_config,
+        _load_config_safe,
+        _norm_url,
+        custom_provider_pool_key_candidates,
+    )
+
     seed = _Seeder(pool_key, entries, environment=environment)
 
     cp_config = _get_custom_provider_config(pool_key, environment=environment)
@@ -487,12 +563,15 @@ def _seed_custom_pool(pool_key: str, entries: List[PooledCredential], *, environ
         api_key = str(cp_config.get("api_key") or "").strip()
         name = str(cp_config.get("name") or "").strip()
         if api_key:
-            seed.upsert(f"config:{name}", {
-                "auth_type": AUTH_TYPE_API_KEY,
-                "access_token": api_key,
-                "base_url": _norm_url(cp_config.get("base_url")),
-                "label": name or f"config:{name}",
-            })
+            seed.upsert(
+                f"config:{name}",
+                {
+                    "auth_type": AUTH_TYPE_API_KEY,
+                    "access_token": api_key,
+                    "base_url": _norm_url(cp_config.get("base_url")),
+                    "label": name or f"config:{name}",
+                },
+            )
 
     # Seed from model.api_key when model.provider=='custom' and model.base_url matches
     try:
@@ -502,7 +581,12 @@ def _seed_custom_pool(pool_key: str, entries: List[PooledCredential], *, environ
             model_provider = str(model_cfg.get("provider") or "").strip().lower()
             model_base_url = _norm_url(model_cfg.get("base_url"))
             model_api_key = next(
-                (v.strip() for k in ("api_key", "api") for v in (model_cfg.get(k),) if isinstance(v, str) and v.strip()),
+                (
+                    v.strip()
+                    for k in ("api_key", "api")
+                    for v in (model_cfg.get(k),)
+                    if isinstance(v, str) and v.strip()
+                ),
                 "",
             )
             if model_provider == "custom" and model_base_url and model_api_key:
@@ -511,18 +595,22 @@ def _seed_custom_pool(pool_key: str, entries: List[PooledCredential], *, environ
                 # seeding is skipped when the pool holds the other identity.
                 # Check if this model's base_url matches our custom provider. See #100413.
                 matched_keys = {
-                    str(key).strip().lower() for key in custom_provider_pool_key_candidates(model_base_url, environment=environment)
+                    str(key).strip().lower()
+                    for key in custom_provider_pool_key_candidates(
+                        model_base_url, environment=environment
+                    )
                 }
                 if pool_key in matched_keys:
-                    seed.upsert("model_config", {
-                        "auth_type": AUTH_TYPE_API_KEY,
-                        "access_token": model_api_key,
-                        "base_url": model_base_url,
-                        "label": "model_config",
-                    })
+                    seed.upsert(
+                        "model_config",
+                        {
+                            "auth_type": AUTH_TYPE_API_KEY,
+                            "access_token": model_api_key,
+                            "base_url": model_base_url,
+                            "label": "model_config",
+                        },
+                    )
     except Exception:
         pass
 
     return seed.result
-
-

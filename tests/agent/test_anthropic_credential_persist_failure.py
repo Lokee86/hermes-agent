@@ -26,6 +26,10 @@ the contention between two refreshers.
 """
 
 from __future__ import annotations
+from hermes_cli.config_credentials import credential_pool_environment as _phase6_auth_environment
+
+import auth.providers.anthropic as _auth_auth_providers_anthropic
+
 
 import json
 import os
@@ -33,8 +37,8 @@ import time
 
 import pytest
 
-from agent import anthropic_credentials as AA
-from agent.anthropic_credentials import CredentialPersistError
+import auth.providers.anthropic as AA
+from auth.providers.anthropic import CredentialPersistError
 from auth.credential_pool import (
     AUTH_TYPE_OAUTH,
     CREDENTIAL_PERSIST_FAILED_REASON,
@@ -62,9 +66,9 @@ def _clean_spent_registry():
     ``mark_rotation_consumed_uncommitted``), and those fingerprints would
     otherwise leak into unrelated tests that reuse the same token literals.
     """
-    AA._SPENT_ROTATION_FINGERPRINTS.clear()
+    _auth_auth_providers_anthropic._SPENT_ROTATION_FINGERPRINTS.clear()
     yield
-    AA._SPENT_ROTATION_FINGERPRINTS.clear()
+    _auth_auth_providers_anthropic._SPENT_ROTATION_FINGERPRINTS.clear()
 
 
 @pytest.fixture
@@ -102,10 +106,10 @@ def claude_credentials(tmp_path, monkeypatch):
         ),
         encoding="utf-8",
     )
-    monkeypatch.setattr(AA, "claude_code_credentials_path", lambda: cred_path)
+    monkeypatch.setattr(_auth_auth_providers_anthropic, "claude_code_credentials_path", lambda: cred_path)
     # The Keychain reader shadows the file on macOS; keep the file the only
     # source so this suite behaves identically on every platform.
-    monkeypatch.setattr(AA, "_read_claude_code_credentials_from_keychain", lambda: None)
+    monkeypatch.setattr(_auth_auth_providers_anthropic, "_read_claude_code_credentials_from_keychain", lambda: None)
     return cred_path
 
 
@@ -168,7 +172,7 @@ def test_claude_code_writer_raises_instead_of_swallowing(
     _break_durable_write(monkeypatch)
 
     with pytest.raises(CredentialPersistError):
-        AA._write_claude_code_credentials(
+        _auth_auth_providers_anthropic._write_claude_code_credentials(
             _ROTATED_ACCESS, _ROTATED_REFRESH, _EXPIRED_MS + 3_600_000
         )
 
@@ -192,7 +196,7 @@ def test_hermes_oauth_writer_raises_instead_of_swallowing(hermes_home, monkeypat
     _break_durable_write(monkeypatch)
 
     with pytest.raises(CredentialPersistError):
-        AA._write_hermes_oauth_credentials(
+        _auth_auth_providers_anthropic._write_hermes_oauth_credentials(
             _ROTATED_ACCESS, _ROTATED_REFRESH, _EXPIRED_MS + 3_600_000
         )
 
@@ -205,7 +209,7 @@ def test_failed_write_leaves_no_temp_file_behind(claude_credentials, monkeypatch
     _break_durable_write(monkeypatch)
 
     with pytest.raises(CredentialPersistError):
-        AA._write_claude_code_credentials(_ROTATED_ACCESS, _ROTATED_REFRESH, 0)
+        _auth_auth_providers_anthropic._write_claude_code_credentials(_ROTATED_ACCESS, _ROTATED_REFRESH, 0)
 
     leftovers = [
         p.name for p in claude_credentials.parent.iterdir() if ".tmp." in p.name
@@ -227,13 +231,13 @@ def test_direct_resolver_fails_closed_when_rotation_cannot_commit(
     access token here would report a rotation that no restart can reproduce,
     because the refresh half of the pair was lost with the failed write.
     """
-    monkeypatch.setattr(AA, "refresh_anthropic_oauth_pure", _rotating_refresh)
+    monkeypatch.setattr(_auth_auth_providers_anthropic, "refresh_anthropic_oauth_pure", _rotating_refresh)
     _break_durable_write(monkeypatch)
 
-    creds = AA.read_claude_code_credentials()
+    creds = _auth_auth_providers_anthropic.read_claude_code_credentials(environment=_phase6_auth_environment())
     assert creds is not None
 
-    assert AA._refresh_oauth_token(creds) is None, (
+    assert _auth_auth_providers_anthropic._refresh_oauth_token(creds, environment=_phase6_auth_environment()) is None, (
         "a refresh whose authoritative write failed must be reported as a "
         "failed refresh, not as a usable access token"
     )
@@ -251,7 +255,7 @@ def test_pool_claude_code_fails_closed_and_reload_cannot_resurrect(
     hermes_home, claude_credentials, monkeypatch
 ):
     from hermes_cli.config_credentials import credential_pool_environment
-    monkeypatch.setattr(AA, "refresh_anthropic_oauth_pure", _rotating_refresh)
+    monkeypatch.setattr(_auth_auth_providers_anthropic, "refresh_anthropic_oauth_pure", _rotating_refresh)
     _break_durable_write(monkeypatch)
 
     entry = _entry("claude_code")
@@ -292,7 +296,7 @@ def test_reauthentication_clears_the_persist_failure_quarantine(
     terminal status, so the user recovers without hand-editing auth.json.
     """
     from hermes_cli.config_credentials import credential_pool_environment
-    monkeypatch.setattr(AA, "refresh_anthropic_oauth_pure", _rotating_refresh)
+    monkeypatch.setattr(_auth_auth_providers_anthropic, "refresh_anthropic_oauth_pure", _rotating_refresh)
     _break_durable_write(monkeypatch)
 
     entry = _entry("claude_code")
@@ -309,8 +313,8 @@ def test_reauthentication_clears_the_persist_failure_quarantine(
     monkeypatch.setattr(
         "hermes_cli.auth.is_provider_explicitly_configured", lambda pid: True
     )
-    monkeypatch.setattr(AA, "claude_code_credentials_path", lambda: claude_credentials)
-    monkeypatch.setattr(AA, "_read_claude_code_credentials_from_keychain", lambda: None)
+    monkeypatch.setattr(_auth_auth_providers_anthropic, "claude_code_credentials_path", lambda: claude_credentials)
+    monkeypatch.setattr(_auth_auth_providers_anthropic, "_read_claude_code_credentials_from_keychain", lambda: None)
     claude_credentials.write_text(
         json.dumps(
             {
@@ -353,8 +357,8 @@ def test_pool_hermes_pkce_fails_closed_and_reload_cannot_resurrect(
         ),
         encoding="utf-8",
     )
-    monkeypatch.setattr(AA, "refresh_anthropic_oauth_pure", _rotating_refresh)
-    monkeypatch.setattr(AA, "read_claude_code_credentials", lambda: None)
+    monkeypatch.setattr(_auth_auth_providers_anthropic, "refresh_anthropic_oauth_pure", _rotating_refresh)
+    monkeypatch.setattr(_auth_auth_providers_anthropic, "read_claude_code_credentials", lambda **kwargs: None)
     _break_durable_write(monkeypatch)
 
     entry = _entry("hermes_pkce")
@@ -420,7 +424,7 @@ def test_retry_path_fails_closed_when_rotation_cannot_commit(
         ),
         encoding="utf-8",
     )
-    monkeypatch.setattr(AA, "refresh_anthropic_oauth_pure", _refresh)
+    monkeypatch.setattr(_auth_auth_providers_anthropic, "refresh_anthropic_oauth_pure", _refresh)
     _break_durable_write(monkeypatch)
 
     entry = _entry("claude_code")

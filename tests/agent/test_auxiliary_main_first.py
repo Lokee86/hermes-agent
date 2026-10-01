@@ -415,7 +415,7 @@ class TestResolveVisionMainFirst:
                 "base_url": "https://api.githubcopilot.com",
             },
         ), patch(
-            "hermes_cli.copilot_auth.copilot_request_headers",
+            'auth.providers.copilot.copilot_request_headers',
             side_effect=fake_headers,
         ):
             mock_client = MagicMock()
@@ -452,7 +452,7 @@ class TestResolveVisionMainFirst:
                 "base_url": "https://api.githubcopilot.com",
             },
         ), patch(
-            "hermes_cli.copilot_auth.copilot_request_headers",
+            'auth.providers.copilot.copilot_request_headers',
             side_effect=fake_headers,
         ):
             mock_client = MagicMock()

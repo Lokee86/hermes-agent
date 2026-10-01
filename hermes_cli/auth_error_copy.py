@@ -7,6 +7,8 @@ line by line.
 """
 
 from __future__ import annotations
+from auth.oauth import SignInCopyError
+
 
 from typing import Callable, Sequence, Tuple
 
@@ -17,25 +19,6 @@ _NETWORK_ERROR_TYPES = frozenset({
 })
 
 # OAuth device-flow error codes (RFC 8628 §3.5) -> plain copy. ``{retry}`` is the retry command.
-DEVICE_FLOW_ERROR_COPY = {
-    "expired_token": (
-        "The sign-in code expired before it was approved in the browser. Run `{retry}` to get a new code."),
-    "access_denied": (
-        "Sign-in was declined in the browser. Run `{retry}` to try again, or `hermes model` to pick a "
-        "different provider."),
-    "invalid_grant": (
-        "The sign-in code was not accepted by the server. Run `{retry}` to get a new code."),
-    "invalid_client": (
-        "The server did not recognize this copy of Hermes. Run `hermes update`, then `{retry}` again."),
-}
-
-
-class SignInCopyError(RuntimeError):
-    """Exception whose ``str()`` is already user copy (lead line + ``Details:`` line)."""
-
-    def __init__(self, message: str, *, oauth_error_code: str = "") -> None:
-        super().__init__(message)
-        self.oauth_error_code = oauth_error_code
 
 
 def is_network_error(exc: BaseException) -> bool:
@@ -49,20 +32,6 @@ def is_network_error(exc: BaseException) -> bool:
 def is_cancelled(exc: BaseException) -> bool:
     return isinstance(exc, (KeyboardInterrupt, EOFError)) or (
         isinstance(exc, SystemExit) and exc.code in (130, None, 0))
-
-
-def device_flow_error(code: str, description: str, *, retry_command: str = "hermes portal") -> SignInCopyError:
-    """Exception for an OAuth device-flow error code whose text is already user-facing.
-
-    Unknown codes keep the server's description as the lead (it is the only information available)
-    but still name the retry command.
-    """
-    lead = DEVICE_FLOW_ERROR_COPY.get(code, "").format(retry=retry_command)
-    if not lead:
-        lead = (f"Sign-in did not complete: {description or 'the server rejected the request'}. "
-                f"Run `{retry_command}` to try again.")
-    details = f"{code}: {description}" if code else description
-    return SignInCopyError(f"{lead}\n  Details: {details}" if details else lead, oauth_error_code=code)
 
 
 def _details_line(exc: BaseException) -> str:

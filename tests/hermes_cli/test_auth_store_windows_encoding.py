@@ -14,6 +14,10 @@ encoding (the fix) instead of relying on the locale default.
 """
 
 from __future__ import annotations
+import auth.providers.nous_store as _auth_auth_providers_nous_store
+
+import auth.providers.nous as _auth_auth_providers_nous
+
 import auth.store as auth_storage
 
 import json
@@ -205,15 +209,7 @@ class TestAuthJsonSiblingReaders:
     def test_read_shared_nous_state_reads_non_ascii_store(
         self, tmp_path, monkeypatch, windows_default_encoding
     ):
-        """hermes_cli.auth._read_shared_nous_state must read a non-ASCII store.
-
-        The shared Nous store (``nous_auth.json``) is written as UTF-8. A
-        non-ASCII field (e.g. an accented display name) must not cause the
-        read to raise under the Windows-default-encoding fixture and be
-        silently swallowed — which would drop the user's shared OAuth
-        credentials and force a device-code re-login.
-        """
-        # The shared-store path has a seat belt that refuses to resolve to the
+        "auth.providers.nous_store._read_shared_nous_state must read a non-ASCII store.\n\n        The shared Nous store (``nous_auth.json``) is written as UTF-8. A\n        non-ASCII field (e.g. an accented display name) must not cause the\n        read to raise under the Windows-default-encoding fixture and be\n        silently swallowed — which would drop the user's shared OAuth\n        credentials and force a device-code re-login.\n        "       # The shared-store path has a seat belt that refuses to resolve to the
         # real user's store under pytest; pin it to a tmp dir explicitly.
         shared_dir = tmp_path / "shared"
         monkeypatch.setenv("HERMES_SHARED_AUTH_DIR", str(shared_dir))
@@ -226,7 +222,7 @@ class TestAuthJsonSiblingReaders:
         }
         _write_utf8(shared_dir / "nous_auth.json", payload)
 
-        provider = auth._read_shared_nous_state()
+        provider = _auth_auth_providers_nous_store._read_shared_nous_state()
         assert provider is not None
         assert provider["access_token"] == "at"
         assert provider["refresh_token"] == "rt"

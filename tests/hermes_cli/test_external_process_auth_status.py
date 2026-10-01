@@ -256,7 +256,7 @@ def test_catalog_key_resolves_from_copilot_cli_store(tmp_path, monkeypatch, _cle
     with mock_patch.object(
         models_mod, "_resolve_copilot_catalog_api_key", wraps=models_mod._resolve_copilot_catalog_api_key
     ), mock_patch(
-        "hermes_cli.copilot_auth.exchange_copilot_token",
+        'auth.providers.copilot.exchange_copilot_token',
         return_value=("exchanged-api-token", 0.0, None),
     ), mock_patch(
         "hermes_cli.auth.resolve_api_key_provider_credentials",

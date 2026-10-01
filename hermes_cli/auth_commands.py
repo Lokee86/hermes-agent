@@ -1,6 +1,16 @@
 """Credential-pool auth subcommands."""
 
 from __future__ import annotations
+import auth.providers.nous_store as _auth_auth_providers_nous_store
+
+from hermes_cli.config_credentials import credential_pool_environment as _phase6_auth_environment
+
+import hermes_cli.auth_anthropic as _auth_hermes_cli_auth_anthropic
+
+import auth.constants as _auth_auth_constants
+import auth.providers.nous as _auth_auth_providers_nous
+import auth.providers.qwen as _auth_auth_providers_qwen
+
 from hermes_cli.config_credentials import credential_environment
 import auth.provider_state as auth_provider_state
 import auth.sources as auth_sources
@@ -205,17 +215,17 @@ def _format_exhausted_status(entry) -> str:
 
 
 def _anthropic_oauth_login(args) -> dict:
-    from agent import anthropic_credentials as anthropic_mod
-    creds = anthropic_mod.run_hermes_oauth_login_pure()
+    import auth.providers.anthropic as anthropic_mod
+    creds = _auth_hermes_cli_auth_anthropic.run_hermes_oauth_login_pure()
     if not creds:
         raise SystemExit("Anthropic OAuth login did not return credentials.")
     return creds
 
 
 def _qwen_oauth_login(args) -> dict:
-    from hermes_cli.auth_qwen import _mark_qwen_oauth_active
+    from auth.providers.qwen import _mark_qwen_oauth_active
 
-    creds = auth_mod.resolve_qwen_runtime_credentials(refresh_if_expiring=False)
+    creds = _auth_auth_providers_qwen.resolve_qwen_runtime_credentials(refresh_if_expiring=False)
     _mark_qwen_oauth_active(creds)
     return creds
 
@@ -273,7 +283,7 @@ _OAUTH_ADD_SPECS: dict[str, _OAuthAddSpec] = {
         source=SOURCE_MANUAL_DEVICE_CODE,
         fields=lambda creds, provider: {
             "refresh_token": creds["tokens"].get("refresh_token"),
-            "base_url": creds.get("base_url") or auth_mod.DEFAULT_XAI_OAUTH_BASE_URL,
+            "base_url": creds.get("base_url") or _auth_auth_constants.DEFAULT_XAI_OAUTH_BASE_URL,
             "last_refresh": creds.get("last_refresh")},
         activate_first=True),
     "qwen-oauth": _OAuthAddSpec(
@@ -316,7 +326,7 @@ def _add_nous_oauth_credential(args, provider: str) -> PooledCredential:
     def _persist(creds: dict, what: str) -> PooledCredential:
         # `--label` is embedded into providers.nous so label_from_token doesn't overwrite it on every
         # subsequent load_pool("nous").
-        entry = auth_mod.persist_nous_credentials(creds, label=custom_label)
+        entry = _auth_auth_providers_nous.persist_nous_credentials(creds, label=custom_label, environment=_phase6_auth_environment())
         shown_label = entry.label if entry is not None else label_from_token(
             creds.get("access_token", ""), f"{provider}-oauth-1")
         print(f'{what} {provider} OAuth {"device-code " if what == "Saved" else ""}credentials: "{shown_label}"')
@@ -325,9 +335,9 @@ def _add_nous_oauth_credential(args, provider: str) -> PooledCredential:
     # Codex-style auto-import: a shared Nous credential at <hermes-root>/shared/nous_auth.json
     # (written by any previous login) makes `hermes --profile <name> auth add nous --type oauth`
     # a one-tap operation for multi-profile users.
-    if auth_mod._read_shared_nous_state():
+    if _auth_auth_providers_nous_store._read_shared_nous_state():
         try:
-            found = f"Found existing Nous OAuth credentials at {auth_mod._nous_shared_store_path()}"
+            found = f"Found existing Nous OAuth credentials at {_auth_auth_providers_nous_store._nous_shared_store_path()}"
         except RuntimeError:
             found = "Found existing shared Nous OAuth credentials"
         print()
@@ -335,7 +345,7 @@ def _add_nous_oauth_credential(args, provider: str) -> PooledCredential:
         do_import = _ask("Import these credentials? [Y/n]: ")
         if do_import is None or do_import.lower() in {"", "y", "yes"}:
             print("Rehydrating Nous session from shared credentials...")
-            rehydrated = auth_mod._try_import_shared_nous_state(timeout_seconds=timeout)
+            rehydrated = _auth_auth_providers_nous_store._try_import_shared_nous_state(timeout_seconds=timeout)
             if rehydrated is not None:
                 return _persist(rehydrated, "Imported")
             # Expired refresh_token, portal down, etc. — fall through to device-code.
@@ -505,12 +515,12 @@ def auth_priority_command(args) -> None:
 
 def _free_tier_lines() -> tuple[str, str]:
     """The two-line free-tier rendering shared by every auth display surface (R-USR-1)."""
-    from hermes_cli.anon_auth import FREE_TIER_LABEL, GUEST_MODEL, UPGRADE_HINT
+    from auth.providers.nous_guest import FREE_TIER_LABEL, GUEST_MODEL, UPGRADE_HINT
     return f"{FREE_TIER_LABEL} · {GUEST_MODEL}", UPGRADE_HINT
 
 
 def _is_free_tier_entry(entry) -> bool:
-    from hermes_cli.anon_auth import is_guest_state
+    from auth.providers.nous_guest import is_guest_state
     return is_guest_state(getattr(entry, "extra", None))
 
 

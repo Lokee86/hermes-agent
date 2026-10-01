@@ -1,3 +1,5 @@
+
+import auth.providers.codex as _auth_auth_providers_codex
 """Regression tests for credential-pool OAuth refresh write-through to root.
 
 Companion to ``tests/hermes_cli/test_xai_oauth_writethrough.py``. That file
@@ -221,8 +223,8 @@ def test_codex_pool_refresh_holds_auth_store_lock_across_post(monkeypatch, tmp_p
             "last_refresh": "2020-01-02T00:00:00Z",
         }
 
-    monkeypatch.setattr(A, "refresh_codex_oauth_pure", fake_refresh)
-    monkeypatch.setattr(auth_codex, "refresh_codex_oauth_pure", fake_refresh)
+    monkeypatch.setattr(_auth_auth_providers_codex, "refresh_codex_oauth_pure", fake_refresh)
+    monkeypatch.setattr(_auth_auth_providers_codex, "refresh_codex_oauth_pure", fake_refresh)
 
     entry = _entry(
         provider,
@@ -346,14 +348,14 @@ def test_hermes_pkce_refresh_writes_back_to_singleton(tmp_path, monkeypatch):
     _write_store(hermes_home / "auth.json", {"version": 1, "providers": {}})
 
     monkeypatch.setattr(
-        "agent.anthropic_credentials.refresh_anthropic_oauth_pure",
+        'auth.providers.anthropic.refresh_anthropic_oauth_pure',
         lambda refresh_token, use_json=False: {
             "access_token": "sk-ant-oat-rt1",
             "refresh_token": "rt1",
             "expires_at_ms": int(time.time() * 1000) + 3_600_000,
         },
     )
-    monkeypatch.setattr("agent.anthropic_credentials.read_claude_code_credentials", lambda: None)
+    monkeypatch.setattr('auth.providers.anthropic.read_claude_code_credentials', lambda**_auth_settings: None)
 
     entry = PooledCredential(
         provider="anthropic",
@@ -396,9 +398,9 @@ def test_manual_hermes_pkce_refresh_does_not_create_duplicate_singleton(
     hermes_home.mkdir(parents=True, exist_ok=True)
     monkeypatch.setenv("HERMES_HOME", str(hermes_home))
     monkeypatch.setattr("hermes_cli.auth.is_provider_explicitly_configured", lambda pid: True)
-    monkeypatch.setattr("agent.anthropic_credentials.read_claude_code_credentials", lambda: None)
+    monkeypatch.setattr('auth.providers.anthropic.read_claude_code_credentials', lambda**_auth_settings: None)
     monkeypatch.setattr(
-        "agent.anthropic_credentials.refresh_anthropic_oauth_pure",
+        'auth.providers.anthropic.refresh_anthropic_oauth_pure',
         lambda refresh_token, use_json=False: {
             "access_token": "manual-at-1",
             "refresh_token": "manual-rt-1",

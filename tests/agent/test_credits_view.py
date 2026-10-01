@@ -31,7 +31,7 @@ def _logged_in_account(monkeypatch):
 
     def _install(account):
         monkeypatch.setattr(
-            "hermes_cli.nous_account.get_nous_portal_account_info",
+            'hermes_cli.nous_account.get_nous_portal_account_info',
             lambda *a, **kw: account,
         )
 

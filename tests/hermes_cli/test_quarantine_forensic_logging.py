@@ -14,7 +14,7 @@ import hashlib
 import logging
 
 from auth.errors import AuthError
-from hermes_cli.auth import _quarantine_nous_oauth_state
+from auth.providers.nous_store import _quarantine_nous_oauth_state
 
 
 # A distinctive, obviously-fake refresh token so the redaction assertion is

@@ -1,6 +1,11 @@
 """Tests for the Phase 2b billing:manage scope step-up (auth.py)."""
 
 from __future__ import annotations
+import auth.providers.nous_store as _auth_auth_providers_nous_store
+
+import auth.oauth as _auth_auth_oauth
+import auth.providers.nous as _auth_auth_providers_nous
+
 import auth.provider_state as auth_provider_state
 import auth.store as auth_storage
 
@@ -8,11 +13,8 @@ import pytest
 
 import hermes_cli.auth as auth
 import hermes_cli.auth_nous as auth_nous
-from hermes_cli.auth import (
-    NOUS_BILLING_MANAGE_SCOPE,
-    nous_token_has_billing_scope,
-    step_up_nous_billing_scope,
-)
+from auth.constants import NOUS_BILLING_MANAGE_SCOPE
+from hermes_cli.auth import nous_token_has_billing_scope, step_up_nous_billing_scope
 
 
 # ---------------------------------------------------------------------------
@@ -56,10 +58,10 @@ def _stub_persist(monkeypatch):
     monkeypatch.setattr(auth_storage, "_load_auth_store", lambda: {})
     monkeypatch.setattr(auth_provider_state, "_save_provider_state", lambda *a, **kw: None)
     monkeypatch.setattr(auth_storage, "_save_auth_store", lambda *a, **kw: "auth.json")
-    monkeypatch.setattr(auth, "_write_shared_nous_state", lambda *a, **kw: None)
-    monkeypatch.setattr(auth_nous, "_write_shared_nous_state", lambda *a, **kw: None)
-    monkeypatch.setattr(auth, "_sync_nous_pool_from_auth_store", lambda: None)
-    monkeypatch.setattr(auth_nous, "_sync_nous_pool_from_auth_store", lambda: None)
+    monkeypatch.setattr(_auth_auth_providers_nous_store, "_write_shared_nous_state", lambda *a, **kw: None)
+    monkeypatch.setattr(_auth_auth_providers_nous_store, "_write_shared_nous_state", lambda *a, **kw: None)
+    monkeypatch.setattr(_auth_auth_providers_nous, "_sync_nous_pool_from_auth_store", lambda**_auth_settings: None)
+    monkeypatch.setattr(_auth_auth_providers_nous, "_sync_nous_pool_from_auth_store", lambda**_auth_settings: None)
 
 
 class _NullCtx:
@@ -113,7 +115,7 @@ def test_device_login_fires_on_verification_before_polling(monkeypatch):
     order: list[str] = []
 
     monkeypatch.setattr(
-        auth,
+        _auth_auth_oauth,
         "_request_device_code",
         lambda **kw: {
             "verification_uri_complete": "https://portal.example/device?code=ABCD",
@@ -128,7 +130,7 @@ def test_device_login_fires_on_verification_before_polling(monkeypatch):
         order.append("poll")
         return {"access_token": "t", "scope": "inference:invoke", "expires_in": 3600}
 
-    monkeypatch.setattr(auth, "_poll_for_token", _fake_poll)
+    monkeypatch.setattr(_auth_auth_oauth, "_poll_for_token", _fake_poll)
 
     seen = {}
 

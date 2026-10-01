@@ -348,7 +348,7 @@ def test_fallback_runtime_resolves_the_fallback_entry_model(monkeypatch, tmp_pat
 
 
 def _quota_auth_error():
-    from hermes_cli.auth import CODEX_RATE_LIMITED_CODE
+    from auth.constants import CODEX_RATE_LIMITED_CODE
     from auth.errors import AuthError
     return AuthError(
         "Codex provider quota exhausted (429); retry after 1839s. Credentials are still valid.",
@@ -475,7 +475,7 @@ def test_model_flow_nous_does_not_restore_stale_custom_api_key(tmp_path, monkeyp
         },
     )
     monkeypatch.setattr(
-        "hermes_cli.auth.resolve_nous_runtime_credentials",
+        'auth.providers.nous.resolve_nous_runtime_credentials',
         lambda *args, **kwargs: {
             "base_url": "https://inference-api.nousresearch.com/v1",
             "api_key": "nous-key",

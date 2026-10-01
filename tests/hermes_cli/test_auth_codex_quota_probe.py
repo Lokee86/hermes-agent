@@ -1,3 +1,10 @@
+
+import auth.providers.codex_quota as _auth_auth_providers_codex_quota
+
+from hermes_cli.config_credentials import credential_pool_environment as _phase6_auth_environment
+
+import auth.constants as _auth_auth_constants
+import auth.providers.codex as _auth_auth_providers_codex
 """Tests for the Codex upstream-quota-restored probe and cooldown clearing.
 
 Covers issue #43747 (externally-reset variant): Codex 429s persist a
@@ -17,14 +24,15 @@ import pytest
 import hermes_cli.auth as auth_mod
 import hermes_cli.auth_codex as auth_codex
 from auth.errors import AuthError
-from hermes_cli.auth import _codex_usage_probe_url, _is_codex_rate_limit_shaped, _probe_codex_quota_restored, clear_codex_pool_quota_cooldowns, resolve_codex_runtime_credentials
+from auth.providers.codex_quota import _codex_usage_probe_url, _is_codex_rate_limit_shaped, _probe_codex_quota_restored, clear_codex_pool_quota_cooldowns
+from auth.providers.codex import resolve_codex_runtime_credentials
 
 
 @pytest.fixture(autouse=True)
 def _clear_probe_cache():
-    auth_mod._codex_quota_probe_cache.clear()
+    _auth_auth_providers_codex_quota._codex_quota_probe_cache.clear()
     yield
-    auth_mod._codex_quota_probe_cache.clear()
+    _auth_auth_providers_codex_quota._codex_quota_probe_cache.clear()
 
 
 def _jwt(claims: dict) -> str:
@@ -71,7 +79,7 @@ class _StubClient:
 def _patch_httpx(monkeypatch, response, calls=None):
     calls = calls if calls is not None else []
     monkeypatch.setattr(
-        auth_mod.httpx, "Client", lambda **kwargs: _StubClient(calls, response)
+        _auth_auth_constants.httpx, "Client", lambda **kwargs: _StubClient(calls, response)
     )
     return calls
 
@@ -222,13 +230,13 @@ def test_resolver_recovers_when_probe_confirms_reset(tmp_path, monkeypatch):
     monkeypatch.setenv("HERMES_HOME", str(hermes_home))
 
     monkeypatch.setattr(
-        auth_mod, "_probe_codex_quota_restored", lambda token, **kw: True
+        _auth_auth_providers_codex_quota, "_probe_codex_quota_restored", lambda token, **kw: True
     )
     monkeypatch.setattr(
-        auth_codex, "_probe_codex_quota_restored", lambda token, **kw: True
+        _auth_auth_providers_codex_quota, "_probe_codex_quota_restored", lambda token, **kw: True
     )
 
-    resolved = resolve_codex_runtime_credentials()
+    resolved = resolve_codex_runtime_credentials(environment=_phase6_auth_environment())
     assert resolved["api_key"] == "tok-quota"
     assert resolved["source"] == "credential_pool"
 
@@ -259,10 +267,10 @@ def test_resolver_selects_entry_with_expired_millisecond_reset(tmp_path, monkeyp
     hermes_home = tmp_path / "hermes"
     _write_auth_store(hermes_home, store)
     monkeypatch.setenv("HERMES_HOME", str(hermes_home))
-    monkeypatch.setattr(auth_mod, "_probe_codex_quota_restored", lambda token, **kw: False)
-    monkeypatch.setattr(auth_codex, "_probe_codex_quota_restored", lambda token, **kw: False)
+    monkeypatch.setattr(_auth_auth_providers_codex_quota, "_probe_codex_quota_restored", lambda token, **kw: False)
+    monkeypatch.setattr(_auth_auth_providers_codex_quota, "_probe_codex_quota_restored", lambda token, **kw: False)
 
-    resolved = resolve_codex_runtime_credentials()
+    resolved = resolve_codex_runtime_credentials(environment=_phase6_auth_environment())
 
     assert resolved["api_key"] == "tok-main"
     assert resolved["source"] == "credential_pool"
@@ -298,8 +306,8 @@ def test_pool_probe_not_fired_for_non_quota_exhaustion(tmp_path, monkeypatch):
         probes.append(token)
         return True
 
-    monkeypatch.setattr(auth_mod, "_probe_codex_quota_restored", _spy)
-    monkeypatch.setattr(auth_codex, "_probe_codex_quota_restored", _spy)
+    monkeypatch.setattr(_auth_auth_providers_codex_quota, "_probe_codex_quota_restored", _spy)
+    monkeypatch.setattr(_auth_auth_providers_codex_quota, "_probe_codex_quota_restored", _spy)
     pool._available_entries(clear_expired=True, refresh=False)
     assert probes == []
 
@@ -331,7 +339,7 @@ class _ExpiryAwareClient(_StubClient):
 
     def get(self, url, headers=None):
         token = (headers or {}).get("Authorization", "").removeprefix("Bearer ")
-        if auth_codex._codex_access_token_is_expiring(token, 0):
+        if _auth_auth_providers_codex._codex_access_token_is_expiring(token, 0):
             self._calls.append({"url": url, "headers": dict(headers or {})})
             return _StubResponse(401, {"error": {"code": "token_expired"}})
         return super().get(url, headers=headers)
@@ -340,7 +348,7 @@ class _ExpiryAwareClient(_StubClient):
 def _patch_expiry_aware_httpx(monkeypatch, response):
     calls: list = []
     monkeypatch.setattr(
-        auth_mod.httpx, "Client", lambda **kwargs: _ExpiryAwareClient(calls, response)
+        _auth_auth_constants.httpx, "Client", lambda **kwargs: _ExpiryAwareClient(calls, response)
     )
     return calls
 
@@ -350,7 +358,7 @@ def _fake_refresh(monkeypatch, fresh_token, calls):
         calls.append(refresh_token)
         return {"access_token": fresh_token, "refresh_token": "rf-new", "last_refresh": "now"}
 
-    monkeypatch.setattr(auth_codex, "refresh_codex_oauth_pure", _refresh)
+    monkeypatch.setattr(_auth_auth_providers_codex, "refresh_codex_oauth_pure", _refresh)
 
 
 def test_resolver_refreshes_expired_token_before_probe(tmp_path, monkeypatch):
@@ -366,7 +374,7 @@ def test_resolver_refreshes_expired_token_before_probe(tmp_path, monkeypatch):
     _fake_refresh(monkeypatch, fresh, refresh_calls)
     http_calls = _patch_expiry_aware_httpx(monkeypatch, _StubResponse(200, _usage_payload(0.0, 0.0)))
 
-    resolved = resolve_codex_runtime_credentials()
+    resolved = resolve_codex_runtime_credentials(environment=_phase6_auth_environment())
 
     assert refresh_calls == ["rf-old"]
     assert http_calls[0]["headers"]["Authorization"] == f"Bearer {fresh}"
@@ -425,7 +433,7 @@ def test_pool_selection_throttles_failing_pre_probe_refresh(tmp_path, monkeypatc
         attempts.append(refresh_token)
         raise RuntimeError("invalid_grant")
 
-    monkeypatch.setattr(auth_codex, "refresh_codex_oauth_pure", _failing_refresh)
+    monkeypatch.setattr(_auth_auth_providers_codex, "refresh_codex_oauth_pure", _failing_refresh)
     http_calls = _patch_expiry_aware_httpx(monkeypatch, _StubResponse(200, _usage_payload(0.0, 0.0)))
     from auth.credential_pool import load_pool
 

@@ -1391,7 +1391,7 @@ def _route_from_model_input(st: _Switch) -> Optional[ModelSwitchResult]:
     if current_provider == "nous":
         # The welcome host serves nous/welcome only; a model outside it needs an account or a key.
         # Never hop to another provider on the user's behalf here (there is no key to hop to).
-        from hermes_cli.anon_auth import GUEST_MODEL, route_is_welcome_host
+        from auth.providers.nous_guest import GUEST_MODEL, route_is_welcome_host
         if route_is_welcome_host(st.current_base_url) and st.new_model != GUEST_MODEL:
             return st.fail(
                 f"{st.new_model} needs a Nous account or an API key. "
