@@ -35,7 +35,11 @@
     "combined_wheel": true,
     "combined_archive_members": 2330,
     "combined_extracted_imports_and_route_checks_passed": true,
-    "retired_phase7_files_absent": true
+    "retired_phase7_files_absent": true,
+    "phase7_installed_fresh_venv": true,
+    "combined_installed_fresh_venv": true,
+    "installed_console_entrypoint_help": true,
+    "installed_cli_tools_auth_help": true
   },
   "known_baseline_failure": {
     "test": "tests/gateway/test_session_policy.py::test_launch_policy_reaches_real_turn_runner",
@@ -47,5 +51,32 @@
     "full Desktop/TUI server suite",
     "full Nix distribution",
     "signed installers"
-  ]
+  ],
+  "final_recheck_date": "2026-10-02",
+  "final_phase7_run": {
+    "python": "3.14.7",
+    "files": 41,
+    "passed": 582,
+    "failed": 0,
+    "runner": "scripts/run_tests.sh",
+    "seconds": 93.2
+  },
+  "final_combined_run": {
+    "python": "3.14.7",
+    "files": 41,
+    "passed": 363,
+    "failed": 0,
+    "skipped": 2,
+    "runner": "scripts/run_tests.sh",
+    "seconds": 55.6
+  },
+  "final_runtime_run": {
+    "python": "3.14.7",
+    "files": 3,
+    "passed": 108,
+    "failed": 0,
+    "runner": "scripts/run_tests.sh",
+    "seconds": 10.0
+  },
+  "final_combined_implementation_head": "a75f79c78cc9c368577abe2886c421bb6d10281c"
 }

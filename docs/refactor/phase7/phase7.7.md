@@ -41,9 +41,12 @@ normalization checks pass. Retired Phase 7 internal CLI files remain absent.
 
 The independent Phase 7.6 hard cut and completed Phase 5 consumer branch were
 combined, then Phase 6's completed auth branch was merged and reconciled in
-`refactor/phase7-integration` at `144d5b0f`. Phase 5's
-`hermes_cli.route_identity` and the additional Phase 6 URL/Actual-provider
-helpers now coexist in their existing owner; no forwarding facade was added.
+`refactor/phase7-integration` at `144d5b0f`. The final reconciliation consumes provider aliases and
+endpoint normalization
+from the Phase 5 canonical provider owner. The restored static auth alias table
+and duplicate CLI URL helpers have been removed; callers import providers
+directly. MiniMax runtime dispatch also calls its canonical OAuth resolver.
+Credential ownership remains in Phase 6's auth package.
 The externally documented plugin import regression exercises real imports
 rather than unavailable static-scanner helper functions.
 
@@ -77,3 +80,31 @@ ownership migration. The complete Desktop/TUI suite, OS-specific installer
 validation, full Nix build, and the entire repository test suite are not
 claimed here. Phase 6's independent closeout also documents its existing
 Windows fixture failures and TUI-file timeout.
+
+## Final recheck — 2026-10-02
+
+The independent Phase 7 branch passed **582 tests across 41 files** on Python
+3.14.7. The final combined branch passed **363 tests across 41 files**, with
+two macOS-only skips. This includes both adjacent-phase provider ownership
+guards, real plugin OAuth lifecycle and profile isolation, shared command
+execution, platform policy, Gateway authorization and approval checks. A further **108 tests across three
+files** passed for runtime provider resolution, late binding and profile-scoped
+credential inputs, including the corrected MiniMax dispatch.
+
+Both component wheels were also installed into fresh Python 3.14 virtual
+environments and exercised outside the source checkout. Fourteen canonical
+modules resolved from installed files; the six executor keys resolved; explicit
+empty selection remained empty. The real installed console entrypoint and CLI,
+tools and auth help passed. The PM-built test dependency set was reused through
+a path-only .pth file, without processing its editable-project .pth files.
+See the installed-package JSON receipts for wheel digests and exact inputs.
+
+The final combined source audit passed across 8,200 Python files. The
+compatibility-pointer audit passed for 2,082 manifest entries. The independent
+Phase 5 and Phase 6 worktrees were not modified. Combined changes remain on
+the separate refactor/phase7-integration branch; the final implementation
+commit is `a75f79c78c`.
+
+The previously documented Windows session-policy baseline defect remains open.
+These focused green runs do not imply a green entire-repository suite, full
+Desktop/TUI server run, full Nix distribution or signed installer verification.
