@@ -6,7 +6,7 @@ Provider and model routing remain with their existing Phase 5 owners.
 """
 
 from __future__ import annotations
-from hermes_cli.route_identity import is_actual_local_base_url, normalize_actual_base_url
+from providers.route_identity import is_actual_local_base_url, normalize_actual_base_url
 from auth.api_keys import resolve_api_key_provider_secret
 from auth.secret_validation import has_usable_secret, looks_like_openrouter_key
 from auth.oauth import _is_terminal_refresh_error
@@ -320,47 +320,6 @@ def _refuse_env_adoption_if_config_corrupt() -> None:
         code="corrupt_config")
 
 
-# Provider aliases accepted by resolve_provider(). Plugin-declared aliases
-# (plugins/model-providers/<name>/) are layered on at call time; this hardcoded
-# table remains authoritative for existing names.
-_PROVIDER_ALIASES: Dict[str, str] = {
-    "glm": "zai", "z-ai": "zai", "z.ai": "zai", "zhipu": "zai",
-    "google": "gemini", "google-gemini": "gemini", "google-ai-studio": "gemini",
-    "x-ai": "xai", "x.ai": "xai", "grok": "xai",
-    "xai-oauth": "xai-oauth", "x-ai-oauth": "xai-oauth",
-    "grok-oauth": "xai-oauth", "xai-grok-oauth": "xai-oauth",
-    "kimi": "kimi-coding", "kimi-for-coding": "kimi-coding", "moonshot": "kimi-coding",
-    "kimi-cn": "kimi-coding-cn", "moonshot-cn": "kimi-coding-cn",
-    "step": "stepfun", "stepfun-coding-plan": "stepfun",
-    "arcee-ai": "arcee", "arceeai": "arcee",
-    "gmi-cloud": "gmi", "gmicloud": "gmi",
-    "actual-computer": "actual", "actualcomputer": "actual", "aci": "actual",
-    "minimax-china": "minimax-cn", "minimax_cn": "minimax-cn",
-    "minimax-portal": "minimax-oauth", "minimax-global": "minimax-oauth", "minimax_oauth": "minimax-oauth",
-    "alibaba_coding": "alibaba-coding-plan", "alibaba-coding": "alibaba-coding-plan",
-    "alibaba_coding_plan": "alibaba-coding-plan",
-    "claude": "anthropic", "claude-code": "anthropic",
-    "github": "copilot", "github-copilot": "copilot",
-    "github-models": "copilot", "github-model": "copilot",
-    "github-copilot-acp": "copilot-acp", "copilot-acp-agent": "copilot-acp",
-    "aigateway": "ai-gateway", "vercel": "ai-gateway", "vercel-ai-gateway": "ai-gateway",
-    "opencode": "opencode-zen", "zen": "opencode-zen",
-    "qwen-portal": "qwen-oauth", "qwen-cli": "qwen-oauth", "qwen-oauth": "qwen-oauth",
-    "hf": "huggingface", "hugging-face": "huggingface", "huggingface-hub": "huggingface",
-    "mimo": "xiaomi", "xiaomi-mimo": "xiaomi",
-    "tencent": "tencent-tokenhub", "tokenhub": "tencent-tokenhub",
-    "tencent-cloud": "tencent-tokenhub", "tencentmaas": "tencent-tokenhub",
-    "tokenplan": "tencent-tokenplan", "tencent-lkeap": "tencent-tokenplan",
-    "aws": "bedrock", "aws-bedrock": "bedrock", "amazon-bedrock": "bedrock", "amazon": "bedrock",
-    "go": "opencode-go", "opencode-go-sub": "opencode-go",
-    "kilo": "kilocode", "kilo-code": "kilocode", "kilo-gateway": "kilocode",
-    "lmstudio": "lmstudio", "lm-studio": "lmstudio", "lm_studio": "lmstudio",
-    "chatgpt": "openai-codex", "chatgpt-codex": "openai-codex",
-    # Local server aliases — route through the generic custom provider
-    "local": "custom",
-    "ollama": "custom", "ollama_cloud": "ollama-cloud",
-    "vllm": "custom", "llamacpp": "custom",
-    "llama.cpp": "custom", "llama-cpp": "custom"}
 
 
 
@@ -443,7 +402,7 @@ def _config_model_provider() -> Tuple[Any, Optional[str]]:
         model_cfg = (load_config() or {}).get("model")
         provider = model_cfg.get("provider") if isinstance(model_cfg, dict) else None
         provider = provider.strip().lower() if isinstance(provider, str) else ""
-        provider = _plugin_aliases().get(provider, provider)
+        provider = normalize_provider_identity(provider)
         if provider == "custom" or provider.startswith("custom:"):
             return model_cfg, "custom"
         # openrouter is absent from PROVIDER_REGISTRY on purpose, so it needs its own rung (#109397);
@@ -672,7 +631,7 @@ OAUTH_PROVIDER_FLOWS: Dict[str, OAuthProviderFlow] = {
 
 def _provider_env_base_url(pconfig: ProviderConfig) -> str:
     if pconfig.id == "actual":
-        from hermes_cli.providers import normalize_provider
+        from providers import normalize_provider
 
         model = read_raw_config().get("model")
         if isinstance(model, dict) and normalize_provider(str(model.get("provider") or "")) == "actual":

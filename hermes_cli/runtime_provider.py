@@ -30,7 +30,8 @@ from auth.constants import ACTUAL_LOCAL_NOAUTH_PLACEHOLDER, DEFAULT_CODEX_BASE_U
 from auth.errors import AuthError
 from auth.providers.nous import _agent_key_is_usable, _nous_inference_env_override, resolve_nous_runtime_credentials
 from hermes_cli.auth_error_copy import format_auth_error
-from hermes_cli.auth import resolve_provider, is_actual_local_base_url, normalize_actual_base_url
+from hermes_cli.auth import resolve_provider
+from providers.route_identity import is_actual_local_base_url, normalize_actual_base_url
 from auth.providers.codex import resolve_codex_runtime_credentials
 from auth.providers.xai import resolve_xai_oauth_runtime_credentials
 from auth.providers.qwen import resolve_qwen_runtime_credentials
@@ -616,7 +617,7 @@ def _minimax_oauth_runtime(provider, requested_provider) -> Optional[Dict[str, A
     pconfig = get_provider_config(provider)
     if not (pconfig and pconfig.auth_type == "oauth_external"):
         return None
-    creds = auth_mod.resolve_minimax_oauth_runtime_credentials()
+    creds = _auth_auth_providers_minimax.resolve_minimax_oauth_runtime_credentials()
     return _runtime(provider, None, creds["base_url"], creds["api_key"], model=_get_model_config().get("default", ""),
                     source=creds.get("source", "oauth"),
                     requested_provider=requested_provider)

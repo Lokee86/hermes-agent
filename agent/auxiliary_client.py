@@ -824,7 +824,7 @@ def _to_openai_base_url(base_url: str) -> str:
     """
     url = str(base_url or "").strip().rstrip("/")
     if base_url_hostname(url) == "api.actual.inc":
-        from hermes_cli.route_identity import normalize_actual_base_url
+        from providers.route_identity import normalize_actual_base_url
         return normalize_actual_base_url(url)
     if url.endswith("/anthropic"):
         if base_url_host_matches(url, "open.bigmodel.cn") or base_url_host_matches(url, "api.z.ai"):
@@ -5014,7 +5014,7 @@ def _resolve_custom_branch(req: _ResolveRequest) -> _ResolveResult:
             custom_base, custom_key = _main_base, _main_key
     if custom_base and custom_key:
         if _is_actual_auxiliary_route(req, custom_base):
-            from hermes_cli.route_identity import normalize_actual_base_url
+            from providers.route_identity import normalize_actual_base_url
             custom_base = normalize_actual_base_url(custom_base)
         final_model = _normalize_resolved_model(
             model or (main_runtime.get("model") if main_runtime else None) or "gpt-4o-mini", provider,
@@ -5085,7 +5085,7 @@ def _resolve_named_custom_branch(req: _ResolveRequest) -> Optional[_ResolveResul
     # Actual's wire protocol takes precedence over persisted task/provider modes.
     entry_api_mode = (req.api_mode or custom_entry.get("api_mode") or "").strip()
     if _is_actual_auxiliary_route(req, custom_base):
-        from hermes_cli.route_identity import normalize_actual_base_url
+        from providers.route_identity import normalize_actual_base_url
         custom_base = normalize_actual_base_url(custom_base)
         entry_api_mode = "chat_completions"
     if not custom_base:
@@ -5190,7 +5190,7 @@ def _resolve_api_key_branch(req: _ResolveRequest, pconfig: Any, resolve_creds: C
     if provider == "actual":
         with contextlib.suppress(Exception):
             from auth.constants import ACTUAL_LOCAL_NOAUTH_PLACEHOLDER
-            from hermes_cli.route_identity import is_actual_local_base_url, normalize_actual_base_url
+            from providers.route_identity import is_actual_local_base_url, normalize_actual_base_url
             raw_base_url = normalize_actual_base_url(raw_base_url)
             if not api_key and is_actual_local_base_url(raw_base_url):
                 api_key = ACTUAL_LOCAL_NOAUTH_PLACEHOLDER
