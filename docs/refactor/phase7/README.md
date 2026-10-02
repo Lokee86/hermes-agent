@@ -2,7 +2,9 @@
 
 Status at 7.1 capture: inventory and executable baseline complete. The subsequent
 [7.2 receipt](phase7.2.md) records the command definitions cut; the
-[7.3 receipt](phase7.3.md) records the shared execution cut.
+[7.3 receipt](phase7.3.md) records the shared execution cut; the
+[7.4 receipt](phase7.4.md) records the runtime capability-policy cut and the
+approved explicit-empty correction.
 Captured 2026-10-01 on Windows, Python 3.11.15.
 
 ## Foundation and isolation

@@ -229,10 +229,9 @@ def _no_models(name: str) -> dict:
 
 @router.get("/api/tools/toolsets")
 async def get_toolsets(profile: Optional[str] = None):
-    from hermes_cli.tools_config import (
-        _CONFIG_ONLY_TOOLSETS, _get_effective_configurable_toolsets, _get_platform_tools,
-        _toolset_configuration_platform, _toolset_has_keys, get_nous_subscription_features,
-        gui_toolset_label)
+    from hermes_cli.tools_config import _CONFIG_ONLY_TOOLSETS, _get_effective_configurable_toolsets, _toolset_configuration_platform, _toolset_has_keys, get_nous_subscription_features, gui_toolset_label
+    from hermes_cli.config import has_xai_tool_credentials
+    from tools.platform_policy import get_platform_tools
     from hermes_cli.platforms import platform_label
     from toolsets import resolve_toolset
     from utils import is_truthy_value
@@ -244,7 +243,7 @@ async def get_toolsets(profile: Optional[str] = None):
             target_platforms = {
                 _toolset_configuration_platform(name) for name, _, _ in toolset_rows}
             enabled_by_platform = {
-                platform: _get_platform_tools(config, platform, include_default_mcp_servers=False)
+                platform: get_platform_tools(config, platform, include_default_mcp_servers=False, xai_credentials_present=has_xai_tool_credentials)
                 for platform in target_platforms}
             features = get_nous_subscription_features(config)
             # Credential presence resolves through the profile's secret scope: outside this block
@@ -282,9 +281,9 @@ async def toggle_toolset(name: str, body: ToolsetToggle, profile: Optional[str] 
     """Enable/disable a configurable toolset for its configuration platform
     (``platform_toolsets.cli`` for most; platform-restricted toolsets target
     their own platform) via the same ``_save_platform_tools`` the CLI uses."""
-    from hermes_cli.tools_config import (
-        _CONFIG_ONLY_TOOLSETS, _get_platform_tools, _save_platform_tools,
-        _toolset_configuration_platform)
+    from hermes_cli.tools_config import _CONFIG_ONLY_TOOLSETS, _save_platform_tools, _toolset_configuration_platform
+    from hermes_cli.config import has_xai_tool_credentials
+    from tools.platform_policy import get_platform_tools
 
     _require_known_toolset(name)
     target_platform = _toolset_configuration_platform(name)
@@ -300,7 +299,7 @@ async def toggle_toolset(name: str, body: ToolsetToggle, profile: Optional[str] 
                 save_config(config)
                 return
             enabled = set(
-                _get_platform_tools(config, target_platform, include_default_mcp_servers=False))
+                get_platform_tools(config, target_platform, include_default_mcp_servers=False, xai_credentials_present=has_xai_tool_credentials))
             if body.enabled:
                 enabled.add(name)
             else:

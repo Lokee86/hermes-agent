@@ -983,9 +983,10 @@ def _warm_turn_machinery_sync() -> int:
     enabled_toolsets = None
     try:
         from hermes_cli.config import load_config_readonly
-        from hermes_cli.tools_config import _get_platform_tools
+        from hermes_cli.config import has_xai_tool_credentials
+        from tools.platform_policy import get_platform_tools
 
-        enabled_toolsets = sorted(_get_platform_tools(load_config_readonly(), "cli"))
+        enabled_toolsets = sorted(get_platform_tools(load_config_readonly(), "cli", xai_credentials_present=has_xai_tool_credentials))
     except Exception:
         logger.debug("platform toolset resolution failed; warming the full tool surface", exc_info=True)
     tool_defs = model_tools.get_tool_definitions(enabled_toolsets=enabled_toolsets, quiet_mode=True)

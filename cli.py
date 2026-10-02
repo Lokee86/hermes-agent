@@ -1527,8 +1527,9 @@ def _build_cli_from_args(model, toolsets, provider, reasoning, api_key, base_url
         except Exception:
             toolsets_list = None
         if toolsets_list is None:
-            from hermes_cli.tools_config import _get_platform_tools
-            toolsets_list = sorted(_get_platform_tools(CLI_CONFIG, "cli"))
+            from hermes_cli.config import has_xai_tool_credentials
+            from tools.platform_policy import get_platform_tools
+            toolsets_list = sorted(get_platform_tools(CLI_CONFIG, "cli", xai_credentials_present=has_xai_tool_credentials))
 
     parsed_skills = _parse_skills_argument(skills)
 

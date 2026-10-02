@@ -280,12 +280,12 @@ class TestSubcommandCompletion:
     def test_tools_enable_skips_already_listed(self, monkeypatch):
         """If the user already typed a name, don't suggest it again."""
         monkeypatch.setattr(
-            "hermes_cli.tools_config._get_platform_tools",
+            "tools.platform_policy.get_platform_tools",
             lambda *_a, **_k: set(),
         )
         monkeypatch.setattr("hermes_cli.config.load_config", lambda: {})
         monkeypatch.setattr(
-            "hermes_cli.tools_config._get_plugin_toolset_keys",
+            "tools.platform_policy.get_plugin_toolset_keys",
             lambda: set(),
         )
 

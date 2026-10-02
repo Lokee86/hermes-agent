@@ -550,19 +550,21 @@ def _mirror_launch_credentials(path, params: dict) -> dict:
 def _describe_toolsets(cfg):
     """``(toolsets, pinned_set)`` as the `hermes tools` checklist presents them (the raw registry
     leaks platform composites and reports everything enabled without a pin)."""
-    from hermes_cli.tools_config import (
-        _coerce_platform_toolsets_value, _get_effective_configurable_toolsets, _get_platform_tools,
-        _toolset_allowed_for_platform)
+    from hermes_cli.tools_config import _get_effective_configurable_toolsets
+    from tools.toolset_scope import toolset_allowed_for_platform
+    from hermes_cli.config import has_xai_tool_credentials
+    from tools.platform_policy import coerce_platform_toolsets_value, get_platform_tools
     from toolsets import resolve_toolset
-    pinned = _coerce_platform_toolsets_value((cfg.get("platform_toolsets") or {}).get("cli"), "cli")
+    pinned = coerce_platform_toolsets_value((cfg.get("platform_toolsets") or {}).get("cli"), "cli")
     pinned_set = _clean_names(pinned) if isinstance(pinned, list) else None
-    platform_enabled = _try(lambda: set(_get_platform_tools(cfg, "cli", include_default_mcp_servers=False)), set())
-    default_off = _try(lambda: _lazy("hermes_cli.tools_config", "_DEFAULT_OFF_TOOLSETS"), set())
+    platform_enabled = _try(lambda: set(get_platform_tools(cfg, "cli", include_default_mcp_servers=False, xai_credentials_present=has_xai_tool_credentials)), set())
+    from tools.platform_policy import _DEFAULT_OFF_TOOLSETS
+    default_off = _DEFAULT_OFF_TOOLSETS
     toolsets_out = []
     for ts_name, ts_label, ts_desc in _get_effective_configurable_toolsets():
         enabled = ts_name in (pinned_set if pinned_set is not None else platform_enabled)
         # Default-off integrations (+ opt-in yuanbao) are noise unless already enabled.
-        if not _toolset_allowed_for_platform(ts_name, "cli") or (
+        if not toolset_allowed_for_platform(ts_name, "cli") or (
                 (ts_name in default_off or ts_name == "yuanbao") and not enabled):
             continue
         toolsets_out.append({"name": ts_name, "label": ts_label, "description": ts_desc or "",

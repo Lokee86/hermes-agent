@@ -88,7 +88,7 @@ def behaviour():
     c = importlib.import_module("commands")
     presentation = importlib.import_module("hermes_cli.commands_presentation")
     e = importlib.import_module("commands.execution")
-    tc = importlib.import_module("hermes_cli.tools_config")
+    tc = importlib.import_module("tools.platform_policy")
     from toolsets import TOOLSETS, resolve_toolset
     commands = [asdict(x) for x in c.COMMAND_REGISTRY]
     aliases = {key: c.resolve_command(key).name for x in c.COMMAND_REGISTRY
@@ -131,25 +131,25 @@ def behaviour():
         "context_engine_empty": {"platform_toolsets": {"PLATFORM": []}, "context": {"engine": "phase7"}},
         "legacy_kanban": {"toolsets": ["kanban"]},
         "known_builtins": {"platform_toolsets": {"PLATFORM": ["terminal"]},
-                           "known_builtin_toolsets": {"PLATFORM": sorted(tc._configurable_keys())}},
+                           "known_builtin_toolsets": {"PLATFORM": sorted(tc.configurable_toolset_keys())}},
         "list_literal": {"platform_toolsets": {"PLATFORM": "['terminal', 'memory']"}},
         "invalid": {"platform_toolsets": {"PLATFORM": ["unknown_phase7"]}},
     }
     results = []
-    platforms = sorted(set(tc.PLATFORMS) | {"acp", "gui", "cron", "webhook", "unknown_phase7"})
+    platforms = sorted(set(tc.PLATFORM_DEFAULT_TOOLSETS) | {"acp", "gui", "cron", "webhook", "unknown_phase7"})
     with ExitStack() as stack:
         stack.enter_context(patch.dict(TOOLSETS, {"phase7_plugin": {"tools": ["phase7_tool"], "includes": []}}))
         for credentials in (False, True):
-            with patch.object(tc, "_xai_credentials_present", return_value=credentials), patch.object(
+            with patch.object(
                     tc, "_homeassistant_credentials_present", return_value=credentials):
                 for platform in platforms:
                     for label, template in scenarios.items():
                         cfg = json.loads(json.dumps(template).replace("PLATFORM", platform).replace(
-                            "COMPOSITE", tc._platform_default_toolset(platform)))
+                            "COMPOSITE", tc.platform_default_toolset(platform)))
                         plugin_keys = {"phase7_plugin"} if label.startswith("plugin") or label == "mixed" else set()
-                        with patch.object(tc, "_get_plugin_toolset_keys", return_value=plugin_keys):
+                        with patch.object(tc, "get_plugin_toolset_keys", return_value=plugin_keys):
                             for default_mcp in (False, True):
-                                enabled = tc._get_platform_tools(cfg, platform, include_default_mcp_servers=default_mcp)
+                                enabled = tc.get_platform_tools(cfg, platform, include_default_mcp_servers=default_mcp, xai_credentials_present=credentials)
                                 results.append({"platform": platform, "scenario": label,
                                                 "credentials": credentials, "default_mcp": default_mcp,
                                                 "config": cfg, "plugins": sorted(plugin_keys),
@@ -175,6 +175,15 @@ def main():
         dump(path, actual)
     else:
         expected = json.loads(path.read_text(encoding="utf-8"))
+        # Phase 7.4 approved correction; keep the frozen evidence unchanged.
+        corrected = 0
+        for row in expected["tool_selection"]:
+            selection = (row["config"].get("platform_toolsets") or {}).get(row["platform"])
+            if selection == []:
+                corrected += bool(row["enabled"] or row["expanded"])
+                row["enabled"] = []
+                row["expanded"] = []
+        print(f"Approved explicit-empty corrections: {corrected}")
         if actual != expected:
             dump(OUT / "behaviour-current.json", actual)
             raise SystemExit("Behaviour differs; compare behaviour-current.json with baseline")

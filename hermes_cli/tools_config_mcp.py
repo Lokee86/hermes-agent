@@ -8,7 +8,7 @@ from hermes_cli.cli_output import (
     print_error as _print_error, print_info as _print_info, print_success as _print_success,
     print_warning as _print_warning)
 from hermes_cli.colors import Colors, color
-from hermes_cli.toolset_scope import (
+from tools.toolset_scope import (
     _TOOLSET_PLATFORM_RESTRICTIONS, toolset_allowed_for_platform as _toolset_allowed_for_platform)
 
 
@@ -156,9 +156,11 @@ def _configure_mcp_tools_interactive(config: dict):
 
 def _apply_toolset_change(config: dict, platform: str, toolset_names: List[str], action: str):
     """Add or remove built-in toolsets for a platform."""
-    from hermes_cli.tools_config import _get_platform_tools, _save_platform_tools
+    from hermes_cli.tools_config import _save_platform_tools
+    from hermes_cli.config import has_xai_tool_credentials
+    from tools.platform_policy import get_platform_tools
 
-    enabled = _get_platform_tools(config, platform, include_default_mcp_servers=False)
+    enabled = get_platform_tools(config, platform, include_default_mcp_servers=False, xai_credentials_present=has_xai_tool_credentials)
     updated = enabled - set(toolset_names) if action == "disable" else enabled | set(toolset_names)
     _save_platform_tools(config, platform, updated)
 
@@ -240,7 +242,9 @@ def _known_tool_platforms() -> set[str]:
 
 def tools_disable_enable_command(args):
     """Enable, disable, or list tools for a platform."""
-    from hermes_cli.tools_config import CONFIGURABLE_TOOLSETS, _get_platform_tools, _get_plugin_toolset_keys, load_config, save_config
+    from hermes_cli.tools_config import CONFIGURABLE_TOOLSETS, load_config, save_config
+    from hermes_cli.config import has_xai_tool_credentials
+    from tools.platform_policy import get_platform_tools, get_plugin_toolset_keys
 
     action = args.tools_action
     platform = getattr(args, "platform", "cli")
@@ -252,7 +256,7 @@ def tools_disable_enable_command(args):
         return
 
     if action == "list":
-        _print_tools_list(_get_platform_tools(config, platform, include_default_mcp_servers=False),
+        _print_tools_list(get_platform_tools(config, platform, include_default_mcp_servers=False, xai_credentials_present=has_xai_tool_credentials),
                           config.get("mcp_servers") or {}, platform)
         return
 
@@ -260,7 +264,7 @@ def tools_disable_enable_command(args):
     toolset_targets = [t for t in targets if ":" not in t]
     mcp_targets = [t for t in targets if ":" in t]
 
-    valid_toolsets = {ts_key for ts_key, _, _ in CONFIGURABLE_TOOLSETS} | _get_plugin_toolset_keys()
+    valid_toolsets = {ts_key for ts_key, _, _ in CONFIGURABLE_TOOLSETS} | get_plugin_toolset_keys()
     unknown_toolsets = [t for t in toolset_targets if t not in valid_toolsets]
     for name in unknown_toolsets:
         _print_error(f"Unknown toolset '{name}'")

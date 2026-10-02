@@ -1088,9 +1088,10 @@ class CLICommandsMixin:
         verb = "Disabling" if subcommand == "disable" else "Enabling"
         _cp(_accent(f"{verb} {', '.join(names)}..."))
         self._run_tools_config(tools_action=subcommand, names=names, platform="cli")
-        from hermes_cli.tools_config import _get_platform_tools
+        from hermes_cli.config import has_xai_tool_credentials
+        from tools.platform_policy import get_platform_tools
         from hermes_cli.config import load_config
-        self.enabled_toolsets = _get_platform_tools(load_config(), "cli")
+        self.enabled_toolsets = get_platform_tools(load_config(), "cli", xai_credentials_present=has_xai_tool_credentials)
         self.new_session()
         _cp(_dim("Session reset. New tool configuration is active."))
 
