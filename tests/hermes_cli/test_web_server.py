@@ -3483,7 +3483,7 @@ class TestModelInfoEndpoint:
             }
         })
 
-        with patch("agent.model_metadata.get_model_context_length", return_value=200000):
+        with patch("models.metadata.context.get_model_context_length", return_value=200000):
             resp = self.client.get("/api/model/info")
 
         data = resp.json()
@@ -3501,7 +3501,7 @@ class TestModelInfoEndpoint:
             "model": "some/obscure-model"
         })
 
-        with patch("agent.model_metadata.get_model_context_length", side_effect=Exception("boom")):
+        with patch("models.metadata.context.get_model_context_length", side_effect=Exception("boom")):
             resp = self.client.get("/api/model/info")
 
         assert resp.status_code == 200
@@ -5461,7 +5461,7 @@ class TestSubmittedCustomEndpointSurvivesAssignment:
             "hermes_cli.models_validate.validate_requested_model",
             lambda *a, **k: {"accepted": True, "persist": True, "recognized": True, "message": None})
         monkeypatch.setattr("hermes_cli.model_switch.get_model_info", lambda *a, **k: None)
-        monkeypatch.setattr("hermes_cli.model_switch.get_model_capabilities", lambda *a, **k: None)
+        monkeypatch.setattr("hermes_cli.model_switch.query_model_metadata", lambda *a, **k: None)
 
         cfg = {"model": {"provider": "openrouter", "default": "m"}}
         result = _validated_main_model_selection(
