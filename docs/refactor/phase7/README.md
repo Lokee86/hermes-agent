@@ -8,6 +8,7 @@ approved explicit-empty correction. The
 [7.5 receipt](phase7.5.md) records consumer migration and the shared application
 configuration operation. The
 [7.6 receipt](phase7.6.md) records the ownership hard cut and blocking CI gate.
+The [7.7 receipt](phase7.7.md) records integration and verification.
 Captured 2026-10-01 on Windows, Python 3.11.15.
 
 ## Foundation and isolation
