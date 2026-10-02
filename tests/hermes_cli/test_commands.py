@@ -7,7 +7,7 @@ from commands import COMMAND_REGISTRY, CommandDef
 from hermes_cli.commands_presentation import COMMANDS_BY_CATEGORY
 from gateway.command_presentation import gateway_help_lines
 from hermes_cli.commands_completion import SlashCommandAutoSuggest, SlashCommandCompleter
-from hermes_cli.commands_platforms import _CMD_NAME_LIMIT, _SLACK_RESERVED_COMMANDS, _SLACK_VIA_HERMES_ONLY, _clamp_command_names, _sanitize_telegram_name, slack_app_manifest, slack_native_slashes, slack_subcommand_map, telegram_bot_commands, telegram_menu_commands
+from gateway.command_platforms import _CMD_NAME_LIMIT, _SLACK_RESERVED_COMMANDS, _SLACK_VIA_HERMES_ONLY, _clamp_command_names, _sanitize_telegram_name, slack_app_manifest, slack_native_slashes, slack_subcommand_map, telegram_bot_commands, telegram_menu_commands
 
 
 def _completions(completer: SlashCommandCompleter, text: str):
@@ -69,9 +69,9 @@ class TestTelegramBotCommands:
         """Stubbed registry entry with em/en dashes comes back hyphenated."""
         fake = CommandDef(name="dashy", description="does a \u2014 b \u2013 c",
                           category="Session")
-        monkeypatch.setattr("hermes_cli.commands_platforms._gateway_available_commands",
+        monkeypatch.setattr("gateway.command_platforms._gateway_available_commands",
                             lambda: [fake])
-        monkeypatch.setattr("hermes_cli.commands_platforms._iter_plugin_command_entries",
+        monkeypatch.setattr("gateway.command_platforms._iter_plugin_command_entries",
                             lambda: iter([]))
         assert ("dashy", "does a - b - c") in telegram_bot_commands(
             include_plugins=False)
@@ -454,7 +454,7 @@ class TestGatewaySkillCollector:
 
     def test_long_skill_name_clamped_but_cmd_key_retained(self, tmp_path):
         from unittest.mock import patch
-        from hermes_cli.commands_platforms import _collect_gateway_skill_entries
+        from gateway.command_platforms import _collect_gateway_skill_entries
 
         long_name = "this-is-a-very-long-skill-name-that-exceeds-limit"
         skills_dir = tmp_path / "skills"
@@ -482,7 +482,7 @@ class TestGatewaySkillCollector:
 
     def test_cap_trims_skills_only(self, tmp_path):
         from unittest.mock import patch
-        from hermes_cli.commands_platforms import _collect_gateway_skill_entries
+        from gateway.command_platforms import _collect_gateway_skill_entries
 
         skills_dir = tmp_path / "skills"
         skills_dir.mkdir()
@@ -679,11 +679,11 @@ class TestTelegramMenuCommands:
         menu_cfg = {"max_commands": 2, "priority_mode": "prepend", "priority": ["gym"]}
 
         with (
-            patch("hermes_cli.commands_platforms.telegram_bot_commands", return_value=fake_core),
+            patch("gateway.command_platforms.telegram_bot_commands", return_value=fake_core),
             patch("agent.skill_commands.get_skill_commands", return_value=fake_cmds),
             patch("plugin_runtime.api.get_plugin_commands", return_value=fake_plugins),
             patch("tools.skills_tool.SKILLS_DIR", local_dir),
-            patch("hermes_cli.commands_platforms._telegram_command_menu_config", return_value=menu_cfg),
+            patch("gateway.command_platforms._telegram_command_menu_config", return_value=menu_cfg),
         ):
             menu, hidden = telegram_menu_commands(max_commands=len(fake_core))
 
@@ -720,10 +720,10 @@ class TestTelegramMenuCommands:
         menu_cfg = {"max_commands": 2, "priority_mode": "prepend", "priority": []}
 
         with (
-            patch("hermes_cli.commands_platforms.telegram_bot_commands", return_value=fake_core),
+            patch("gateway.command_platforms.telegram_bot_commands", return_value=fake_core),
             patch("agent.skill_commands.get_skill_commands", return_value=fake_cmds),
             patch("tools.skills_tool.SKILLS_DIR", local_dir),
-            patch("hermes_cli.commands_platforms._telegram_command_menu_config", return_value=menu_cfg),
+            patch("gateway.command_platforms._telegram_command_menu_config", return_value=menu_cfg),
         ):
             menu, hidden = telegram_menu_commands(max_commands=2)
 
@@ -756,10 +756,10 @@ class TestTelegramMenuCommands:
         }
 
         with (
-            patch("hermes_cli.commands_platforms.telegram_bot_commands", return_value=fake_core),
+            patch("gateway.command_platforms.telegram_bot_commands", return_value=fake_core),
             patch("agent.skill_commands.get_skill_commands", return_value=fake_cmds),
             patch("tools.skills_tool.SKILLS_DIR", local_dir),
-            patch("hermes_cli.commands_platforms._telegram_command_menu_config", return_value=menu_cfg),
+            patch("gateway.command_platforms._telegram_command_menu_config", return_value=menu_cfg),
         ):
             menu, hidden = telegram_menu_commands(max_commands=1)
 
@@ -787,7 +787,7 @@ class TestTelegramMenuCommands:
             patch("plugin_runtime.api.get_plugin_commands", return_value=fake_plugins),
             patch("agent.skill_commands.get_skill_commands", return_value={}),
             patch("tools.skills_tool.SKILLS_DIR", local_dir),
-            patch("hermes_cli.commands_platforms._telegram_command_menu_config", return_value=menu_cfg),
+            patch("gateway.command_platforms._telegram_command_menu_config", return_value=menu_cfg),
         ):
             menu, hidden = telegram_menu_commands(max_commands=1)
 
@@ -822,7 +822,7 @@ class TestTelegramMenuCommands:
     def test_scalar_configured_priority_is_accepted_as_one_command(self):
         """The config CLI's scalar value form must work for a single priority."""
         from unittest.mock import patch
-        from hermes_cli.commands_platforms import _telegram_command_menu_config
+        from gateway.command_platforms import _telegram_command_menu_config
 
         raw_config = {
             "platforms": {
@@ -845,7 +845,7 @@ class TestTelegramMenuCommands:
 # Discord skill commands grouped by category
 # ---------------------------------------------------------------------------
 
-from hermes_cli.commands_platforms import discord_skill_commands_by_category
+from gateway.command_platforms import discord_skill_commands_by_category
 
 
 class TestDiscordSkillCommandsByCategory:

@@ -4616,7 +4616,7 @@ class DiscordAdapter(DiscordAuthorizationMixin, DiscordMediaMixin, BasePlatformA
     def _refresh_skill_catalog_state(self) -> None:
         """Re-scan disk and repopulate ``self._skill_entries``/``_skill_lookup`` in place.
         No Discord API calls: autocomplete and handler read these attributes directly."""
-        from hermes_cli.commands_platforms import discord_skill_commands_by_category
+        from gateway.command_platforms import discord_skill_commands_by_category
         reserved = getattr(self, "_skill_group_reserved_names", set())
         categories, uncategorized, hidden = discord_skill_commands_by_category(
             reserved_names=set(reserved),

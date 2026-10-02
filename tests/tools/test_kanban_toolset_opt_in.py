@@ -30,7 +30,7 @@ def test_saved_opt_in_roundtrip_reaches_schema_and_board(surface, tmp_path, monk
     monkeypatch.delenv("HERMES_KANBAN_TASK", raising=False)
     monkeypatch.delenv("HERMES_KANBAN_BOARD", raising=False)
     from hermes_cli.config import load_config, save_config
-    from hermes_cli.tools_config import _apply_toolset_change
+    from hermes_cli.config_toolsets import apply_toolset_change
     from tools.platform_policy import get_platform_tools
     from tools.registry import registry
 
@@ -64,7 +64,7 @@ def test_saved_opt_in_roundtrip_reaches_schema_and_board(surface, tmp_path, monk
             assert "error" not in response, response
             assert "kanban" in response["result"]["changed"]
         else:
-            _apply_toolset_change(load_config(), "cli", ["kanban"], action)
+            apply_toolset_change(load_config(), "cli", ["kanban"], action)
 
     try:
         toggle(True)

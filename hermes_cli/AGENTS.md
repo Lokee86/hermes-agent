@@ -287,3 +287,8 @@ contextvars. `upgrade_guest` (`hermes auth upgrade`), the CLI `/login` handler a
 promotion poller are renderers over it; a surface that needs the cancel check and the save to be
 atomic passes `persist_guard`. The desktop's plain "connect another Nous account" device-code login
 is a separate path (`_nous_plain_poller`) and must stay one.
+
+Shared tool-setting writes live in `hermes_cli/config_toolsets.py`, an application operation
+using the existing config backend. CLI menus, HTTP and Desktop RPC call it directly under
+their target profile scope. Runtime capability reads use `tools/platform_policy.py`.
+Gateway command menu projections live in `gateway/command_platforms.py`.

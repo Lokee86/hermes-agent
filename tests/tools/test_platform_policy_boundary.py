@@ -5,6 +5,8 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 RETIRED_NAMES = {
+    "_save_platform_tools", "_apply_toolset_change", "_apply_mcp_change",
+    "_toolset_configuration_platform", "_CONFIG_ONLY_TOOLSETS", "_cfg_section",
     "_get_platform_tools", "get_platform_tools",
     "_get_plugin_toolset_keys", "get_plugin_toolset_keys",
     "_configurable_keys", "configurable_toolset_keys",
@@ -28,6 +30,9 @@ def test_cli_presentation_does_not_own_runtime_policy():
     definitions = {node.name for node in tree.body if isinstance(node, ast.FunctionDef)}
     assert not definitions & RETIRED_NAMES
     assert not (ROOT / "hermes_cli/toolset_scope.py").exists()
+    assert not (ROOT / "hermes_cli/commands_platforms.py").exists()
+    mcp = ast.parse((ROOT / "hermes_cli/tools_config_mcp.py").read_text(encoding="utf-8"))
+    assert not {node.name for node in mcp.body if isinstance(node, ast.FunctionDef)} & RETIRED_NAMES
 
 
 def test_first_party_consumers_use_canonical_policy_and_scope():
@@ -39,13 +44,13 @@ def test_first_party_consumers_use_canonical_policy_and_scope():
     violations = []
     for path in paths:
         source = path.read_text(encoding="utf-8")
-        if "tools_config" not in source and "toolset_scope" not in source:
+        if not any(name in source for name in ("tools_config", "toolset_scope", "commands_platforms")):
             continue
         tree = ast.parse(source)
         aliases = set()
         for node in ast.walk(tree):
             if isinstance(node, ast.ImportFrom):
-                if node.module == "hermes_cli.toolset_scope":
+                if node.module in {"hermes_cli.toolset_scope", "hermes_cli.commands_platforms"}:
                     violations.append((path, node.lineno, "retired scope import"))
                 if node.module == "hermes_cli.tools_config":
                     forbidden = {alias.name for alias in node.names} & RETIRED_NAMES
@@ -58,7 +63,7 @@ def test_first_party_consumers_use_canonical_policy_and_scope():
                 for alias in node.names:
                     if alias.name == "hermes_cli.tools_config":
                         aliases.add(alias.asname or "hermes_cli.tools_config")
-                    if alias.name == "hermes_cli.toolset_scope":
+                    if alias.name in {"hermes_cli.toolset_scope", "hermes_cli.commands_platforms"}:
                         violations.append((path, node.lineno, "retired scope import"))
         for node in ast.walk(tree):
             if isinstance(node, ast.Attribute) and node.attr in RETIRED_NAMES:

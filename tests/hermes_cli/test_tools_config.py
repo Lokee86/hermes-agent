@@ -10,7 +10,8 @@ import pytest
 
 from hermes_cli.nous_account import NousPortalAccountInfo, NousToolAccessInfo
 from hermes_cli.nous_subscription import NousSubscriptionFeatures
-from hermes_cli.tools_config import _apply_toolset_change, _checklist_toolset_keys, _run_post_setup, _save_platform_tools, _toolset_has_keys, CONFIGURABLE_TOOLSETS, TOOL_CATEGORIES, _visible_providers, tools_command
+from hermes_cli.config_toolsets import apply_toolset_change, save_platform_tools, CONFIG_ONLY_TOOLSETS
+from hermes_cli.tools_config import _checklist_toolset_keys, _run_post_setup, _toolset_has_keys, CONFIGURABLE_TOOLSETS, TOOL_CATEGORIES, _visible_providers, tools_command
 from tools.platform_policy import _DEFAULT_OFF_TOOLSETS, _RECENTLY_SHIPPED_TOOLSETS, get_platform_tools
 
 
@@ -95,8 +96,8 @@ def test_enable_on_string_platform_toolsets_keeps_listed_entries():
     dropped the user's default-off entries (video, video_gen) on write."""
     config = {"platform_toolsets": {"telegram": '["browser", "terminal", "video", "video_gen"]'}}
 
-    with patch("hermes_cli.tools_config.save_config"):
-        _apply_toolset_change(config, "telegram", ["computer_use"], "enable")
+    with patch("hermes_cli.config_toolsets.save_config"):
+        apply_toolset_change(config, "telegram", ["computer_use"], "enable")
 
     saved = config["platform_toolsets"]["telegram"]
     assert isinstance(saved, list)
@@ -197,7 +198,7 @@ def test_toolset_has_keys_for_vision_accepts_codex_auth(tmp_path, monkeypatch):
     assert _toolset_has_keys("vision") is True
 
 
-def test_save_platform_tools_preserves_mcp_server_names():
+def testsave_platform_tools_preserves_mcp_server_names():
     """Ensure MCP server names are preserved when saving platform tools.
 
     Regression test for https://github.com/NousResearch/hermes-agent/issues/1247
@@ -210,8 +211,8 @@ def test_save_platform_tools_preserves_mcp_server_names():
 
     new_selection = {"web", "browser"}
 
-    with patch("hermes_cli.tools_config.save_config"):
-        _save_platform_tools(config, "cli", new_selection)
+    with patch("hermes_cli.config_toolsets.save_config"):
+        save_platform_tools(config, "cli", new_selection)
 
     saved_toolsets = config["platform_toolsets"]["cli"]
 
@@ -254,7 +255,7 @@ def test_first_install_nous_auto_configures_video_gen(monkeypatch):
         "hermes_cli.tools_config._prompt_toolset_checklist",
         lambda *args, **kwargs: {"video_gen"},
     )
-    monkeypatch.setattr("hermes_cli.tools_config.save_config", lambda config: None)
+    monkeypatch.setattr("hermes_cli.config_toolsets.save_config", lambda config: None)
     monkeypatch.setattr(
         "hermes_cli.tools_config._get_enabled_platforms",
         lambda: ["cli"],
@@ -574,8 +575,8 @@ def test_kanban_checklist_reports_and_persists_explicit_removal():
     universe = _checklist_toolset_keys("telegram")
     new_enabled = current - {"kanban"}
     assert ((current - new_enabled) & universe) == {"kanban"}
-    with patch("hermes_cli.tools_config.save_config"):
-        _save_platform_tools(config, "telegram", new_enabled)
+    with patch("hermes_cli.config_toolsets.save_config"):
+        save_platform_tools(config, "telegram", new_enabled)
     assert "kanban" not in get_platform_tools(config, "telegram", include_default_mcp_servers=False, xai_credentials_present=has_xai_tool_credentials)
     assert {"web", "terminal"} <= set(config["platform_toolsets"]["telegram"])
 
@@ -751,7 +752,6 @@ _requires_recently_shipped = pytest.mark.skipif(
 def _saved_list_from_before(platform="cli"):
     """A saved explicit list as it looked before the new toolsets existed."""
     from hermes_cli.tools_config import (
-        _CONFIG_ONLY_TOOLSETS,
         _toolset_allowed_for_platform,
     )
 
@@ -762,7 +762,7 @@ def _saved_list_from_before(platform="cli"):
                 for ts_key, _, _ in CONFIGURABLE_TOOLSETS
                 if ts_key not in _RECENTLY_SHIPPED_TOOLSETS
                 and ts_key not in _DEFAULT_OFF_TOOLSETS
-                and ts_key not in _CONFIG_ONLY_TOOLSETS
+                and ts_key not in CONFIG_ONLY_TOOLSETS
                 and _toolset_allowed_for_platform(ts_key, platform)
             )
         }
@@ -796,8 +796,8 @@ def test_unchecking_the_new_toolset_sticks():
 
     config = {"platform_toolsets": {"cli": ["hermes-cli"]}}
     enabled = get_platform_tools(config, "cli", include_default_mcp_servers=False, xai_credentials_present=has_xai_tool_credentials)
-    with patch("hermes_cli.tools_config.save_config"):
-        _save_platform_tools(config, "cli", enabled - _RECENTLY_SHIPPED_TOOLSETS)
+    with patch("hermes_cli.config_toolsets.save_config"):
+        save_platform_tools(config, "cli", enabled - _RECENTLY_SHIPPED_TOOLSETS)
 
     reread = get_platform_tools(config, "cli", include_default_mcp_servers=False, xai_credentials_present=has_xai_tool_credentials)
 

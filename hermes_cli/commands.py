@@ -240,13 +240,13 @@ def discord_skill_commands(
 _PLUGIN_COMPAT_LAZY = {
     'SlashCommandAutoSuggest': ('hermes_cli.commands_completion', 'SlashCommandAutoSuggest'),
     'SlashCommandCompleter': ('hermes_cli.commands_completion', 'SlashCommandCompleter'),
-    'discord_skill_commands_by_category': ('hermes_cli.commands_platforms', 'discord_skill_commands_by_category'),
-    'slack_app_manifest': ('hermes_cli.commands_platforms', 'slack_app_manifest'),
-    'slack_native_slashes': ('hermes_cli.commands_platforms', 'slack_native_slashes'),
-    'slack_subcommand_map': ('hermes_cli.commands_platforms', 'slack_subcommand_map'),
-    'telegram_bot_commands': ('hermes_cli.commands_platforms', 'telegram_bot_commands'),
-    'telegram_menu_commands': ('hermes_cli.commands_platforms', 'telegram_menu_commands'),
-    'telegram_menu_max_commands': ('hermes_cli.commands_platforms', 'telegram_menu_max_commands'),
+    'discord_skill_commands_by_category': ('gateway.command_platforms', 'discord_skill_commands_by_category'),
+    'slack_app_manifest': ('gateway.command_platforms', 'slack_app_manifest'),
+    'slack_native_slashes': ('gateway.command_platforms', 'slack_native_slashes'),
+    'slack_subcommand_map': ('gateway.command_platforms', 'slack_subcommand_map'),
+    'telegram_bot_commands': ('gateway.command_platforms', 'telegram_bot_commands'),
+    'telegram_menu_commands': ('gateway.command_platforms', 'telegram_menu_commands'),
+    'telegram_menu_max_commands': ('gateway.command_platforms', 'telegram_menu_max_commands'),
 }
 
 

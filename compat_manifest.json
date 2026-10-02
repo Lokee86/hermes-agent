@@ -3048,7 +3048,7 @@
    "facade": "hermes_cli.commands",
    "name": "discord_skill_commands_by_category",
    "kind": "moved-lazy",
-   "target": "hermes_cli.commands_platforms"
+   "target": "gateway.command_platforms"
   },
   {
    "facade": "hermes_cli.commands",
@@ -3072,19 +3072,19 @@
    "facade": "hermes_cli.commands",
    "name": "slack_app_manifest",
    "kind": "moved-lazy",
-   "target": "hermes_cli.commands_platforms"
+   "target": "gateway.command_platforms"
   },
   {
    "facade": "hermes_cli.commands",
    "name": "slack_native_slashes",
    "kind": "moved-lazy",
-   "target": "hermes_cli.commands_platforms"
+   "target": "gateway.command_platforms"
   },
   {
    "facade": "hermes_cli.commands",
    "name": "slack_subcommand_map",
    "kind": "moved-lazy",
-   "target": "hermes_cli.commands_platforms"
+   "target": "gateway.command_platforms"
   },
   {
    "facade": "hermes_cli.commands",
@@ -3096,19 +3096,19 @@
    "facade": "hermes_cli.commands",
    "name": "telegram_bot_commands",
    "kind": "moved-lazy",
-   "target": "hermes_cli.commands_platforms"
+   "target": "gateway.command_platforms"
   },
   {
    "facade": "hermes_cli.commands",
    "name": "telegram_menu_commands",
    "kind": "moved-lazy",
-   "target": "hermes_cli.commands_platforms"
+   "target": "gateway.command_platforms"
   },
   {
    "facade": "hermes_cli.commands",
    "name": "telegram_menu_max_commands",
    "kind": "moved-lazy",
-   "target": "hermes_cli.commands_platforms"
+   "target": "gateway.command_platforms"
   },
   {
    "facade": "hermes_cli.commands",
