@@ -751,9 +751,7 @@ _requires_recently_shipped = pytest.mark.skipif(
 
 def _saved_list_from_before(platform="cli"):
     """A saved explicit list as it looked before the new toolsets existed."""
-    from hermes_cli.tools_config import (
-        _toolset_allowed_for_platform,
-    )
+    from tools.toolset_scope import toolset_allowed_for_platform as _toolset_allowed_for_platform
 
     return {
         "platform_toolsets": {

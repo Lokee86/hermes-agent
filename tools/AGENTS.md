@@ -165,3 +165,7 @@ policy suppression and the model pipeline lives in `tools/toolset_selection.py`.
 Keep tool definitions/expansion in `toolsets.py`, availability in `tools/registry.py`,
 and schema preparation in `model_tools.py`. Selection never grants authorization.
 Do not restore CLI runtime-policy forwarding paths or duplicate these registries.
+
+Run `python scripts/check_phase7_boundaries.py` for the blocking ownership gate.
+Its contract tests live in `tests/scripts/test_check_phase7_boundaries.py`;
+retired imports, forwarding paths and duplicate command owners must stay absent.

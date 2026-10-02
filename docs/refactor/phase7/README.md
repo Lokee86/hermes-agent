@@ -6,7 +6,8 @@ Status at 7.1 capture: inventory and executable baseline complete. The subsequen
 [7.4 receipt](phase7.4.md) records the runtime capability-policy cut and the
 approved explicit-empty correction. The
 [7.5 receipt](phase7.5.md) records consumer migration and the shared application
-configuration operation.
+configuration operation. The
+[7.6 receipt](phase7.6.md) records the ownership hard cut and blocking CI gate.
 Captured 2026-10-01 on Windows, Python 3.11.15.
 
 ## Foundation and isolation

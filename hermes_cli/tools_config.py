@@ -348,18 +348,6 @@ def _platform_toolset_summary(config: dict, platforms: Optional[List[str]] = Non
     return {pkey: _tool_policy.get_platform_tools(config, pkey, xai_credentials_present=has_xai_tool_credentials) for pkey in platforms}
 
 
-def _parse_enabled_flag(value, default: bool = True) -> bool:
-    """Parse bool-like config values used by tool/platform settings."""
-    if isinstance(value, (bool, int)):
-        return bool(value)
-    if isinstance(value, str):
-        lowered = value.strip().lower()
-        if lowered in {"true", "1", "yes", "on", "false", "0", "no", "off"}:
-            return lowered in {"true", "1", "yes", "on"}
-    return default
-
-
-
 
 
 

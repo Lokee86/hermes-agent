@@ -68,3 +68,15 @@ def test_settings_roundtrip_across_served_profiles(operation, tmp_path, multiple
             assert "terminal" in actual["platform_toolsets"]["cli"]
             assert actual["agent"]["disabled_toolsets"] == ["browser"]
     assert dict(os.environ) == before_env
+
+
+@pytest.mark.parametrize("value,expected", [
+    (True, True), (False, False), (1, True), (0, False), (-1, True),
+    (" TRUE ", True), ("yes", True), ("ON", True), ("1", True),
+    (" FALSE ", False), ("no", False), ("OFF", False), ("0", False),
+    (None, None), ("unknown", None), ("", None), ([], None), (1.5, None),
+])
+@pytest.mark.parametrize("default", [False, True])
+def test_enabled_flag_preserves_legacy_default_semantics(value, expected, default):
+    from hermes_cli.config_toolsets import parse_enabled_flag
+    assert parse_enabled_flag(value, default=default) is (default if expected is None else expected)

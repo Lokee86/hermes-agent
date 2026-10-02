@@ -101,3 +101,14 @@ def apply_mcp_change(config: dict, targets: List[str], action: str) -> Set[str]:
         tools_cfg["exclude"] = exclude
 
     return failed_servers
+
+
+def parse_enabled_flag(value, default: bool = True) -> bool:
+    """Parse bool-like config values used by tool/platform settings."""
+    if isinstance(value, (bool, int)):
+        return bool(value)
+    if isinstance(value, str):
+        lowered = value.strip().lower()
+        if lowered in {"true", "1", "yes", "on", "false", "0", "no", "off"}:
+            return lowered in {"true", "1", "yes", "on"}
+    return default

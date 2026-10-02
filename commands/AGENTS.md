@@ -21,3 +21,7 @@ discovery and lifecycle ownership. Do not restore `hermes_cli/slash_exec.py` or 
 Preserve Gateway authorization and approval enforcement independently of discovery/execution.
 
 Tests belong in `tests/commands/` and run through `scripts/run_tests.sh`.
+
+Run `python scripts/check_phase7_boundaries.py` for the blocking ownership gate.
+Its contract tests live in `tests/scripts/test_check_phase7_boundaries.py`;
+retired imports, forwarding paths and duplicate command owners must stay absent.
