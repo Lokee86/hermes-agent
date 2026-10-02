@@ -3,7 +3,8 @@
 import pytest
 from unittest.mock import patch, MagicMock
 
-from hermes_cli.auth import resolve_provider, resolve_api_key_provider_credentials
+from hermes_cli.auth import resolve_provider
+from hermes_cli.runtime_provider_credentials import resolve_api_key_provider_credentials
 from models import normalize_model_id
 from providers import normalize_provider, vendor_for_model
 from agent.models_dev import list_agentic_models

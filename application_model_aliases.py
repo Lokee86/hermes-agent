@@ -6,6 +6,7 @@ and invocation semantics remain owned by the lower domains.
 """
 
 from __future__ import annotations
+from hermes_cli.config_credentials import credential_pool_environment as _phase7_credential_pool_environment
 
 from dataclasses import dataclass
 from typing import Any, Mapping
@@ -165,8 +166,8 @@ def _scoped_env(name: str) -> str:
         from agent.secret_scope import current_secret_scope, get_secret, is_multiplex_active
         if current_secret_scope() is not None or is_multiplex_active():
             return _clean(get_secret(name, ""))
-        from agent.credential_pool import get_env_prefer_dotenv
-        return _clean(get_env_prefer_dotenv(name))
+        from auth.pool_sources import get_env_prefer_dotenv
+        return _clean(get_env_prefer_dotenv(name, environment=_phase7_credential_pool_environment()))
     except Exception:
         return ""
 

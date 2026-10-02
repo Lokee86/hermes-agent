@@ -28,7 +28,7 @@ def _fast_catalog_ids(provider: str) -> tuple[str, ...]:
     provider_id = str(provider or "").strip().lower()
     is_nous = provider_id == "nous"
     try:
-        from hermes_cli.auth import resolve_api_key_provider_credentials
+        from hermes_cli.runtime_provider_credentials import resolve_api_key_provider_credentials
         from application_model_pricing import fetch_models_with_pricing
         from providers import get_provider_profile
 

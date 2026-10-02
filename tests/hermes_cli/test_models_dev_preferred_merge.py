@@ -84,7 +84,7 @@ class TestProviderModelIdsPreferred:
 
         with patch("hermes_cli.urllib_security.open_credentialed_url", side_effect=fake_open):
             with patch(
-                "hermes_cli.auth.resolve_api_key_provider_credentials",
+                "hermes_cli.runtime_provider_credentials.resolve_api_key_provider_credentials",
                 return_value={
                     "api_key": "sk-kimi-test",
                     "base_url": "https://api.kimi.com/coding",
@@ -93,7 +93,7 @@ class TestProviderModelIdsPreferred:
                 coding_models = provider_model_ids("kimi-coding")
 
             with patch(
-                "hermes_cli.auth.resolve_api_key_provider_credentials",
+                "hermes_cli.runtime_provider_credentials.resolve_api_key_provider_credentials",
                 return_value={
                     "api_key": "legacy-test",
                     "base_url": "https://api.moonshot.ai/v1",
@@ -102,7 +102,7 @@ class TestProviderModelIdsPreferred:
                 legacy_models = provider_model_ids("kimi-coding")
 
             with patch(
-                "hermes_cli.auth.resolve_api_key_provider_credentials",
+                "hermes_cli.runtime_provider_credentials.resolve_api_key_provider_credentials",
                 return_value={
                     "api_key": "custom-test",
                     "base_url": "https://example.invalid/v1",
@@ -131,7 +131,7 @@ class TestProviderModelIdsPreferred:
 
         with (
             patch("hermes_cli.main_provider_setup._prompt_api_key", return_value=("sk-kimi-test", False)),
-            patch("hermes_cli.auth._prompt_model_selection", side_effect=fake_select),
+            patch("hermes_cli.auth_model_picker._prompt_model_selection", side_effect=fake_select),
             patch("hermes_cli.config.get_env_value", return_value=""),
             patch("hermes_cli.config.save_env_value"),
         ):

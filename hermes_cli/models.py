@@ -6,6 +6,8 @@ configuration, credentials and network observations for those domains.
 """
 
 from __future__ import annotations
+from hermes_cli.config_credentials import credential_pool_environment as _phase6_auth_environment
+
 
 import contextvars
 import copy
@@ -526,7 +528,7 @@ def _configured_provider_ids() -> set[str]:
 def _first_exchangeable_copilot_token(raw_tokens) -> str:
     """Exchange stored GitHub tokens in order; the first that validates AND exchanges wins (every
     entry is tried so a later valid token survives an earlier malformed one)."""
-    from hermes_cli.copilot_auth import exchange_copilot_token, validate_copilot_token
+    from auth.providers.copilot import exchange_copilot_token, validate_copilot_token
 
     for raw in raw_tokens:
         raw = str(raw or "").strip()
@@ -561,7 +563,7 @@ def _resolve_copilot_catalog_api_key() -> str:
     ``~/.copilot/config.json`` ``copilotTokens`` (the ACP CLI's own store). Without the latter two,
     keyless users see the picker fall back to the stale curated list on a silent 401."""
     def _pool_token() -> str:
-        from hermes_cli.auth import read_credential_pool
+        from auth.pool_persistence import read_credential_pool
 
         return _first_exchangeable_copilot_token(
             entry.get("access_token") for entry in read_credential_pool("copilot") if isinstance(entry, dict))
@@ -627,9 +629,9 @@ def _codex_catalog(normalized: str, force_refresh: bool) -> list[str]:
     # gateway key is only ever sent to that gateway, never to the chatgpt.com default.
     base_url = None
     try:
-        from hermes_cli.auth import _codex_access_token_is_expiring, resolve_codex_runtime_credentials
+        from auth.providers.codex import _codex_access_token_is_expiring, resolve_codex_runtime_credentials
 
-        creds = resolve_codex_runtime_credentials(read_only=True)
+        creds = resolve_codex_runtime_credentials(read_only=True, environment=_phase6_auth_environment())
         access_token, base_url = creds.get("api_key"), creds.get("base_url")
         if _codex_access_token_is_expiring(access_token, 0):
             access_token = None
@@ -685,9 +687,10 @@ def _copilot_catalog(normalized: str, force_refresh: bool) -> Optional[list[str]
 
 def _nous_catalog(normalized: str, force_refresh: bool) -> Optional[list[str]]:
     try:
-        from hermes_cli.auth import fetch_nous_models, resolve_nous_runtime_credentials
+        from hermes_cli.auth_nous import fetch_nous_models
+        from auth.providers.nous import resolve_nous_runtime_credentials
 
-        creds = resolve_nous_runtime_credentials()
+        creds = resolve_nous_runtime_credentials(environment=_phase6_auth_environment())
         if creds:
             live = fetch_nous_models(api_key=creds.get("api_key", ""), inference_base_url=creds.get("base_url", ""))
             if live:
@@ -702,7 +705,7 @@ def _nous_catalog(normalized: str, force_refresh: bool) -> Optional[list[str]]:
 def _api_key_credentials(normalized: str) -> tuple[str, str]:
     """``(api_key, base_url)`` from ``resolve_api_key_provider_credentials``; empty strings on any miss."""
     try:
-        from hermes_cli.auth import resolve_api_key_provider_credentials
+        from hermes_cli.runtime_provider_credentials import resolve_api_key_provider_credentials
 
         creds = resolve_api_key_provider_credentials(normalized)
         return str(creds.get("api_key") or "").strip(), str(creds.get("base_url") or "").strip()
@@ -1385,8 +1388,8 @@ def _resolve_anthropic_pool_catalog_credentials() -> tuple[str, str]:
     """Read-only API-key pool credential for model discovery (``resolve_anthropic_token()`` ignores
     ``api_key`` pool entries — its runtime contract is OAuth-oriented)."""
     try:
-        from agent.credential_pool import AUTH_TYPE_API_KEY
-        from hermes_cli.auth import read_credential_pool
+        from auth.credential_pool import AUTH_TYPE_API_KEY
+        from auth.pool_persistence import read_credential_pool
 
         for entry in read_credential_pool("anthropic"):
             if not isinstance(entry, dict) or entry.get("auth_type") != AUTH_TYPE_API_KEY:
@@ -1404,12 +1407,12 @@ def _fetch_anthropic_models(
 ) -> Optional[list[str]]:
     """Application-owned credential resolution; provider plugin owns catalogue pagination."""
     try:
-        from agent.anthropic_credentials import resolve_anthropic_token, _is_oauth_token
+        from auth.providers.anthropic import resolve_anthropic_token, _is_oauth_token
     except ImportError:
         return None
 
     resolved_base_url = base_url
-    token = (api_key or "").strip() or resolve_anthropic_token()
+    token = (api_key or "").strip() or resolve_anthropic_token(environment=_phase6_auth_environment())
     if not token:
         # Never pair a pool credential with a caller-supplied endpoint.
         token, resolved_base_url = _resolve_anthropic_pool_catalog_credentials()

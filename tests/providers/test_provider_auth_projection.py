@@ -8,19 +8,8 @@ import subprocess
 import sys
 from pathlib import Path
 
-from hermes_cli.auth_constants import (
-    CODEX_OAUTH_CLIENT_ID,
-    CODEX_OAUTH_TOKEN_URL,
-    DEFAULT_NOUS_CLIENT_ID,
-    DEFAULT_NOUS_PORTAL_URL,
-    DEFAULT_NOUS_SCOPE,
-    MINIMAX_OAUTH_CN_BASE,
-    QWEN_OAUTH_CLIENT_ID,
-    QWEN_OAUTH_TOKEN_URL,
-    XAI_OAUTH_CLIENT_ID,
-    XAI_OAUTH_DEVICE_CODE_URL,
-    XAI_OAUTH_SCOPE,
-)
+from auth.constants import CODEX_OAUTH_CLIENT_ID, CODEX_OAUTH_TOKEN_URL, DEFAULT_NOUS_CLIENT_ID, DEFAULT_NOUS_SCOPE, MINIMAX_OAUTH_CN_BASE, QWEN_OAUTH_CLIENT_ID, QWEN_OAUTH_TOKEN_URL, XAI_OAUTH_CLIENT_ID, XAI_OAUTH_DEVICE_CODE_URL, XAI_OAUTH_SCOPE
+from auth.store_migrations import DEFAULT_NOUS_PORTAL_URL
 from hermes_cli.provider_auth import (
     AUTH_AUTO_DETECT_ORDER,
     get_provider_config,

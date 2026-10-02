@@ -33,7 +33,7 @@ def install_context_metadata_hooks() -> None:
         return model_metadata_http.resolve_verify(base_url)
 
     def is_codex_oauth_token(access_token: str) -> bool:
-        from hermes_cli.auth_constants import _decode_jwt_claims
+        from auth.token_validation import _decode_jwt_claims
         return bool(_decode_jwt_claims(access_token))
 
     def materialize_api_key(api_key: object) -> str:
@@ -41,7 +41,7 @@ def install_context_metadata_hooks() -> None:
         return materialize_probe_api_key(api_key)
 
     def fingerprint_api_key(api_key: object) -> str:
-        from agent.credential_persistence import fingerprint_secret_value
+        from auth.persistence import fingerprint_secret_value
         return fingerprint_secret_value(api_key) or ""
 
     def custom_provider_api_mode(base_url: str, custom_providers: list | None):

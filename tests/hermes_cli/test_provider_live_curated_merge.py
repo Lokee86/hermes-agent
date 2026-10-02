@@ -41,7 +41,7 @@ class TestGenericProviderLiveCuratedMerge:
         with (
             patch("providers.get_provider_profile", side_effect=lambda name: self._make_profile(live, name)),
             patch(
-                "hermes_cli.auth.resolve_api_key_provider_credentials",
+                "hermes_cli.runtime_provider_credentials.resolve_api_key_provider_credentials",
                 return_value={"api_key": "k", "base_url": ""},
             ),
             patch.dict("models.catalog_static._PROVIDER_MODELS", {"zai": curated}),
@@ -63,7 +63,7 @@ class TestGenericProviderLiveCuratedMerge:
         with (
             patch("providers.get_provider_profile", side_effect=lambda name: self._make_profile(live, name)),
             patch(
-                "hermes_cli.auth.resolve_api_key_provider_credentials",
+                "hermes_cli.runtime_provider_credentials.resolve_api_key_provider_credentials",
                 return_value={"api_key": "k", "base_url": ""},
             ),
             patch.dict("models.catalog_static._PROVIDER_MODELS", {"zai": ["c", "b"]}),
@@ -75,7 +75,7 @@ class TestGenericProviderLiveCuratedMerge:
         with (
             patch("providers.get_provider_profile", side_effect=lambda name: self._make_profile(live, name)),
             patch(
-                "hermes_cli.auth.resolve_api_key_provider_credentials",
+                "hermes_cli.runtime_provider_credentials.resolve_api_key_provider_credentials",
                 return_value={"api_key": "k", "base_url": ""},
             ),
             patch.dict("models.catalog_static._PROVIDER_MODELS", {"opencode-zen": ["c", "b"]}),
@@ -94,7 +94,7 @@ class TestGenericProviderLiveCuratedMerge:
         with (
             patch("providers.get_provider_profile", side_effect=lambda name: self._make_profile(live, name)),
             patch(
-                "hermes_cli.auth.resolve_api_key_provider_credentials",
+                "hermes_cli.runtime_provider_credentials.resolve_api_key_provider_credentials",
                 return_value={"api_key": "k", "base_url": ""},
             ),
         ):
@@ -115,7 +115,7 @@ class TestGenericProviderLiveCuratedMerge:
         with (
             patch("providers.get_provider_profile", side_effect=lambda name: self._make_profile(live, name)),
             patch(
-                "hermes_cli.auth.resolve_api_key_provider_credentials",
+                "hermes_cli.runtime_provider_credentials.resolve_api_key_provider_credentials",
                 return_value={"api_key": "k", "base_url": ""},
             ),
         ):
@@ -130,7 +130,7 @@ class TestGenericProviderLiveCuratedMerge:
         with (
             patch("providers.get_provider_profile", side_effect=lambda name: self._make_profile(None, name)),
             patch(
-                "hermes_cli.auth.resolve_api_key_provider_credentials",
+                "hermes_cli.runtime_provider_credentials.resolve_api_key_provider_credentials",
                 return_value={"api_key": "", "base_url": ""},
             ),
             patch("agent.models_dev.list_agentic_models", return_value=["x-preview-f-free", "kimi-k3"]),

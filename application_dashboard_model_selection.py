@@ -89,7 +89,7 @@ def select_dashboard_main_model(
         # another arbitrary custom host. Only the submitted inline key is used.
         runtime = {"provider": target, "base_url": explicit_url, "api_key": api_key}
     else:
-        from hermes_cli.auth_constants import AuthError
+        from auth.errors import AuthError
 
         try:
             runtime = _acquire(

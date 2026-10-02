@@ -827,6 +827,8 @@ include = [
   "providers.*",
   "models",
   "models.*",
+  "auth",
+  "auth.*",
   "hermes_platform",
   "hermes_platform.*",
   "pm",

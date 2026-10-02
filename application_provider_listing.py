@@ -1,5 +1,6 @@
 """Profile-scoped provider list for application presentation, from canonical registry."""
 from __future__ import annotations
+from hermes_cli.config_credentials import credential_pool_environment as _phase7_credential_pool_environment
 
 from typing import Any, Mapping
 
@@ -8,13 +9,14 @@ def _scoped_env_key(name: str) -> str:
     from agent.secret_scope import current_secret_scope, get_secret, is_multiplex_active
     if current_secret_scope() is not None or is_multiplex_active():
         return str(get_secret(name, "") or "").strip()
-    from agent.credential_pool import get_env_prefer_dotenv
-    return str(get_env_prefer_dotenv(name) or "").strip()
+    from auth.pool_sources import get_env_prefer_dotenv
+    return str(get_env_prefer_dotenv(name, environment=_phase7_credential_pool_environment()) or "").strip()
 
 
 def _has_credentials(provider: str, config: Mapping[str, Any]) -> bool:
     try:
-        from hermes_cli.auth import get_auth_status, has_usable_secret
+        from hermes_cli.auth import get_auth_status
+        from auth.secret_validation import has_usable_secret
         if provider == "custom":
             model = config.get("model")
             return bool(str(model.get("base_url") or "").strip()) if isinstance(model, Mapping) else False

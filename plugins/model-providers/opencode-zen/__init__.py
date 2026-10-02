@@ -80,7 +80,7 @@ class OpenCodeGoProfile(ProviderProfile):
 
         from agent.account_usage import AccountUsageSnapshot, AccountUsageWindow
         # Account usage needs only an API key, never a CLI-computed model route.
-        from hermes_cli.auth import resolve_api_key_provider_credentials
+        from hermes_cli.runtime_provider_credentials import resolve_api_key_provider_credentials
 
         token = str(api_key or resolve_api_key_provider_credentials(self.name).get("api_key") or "").strip()
         if not token:

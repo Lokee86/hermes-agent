@@ -3,6 +3,8 @@ host use its one model, the ``x-nous-model-switch`` header moves a session off `
 and refusal copy names the way forward (never guest / anonymous / claim)."""
 
 from __future__ import annotations
+import auth.providers.nous_guest as _auth_auth_providers_nous_guest
+
 
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -31,7 +33,7 @@ class TestAuxiliaryOnWelcomeHost:
              patch.object(ac, "_create_openai_client", return_value="client") as create, \
              patch.object(ac, "get_provider_profile") as profile_lookup:
             client, model = ac._try_nous()
-        assert (client, model) == ("client", anon_auth.GUEST_MODEL)
+        assert (client, model) == ("client", _auth_auth_providers_nous_guest.GUEST_MODEL)
         assert create.call_args.kwargs["base_url"] == WELCOME
         profile_lookup.assert_not_called()   # the Portal's pick would be a guaranteed 429 model_not_free
         assert ac.auxiliary_is_nous is True

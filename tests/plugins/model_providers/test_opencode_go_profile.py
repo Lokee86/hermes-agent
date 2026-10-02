@@ -318,7 +318,7 @@ def test_opencode_go_plan_windows_reach_usage_through_profile_hook(opencode_go_p
 
     monkeypatch.setattr("httpx.Client", _Client)
     monkeypatch.setattr(
-        "hermes_cli.auth.resolve_api_key_provider_credentials",
+        'hermes_cli.runtime_provider_credentials.resolve_api_key_provider_credentials',
         lambda provider: {"provider": provider, "api_key": "sk-test"},
     )
 

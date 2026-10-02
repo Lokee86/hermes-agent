@@ -1,3 +1,5 @@
+
+from hermes_cli.config_credentials import credential_pool_environment as _phase6_auth_environment
 """Shared auxiliary client router for side tasks (compression, search, vision, ...).
 
 Text auto chain: main provider+model → OpenRouter → Nous Portal → custom endpoint →
@@ -116,7 +118,7 @@ def aux_probe_mode():
         _aux_probe_state.active = prev
 
 
-from agent.credential_pool import load_pool
+from auth.credential_pool import load_pool
 from agent.model_capability_sources import default_capability_sources
 from models import ModelRef
 from models.metadata import ModelMetadataContext, resolve_supports_vision
@@ -793,7 +795,7 @@ def _auth_json_path():
     """Active profile's ``auth.json`` at call time (a patched ``_AUTH_JSON_PATH`` still wins). The
     import-time constant is the LAUNCH profile's; under multiplexing a secondary's auxiliary calls
     would otherwise authenticate to Nous with the default profile's token."""
-    from hermes_cli.auth import _auth_file_path
+    from auth.store import _auth_file_path
     return _AUTH_JSON_PATH if _AUTH_JSON_PATH != _AUTH_JSON_PATH_AT_IMPORT else _auth_file_path()
 
 # Hosts exposing BOTH ``…/anthropic`` and a sibling OpenAI ``…/v1``. Matched on the URL *host*
@@ -822,7 +824,7 @@ def _to_openai_base_url(base_url: str) -> str:
     """
     url = str(base_url or "").strip().rstrip("/")
     if base_url_hostname(url) == "api.actual.inc":
-        from hermes_cli.auth import normalize_actual_base_url
+        from hermes_cli.route_identity import normalize_actual_base_url
         return normalize_actual_base_url(url)
     if url.endswith("/anthropic"):
         if base_url_host_matches(url, "open.bigmodel.cn") or base_url_host_matches(url, "api.z.ai"):
@@ -845,8 +847,9 @@ def _to_openai_base_url(base_url: str) -> str:
 
 def _load_pool_with_credentials(provider: str, note: str = "") -> Optional[Any]:
     """``load_pool(provider)`` when it has credentials, else None (never raises)."""
+    from hermes_cli.config_credentials import credential_pool_environment
     try:
-        pool = load_pool(provider)
+        pool = load_pool(provider, environment=credential_pool_environment())
     except Exception as exc:
         logger.debug("Auxiliary client: could not load pool for %s%s: %s", provider, note, exc)
         return None
@@ -898,7 +901,7 @@ def _pool_runtime_base_url(entry: Any, fallback: str = "") -> str:
         return str(fallback or "").strip().rstrip("/")
     if getattr(entry, "provider", None) == "nous":
         # Canonical auth-layer reader so the env override shares one normalization path.
-        from hermes_cli.auth import _nous_inference_env_override
+        from auth.providers.nous import _nous_inference_env_override
         env_url = _nous_inference_env_override()
         if env_url:
             return env_url
@@ -1806,7 +1809,7 @@ def _read_nous_auth() -> Optional[dict]:
 
 def _nous_api_key(provider: dict) -> str:
     """Extract a usable Nous inference JWT from stored auth state."""
-    from hermes_cli.auth import _nous_invoke_jwt_is_usable
+    from auth.token_validation import _nous_invoke_jwt_is_usable
     for token_key, expiry_key in (("agent_key", "agent_key_expires_at"), ("access_token", "expires_at")):
         token = provider.get(token_key)
         if not isinstance(token, str) or not token.strip():
@@ -1818,9 +1821,10 @@ def _nous_api_key(provider: dict) -> str:
 
 def _resolve_nous_pool_runtime_api(*, force_refresh: bool = False) -> Optional[tuple[str, str]]:
     """Resolve Nous auxiliary credentials from the selected pool entry."""
+    from hermes_cli.config_credentials import credential_pool_environment
     try:
-        from hermes_cli.auth import _agent_key_is_usable
-        pool = load_pool("nous")
+        from auth.providers.nous import _agent_key_is_usable
+        pool = load_pool("nous", environment=credential_pool_environment())
     except Exception as exc:
         logger.debug("Auxiliary Nous pool credential resolution failed: %s", exc)
         return None
@@ -1864,12 +1868,12 @@ def _resolve_nous_runtime_api(
     if pooled is not None:
         return pooled
     try:
-        from hermes_cli.auth import resolve_nous_runtime_credentials
+        from auth.providers.nous import resolve_nous_runtime_credentials
         creds = resolve_nous_runtime_credentials(
             timeout_seconds=env_float("HERMES_NOUS_TIMEOUT_SECONDS", 15),
             force_refresh=force_refresh,
             stale_access_token=stale_access_token or None,
-        )
+         environment=_phase6_auth_environment())
     except Exception as exc:
         # Kept at WARNING (once per message) and remembered: the ladder falls back silently, and
         # without this the goal judge only ever saw "judge error: RuntimeError" (#42177).
@@ -1893,9 +1897,11 @@ def _resolve_xai_oauth_for_aux() -> Optional[Tuple[str, str]]:
 
     Pool first (some xAI OAuth logins exist only as pool entries), then the singleton auth-store resolver.
     """
+    from hermes_cli.config_credentials import credential_pool_environment
     try:
-        from hermes_cli.auth import DEFAULT_XAI_OAUTH_BASE_URL, _xai_validate_inference_base_url
-        pool = load_pool("xai-oauth")
+        from auth.constants import DEFAULT_XAI_OAUTH_BASE_URL
+        from auth.providers.xai import _xai_validate_inference_base_url
+        pool = load_pool("xai-oauth", environment=credential_pool_environment())
         if pool and pool.has_credentials():
             entry = pool.select()
             if entry is not None:
@@ -1915,7 +1921,7 @@ def _resolve_xai_oauth_for_aux() -> Optional[Tuple[str, str]]:
     except Exception as exc:
         logger.debug("Auxiliary xAI OAuth pool credential resolution failed: %s", exc)
     try:
-        from hermes_cli.auth import resolve_xai_oauth_runtime_credentials
+        from auth.providers.xai import resolve_xai_oauth_runtime_credentials
         creds = resolve_xai_oauth_runtime_credentials()
     except Exception as exc:
         logger.debug("Auxiliary xAI OAuth runtime credential resolution failed: %s", exc)
@@ -1945,7 +1951,7 @@ def _resolve_codex_credential_and_base() -> Tuple[Optional[str], str]:
 def _read_codex_singleton_token() -> Optional[str]:
     """The profile's auth.json Codex access token (expired JWTs skipped), else None."""
     try:
-        from hermes_cli.auth import _read_codex_tokens
+        from auth.providers.codex import _read_codex_tokens
         access_token = _read_codex_tokens().get("tokens", {}).get("access_token")
         if not isinstance(access_token, str) or not access_token.strip():
             return None
@@ -1969,7 +1975,7 @@ def _read_codex_singleton_token() -> Optional[str]:
 def _resolve_api_key_provider() -> Tuple[Optional[OpenAI], Optional[str]]:
     """Try each API-key provider in canonical provider projection order; (client, model) or (None, None)."""
     try:
-        from hermes_cli.auth import resolve_api_key_provider_credentials
+        from hermes_cli.runtime_provider_credentials import resolve_api_key_provider_credentials
     except ImportError:
         logger.debug("Could not import provider auth projection for API-key fallback")
         return None, None
@@ -2203,7 +2209,7 @@ def _try_nous(vision: bool = False) -> Tuple[Optional[OpenAI], Optional[str]]:
         ).rstrip("/")
     with contextlib.suppress(Exception):
         from agent.nous_rate_guard import nous_rate_limit_remaining
-        from hermes_cli.anon_auth import is_anonymous_request
+        from auth.providers.nous_guest import is_anonymous_request
         anonymous = is_anonymous_request("nous", api_key)
         remaining = nous_rate_limit_remaining(anonymous=anonymous)
         if remaining is not None and remaining > 0:
@@ -2220,7 +2226,7 @@ def _try_nous(vision: bool = False) -> Tuple[Optional[OpenAI], Optional[str]]:
     # recommended aux model is a guaranteed 429 ``model_not_free``. Pin the route's model instead.
     # Vision rides the same id (the backing model is multimodal; a backing that is not answers
     # the request with the upstream's own error, which the ladder handles like any other).
-    from hermes_cli.anon_auth import GUEST_MODEL, route_is_welcome_host
+    from auth.providers.nous_guest import GUEST_MODEL, route_is_welcome_host
     global auxiliary_is_nous
     if route_is_welcome_host(base_url):
         auxiliary_is_nous = True
@@ -2609,7 +2615,7 @@ def clear_runtime_main() -> None:
 def _resolve_custom_runtime() -> Tuple[Optional[str], Optional[str], Optional[str]]:
     """Resolve the active custom/main endpoint like the main CLI (env OPENAI_BASE_URL or config-saved)."""
     try:
-        from hermes_cli.auth import AuthError
+        from auth.errors import AuthError
         from hermes_cli.runtime_provider import resolve_runtime_provider
         runtime = resolve_runtime_provider(requested="custom")
     except AuthError as exc:
@@ -2709,7 +2715,7 @@ def _try_custom_endpoint() -> Tuple[Optional[Any], Optional[str]]:
         # #114967); third-party Anthropic-compatible gateways never get it.
         try:
             from agent.anthropic_adapter import build_anthropic_client
-            from agent.anthropic_credentials import anthropic_route_is_oauth
+            from auth.providers.anthropic import anthropic_route_is_oauth
             real_client = build_anthropic_client(custom_key, custom_base)
         except ImportError:
             logger.warning(
@@ -2783,7 +2789,7 @@ def _try_azure_foundry(
     callable bearer, per-model api_mode, base_url overrides). Returns ``(client, model)`` or ``(None, None)``."""
     try:
         from hermes_cli.runtime_provider import _resolve_azure_foundry_runtime
-        from hermes_cli.auth import AuthError
+        from auth.errors import AuthError
         from hermes_cli.config import load_config_readonly
     except ImportError:
         return None, None
@@ -2836,7 +2842,7 @@ def _try_anthropic(explicit_api_key: Optional[Union[str, Callable[[], str]]] = N
                    explicit_base_url: Optional[str] = None) -> Tuple[Optional[Any], Optional[str]]:
     try:
         from agent.anthropic_adapter import build_anthropic_client
-        from agent.anthropic_credentials import resolve_anthropic_token
+        from auth.providers.anthropic import resolve_anthropic_token
     except ImportError:
         return None, None
     pool_present, entry = _select_pool_entry("anthropic")
@@ -2845,7 +2851,7 @@ def _try_anthropic(explicit_api_key: Optional[Union[str, Callable[[], str]]] = N
     else:
         # Pool absent/empty: legacy resolver so a dead pool entry can't wedge aux tasks when a standalone credential exists.
         entry = None
-        token = explicit_api_key or resolve_anthropic_token()
+        token = explicit_api_key or resolve_anthropic_token(environment=_phase6_auth_environment())
     if not token:
         return None, None
     # Honor config.yaml model.base_url only when provider is anthropic AND the URL is
@@ -2876,7 +2882,7 @@ def _try_anthropic(explicit_api_key: Optional[Union[str, Callable[[], str]]] = N
             )
             return None, None
         base_url = override_url
-    from agent.anthropic_credentials import _is_oauth_token
+    from auth.providers.anthropic import _is_oauth_token
     is_oauth = _is_oauth_token(token)
     model = select_provider_auxiliary_model("anthropic")
     if _aux_probe_active():
@@ -3519,9 +3525,10 @@ def _recover_provider_pool(provider: str, exc: Exception, *, failed_api_key: str
     ``failed_api_key`` lets mark_exhausted_and_rotate identify the right pool entry even if
     another process already rotated (current() would be None).
     """
+    from hermes_cli.config_credentials import credential_pool_environment
     normalized = _normalize_aux_provider(provider)
     try:
-        pool = load_pool(normalized)
+        pool = load_pool(normalized, environment=credential_pool_environment())
     except Exception as load_exc:
         logger.debug("Auxiliary client: could not load pool for %s recovery: %s", normalized, load_exc)
         return False
@@ -3624,7 +3631,7 @@ def _creds_have_api_key(creds: Dict[str, Any]) -> bool:
 
 
 def _refresh_copilot_credentials() -> bool:
-    from hermes_cli.copilot_auth import _jwt_cache, _token_fingerprint, exchange_copilot_token, resolve_copilot_token
+    from auth.providers.copilot import _jwt_cache, _token_fingerprint, exchange_copilot_token, resolve_copilot_token
     raw_token, _source = resolve_copilot_token()
     if not str(raw_token or "").strip():
         return False
@@ -3634,41 +3641,43 @@ def _refresh_copilot_credentials() -> bool:
 
 
 def _refresh_codex_credentials() -> bool:
-    from hermes_cli.auth import resolve_codex_runtime_credentials
-    return _creds_have_api_key(resolve_codex_runtime_credentials(force_refresh=True))
+    from auth.providers.codex import resolve_codex_runtime_credentials
+    return _creds_have_api_key(resolve_codex_runtime_credentials(force_refresh=True, environment=_phase6_auth_environment()))
 
 
 def _refresh_nous_credentials() -> bool:
-    from hermes_cli.auth import resolve_nous_runtime_credentials
+    from auth.providers.nous import resolve_nous_runtime_credentials
     return _creds_have_api_key(resolve_nous_runtime_credentials(
         timeout_seconds=env_float("HERMES_NOUS_TIMEOUT_SECONDS", 15), force_refresh=True
-    ))
+    , environment=_phase6_auth_environment()))
 
 
 def _refresh_anthropic_credentials(failed_api_key: str = "") -> bool:
-    from agent.anthropic_credentials import read_claude_code_credentials, _refresh_oauth_token
+    from hermes_cli.config_credentials import credential_pool_environment
+    from auth.providers.anthropic import read_claude_code_credentials, _refresh_oauth_token
     token = failed_api_key
     if not token:
         return False
-    pool = load_pool("anthropic")
+    pool = load_pool("anthropic", environment=credential_pool_environment())
     if pool.entry_id_for_api_key(token):
         return pool.try_refresh_matching(api_key_hint=token) is not None
-    creds = read_claude_code_credentials()
+    creds = read_claude_code_credentials(environment=_phase6_auth_environment())
     # Never spend an ambient login's refresh rotation for another request's key.
     if isinstance(creds, dict) and creds.get("accessToken") == token and creds.get("refreshToken"):
-        return bool(_refresh_oauth_token(creds))
+        return bool(_refresh_oauth_token(creds, environment=_phase6_auth_environment()))
     return False
 
 
 def _refresh_xai_oauth_credentials() -> bool:
     """Pool-level refresh first, then the singleton auth-store resolver."""
-    pool = load_pool("xai-oauth")
+    from hermes_cli.config_credentials import credential_pool_environment
+    pool = load_pool("xai-oauth", environment=credential_pool_environment())
     if pool and pool.has_credentials():
         pool.select()
         refreshed = pool.try_refresh_current()
         if refreshed is not None and str(getattr(refreshed, "runtime_api_key", "") or "").strip():
             return True
-    from hermes_cli.auth import resolve_xai_oauth_runtime_credentials
+    from auth.providers.xai import resolve_xai_oauth_runtime_credentials
     return _creds_have_api_key(resolve_xai_oauth_runtime_credentials(force_refresh=True))
 
 
@@ -4649,6 +4658,7 @@ def _named_custom_api_key(custom_entry: Dict[str, Any], provider: str, custom_ba
     """Credential for a named custom provider: inline api_key → key_env → key_cmd → credential pool → placeholder.
     Aux resolves named custom providers here, not via _resolve_named_custom_runtime, so key_cmd must be
     honoured at the same precedence or every aux call 401s."""
+    from hermes_cli.config_credentials import credential_pool_environment
     custom_key: Any = (custom_entry.get("api_key") or "").strip()
     custom_key_env = (custom_entry.get("key_env") or custom_entry.get("api_key_env") or "").strip()
     if not custom_key and custom_key_env:
@@ -4659,11 +4669,11 @@ def _named_custom_api_key(custom_entry: Dict[str, Any], provider: str, custom_ba
         custom_key = build_command_token_provider(custom_key_cmd, custom_entry.get("name") or provider) or custom_key
     if not custom_key:
         with contextlib.suppress(Exception):
-            from agent.credential_pool import custom_provider_pool_key_candidates
+            from auth.credential_pool import custom_provider_pool_key_candidates
             pool_name = custom_entry.get("provider_key") or custom_entry.get("name") or provider
-            for pool_key in custom_provider_pool_key_candidates(custom_base, pool_name):
+            for pool_key in custom_provider_pool_key_candidates(custom_base, pool_name, environment=credential_pool_environment()):
                 try:
-                    pool = load_pool(pool_key)
+                    pool = load_pool(pool_key, environment=credential_pool_environment())
                 except Exception:
                     continue
                 if not pool.has_credentials():
@@ -5004,7 +5014,7 @@ def _resolve_custom_branch(req: _ResolveRequest) -> _ResolveResult:
             custom_base, custom_key = _main_base, _main_key
     if custom_base and custom_key:
         if _is_actual_auxiliary_route(req, custom_base):
-            from hermes_cli.auth import normalize_actual_base_url
+            from hermes_cli.route_identity import normalize_actual_base_url
             custom_base = normalize_actual_base_url(custom_base)
         final_model = _normalize_resolved_model(
             model or (main_runtime.get("model") if main_runtime else None) or "gpt-4o-mini", provider,
@@ -5075,7 +5085,7 @@ def _resolve_named_custom_branch(req: _ResolveRequest) -> Optional[_ResolveResul
     # Actual's wire protocol takes precedence over persisted task/provider modes.
     entry_api_mode = (req.api_mode or custom_entry.get("api_mode") or "").strip()
     if _is_actual_auxiliary_route(req, custom_base):
-        from hermes_cli.auth import normalize_actual_base_url
+        from hermes_cli.route_identity import normalize_actual_base_url
         custom_base = normalize_actual_base_url(custom_base)
         entry_api_mode = "chat_completions"
     if not custom_base:
@@ -5105,7 +5115,7 @@ def _resolve_named_custom_branch(req: _ResolveRequest) -> Optional[_ResolveResul
     if entry_api_mode == "anthropic_messages":
         try:
             from agent.anthropic_adapter import build_anthropic_client
-            from agent.anthropic_credentials import anthropic_route_is_oauth
+            from auth.providers.anthropic import anthropic_route_is_oauth
             real_client = build_anthropic_client(custom_key, custom_base)
             if entry_headers:
                 # Same entry headers as the two OpenAI-wire arms; ``with_options`` merges onto the
@@ -5179,9 +5189,8 @@ def _resolve_api_key_branch(req: _ResolveRequest, pconfig: Any, resolve_creds: C
         raw_base_url = req.explicit_base_url.strip().rstrip("/")
     if provider == "actual":
         with contextlib.suppress(Exception):
-            from hermes_cli.auth import (
-                ACTUAL_LOCAL_NOAUTH_PLACEHOLDER, is_actual_local_base_url, normalize_actual_base_url
-            )
+            from auth.constants import ACTUAL_LOCAL_NOAUTH_PLACEHOLDER
+            from hermes_cli.route_identity import is_actual_local_base_url, normalize_actual_base_url
             raw_base_url = normalize_actual_base_url(raw_base_url)
             if not api_key and is_actual_local_base_url(raw_base_url):
                 api_key = ACTUAL_LOCAL_NOAUTH_PLACEHOLDER
@@ -5294,10 +5303,7 @@ def _resolve_registry_branch(req: _ResolveRequest) -> _ResolveResult:
     """canonical provider projection providers, dispatched on ``auth_type``; unknown providers log once."""
     provider = req.provider
     try:
-        from hermes_cli.auth import (
-            resolve_api_key_provider_credentials,
-            resolve_external_process_provider_credentials,
-        )
+        from hermes_cli.runtime_provider_credentials import resolve_api_key_provider_credentials, resolve_external_process_provider_credentials
     except ImportError:
         logger.debug("hermes_cli.auth not available for provider %s", provider)
         return None, None

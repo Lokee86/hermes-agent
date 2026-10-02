@@ -108,7 +108,7 @@ def test_main_assignment_owner_never_imports_cli_switch_or_cli_apply():
 
 def test_missing_provider_credentials_return_dashboard_bad_request(monkeypatch):
     from fastapi import HTTPException
-    from hermes_cli.auth_constants import AuthError
+    from auth.errors import AuthError
     from hermes_cli.web_server_config import _validated_main_model_selection
 
     def missing(**_kw):

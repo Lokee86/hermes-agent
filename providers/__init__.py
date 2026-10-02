@@ -116,13 +116,7 @@ def __getattr__(name):  # PEP 562 - lazy so no import cycles
     if target is None:
         raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
     import importlib
-<<<<<<< HEAD
     from plugin_runtime.compat import warn_once
-=======
-
-    from hermes_cli.plugin_compat import warn_once
-
->>>>>>> 00f1cff3b4174b91f397cbbe0c65de50624d34d9
     warn_once(__name__, name, *target)
     return getattr(importlib.import_module(target[0]), target[1])
 # ---- END PLUGIN-COMPAT ----

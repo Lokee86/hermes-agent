@@ -3,7 +3,7 @@ from hermes_cli.provider_auth import get_provider_config, iter_provider_configs
 import pytest
 import hermes_yaml as yaml
 
-from hermes_cli.auth import write_credential_pool
+from auth.pool_persistence import write_credential_pool
 from hermes_cli.runtime_provider import resolve_runtime_provider
 from hermes_constants import get_hermes_home
 

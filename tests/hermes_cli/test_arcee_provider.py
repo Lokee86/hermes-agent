@@ -5,11 +5,8 @@ import types
 
 import pytest
 
-from hermes_cli.auth import (
-    resolve_provider,
-    get_api_key_provider_status,
-    resolve_api_key_provider_credentials,
-)
+from hermes_cli.auth import resolve_provider, get_api_key_provider_status
+from hermes_cli.runtime_provider_credentials import resolve_api_key_provider_credentials
 
 
 _OTHER_PROVIDER_KEYS = (

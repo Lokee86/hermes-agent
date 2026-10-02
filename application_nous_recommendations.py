@@ -12,7 +12,8 @@ from typing import Any
 def portal_base_url() -> str:
     """Use this profile's authenticated Portal endpoint without exposing credentials."""
     try:
-        from hermes_cli.auth import DEFAULT_NOUS_PORTAL_URL, get_provider_auth_state
+        from auth.store_migrations import DEFAULT_NOUS_PORTAL_URL
+        from auth.provider_state import get_provider_auth_state
 
         state = get_provider_auth_state("nous") or {}
         return str(state.get("portal_base_url") or DEFAULT_NOUS_PORTAL_URL).strip().rstrip("/")

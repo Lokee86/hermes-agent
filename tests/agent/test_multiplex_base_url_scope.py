@@ -5,6 +5,8 @@ them (OPENAI_BASE_URL, XAI_BASE_URL, NOUS_INFERENCE_BASE_URL) and the gateway pr
 provider endpoints must follow the same rule, or a secondary's key is sent to another profile's host.
 """
 from __future__ import annotations
+import auth.providers.nous as _auth_auth_providers_nous
+
 
 import pytest
 
@@ -41,7 +43,7 @@ def test_base_urls_follow_the_scoped_key_not_default_environ(monkeypatch, second
     )
     assert "default.example" not in (base or "")
     assert aux._scoped_key_env("OPENAI_BASE_URL") == ""
-    assert auth_nous._nous_inference_env_override() is None
+    assert _auth_auth_providers_nous._nous_inference_env_override() is None
     monkeypatch.setattr("gateway.run._load_gateway_config", lambda: {})
     assert GatewayTurnMixin._get_proxy_url(GatewayTurnMixin.__new__(GatewayTurnMixin)) is None
     assert "default.example" not in browserbase.BrowserbaseBrowserProvider()._get_config_or_none()["base_url"]
@@ -62,6 +64,6 @@ def test_unscoped_single_profile_reads_keep_environ(monkeypatch):
         monkeypatch.setenv("GATEWAY_PROXY_URL", "https://proxy.mine.example/")
         monkeypatch.setenv("NOUS_INFERENCE_BASE_URL", "https://nous.mine.example/v1/")
         assert GatewayTurnMixin._get_proxy_url(GatewayTurnMixin.__new__(GatewayTurnMixin)) == "https://proxy.mine.example"
-        assert auth_nous._nous_inference_env_override() == "https://nous.mine.example/v1"
+        assert _auth_auth_providers_nous._nous_inference_env_override() == "https://nous.mine.example/v1"
     finally:
         secret_scope.reset_secret_scope(token)

@@ -572,8 +572,9 @@ class TestResolveXaiOAuthForAux:
         should not fall through to "no auxiliary provider configured" just
         because the singleton auth-store entry is absent.
         """
-        from agent.credential_pool import AUTH_TYPE_OAUTH, PooledCredential, load_pool
-        from hermes_cli.auth import DEFAULT_XAI_OAUTH_BASE_URL
+        from hermes_cli.config_credentials import credential_pool_environment
+        from auth.credential_pool import AUTH_TYPE_OAUTH, PooledCredential, load_pool
+        from auth.constants import DEFAULT_XAI_OAUTH_BASE_URL
 
         hermes_home = tmp_path / "hermes"
         hermes_home.mkdir(parents=True, exist_ok=True)
@@ -585,7 +586,7 @@ class TestResolveXaiOAuthForAux:
         monkeypatch.delenv("HERMES_XAI_BASE_URL", raising=False)
         monkeypatch.delenv("XAI_BASE_URL", raising=False)
 
-        pool = load_pool("xai-oauth")
+        pool = load_pool("xai-oauth", environment=credential_pool_environment())
         pool.add_entry(PooledCredential(
             provider="xai-oauth",
             id="xai123",
@@ -604,8 +605,9 @@ class TestResolveXaiOAuthForAux:
         )
 
     def test_pool_backed_credentials_honor_base_url_env_override(self, tmp_path, monkeypatch):
-        from agent.credential_pool import AUTH_TYPE_OAUTH, PooledCredential, load_pool
-        from hermes_cli.auth import DEFAULT_XAI_OAUTH_BASE_URL
+        from hermes_cli.config_credentials import credential_pool_environment
+        from auth.credential_pool import AUTH_TYPE_OAUTH, PooledCredential, load_pool
+        from auth.constants import DEFAULT_XAI_OAUTH_BASE_URL
 
         hermes_home = tmp_path / "hermes"
         hermes_home.mkdir(parents=True, exist_ok=True)
@@ -616,7 +618,7 @@ class TestResolveXaiOAuthForAux:
         monkeypatch.setenv("HERMES_HOME", str(hermes_home))
         monkeypatch.setenv("HERMES_XAI_BASE_URL", "https://example.x.ai/v1/")
 
-        pool = load_pool("xai-oauth")
+        pool = load_pool("xai-oauth", environment=credential_pool_environment())
         pool.add_entry(PooledCredential(
             provider="xai-oauth",
             id="xai456",
@@ -653,7 +655,7 @@ class TestAnthropicOAuthFlag:
 
     def test_api_key_no_oauth_flag(self, monkeypatch):
         """Regular API keys (sk-ant-api-*) should create client with is_oauth=False."""
-        with patch("agent.anthropic_credentials.resolve_anthropic_token", return_value="sk-ant-api03-testkey1234"), \
+        with patch('auth.providers.anthropic.resolve_anthropic_token', return_value="sk-ant-api03-testkey1234"), \
              patch("agent.anthropic_adapter.build_anthropic_client") as mock_build, \
              patch("agent.auxiliary_client._select_pool_entry", return_value=(False, None)):
             mock_build.return_value = MagicMock()
@@ -678,7 +680,7 @@ class TestAnthropicOAuthFlag:
 
         with (
             patch("agent.auxiliary_client.load_pool", return_value=_Pool()),
-            patch("agent.anthropic_credentials.resolve_anthropic_token", side_effect=AssertionError("legacy path should not run")),
+            patch('auth.providers.anthropic.resolve_anthropic_token', side_effect=AssertionError("legacy path should not run")),
             patch("agent.anthropic_adapter.build_anthropic_client", return_value=MagicMock()) as mock_build,
         ):
             from agent.auxiliary_client import _try_anthropic
@@ -952,7 +954,7 @@ class TestExplicitProviderRouting:
 
     def test_explicit_anthropic_api_key(self, monkeypatch):
         """provider='anthropic' + regular API key should work with is_oauth=False."""
-        with patch("agent.anthropic_credentials.resolve_anthropic_token", return_value="sk-ant-api-regular-key"), \
+        with patch('auth.providers.anthropic.resolve_anthropic_token', return_value="sk-ant-api-regular-key"), \
              patch("agent.anthropic_adapter.build_anthropic_client") as mock_build, \
              patch("agent.auxiliary_client._select_pool_entry", return_value=(False, None)):
             mock_build.return_value = MagicMock()
@@ -1145,7 +1147,7 @@ class TestGetTextAuxiliaryClient:
         with (
             patch("agent.auxiliary_client.load_pool", return_value=_Pool()),
             patch("agent.auxiliary_client.OpenAI"),
-            patch("hermes_cli.auth._read_codex_tokens", side_effect=AssertionError("legacy codex store should not run")),
+            patch('auth.providers.codex._read_codex_tokens', side_effect=AssertionError("legacy codex store should not run")),
         ):
             from agent.auxiliary_client import _build_codex_client
 
@@ -1195,7 +1197,7 @@ class TestVisionClientFallback:
             patch("agent.auxiliary_client._read_main_provider", return_value="anthropic"),
             patch("agent.auxiliary_client._read_main_model", return_value="claude-sonnet-4"),
             patch("agent.anthropic_adapter.build_anthropic_client", return_value=MagicMock()),
-            patch("agent.anthropic_credentials.resolve_anthropic_token", return_value="***"),
+            patch('auth.providers.anthropic.resolve_anthropic_token', return_value="***"),
         ):
             backends = get_available_vision_backends()
 
@@ -2033,7 +2035,7 @@ class TestTryMainAgentModelFallback:
 def test_resolve_api_key_provider_skips_unconfigured_anthropic(monkeypatch):
     """_resolve_api_key_provider must not try anthropic when user never configured it."""
     from collections import OrderedDict
-    from hermes_cli.auth import ProviderConfig
+    from hermes_cli.provider_auth import ProviderConfig
 
     # Build a minimal registry with only "anthropic" so the loop is guaranteed
     # to reach it without being short-circuited by earlier providers.
@@ -2070,7 +2072,7 @@ def test_resolve_api_key_provider_skips_unconfigured_anthropic(monkeypatch):
 def test_resolve_api_key_provider_skips_unconfigured_copilot(monkeypatch):
     """_resolve_api_key_provider must skip copilot when user never configured it (#114740)."""
     from collections import OrderedDict
-    from hermes_cli.auth import ProviderConfig
+    from hermes_cli.provider_auth import ProviderConfig
 
     fake_registry = OrderedDict({
         "copilot": ProviderConfig(
@@ -2782,7 +2784,7 @@ class TestAuxiliaryTaskExtraBody:
     def test_bare_custom_auth_error_does_not_fall_back_to_env_base_url(self, monkeypatch):
         """Bare 'custom' with nothing configured: the main resolver raises AuthError; aux must
         return no endpoint rather than route to a stale env OPENAI_BASE_URL with a placeholder key."""
-        from hermes_cli.auth import AuthError
+        from auth.errors import AuthError
         from agent.auxiliary_client import _resolve_custom_runtime
         monkeypatch.setenv("OPENAI_BASE_URL", "https://old-proxy.example/v1")
         monkeypatch.delenv("OPENAI_API_KEY", raising=False)
@@ -2908,17 +2910,17 @@ class TestAuxiliaryAuthRefreshRetry:
             # Anthropic credential sourcing lives in agent/anthropic_credentials.py;
             # patch it at that definition site so both the direct call here and
             # the re-read inside ``_refresh_oauth_token`` see the same stub.
-            patch("agent.anthropic_credentials.read_claude_code_credentials", return_value={
+            patch('auth.providers.anthropic.read_claude_code_credentials', return_value={
                 "accessToken": "expired-token",
                 "refreshToken": "refresh-token",
                 "expiresAt": 0,
             }),
-            patch("agent.anthropic_credentials.refresh_anthropic_oauth_pure", return_value={
+            patch('auth.providers.anthropic.refresh_anthropic_oauth_pure', return_value={
                 "access_token": "fresh-token",
                 "refresh_token": "refresh-token-2",
                 "expires_at_ms": 9999999999999,
             }) as mock_refresh_oauth,
-            patch("agent.anthropic_credentials._write_claude_code_credentials") as mock_write,
+            patch('auth.providers.anthropic._write_claude_code_credentials') as mock_write,
         ):
             from agent.auxiliary_client import _refresh_provider_credentials
 
@@ -4308,7 +4310,7 @@ class TestAnthropicExplicitApiKey:
 
     def test_resolve_provider_client_passes_explicit_api_key_to_anthropic(self):
         """resolve_provider_client(provider='anthropic', explicit_api_key=...) must propagate the key."""
-        with patch("agent.anthropic_credentials.resolve_anthropic_token", return_value="env-key"), \
+        with patch('auth.providers.anthropic.resolve_anthropic_token', return_value="env-key"), \
              patch("agent.anthropic_adapter.build_anthropic_client") as mock_build, \
              patch("agent.auxiliary_client._select_pool_entry", return_value=(False, None)):
             mock_build.return_value = MagicMock()
@@ -5190,7 +5192,7 @@ class TestFastModelTier:
         from agent import auxiliary_model_resolution as selection_aux
 
         with patch(
-            "hermes_cli.auth.resolve_api_key_provider_credentials",
+            "hermes_cli.runtime_provider_credentials.resolve_api_key_provider_credentials",
             return_value={"api_key": "sk-test", "base_url": "https://api.example.com/v1"},
         ), patch(
             "application_model_pricing.fetch_models_with_pricing",

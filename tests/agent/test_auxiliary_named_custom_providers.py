@@ -151,7 +151,7 @@ class TestResolveProviderClientModelNormalization:
             "model": {"default": "zai/glm-5.1", "provider": "zai"},
         })
         with (
-            patch("hermes_cli.auth.resolve_api_key_provider_credentials", return_value={
+            patch("hermes_cli.runtime_provider_credentials.resolve_api_key_provider_credentials", return_value={
                 "api_key": "glm-key",
                 "base_url": "https://api.z.ai/api/paas/v4",
             }),
@@ -189,7 +189,7 @@ class TestResolveVisionProviderClientModelNormalization:
         })
         with (
             patch("agent.auxiliary_client._read_nous_auth", return_value=None),
-            patch("hermes_cli.auth.resolve_api_key_provider_credentials", return_value={
+            patch("hermes_cli.runtime_provider_credentials.resolve_api_key_provider_credentials", return_value={
                 "api_key": "glm-key",
                 "base_url": "https://api.z.ai/api/paas/v4",
             }),
