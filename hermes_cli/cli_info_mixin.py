@@ -252,7 +252,7 @@ class CLIInfoMixin:
         from cli import (
             ChatConsole, _BOLD, _DIM, _RST, _accent_hex, _cprint, _ensure_skill_commands,
             _termux_example_image_path, get_skill_bundles)
-        from hermes_cli.commands import COMMANDS_BY_CATEGORY, HELP_SESSION_SUBGROUPS
+        from hermes_cli.commands_presentation import COMMANDS_BY_CATEGORY, HELP_SESSION_SUBGROUPS
 
         arg = (arg or "").strip()
         skill_commands = _ensure_skill_commands()
@@ -448,7 +448,7 @@ class CLIInfoMixin:
         if not getattr(self, "_agent_running", False):
             return False
         try:
-            from hermes_cli.commands import resolve_command
+            from commands import resolve_command
             cmd = resolve_command(text.split(None, 1)[0].lower().lstrip('/'))
             return bool(cmd and cmd.name in names)
         except Exception:

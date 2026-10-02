@@ -138,7 +138,7 @@ def _resolve_matrix_bang_command(name: str) -> str | None:
         return None
     candidates = list(dict.fromkeys((name.lower(), name.lower().replace("_", "-"))))
     try:
-        from hermes_cli.commands import is_gateway_known_command
+        from commands import is_gateway_known_command
         for candidate in candidates:
             if is_gateway_known_command(candidate):
                 return candidate

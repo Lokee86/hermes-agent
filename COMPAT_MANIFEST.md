@@ -1162,19 +1162,19 @@ to the public equivalent or the new module. Test monkeypatch seams are likewise 
 | `_collect_gateway_skill_entries` | restored-helper | `(deleted; restored as a dependency of discord_skill_commands)` |
 | `_requires_argument` | restored-helper | `(deleted; restored as a dependency of discord_skill_commands)` |
 | `discord_skill_commands` | restored-def | `(deleted; BASE body restored)` |
-| `discord_skill_commands_by_category` | moved-lazy | `hermes_cli.commands_platforms` |
+| `discord_skill_commands_by_category` | moved-lazy | `gateway.command_platforms` |
 | `field` | import | `dataclasses` |
 | `key` | unrestorable | `no top-level definition on BASE` |
 | `m` | unrestorable | `no top-level definition on BASE` |
 | `os` | import | `os` |
 | `shutil` | import | `shutil` |
-| `slack_app_manifest` | moved-lazy | `hermes_cli.commands_platforms` |
-| `slack_native_slashes` | moved-lazy | `hermes_cli.commands_platforms` |
-| `slack_subcommand_map` | moved-lazy | `hermes_cli.commands_platforms` |
+| `slack_app_manifest` | moved-lazy | `gateway.command_platforms` |
+| `slack_native_slashes` | moved-lazy | `gateway.command_platforms` |
+| `slack_subcommand_map` | moved-lazy | `gateway.command_platforms` |
 | `subprocess` | import | `subprocess` |
-| `telegram_bot_commands` | moved-lazy | `hermes_cli.commands_platforms` |
-| `telegram_menu_commands` | moved-lazy | `hermes_cli.commands_platforms` |
-| `telegram_menu_max_commands` | moved-lazy | `hermes_cli.commands_platforms` |
+| `telegram_bot_commands` | moved-lazy | `gateway.command_platforms` |
+| `telegram_menu_commands` | moved-lazy | `gateway.command_platforms` |
+| `telegram_menu_max_commands` | moved-lazy | `gateway.command_platforms` |
 | `time` | import | `time` |
 
 ### `hermes_cli.config`

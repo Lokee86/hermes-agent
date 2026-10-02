@@ -442,7 +442,7 @@ def _(rid, params: dict) -> dict:
 
 @_rpc("command.resolve", 5012)
 def _(rid, params: dict) -> dict:
-    r = _tools_mod("hermes_cli.commands").resolve_command(params.get("name", ""))
+    r = _tools_mod("commands").resolve_command(params.get("name", ""))
     if r:
         return _ok(rid, {"canonical": r.name, "description": r.description, "category": r.category})
     return _err(rid, 4011, f"unknown command: {params.get('name')}")
@@ -552,7 +552,7 @@ def _is_registry_command(base: str) -> bool:
     built-in cannot be the skill whose prompt the worker would drop.
     """
     try:
-        return _tools_mod("hermes_cli.commands").resolve_command(base) is not None
+        return _tools_mod("commands").resolve_command(base) is not None
     except Exception:
         return False
 
@@ -567,7 +567,7 @@ def _dispatch_plugin(rid, params, session, name, arg):
 def _bundle_key_for(name: str):
     """Skill-bundle key for ``name`` when it is NOT a registry command; None otherwise / on failure."""
     try:
-        if _tools_mod("hermes_cli.commands").resolve_command(name) is None:
+        if _tools_mod("commands").resolve_command(name) is None:
             return _tools_mod("agent.skill_bundles").resolve_bundle_command_key(name)
         return None
     except Exception:
@@ -1105,29 +1105,33 @@ def _(rid, params: dict) -> dict:
 
 
 def _configure_session_tools(rid, params: dict, sid: str, session) -> dict:
+    from tools.platform_policy import get_platform_tools, get_plugin_toolset_keys, configurable_toolset_keys
+    from hermes_cli.config_toolsets import apply_toolset_change, apply_mcp_change
+    from hermes_cli.config import has_xai_tool_credentials
+
     action = str(params.get("action", "") or "").strip().lower()
     targets = [str(name).strip() for name in params.get("names", []) or [] if str(name).strip()]
     if action not in {"disable", "enable"}:
         return _err(rid, 4017, f"unknown tools action: {action}")
     if not targets:
         return _err(rid, 4018, "names required")
-    hc, tc = _tools_mod("hermes_cli.config"), _tools_mod("hermes_cli.tools_config")
+    hc = _tools_mod("hermes_cli.config")
     cfg = hc.load_config()
-    valid_toolsets = {ts_key for ts_key, _, _ in tc.CONFIGURABLE_TOOLSETS} | tc._get_plugin_toolset_keys()
+    valid_toolsets = configurable_toolset_keys() | get_plugin_toolset_keys()
     mcp_targets = [name for name in targets if ":" in name]
     unknown = [name for name in targets if ":" not in name and name not in valid_toolsets]
     toolset_targets = [name for name in targets if ":" not in name and name in valid_toolsets]
     if toolset_targets:
-        tc._apply_toolset_change(cfg, "cli", toolset_targets, action)
+        apply_toolset_change(cfg, "cli", toolset_targets, action)
     plugins = _mcp_server_rows()[1]
     for target in mcp_targets:
         server_name = target.split(":", 1)[0]
         if err := _mcp_plugin_write_error(rid, server_name, plugins):
             return err
-    missing_servers = tc._apply_mcp_change(cfg, mcp_targets, action) if mcp_targets else set()
+    missing_servers = apply_mcp_change(cfg, mcp_targets, action) if mcp_targets else set()
     hc.save_config(cfg)
     info = _reset_session_agent(sid, session) if session else None
-    enabled = sorted(tc._get_platform_tools(hc.load_config(), "cli", include_default_mcp_servers=False))
+    enabled = sorted(get_platform_tools(hc.load_config(), "cli", include_default_mcp_servers=False, xai_credentials_present=has_xai_tool_credentials))
     changed = [
         name for name in targets
         if name not in unknown and (":" not in name or name.split(":", 1)[0] not in missing_servers)]

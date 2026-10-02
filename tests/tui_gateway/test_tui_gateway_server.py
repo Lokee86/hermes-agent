@@ -1,3 +1,4 @@
+from tools import platform_policy
 import contextlib
 import json
 import logging
@@ -2482,9 +2483,7 @@ def test_load_enabled_toolsets_honors_disabled_project_on_configured_fallback(
     import hermes_cli.tools_config as tools_config_mod
 
     monkeypatch.setattr(cc, "coding_selection", lambda **_: None)
-    monkeypatch.setattr(
-        tools_config_mod,
-        "_get_platform_tools",
+    monkeypatch.setattr(platform_policy, "get_platform_tools",
         lambda *_args, **_kwargs: {"memory", "web"},
     )
     monkeypatch.setattr(server, "_load_disabled_toolsets", lambda: ["project"])
@@ -2536,7 +2535,7 @@ def test_load_enabled_toolsets_rejects_disabled_mcp_env(monkeypatch, capsys):
     # _load_enabled_toolsets. Toolsets inside their first release
     # (_RECENTLY_SHIPPED_TOOLSETS) are back-filled onto saved lists that never
     # offered them — allow those too.
-    from hermes_cli.tools_config import _RECENTLY_SHIPPED_TOOLSETS
+    from tools.platform_policy import _RECENTLY_SHIPPED_TOOLSETS
 
     result = server._load_enabled_toolsets()
     assert result is not None
@@ -2561,7 +2560,7 @@ def test_load_enabled_toolsets_falls_back_when_tui_env_invalid(monkeypatch, caps
         config_mod, "load_config", lambda: {"platform_toolsets": {"cli": ["memory"]}}
     )
 
-    from hermes_cli.tools_config import _RECENTLY_SHIPPED_TOOLSETS
+    from tools.platform_policy import _RECENTLY_SHIPPED_TOOLSETS
 
     result = server._load_enabled_toolsets()
     assert result is not None

@@ -798,6 +798,8 @@ youtube-transcript-api = false
 
 [tool.setuptools.packages.find]
 include = [
+  "commands",
+  "commands.*",
   "agent",
   "agent.*",
   "tools",
