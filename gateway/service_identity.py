@@ -35,7 +35,7 @@ def unit_environment_value(unit_path: Path, name: str) -> str | None:
             continue
         body = body[len("Environment="):].strip()
         if body.startswith('"') and body.endswith('"'):
-            body = body[1:-1].replace(r'\\"', '"').replace(r"\\\\", "\\").replace("%%", "%")
+            body = body[1:-1].replace('\\\"', '"').replace("\\\\", "\\").replace("%%", "%")
         if body.startswith(f"{name}="):
             return body.split("=", 1)[1].strip() or None
     return None

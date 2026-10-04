@@ -267,7 +267,10 @@ def sync_home_from_unit(system: bool) -> None:
             **_CAPTURE_TEXT,
         )
         if result.returncode == 0:
-            for token in result.stdout.split():
+            manager_env = (result.stdout or "").strip()
+            if manager_env.startswith("Environment="):
+                manager_env = manager_env.split("=", 1)[1]
+            for token in manager_env.split():
                 if token.startswith("HERMES_HOME="):
                     home = token.split("=", 1)[1].strip()
                     break
