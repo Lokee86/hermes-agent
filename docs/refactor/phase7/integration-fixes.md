@@ -6,7 +6,8 @@ The combined branch is a verification checkout, not a required baseline.
 Annotated Git tag `refactor/phase7-integration-fixes` preserves commit
 `a75f79c78cc9c368577abe2886c421bb6d10281c` and its combined ancestor history.
 The tag keeps that history reachable even if the integration branch or worktree
-is later removed. The tag is local; it has not been pushed.
+is later removed. The tag is published on the fork together with
+`refactor/phase7-integration` (public branch head `975959cacecb5c8d5bafd35a2a64b9200846f00c`).
 
 ## Ownership and disposition
 
