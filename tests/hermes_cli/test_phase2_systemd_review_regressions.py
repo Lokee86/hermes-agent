@@ -50,11 +50,15 @@ def test_sync_home_prefers_unit_pin_without_manager_fallback(monkeypatch, tmp_pa
     assert systemd_runtime.os.environ["HERMES_HOME"] == "/unit/hermes"
 
 
+@pytest.mark.parametrize("name", ["HERMES_HOME", "LD_LIBRARY_PATH"])
 @pytest.mark.parametrize(
-    ("name", "value"),
+    "value",
     [
-        ("HERMES_HOME", '/srv/hermes\\profile"name%dir'),
-        ("LD_LIBRARY_PATH", '/opt/a\\b/lib:/opt/"cuda"%/lib'),
+        "/plain/path",
+        "/opt/pct%dir/lib",
+        r"/opt/a\b/lib",
+        '/opt/cu"da/lib',
+        r'/opt/a\b/"quoted"/pct%dir',
     ],
 )
 def test_unit_environment_reader_round_trips_writer(tmp_path, name, value):
@@ -76,7 +80,11 @@ def test_installed_ld_library_path_round_trip_is_byte_stable(monkeypatch, tmp_pa
     )
     monkeypatch.delenv("LD_LIBRARY_PATH", raising=False)
 
-    assert systemd_unit_render.ld_library_path_line(False) == encoded
+    first = systemd_unit_render.ld_library_path_line(False)
+    second = systemd_unit_render.ld_library_path_line(False)
+
+    assert first == encoded
+    assert second == first
 
 
 @pytest.mark.parametrize(("scope", "system"), [("user", False), ("system", True)])
