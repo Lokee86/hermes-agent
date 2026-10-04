@@ -31,6 +31,25 @@ def test_sync_home_from_manager_environment_ignores_property_wrapper(
     assert systemd_runtime.os.environ["HERMES_HOME"] == "/srv/hermes"
 
 
+def test_sync_home_prefers_unit_pin_without_manager_fallback(monkeypatch, tmp_path):
+    unit = tmp_path / "hermes-gateway.service"
+    unit.write_text(
+        systemd_unit_render.systemd_env_line("HERMES_HOME", "/unit/hermes"),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(systemd_runtime, "unit_path", lambda system=False: unit)
+
+    def unexpected_manager_query(*args, **kwargs):
+        raise AssertionError("manager fallback should not run when the unit pins HERMES_HOME")
+
+    monkeypatch.setattr(systemd_runtime, "run_systemctl", unexpected_manager_query)
+    monkeypatch.setenv("HERMES_HOME", "/caller/hermes")
+
+    systemd_runtime.sync_home_from_unit(system=True)
+
+    assert systemd_runtime.os.environ["HERMES_HOME"] == "/unit/hermes"
+
+
 @pytest.mark.parametrize(
     ("name", "value"),
     [
