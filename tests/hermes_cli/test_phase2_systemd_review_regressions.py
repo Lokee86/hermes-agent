@@ -1,8 +1,9 @@
 import subprocess
+from types import SimpleNamespace
 
 import pytest
 
-from gateway import service_identity, systemd_runtime, systemd_unit_render
+from gateway import service_identity, systemd_identity, systemd_runtime, systemd_unit_render
 from hermes_cli import gateway as gateway_cli
 
 
@@ -85,6 +86,105 @@ def test_installed_ld_library_path_round_trip_is_byte_stable(monkeypatch, tmp_pa
 
     assert first == encoded
     assert second == first
+
+
+def test_direct_system_install_rejects_non_root_before_legacy_preflight(monkeypatch):
+    events = []
+    args = SimpleNamespace(start_now=False, start_on_login=False)
+
+    monkeypatch.setattr(systemd_identity.os, "geteuid", lambda: 1000, raising=False)
+    real_require_root = systemd_identity.require_root
+
+    def observe_authority(action):
+        events.append(("authority", action))
+        real_require_root(action)
+
+    def unexpected_lifecycle(**kwargs):
+        raise AssertionError("rejected system install must not enter lifecycle")
+
+    monkeypatch.setattr(systemd_identity, "require_root", observe_authority)
+    monkeypatch.setattr(
+        gateway_cli,
+        "_remove_legacy_systemd_units_before_install",
+        lambda **kwargs: events.append(("legacy-preflight", kwargs)),
+    )
+    monkeypatch.setattr(gateway_cli._systemd_lifecycle, "install", unexpected_lifecycle)
+    monkeypatch.setattr(gateway_cli._systemd_lifecycle, "start", unexpected_lifecycle)
+
+    with pytest.raises(systemd_identity.SystemScopeRequiresRootError):
+        gateway_cli._install_systemd_from_cli(
+            args,
+            force=False,
+            system=True,
+            run_as_user="alice",
+        )
+
+    assert events == [("authority", "install")]
+
+
+@pytest.mark.parametrize(
+    ("system", "euid", "start_now", "start_on_login"),
+    [
+        (False, 1000, False, False),
+        (True, 0, True, True),
+    ],
+)
+def test_direct_install_keeps_authority_preflight_and_lifecycle_order(
+    monkeypatch, system, euid, start_now, start_on_login
+):
+    events = []
+    args = SimpleNamespace(start_now=start_now, start_on_login=start_on_login)
+    monkeypatch.setattr(gateway_cli.sys, "stdin", SimpleNamespace(isatty=lambda: False))
+    monkeypatch.setattr(gateway_cli, "is_wsl", lambda: False)
+    monkeypatch.setattr(systemd_identity.os, "geteuid", lambda: euid, raising=False)
+    real_require_root = systemd_identity.require_root
+
+    def observe_authority(action):
+        events.append(("authority", action))
+        real_require_root(action)
+
+    monkeypatch.setattr(systemd_identity, "require_root", observe_authority)
+    monkeypatch.setattr(
+        gateway_cli,
+        "_remove_legacy_systemd_units_before_install",
+        lambda **kwargs: events.append(("legacy-preflight", kwargs)),
+    )
+    monkeypatch.setattr(
+        gateway_cli._systemd_lifecycle,
+        "install",
+        lambda **kwargs: events.append(("install", kwargs)),
+    )
+    monkeypatch.setattr(
+        gateway_cli._systemd_lifecycle,
+        "start",
+        lambda **kwargs: events.append(("start", kwargs)),
+    )
+
+    gateway_cli._install_systemd_from_cli(
+        args,
+        force=False,
+        system=system,
+        run_as_user="alice" if system else None,
+    )
+
+    expected = [
+        ("legacy-preflight", {"non_interactive": True}),
+        (
+            "install",
+            {
+                "force": False,
+                "system": system,
+                "run_as_user": "alice" if system else None,
+                "enable_on_startup": start_on_login,
+            },
+        ),
+    ]
+    if system:
+        expected.insert(0, ("authority", "install"))
+    if start_now:
+        expected.append(("start", {"system": system}))
+
+    assert events == expected
 
 
 @pytest.mark.parametrize(("scope", "system"), [("user", False), ("system", True)])

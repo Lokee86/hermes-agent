@@ -2631,6 +2631,8 @@ def _handle_no_backend(subcommand: str, *, wsl: bool, s6: bool) -> None:
 
 
 def _install_systemd_from_cli(args, *, force: bool, system: bool, run_as_user) -> None:
+    if system:
+        _systemd_identity.require_root("install")
     if is_wsl():
         print_warning("WSL detected — systemd services may not survive WSL restarts.")
         _print_info_lines(
