@@ -3,9 +3,7 @@
 The identity is created in exactly one place, at boot (``hermes_cli.free_tier_bootstrap``), and only
 while ``HERMES_GUEST_ONBOARDING=1`` (see ``guest_enabled``). The bootstrap mints an anonymous Nous
 account (``POST /api/anonymous/create``); its ``anon_`` credential is later exchanged for short-lived
-JWTs (``POST /api/anonymous/token``). The result is persisted as the singleton ``providers.nous``; it
-becomes ``active_provider`` only when the bootstrap's inventory found nothing else usable, so an
-install with its own key keeps that key for inference and uses the identity for connectors only. In
+JWTs (``POST /api/anonymous/token``). The result is persisted as the singleton ``providers.nous``. In
 the resolver ladder (``resolve_provider``) an existing free-tier identity sits directly above the
 implicit AWS Bedrock chain (NS-829): any explicit provider (env key, ``model.provider``, OpenRouter
 pool, a logged-in ``active_provider``) beats it, and the ladder never creates one.
@@ -49,7 +47,7 @@ from auth.store_migrations import DEFAULT_NOUS_PORTAL_URL
 
 # Launch gate for the whole free tier while it is pre-GA: exactly "1" turns it on for this process
 # (CLI, gateway, serve backend alike); anything else leaves every surface behaving as if the free
-# tier did not exist. ``guest_enabled`` is the only reader. Not a user preference: never written to
+# tier did not exist. Not a user preference: never written to
 # config.yaml or .env, never shown in setup. Deleted at GA together with this comment.
 
 
@@ -68,6 +66,8 @@ from auth.store_migrations import DEFAULT_NOUS_PORTAL_URL
 #   503 ``temporarily_disabled``  the ops breaker is tripped (transient, no hint)
 #   429 ``temporarily_unavailable`` + Retry-After   per-address / per-credential limits
 #   428 ``pow_required`` / ``pow_invalid`` / ``pow_replayed``   proof-of-work enforced (not implemented here)
+#   428 ``challenge_required`` + ``challenges[]``   a browser challenge first (``anon_challenge``)
+#   403 ``signin_required`` / ``access_denied``     this client is refused without an account
 #   404 ``unknown_token``         the credential was reaped or claimed (re-mint)
 #   403 ``account_locked``        the account is locked (dead; never re-mint from it)
 #   401                           an outstanding JWT whose account is gone (re-mint)
@@ -130,6 +130,9 @@ _WELCOME_ROUTE_REFUSALS = (
     ("anonymous accounts must use", "anon_on_paid_host"),
     ("serves anonymous hermes agent accounts only", "named_on_welcome_host"),
     ("anonymous accounts are not accepted", "tier_disabled"),
+    # The gateway's answer to an expired or unreadable bearer: the credential, not the tier. A
+    # retry that waited out a long rate limit outlives the 15-minute free-tier JWT and lands here.
+    ("invalid jwt", "session_expired"),
 )
 _WELCOME_ROUTE_COPY = {
     # Only reachable when the route heal (``turn_recovery._recover_welcome_tier``) could not move
@@ -139,6 +142,9 @@ _WELCOME_ROUTE_COPY = {
     "named_on_welcome_host": "This Nous account needs to reconnect. {model_hint}",
     "tier_disabled": "Using Hermes without signing in is switched off right now. "
                      "Sign in to keep chatting, it's free. {signin}",
+    # Only reachable when re-exchanging the free credential failed (``turn_recovery._recover_welcome_tier``).
+    "session_expired": "Hermes couldn't renew its connection to the free model. "
+                       "Send your message again, or sign in to keep chatting, it's free. {signin}",
 }
 # The sign-in door, phrased for a chat surface (slash command) and for a terminal.
 _SIGNIN_CHAT = "To sign in: /login."
@@ -209,6 +215,7 @@ def welcome_route_refusal(status: Any, message: Any, base_url: Any = None) -> Op
     ``"anon_on_paid_host"``: a free-tier JWT reached the paid host. ``"named_on_welcome_host"``: an
     account or API key reached the free tier's host. ``"tier_disabled"``: the tier is dark
     (``WELCOME_MODE=off``). Each is deterministic for the request: retrying cannot help.
+    ``"session_expired"``: the 403 names the bearer (``invalid jwt``); a fresh credential heals it.
 
     The dark-tier 403 is keyed on the ROUTE, not the message: the gateway's permission error
     carries only its generic sentence (the detail stays in its logs), so any 403 answered by the

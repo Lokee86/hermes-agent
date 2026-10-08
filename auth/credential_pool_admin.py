@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 import auth.pool_persistence as auth_pool_persistence
+import auth.store as auth_store
 
 import time
 from dataclasses import replace
@@ -18,6 +19,10 @@ def _cleared_status_copy(entry: PooledCredential) -> PooledCredential:
     # "never had a status" — both read as bare None on disk (#89415).
     return replace(entry, **_CLEAR_STATUS, model_cooldowns=None, status_cleared_at=time.time(),
                    extra={k: v for k, v in entry.extra.items() if k != "failure_reason"})
+
+
+class CredentialNotSavedError(RuntimeError):
+    """``add_entry`` wrote the pool but the store does not hold the new row."""
 
 
 class CredentialPoolAdminMixin:
@@ -131,20 +136,36 @@ class CredentialPoolAdminMixin:
 
     def add_entry(self, entry: PooledCredential) -> PooledCredential:
         self.environment.require_current_scope()
-        from auth.credential_pool import _next_priority
+        from auth.credential_pool import (
+            _next_priority, _profile_owns_pool_provider, _borrowed_single_use_pool_root,
+        )
+        from auth.oauth_grants import SINGLE_USE_REFRESH_POOL_PROVIDERS
         from auth.pool_persistence import write_credential_pool
 
         with self._lock:
             entry = replace(entry, priority=_next_priority(self._entries))
             self._entries.append(entry)
-            borrowed_ids = getattr(self, "_borrowed_root_ids", None)
-            if borrowed_ids:
-                # ``hermes -p <profile> auth add <single-use provider>``: the
-                # profile claims its OWN credential. Persist only profile-owned
-                # rows — copying the borrowed root grant alongside would fork
-                # its single-use refresh token (#100339). Once the profile owns
-                # rows, the root fallback for this provider is shadowed.
-                self._entries = [e for e in self._entries if e.id not in borrowed_ids]
+            borrowed_ids = self._borrowed_root_ids
+            # Decided now, not from load_pool()'s snapshot: a profile with no
+            # rows of its own borrows from root even when root has none, and
+            # ``_persist`` would send the new row to the update-only root merge,
+            # which drops it (#103694).
+            profile_borrows = (
+                self.provider in SINGLE_USE_REFRESH_POOL_PROVIDERS
+                and not _profile_owns_pool_provider(self.provider)
+                and _borrowed_single_use_pool_root() is not None
+            )
+            if borrowed_ids or profile_borrows:
+                # ``hermes -p <profile> auth add <single-use provider>``: a fresh
+                # login inside the profile is the profile's OWN credential, so
+                # it goes to the profile store, never to root. Only that row is
+                # written: the rest of this pool is root's (its rows, or its
+                # ``providers.<id>`` login seeded through the fallback), and a
+                # copy would fork that single-use refresh token (#100339). Rows
+                # the profile seeds from its own sources come back on the next
+                # load. Once the profile owns rows, the root fallback for this
+                # provider is shadowed.
+                self._entries = [entry]
                 written = write_credential_pool(
                     self.provider,
                     [e.to_dict() for e in self._entries],
@@ -156,4 +177,14 @@ class CredentialPoolAdminMixin:
                 self._borrowed_root_ids = set()
             else:
                 self._persist()
+            # Callers print "Added" on return; a row the store did not keep
+            # must fail loudly instead.
+            if not any(isinstance(row, dict) and row.get("id") == entry.id
+                       for row in auth_pool_persistence.read_credential_pool(self.provider)):
+                self._entries = [e for e in self._entries if e.id != entry.id]
+                raise CredentialNotSavedError(
+                    f"The {self.provider} credential was not saved: {auth_store._auth_file_path()} "
+                    f"does not contain it after the write, so nothing was added. Check that the file "
+                    f"is writable, then run the command again."
+                )
             return entry

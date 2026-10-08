@@ -590,7 +590,11 @@ def custom_provider_pool_key_candidates(
     if requested_aliases:
         for norm_name, entry in _iter_custom_providers(environment=environment):
             if requested_aliases & _custom_entry_name_aliases(norm_name, entry):
-                return _pool_keys_for_custom_entry(norm_name, entry)
+                # Named pools are still endpoint-bound; an explicit URL override
+                # must not receive credentials for the configured endpoint.
+                if _norm_url(entry.get("base_url")) == normalized_url:
+                    return _pool_keys_for_custom_entry(norm_name, entry)
+                return []
 
     for norm_name, entry in _iter_custom_providers(environment=environment):
         entry_url = _norm_url(entry.get("base_url"))
@@ -1463,6 +1467,10 @@ class CredentialPool(CredentialPoolRefreshMixin, CredentialPoolAdminMixin, Crede
                 ):
                     continue
                 if clear_expired:
+                    # The quota probe may rotate a single-use refresh token and
+                    # replace this row. Clear status on that replacement, never
+                    # resurrect the pre-probe token from the loop snapshot.
+                    entry = next((current for current in self._entries if current.id == entry.id), entry)
                     entry = self._adopt(entry, persist=False, **_MARK_OK)
                     cleared_any = True
             if refresh and self._entry_needs_refresh(entry):

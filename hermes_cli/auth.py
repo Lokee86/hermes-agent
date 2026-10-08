@@ -20,6 +20,7 @@ import auth.store_migrations as auth_store_migrations
 import auth.provider_status as auth_provider_status
 
 from pm import install_hint
+import errno
 import json
 import logging
 import os
@@ -164,7 +165,7 @@ BUILTIN_PROVIDER_IDS = frozenset(PROVIDER_REGISTRY)
 # a plugin never observes a partially initialized auth module (CONTRACT: during discovery a plugin may
 # rely only on ``ProviderConfig`` and ``PROVIDER_REGISTRY`` from here — nothing defined below).
 from hermes_cli.config import (  # noqa: E402
-    atomic_config_write, get_hermes_home, get_config_path, read_raw_config, require_readable_config_before_write)
+    atomic_config_replace, get_hermes_home, get_config_path, read_raw_config, require_readable_config_before_write)
 
 # Plugin profiles (plugins/model-providers/<name>/) are mirrored into PROVIDER_REGISTRY with the
 # auth_type they declare; the mirror lives in the sibling so it can be re-run after discovery.
@@ -905,7 +906,8 @@ def _external_process_spec(
                or str(getattr(profile, "process_command", "") or ""))
     raw_args = os.getenv(args_env_var, "").strip() if args_env_var else ""
     args = shlex.split(raw_args) if raw_args else list(getattr(profile, "process_args", ()) or [])
-    return command, args, base_url, shutil.which(command) if command else None, command_env_vars
+    from hermes_cli.auth_external_process import resolve_external_process_command
+    return command, args, base_url, resolve_external_process_command(command), command_env_vars
 
 
 def get_external_process_provider_status(provider_id: str) -> Dict[str, Any]:
@@ -1071,7 +1073,7 @@ def _update_config_for_provider(
     elif clear_default:
         model_cfg.pop("default", None)
     config["model"] = model_cfg
-    atomic_config_write(config_path, config)
+    atomic_config_replace(config_path, config)
     return config_path
 
 
@@ -1115,7 +1117,7 @@ def _reset_config_provider() -> Path:
         model["provider"] = "auto"
         if "base_url" in model:
             model["base_url"] = OPENROUTER_BASE_URL
-    atomic_config_write(config_path, config)
+    atomic_config_replace(config_path, config)
     return config_path
 
 

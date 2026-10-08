@@ -295,8 +295,11 @@ def _seed_tokens_singleton(seed: _Seeder, auth_store: Dict[str, Any]) -> None:
     Codex CLI / VS Code causes refresh_token_reused races. Adoption is an
     explicit one-time prompt via `hermes auth openai-codex`.
     """
-    from auth.credential_pool import AUTH_TYPE_OAUTH, _load_provider_state, label_from_token
-    state = _load_provider_state(auth_store, seed.provider)
+    from auth.credential_pool import AUTH_TYPE_OAUTH, _load_provider_state_with_source, label_from_token
+    from auth.oauth_grants import owned_profile_reads_root_state
+    state, source_path = _load_provider_state_with_source(auth_store, seed.provider)
+    if owned_profile_reads_root_state(auth_store, seed.provider, source_path):
+        return
     tokens = state.get("tokens") if isinstance(state, dict) else None
     if not (isinstance(tokens, dict) and tokens.get("access_token")):
         return

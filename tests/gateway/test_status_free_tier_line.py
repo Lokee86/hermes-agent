@@ -94,13 +94,13 @@ async def test_status_omits_the_line_for_a_real_account():
 async def test_a_status_gate_failure_never_breaks_status(monkeypatch):
     runner = _runner()
     _seed_nous(_free_tier_state())
-    monkeypatch.setattr(_auth_auth_providers_nous_guest, "guest_carries_inference", lambda**_auth_settings: False)
+    monkeypatch.setattr(anon_auth, "free_tier_route", lambda: False)
     expected = await runner._handle_message(_make_event("/status"))
 
     def broken_store(**_auth_settings):
         raise RuntimeError("broken store")
 
-    monkeypatch.setattr(_auth_auth_providers_nous_guest, "guest_carries_inference", broken_store)
+    monkeypatch.setattr(anon_auth, "free_tier_route", broken_store)
 
     result = await runner._handle_message(_make_event("/status"))
 

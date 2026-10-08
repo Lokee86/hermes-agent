@@ -27,7 +27,7 @@ class SetupRecord:
 
     provider_configured: bool      # some provider can carry inference (free tier included)
     inference_provider: str        # ``resolve_provider("auto")``'s answer, "" when nothing resolves
-    free_tier: bool                # the identity that exists is the free tier AND the tier is on
+    free_tier_account: bool        # the identity that exists is the free tier AND the tier is on
     has_identity: bool             # a Nous identity (free tier or account) is on disk
     other_providers: bool          # the inventory found something usable BESIDES the free tier
     error: str = ""                # why the mint did not happen, when it did not; "" otherwise
@@ -37,11 +37,16 @@ class SetupRecord:
     failure: Dict[str, Any] = field(default_factory=dict)
     finished_at: float = field(default_factory=time.time)
 
+    @property
+    def free_tier_route(self) -> bool:
+        return self.free_tier_account and self.inference_provider == "nous"
+
     def as_payload(self) -> Dict[str, Any]:
         # The broadcast carries the failure block flat, the same shape ``setup.status`` spreads,
         # so a client keys on ``error_code`` identically whichever surface it read.
         payload = asdict(self)
         payload.update(payload.pop("failure"))
+        payload["free_tier_route"] = self.free_tier_route
         return payload
 
     def failure_fields(self) -> Dict[str, Any]:
@@ -180,7 +185,7 @@ def _build_record(*, other: bool, force: bool) -> SetupRecord:
     return SetupRecord(
         provider_configured=other or free_tier or (bool(state) and not _auth_auth_providers_nous_guest.is_guest_state(state)),
         inference_provider=_resolve_inference(),
-        free_tier=free_tier,
+        free_tier_account=free_tier_account,
         has_identity=bool(state),
         other_providers=other,
         error=error,

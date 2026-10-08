@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 from contextlib import suppress
+import logging
 import uuid
 
 import acp
@@ -16,6 +17,8 @@ from hermes_cli.gateway_client import GatewayClientError, connect_gateway
 from hermes_constants import get_hermes_home
 from acp_adapter.session import _translate_acp_cwd, _normalize_cwd_for_compare
 
+logger = logging.getLogger(__name__)
+
 
 def _stage_user_content(content):
     """Shared-converter output -> ``(text, attachments)`` for ``prompt.submit``.
@@ -27,7 +30,9 @@ def _stage_user_content(content):
     if isinstance(content, str):
         return content, []
     import base64
+    import binascii
     from gateway.platforms.base import cache_image_from_bytes
+    from gateway.session_ingress_media import _ATTACHMENT_LIMIT, _IMAGE_EXT, sniff_image_mime
     texts, attachments = [], []
     for part in content:
         if part.get('type') == 'text':
@@ -38,9 +43,20 @@ def _stage_user_content(content):
             texts.append(f"[Image attached: {url}]")
             continue
         header, _, data = url.partition(',')
-        mime = header[len('data:'):].split(';', 1)[0] or 'image/png'
+        declared = header[len('data:'):].split(';', 1)[0].strip().lower()
+        if len(attachments) >= _ATTACHMENT_LIMIT:
+            raise GatewayClientError('acp_content_invalid')
         try:
-            path = cache_image_from_bytes(base64.b64decode(data), '.' + mime.split('/', 1)[1])
+            raw = base64.b64decode(data, validate=True)
+        except (binascii.Error, ValueError) as exc:
+            raise GatewayClientError('acp_content_invalid') from exc
+        # The staged extension and admitted type come from the sniffed bytes, never the client's
+        # text (``text/html`` -> .html, ``image/svg+xml``, or a path-shaped subtype on Windows).
+        mime = sniff_image_mime(raw)
+        if mime is None or (declared and {'image/jpg': 'image/jpeg'}.get(declared, declared) != mime):
+            raise GatewayClientError('acp_content_invalid')
+        try:
+            path = cache_image_from_bytes(raw, _IMAGE_EXT[mime])
         except ValueError as exc:
             raise GatewayClientError('acp_content_invalid') from exc
         attachments.append({'path': path, 'mime': mime})
@@ -299,6 +315,9 @@ class GatewayACPAgent(acp.Agent):
         except asyncio.CancelledError:
             raise
         except Exception as exc:
+            # Boundary: ANY projection failure must reach every waiter (prompt/load re-raise
+            # ``_failure``), or they block forever on ``_changed``.
+            logger.debug("ACP gateway event projection stopped", exc_info=True)
             async with self._changed:
                 self._failure = exc
                 self._changed.notify_all()
@@ -365,7 +384,6 @@ class GatewayACPAgent(acp.Agent):
             self._permissions[key] = asyncio.create_task(self._answer_permission(session_id, prompt))
 
     async def _answer_permission(self, session_id, prompt):
-        import logging
         from acp.schema import AllowedOutcome
         from acp_adapter.permissions import (
             _build_permission_options, _build_permission_tool_call, _OPTION_ID_TO_HERMES,
@@ -392,7 +410,9 @@ class GatewayACPAgent(acp.Agent):
                 prompt_id=prompt["prompt_id"], execution_generation=prompt["execution_generation"],
                 choice=_OPTION_ID_TO_HERMES[response.outcome.option_id])
         except Exception:
-            logging.getLogger(__name__).info("ACP permission viewer detached or control expired")
+            # Boundary: a detached viewer or expired control is not a denial; the canonical
+            # waiter stays answerable by another viewer, so nothing propagates.
+            logger.info("ACP permission viewer detached or control expired", exc_info=True)
 
     async def aclose(self):
         for task in self._permissions.values():
