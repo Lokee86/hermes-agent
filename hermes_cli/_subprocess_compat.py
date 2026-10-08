@@ -10,12 +10,15 @@ from __future__ import annotations
 from typing import NoReturn
 
 from runtime.git_subprocess import (
+    FILTER_DISCOVERY_FAILED,
     NO_DRIVER_DIFF_FLAGS,
     NO_LAZY_FETCH_ENV,
     bounded_git_probe,
     expose_pm_git,
     harden_git_argv,
+    no_prompt_git_kwargs,
     noninteractive_git_env,
+    noninteractive_repo_git_env,
     selected_git_env,
 )
 from runtime.process_identity import pid_exists_stdlib, pid_is_hermes
@@ -42,6 +45,7 @@ def run(cmd, **kwargs) -> NoReturn:
 
 
 __all__ = [
+    "FILTER_DISCOVERY_FAILED",
     "IS_WINDOWS",
     "NO_DRIVER_DIFF_FLAGS",
     "NO_LAZY_FETCH_ENV",
@@ -50,7 +54,9 @@ __all__ = [
     "expose_pm_git",
     "harden_git_argv",
     "kill_process_tree",
+    "no_prompt_git_kwargs",
     "noninteractive_git_env",
+    "noninteractive_repo_git_env",
     "pid_exists_stdlib",
     "pid_is_hermes",
     "resolve_node_command",

@@ -8,11 +8,12 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+import re
 import subprocess
 import sys
 from typing import Mapping, Sequence
 
-from runtime.subprocess_compat import bounded_probe_run
+from runtime.subprocess_compat import bounded_probe_run, windows_hide_flags
 
 # Flags that neutralize *attribute-scoped* diff drivers on any diff-rendering git command. A
 # malicious repo can name a driver in ``.gitattributes`` (``* diff=evil``) and point it at an
@@ -84,6 +85,15 @@ _GIT_CONFIG_OVERRIDES = {
 }
 
 
+_FILTER_COMMAND_KEY = re.compile(r"^filter\..+\.(?:clean|smudge|process)$", re.IGNORECASE)
+_INCLUDE_IF_KEY = re.compile(r"^includeif\..*\.path$", re.IGNORECASE)
+_INCLUDE_KEY = re.compile(r"^include(?:if\..*)?\.path$", re.IGNORECASE)
+_DISCOVERY_KEYS_REGEXP = r"^(filter\..*\.(clean|smudge|process)|include\.path|includeif\..*\.path)$"
+_MAX_INCLUDE_TARGETS = 16
+_MAX_FILTER_KEYS = 256
+FILTER_DISCOVERY_FAILED = "git filter discovery failed"
+
+
 def _safe_directory_cache_key(env: "Mapping[str, str]") -> tuple:
     """Everything that decides which files ``git config --system/--global`` reads, plus the
     global candidates' mtimes so an edit to ``~/.gitconfig`` is picked up without a restart."""
@@ -146,6 +156,7 @@ def _user_safe_directories(base_env: "Mapping[str, str]") -> list[str]:
                 ["git", "config", scope, "-z", "--get-all", "safe.directory"],
                 capture_output=True, text=True, encoding="utf-8", errors="replace",
                 timeout=5, stdin=subprocess.DEVNULL, env=env, check=False,
+                creationflags=windows_hide_flags(),
             )
         except (OSError, subprocess.SubprocessError):
             continue
@@ -253,7 +264,101 @@ def noninteractive_git_env(base: "Mapping[str, str] | None" = None) -> dict[str,
     return env
 
 
-def bounded_git_probe(argv: Sequence[str], *, timeout: float) -> str:
+def noninteractive_repo_git_env(
+    cwd: "str | os.PathLike[str]",
+    base: "Mapping[str, str] | None" = None,
+) -> "dict[str, str] | None":
+    """Harden internal Git for one repository, including named clean/smudge/process filters."""
+    env = noninteractive_git_env(base)
+    proc = bounded_probe_run(
+        ["git", "-C", str(cwd), "config", "--includes", "--show-origin", "-z",
+         "--get-regexp", _DISCOVERY_KEYS_REGEXP],
+        timeout=2, env=env,
+    )
+    if proc is None or proc.returncode not in (0, 1):
+        return None
+    names: list[str] = []
+    targets: set[Path] = set()
+    toplevel: "Path | None" = None
+    fields = proc.stdout.split("\0")
+    for origin, entry in zip(fields[0::2], fields[1::2]):
+        key, _, value = entry.partition("\n")
+        if not _INCLUDE_IF_KEY.fullmatch(key):
+            names.append(key)
+            continue
+        if not origin.startswith("file:"):
+            return None
+        origin_path = Path(origin[len("file:"):])
+        if not origin_path.is_absolute():
+            if env.get("GIT_DIR") or env.get("GIT_WORK_TREE"):
+                return None
+            if toplevel is None:
+                top = bounded_probe_run(
+                    ["git", "-C", str(cwd), "rev-parse", "--show-toplevel"],
+                    timeout=2, env=env,
+                )
+                if top is None or top.returncode != 0:
+                    return None
+                toplevel = Path(top.stdout.rstrip("\r\n"))
+            origin_path = toplevel / origin_path
+        target = (origin_path.parent / os.path.expanduser(value)).resolve()
+        if target in targets or not target.exists():
+            continue
+        if not target.is_file() or len(targets) >= _MAX_INCLUDE_TARGETS:
+            return None
+        targets.add(target)
+        probe = bounded_probe_run(
+            ["git", "config", "--file", str(target), "--name-only", "-z",
+             "--get-regexp", _DISCOVERY_KEYS_REGEXP],
+            timeout=2, env=env,
+        )
+        if probe is None or probe.returncode not in (0, 1):
+            return None
+        found = probe.stdout.split("\0")
+        if any(_INCLUDE_KEY.fullmatch(name) for name in found):
+            return None
+        names.extend(found)
+
+    keys: list[str] = []
+    required: list[str] = []
+    seen: set[str] = set()
+    for raw in names:
+        key = raw.strip()
+        if not key or key in seen or not _FILTER_COMMAND_KEY.fullmatch(key):
+            continue
+        seen.add(key)
+        keys.append(key)
+        if len(keys) > _MAX_FILTER_KEYS:
+            return None
+        required_key = key.rsplit(".", 1)[0] + ".required"
+        if required_key not in seen:
+            seen.add(required_key)
+            required.append(required_key)
+
+    start = int(env["GIT_CONFIG_COUNT"])
+    overrides = [(key, "") for key in keys] + [(key, "false") for key in required]
+    for offset, (key, value) in enumerate(overrides):
+        env[f"GIT_CONFIG_KEY_{start + offset}"] = key
+        env[f"GIT_CONFIG_VALUE_{start + offset}"] = value
+    env["GIT_CONFIG_COUNT"] = str(start + len(overrides))
+    return env
+
+
+def no_prompt_git_kwargs() -> dict:
+    """Subprocess kwargs for updater Git network calls that must never prompt."""
+    env = dict(os.environ)
+    env["GIT_TERMINAL_PROMPT"] = "0"
+    env["GCM_INTERACTIVE"] = "Never"
+    return {
+        "stdin": subprocess.DEVNULL,
+        "env": env,
+        "creationflags": windows_hide_flags(),
+    }
+
+
+def bounded_git_probe(
+    argv: Sequence[str], *, timeout: float, env: "Mapping[str, str] | None" = None
+) -> str:
     """Run a short ``git`` probe and return stripped stdout, or ``""`` on ANY failure.
 
     On Windows ``run()``'s post-timeout cleanup calls an unbounded ``communicate()``; a suspended
@@ -279,18 +384,24 @@ def bounded_git_probe(argv: Sequence[str], *, timeout: float) -> str:
     openai/codex#36793). ``process_group`` only changes which group the child belongs to; it does not detach
     the terminal or alter the fast path.
     """
-    result = bounded_probe_run(argv, timeout=timeout, env={**noninteractive_git_env(), **NO_LAZY_FETCH_ENV})
+    result = bounded_probe_run(
+        argv, timeout=timeout,
+        env={**(env or noninteractive_git_env()), **NO_LAZY_FETCH_ENV},
+    )
     if result is None or result.returncode != 0:
         return ""
     return (result.stdout or "").strip()
 
 
 __all__ = [
+    "FILTER_DISCOVERY_FAILED",
     "NO_DRIVER_DIFF_FLAGS",
     "NO_LAZY_FETCH_ENV",
     "bounded_git_probe",
     "expose_pm_git",
     "harden_git_argv",
+    "no_prompt_git_kwargs",
     "noninteractive_git_env",
+    "noninteractive_repo_git_env",
     "selected_git_env",
 ]

@@ -348,8 +348,21 @@ def kill_popen_process_tree(proc: subprocess.Popen) -> None:
     except OSError:
         pass
 
+
+def kill_and_drain(proc: subprocess.Popen, seconds: float) -> tuple | None:
+    """Tree-kill *proc*, then drain its pipes for at most *seconds*."""
+    kill_popen_process_tree(proc)
+    try:
+        return proc.communicate(timeout=seconds)
+    except (OSError, ValueError, subprocess.SubprocessError):
+        # Reader threads may still own the descriptors; do not close them here.
+        proc.stdin = proc.stdout = proc.stderr = None
+        return None
+
+
 __all__ = [
     "attach_self_to_kill_on_close_job",
+    "kill_and_drain",
     "kill_popen_process_tree",
     "kill_process_tree",
     "spawn_contained_process",

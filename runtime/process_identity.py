@@ -28,6 +28,10 @@ LEDGER_FILENAME = "spawn-ledger.json"
 #: Interactive processes (chat, REPLs) are deliberately NOT in this set.
 REAPABLE_PURPOSES = frozenset({"serve", "dashboard", "gateway", "mcp-helper"})
 
+#: Host-role owners a fresh backend may reap on a HELD_BY_OTHER conflict (#121964): the
+#: serve/dashboard/gateway subset. The mcp-helper rung stays owned by reap_orphaned_mcp_helpers.
+_BACKEND_OWNER_PURPOSES = REAPABLE_PURPOSES - {"mcp-helper"}
+
 _IS_WINDOWS = platform.system() == "Windows"
 IS_WINDOWS = _IS_WINDOWS
 
@@ -501,6 +505,72 @@ def spawner_is_dead(entry: dict) -> Optional[bool]:
         return None
     alive = _pid_alive_matches(spawner_pid, entry.get("spawner_create"))
     return None if alive is None else not alive
+
+
+def _terminate_then_kill(pid: int, create_time: Optional[float]) -> bool:
+    """SIGTERM, 2 s grace, then SIGKILL. False when the incarnation moved on or is already gone."""
+    try:
+        import psutil
+
+        proc = psutil.Process(pid)
+        if not _same_incarnation(proc, create_time):
+            return False
+        proc.terminate()
+        try:
+            proc.wait(timeout=2.0)
+        except psutil.TimeoutExpired:
+            proc.kill()
+        return True
+    except Exception:
+        logger.debug("orphan terminate failed for pid %s", pid, exc_info=True)
+        return False
+
+
+def reap_orphaned_backend_owner(
+    pid: int,
+    create_time: Optional[float],
+    *,
+    kill_fn=None,
+    reparented_orphan_fn=None,
+) -> Optional[int]:
+    """Kill a conflicting host owner only when ledger evidence proves it is orphaned."""
+    try:
+        pid = int(pid)
+    except (TypeError, ValueError):
+        return None
+    if pid <= 0 or pid == os.getpid():
+        return None
+    try:
+        entry = next(
+            (e for e in ledger_entries()
+             if e.get("pid") == pid
+             and e.get("purpose") in _BACKEND_OWNER_PURPOSES
+             and (e.get("create_time") is None or create_time is None
+                  or abs(float(e["create_time"]) - float(create_time)) < 2.0)),
+            None,
+        )
+    except Exception:
+        return None
+    if entry is None:
+        return None
+    spawner_dead = spawner_is_dead(entry)
+    if spawner_dead is not True:
+        if not (
+            entry.get("spawner_pid") is None
+            and reparented_orphan_fn is not None
+            and reparented_orphan_fn(pid)
+        ):
+            return None
+    try:
+        if kill_fn is not None:
+            kill_fn(pid)
+        elif not _terminate_then_kill(pid, entry.get("create_time")):
+            return None
+    except Exception:
+        logger.debug("backend owner reap failed for %s", entry, exc_info=True)
+        return None
+    logger.info("reaped orphaned %s backend owner pid %s", entry.get("purpose"), pid)
+    return pid
 
 
 def reap_orphaned_mcp_helpers(*, project_root: Optional[Path] = None, kill_fn=None) -> list[int]:
