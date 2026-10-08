@@ -18,6 +18,7 @@ from agent.credential_pool import (
     STRATEGY_RANDOM, STRATEGY_LEAST_USED, PooledCredential, _codex_principal_identity,
     _exhausted_until, _normalize_custom_pool_name, get_pool_strategy, label_from_token, list_custom_pool_providers,
     load_pool)
+from agent.credential_pool_admin import CredentialNotSavedError
 import hermes_cli.auth as auth_mod
 from hermes_cli.auth_plugin_providers import (
     dispatch_plugin_auth, is_refreshable_oauth_provider, plugin_missing_auth_handler_error)
@@ -411,6 +412,8 @@ def auth_add_command(args) -> None:
     except auth_mod.AuthError as exc:
         # A denied / mismatched / timed-out OAuth login is a user-facing outcome, not a crash.
         raise SystemExit(f"Login failed: {auth_mod.format_auth_error(exc)}") from exc
+    except CredentialNotSavedError as exc:
+        raise SystemExit(str(exc)) from exc
     if wanted_priority is not None:
         placed_pool = load_pool(provider)
         moved = placed_pool.move_entry(entry.id, int(wanted_priority))

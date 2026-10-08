@@ -64,6 +64,10 @@ from hermes_cli.models_local import (
 
 logger = logging.getLogger(__name__)
 
+class CuratedFallbackModels(list):
+    """Fallback-only model list; never overwrites verified live catalog observations."""
+
+
 # Identify ourselves so endpoints fronted by Cloudflare's Browser Integrity
 # Check (error 1010) don't reject the default ``Python-urllib/*`` signature.
 _HERMES_USER_AGENT = f"hermes-cli/{get_version_info().base_version}"
@@ -241,6 +245,33 @@ def union_with_portal_paid_recommendations(
     return _union_with_portal_recommendations(
         "paidRecommendedModels", curated_ids, pricing, portal_base_url,
         force_refresh=force_refresh, synthesize_free_pricing=False)
+
+
+def union_with_nous_on_sale_models(curated_ids: list[str], pricing: dict[str, dict[str, Any]]) -> list[str]:
+    """Curated list plus every paid Nous model the gateway is discounting right now, deepest
+    discount first. A sale lives only in ``/v1/models`` ``pricing.original``, so without this the
+    picker badges discounts on curated rows but never shows a discounted model the curated list and
+    Portal recommendations omit. Free rows stay with ``freeRecommendedModels``; rows the gateway
+    marks tool-less (``"tools": False``) are skipped because Hermes is tool-calling-first, and
+    image/video generation rows are skipped because they are not chat models."""
+    from math import isfinite
+
+    from hermes_cli.models_pricing import _price_float, compute_sale_discount
+
+    seen = set(curated_ids)
+    on_sale: list[tuple[int, str]] = []
+    for mid, entry in (pricing or {}).items():
+        if mid in seen or not isinstance(entry, dict) or entry.get("tools") is False or entry.get("generation"):
+            continue
+        sale = compute_sale_discount(entry.get("prompt", ""), entry.get("completion", ""), entry.get("original"))
+        # Badge percentages are rounded: a nearly-free paid row can display 100% off.
+        paid = any(
+            (rate := _price_float(entry.get(key), positive=True)) is not None and isfinite(rate)
+            for key in ("prompt", "completion")
+        )
+        if sale is not None and isinstance(entry.get("original"), dict) and paid:
+            on_sale.append((-sale[0], mid))
+    return list(curated_ids) + [mid for _, mid in sorted(on_sale)]
 
 
 # Free-tier detection cache, per profile — short so an account upgrade shows within minutes.
@@ -498,6 +529,8 @@ def curated_models_for_provider(
     # Try live API first (Codex, Nous, etc. all support /models)
     live = provider_model_ids(normalized)
     if live:
+        # StepFun's Step Plan /models merge now lives in its provider fetcher
+        # (``_stepfun_catalog``) so every picker surface sees the same list.
         return [(m, "") for m in live]
 
     # Fallback to static catalog
@@ -666,11 +699,6 @@ def _copilot_acp_session_models(force_refresh: bool) -> Optional[list[str]]:
     return live
 
 
-class CuratedFallbackModels(list[str]):
-    """A curated list served because the provider's live catalog was unavailable. The disk cache
-    treats it as a placeholder, never as the account's real catalog (#107391)."""
-
-
 def _copilot_catalog(normalized: str, force_refresh: bool) -> Optional[list[str]]:
     if normalized == "copilot-acp" and (live := _copilot_acp_session_models(force_refresh)):
         return live
@@ -721,6 +749,23 @@ def _api_key_provider_live(normalized: str, force_refresh: bool) -> Optional[lis
         return None
 
 
+def _stepfun_catalog(normalized: str, force_refresh: bool) -> Optional[list[str]]:
+    """Step Plan live list merged with the curated catalog (the ``_anthropic_catalog`` pattern).
+
+    The StepFun inference endpoint is the Step Plan API, whose ``/models`` returns a subset of
+    the full catalog: it omits models served by the Standard API (e.g. ``step-3.7-flash``),
+    so a healthy live response would shadow curated-only models from every picker surface
+    (#41147). Live rows first, then curated-only additions — and when the probe declines
+    (no credentials / failure) ``None`` falls through to the generic profile path, whose
+    ``merge_profile_catalog`` already serves the curated floor as a placeholder.
+    """
+    live = _api_key_provider_live(normalized, force_refresh)
+    if not live:
+        return live
+    curated = list(catalog_static._PROVIDER_MODELS.get(normalized, []))
+    return _merge_unique(live, curated, key=_model_dedup_key) if curated else live
+
+
 def _anthropic_catalog(normalized: str, force_refresh: bool) -> list[str]:
     model_cfg = _get_model_config_dict()
     cfg_base_url = cfg_api_key = ""
@@ -730,7 +775,9 @@ def _anthropic_catalog(normalized: str, force_refresh: bool) -> list[str]:
     live = _fetch_anthropic_models(base_url=cfg_base_url or None, api_key=cfg_api_key or None)
     curated = list(catalog_static._PROVIDER_MODELS.get("anthropic", []))
     if not live:
-        return curated
+        # A placeholder for the outage, not this account/proxy's catalog: the disk cache must
+        # never pin it over a same-credentials live row (#107391).
+        return CuratedFallbackModels(curated)
     # The live /v1/models dump lags newly-routed curated aliases (reachable before enumerated):
     # curated first, then live-only extras, so a fresh curated model never disappears.
     return live if cfg_base_url else _merge_unique(curated, live)
@@ -830,7 +877,7 @@ _PROVIDER_CATALOG_FETCHERS: dict[str, Any] = {
     "copilot": _copilot_catalog,
     "copilot-acp": _copilot_catalog,
     "nous": _nous_catalog,
-    "stepfun": _api_key_provider_live,
+    "stepfun": _stepfun_catalog,
     "gmi": _api_key_provider_live,
     "anthropic": _anthropic_catalog,
     "ai-gateway": lambda normalized, force_refresh: _fetch_ai_gateway_models() or None,
@@ -939,19 +986,19 @@ def _configured_relay_base_url(provider: str) -> str:
     base_url = str(model_cfg.get("base_url") or "").strip().rstrip("/")
     if not base_url:
         return ""
-    # A base_url equal to the provider's own endpoint is not a relay (setup persists canonical
-    # URLs too): keep native discovery, which OAuth providers such as Codex need because the
-    # generic relay probe only speaks api_key. Profiles cover providers PROVIDER_REGISTRY lacks
-    # (OpenRouter).
+    # A base_url equal to the provider's own endpoint (the profile's or the registry row's: TokenHub's
+    # profile leaves it empty; OpenRouter has no registry row) is not a relay: setup persists
+    # canonical URLs, and OAuth providers (Codex) need native discovery.
     try:
+        from hermes_cli.provider_auth import get_provider_config
         from providers import get_provider_profile
 
-        canonical = getattr(get_provider_profile(normalized), "base_url", "") or ""
+        profile_url = getattr(get_provider_profile(normalized), "base_url", "")
+        registry_url = getattr(get_provider_config(normalized), "inference_base_url", "")
+        canonical = {normalize_route_base_url(u) for u in (profile_url, registry_url) if u}
     except Exception:
         return base_url  # lookup failed: stay a relay, never widening where credentials go
-    if canonical and normalize_route_base_url(base_url) == normalize_route_base_url(canonical):
-        return ""
-    return base_url
+    return "" if normalize_route_base_url(base_url) in canonical else base_url
 
 
 def _relay_model_catalog(normalized: str, relay: str) -> Optional[list[str]]:

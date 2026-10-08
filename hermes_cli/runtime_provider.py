@@ -7,6 +7,7 @@ OpenRouter/bare-custom, Bedrock and external-process builders in
 
 from __future__ import annotations
 
+import copy
 import logging
 from dataclasses import dataclass
 from typing import Any, Callable, Dict, Optional
@@ -672,7 +673,7 @@ _LOCAL_BYPASS_CLOUD_HOSTS = ("openrouter.ai", "anthropic.com", "openai.com")
 def _raise_if_provider_disabled(requested_provider: str) -> None:
     """Honour ``providers.<name>.enabled: false`` for built-ins too (the custom lookup gate only
     covers custom blocks); a typed error lets the fallback chain advance."""
-    full_cfg = _config_mod.load_config()
+    full_cfg = load_config()
     provs_cfg = full_cfg.get("providers") if isinstance(full_cfg, dict) else None
     block = provs_cfg.get(requested_provider) if isinstance(provs_cfg, dict) else None
     if isinstance(block, dict) and not _config_mod.is_provider_enabled(block):

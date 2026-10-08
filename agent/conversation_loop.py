@@ -15,9 +15,10 @@ import time
 from dataclasses import dataclass, field, fields
 from typing import Any, Dict, List, Optional
 
+from agent.agent_runtime_helpers_placeholders import hidden_interrupt_placeholder_row
 from agent.codex_responses_adapter import _summarize_user_message_for_log
 from agent.fast_mode import begin_turn as begin_fast_mode_turn
-from agent.message_metadata import append_message
+from agent.message_metadata import append_message, without_persistence_fields
 from agent.message_sanitization import _repair_tool_call_arguments, _sanitize_surrogates
 from agent.model_metadata import _estimate_tools_tokens_rough
 from models.metadata.context import MINIMUM_CONTEXT_LENGTH
@@ -35,7 +36,9 @@ from agent.surface_switch import (
     identity_line_value, note_inert_pinned_tools, runtime_host_value, stage_surface_switch_note,
 )
 from agent.turn_context import PreflightCompressionTimedOut, build_turn_context
+from hermes_cli.observability.shared_metrics_efficiency import record_cache_break, record_prompt_rebuild
 from agent.turn_retry_state import TurnRetryState
+from agent.turn_scripted_prelude import Prelude, play_prelude
 # Phase helpers of the turn loop, bound at import so a source-tree swap cannot load a
 # skewed phase mid-turn.
 from agent.turn_api_call import handle_api_interrupt, nous_rate_limit_guard, perform_api_call
@@ -343,15 +346,9 @@ def _apply_active_turn_redirect(agent: Any, messages: List[Dict[str, Any]], text
     # preserves alternation only — scaffold bytes must never land in it, since api_content
     # is substituted back into content on replay (#81841).
     if not (messages and messages[-1].get("role") == "assistant"):
-        placeholder: Dict[str, Any] = {"role": "assistant", "content": visible or ""}
-        if not visible:
-            placeholder["display_kind"] = "hidden"
-            # Hidden row, but a non-empty neutral api_content so the pre-call sanitizer
-            # does not re-heal it every call (#88955). Never _INTERRUPT_SCAFFOLD_MARKER:
-            # as assistant text the model echoes it (#81841).
-            from agent.agent_runtime_helpers import _INTERRUPTED_PLACEHOLDER
-            placeholder["api_content"] = _INTERRUPTED_PLACEHOLDER
-        append_message(messages, placeholder)
+        # Hidden row with a neutral api_content (#88955). Never _INTERRUPT_SCAFFOLD_MARKER:
+        # as assistant text the model echoes it (#81841).
+        append_message(messages, {"role": "assistant", "content": visible} if visible else hidden_interrupt_placeholder_row())
     # Transcript shows the user's own words; the provider replays the scaffolded form.
     append_message(messages, {"role": "user", "content": text, "api_content": correction})
 
@@ -719,6 +716,37 @@ def _restore_pinned_tools(agent, session_row) -> list:
     return built_for_this_surface
 
 
+def _refresh_bot_chat_tools(agent) -> None:
+    """Rebuild ``agent.tools`` for a Bot Chat capability refresh through the builder that
+    created the session, so the refreshed set is what a fresh desktop/TUI session gets
+    (#124211). A canonical Bot Chat never forks, so its tools[] is otherwise a fossil of
+    session creation: ``hermes tools enable/disable`` writes ``platform_toolsets`` and the
+    automatic between-turns refresh reuses the build-time selection. Only the desktop/TUI
+    gateway keeps agents alive across turns; every other surface builds a fresh agent whose
+    tools[] already reflects config. No prefix preservation: a disabled toolset must drop,
+    and the prompt rebuild this rides on already breaks the cache."""
+    from gateway.session_policy import active_policy
+    policy = active_policy()
+    platform = getattr(agent, "platform", None)
+    if policy is None and platform not in ("desktop", "tui"):
+        return
+    try:
+        from tools.mcp_tool_agent import refresh_agent_mcp_tools
+        if policy is not None:
+            # Gateway-owned session (managed worker / owner turn): toolsets are frozen in its
+            # launch policy, so live config edits never widen or narrow a running session.
+            refresh_agent_mcp_tools(agent, enabled_override=list(policy.toolsets),
+                                    quiet_mode=True, content_aware=True)
+            return
+        from tui_gateway.server import _load_disabled_toolsets, _load_enabled_toolsets
+        refresh_agent_mcp_tools(
+            agent, enabled_override=_load_enabled_toolsets(platform),
+            disabled_override=_load_disabled_toolsets(), quiet_mode=True, content_aware=True)
+    except Exception as exc:
+        logger.warning("Bot Chat capability refresh kept the previous tools for session %s: %s",
+                       agent.session_id, exc)
+
+
 def _restore_or_build_system_prompt(agent, system_message, conversation_history):
     """Restore the cached system prompt from the session DB or build it fresh.
 
@@ -758,14 +786,19 @@ def _restore_or_build_system_prompt(agent, system_message, conversation_history)
                 clear_skills_system_prompt_cache(clear_snapshot=True)
             except Exception:
                 pass
+            _refresh_bot_chat_tools(agent)
             agent._cached_system_prompt = agent._build_system_prompt(system_message)
+            record_cache_break(agent, "toolset_change")
             stage_surface_switch_note(agent, agent._cached_system_prompt, conversation_history)
             # Persist so the NEXT turn restores the new bytes verbatim (cache break is
-            # once per capability change). on_session_start not re-fired: continuation.
+            # once per capability change). Tools re-pin too: without it the next
+            # turn's pin-restore would resurrect the pre-refresh toolset (#124211).
+            # on_session_start not re-fired: continuation.
             _persist_system_prompt(
                 agent,
                 "Session DB update_system_prompt failed after Bot Chat capability refresh "
                 "(session=%s): %s. The refresh will re-fire next turn.",
+                persist_tools=True,
             )
             return
         # Continuing session — reuse the exact system prompt from the
@@ -819,6 +852,8 @@ def _restore_or_build_system_prompt(agent, system_message, conversation_history)
     # persisted over the pin below. Pinned first, so the prompt describes the tools sent.
     built_for_this_surface = _restore_pinned_tools(agent, session_row)
     agent._cached_system_prompt = agent._build_system_prompt(system_message)
+    if conversation_history:
+        record_prompt_rebuild(agent, stored_prompt, stored_state, agent._cached_system_prompt)
 
     # The rebuilt prompt describes the CURRENT surface, but a surface note left in the
     # transcript by an earlier switch does not — retire it here too, or a rebuild for an
@@ -1286,7 +1321,11 @@ def _apply_context_engine_selection(
     # Require a NON-EMPTY list of dicts: ``all([])`` is ``True``, so a ``[]`` from a
     # buggy engine would otherwise replace the request instead of failing open.
     if isinstance(selected, list) and selected and all(isinstance(m, dict) for m in selected):
-        return selected
+        # The engine may hand back the ``conversation_messages`` clones (or its own dicts) that still
+        # carry persistence-only fields; the request copy was stripped BEFORE this hook, so strip the
+        # selection too or those fields reach the provider. Dicts without them pass through as-is.
+        stripped = [without_persistence_fields(m) for m in selected]
+        return selected if all(a is b for a, b in zip(stripped, selected)) else stripped
     logger.warning(
         "Context engine select_context returned an invalid value "
         "(not a non-empty list of dicts); ignoring (session=%s)", session_label,
@@ -1383,10 +1422,10 @@ class _LoopState:
     failed: bool = False
     codex_ack_continuations: int = 0
     length_continue_retries: int = 0
-    # Per-turn backstop for the refunding restarts (redirect / rebuilt-for-fallback).
-    # Unlike ``retry_count`` (rebound to 0 each iteration) this accumulates for the whole
-    # turn so a runaway interrupt/redirect that keeps re-arming a restart flag cannot
-    # refund the iteration budget forever and hold the turn lease indefinitely.
+    # Backstop for the refunding restarts (redirect / rebuilt-for-fallback). Unlike
+    # ``retry_count`` (rebound to 0 each iteration) this survives across iterations until a
+    # response arrives, so a runaway interrupt/redirect that keeps re-arming a restart flag
+    # cannot refund the iteration budget forever and hold the turn lease indefinitely.
     restart_count: int = 0
     _outer_error_count: int = 0  # outer-loop exceptions this turn (#92450), see _MAX_OUTER_LOOP_ERRORS
     truncated_tool_call_retries: int = 0
@@ -1496,6 +1535,24 @@ def _run_api_retry_loop(agent, s: _LoopState) -> Optional[Dict[str, Any]]:
     return None
 
 
+def _codex_app_server_turn(agent: Any, s: Any) -> Optional[Dict[str, Any]]:
+    """The codex app-server's result for this turn, or None when its failure activated a fallback and the
+    generic loop retries the same user turn."""
+    codex_result = agent._run_codex_app_server_turn(
+        user_message=s.user_message, original_user_message=s.original_user_message,
+        messages=s.messages, effective_task_id=s.effective_task_id,
+        should_review_memory=s._should_review_memory,
+    )
+    from agent.turn_recovery import activate_codex_app_server_fallback
+    if not activate_codex_app_server_fallback(agent, codex_result):
+        return codex_result
+    # Fallback activation rewrote provider/model/api_mode: retry this same user turn on the generic
+    # loop below, keeping codex's projected rows and its failed API call in the turn's accounting.
+    s.api_call_count = int(codex_result.get("api_calls") or 0)
+    s.active_system_prompt = _sync_failover_system_message(agent, None, s.active_system_prompt)
+    return None
+
+
 def _run_conversation_turn(
     agent,
     user_message: Any,
@@ -1510,13 +1567,19 @@ def _run_conversation_turn(
     persist_user_platform_id: Optional[str] = None,
     turn_author: Optional[Dict[str, Any]] = None,
     moa_config: Optional[dict[str, Any]] = None,
+    title_user_message: Optional[str] = None,
+    prelude: Optional[Prelude] = None,
 ) -> Dict[str, Any]:
     """Run a complete conversation with tool calling until completion; returns the result dict.
 
     ``stream_callback``: per-text-delta callback (TTS). ``persist_user_message``: clean text to
     store when ``user_message`` carries API-only synthetic prefixes; timestamp / platform id are
-    stored as metadata (platform id lets restart drain recovery dedup). ``persist_user_display_*``:
-    display-only event rendering; the model still receives the message unchanged."""
+    stored as metadata (platform id lets restart drain recovery dedup).
+    ``title_user_message``: optional pre-injection text for titles only (None uses the
+    model-facing message; an empty string suppresses titling for this turn).
+    ``persist_user_display_*``:
+    display-only event rendering; the model still receives the message unchanged.
+    ``prelude``: scripted tool calls played before the first model call (``agent/turn_scripted_prelude.py``)."""
     if moa_config is None:
         user_message, moa_config, persist_user_message = _decode_inline_moa_turn(
             user_message, persist_user_message
@@ -1554,9 +1617,14 @@ def _run_conversation_turn(
             # MoA turns append per-call aggregated context to the API copy of the
             # user message, so no byte-stable api_content sidecar can be stamped.
             moa_active=bool(moa_config),
+            title_user_message=title_user_message,
         )
     except PreflightCompressionTimedOut as _preflight_timeout_exc:
         return _preflight_timeout_result(agent, _preflight_timeout_exc, conversation_history)
+    # Voice turns may run on auxiliary.voice_chat: bound after the prompt/row/compaction were settled
+    # against the main model, undone in finalize_turn (and run_conversation's finally on early exits).
+    from agent.voice_turn_route import begin_voice_turn_route
+    _ctx.active_system_prompt = begin_voice_turn_route(agent, _ctx.messages, _ctx.active_system_prompt)
 
     # Per-turn agent state (the gateway caches agents across turns, so none of this may
     # leak into the next message): interim-commentary dedup spans the whole turn but not
@@ -1593,7 +1661,12 @@ def _run_conversation_turn(
         s.api_call_count = int(codex_result.get("api_calls") or 0)
         s.active_system_prompt = _sync_failover_system_message(agent, None, s.active_system_prompt)
 
-    while (s.api_call_count < agent.max_iterations and agent.iteration_budget.remaining > 0) or agent._budget_grace_call:
+    _prelude_action, _prelude_result = play_prelude(agent, s, prelude)
+    if _prelude_action == "return":
+        return _prelude_result
+    while _prelude_action != "break" and (
+        (s.api_call_count < agent.max_iterations and agent.iteration_budget.remaining > 0) or agent._budget_grace_call
+    ):
         if _run_phase(begin_iteration, agent, s).action == "break":
             break
         _run_phase(prepare_iteration, agent, s)
@@ -1666,6 +1739,8 @@ def run_conversation(
     persist_user_platform_id: Optional[str] = None,
     moa_config: Optional[dict[str, Any]] = None,
     turn_author: Optional[Dict[str, Any]] = None,
+    title_user_message: Optional[str] = None,
+    prelude: Optional[Prelude] = None,
 ) -> Dict[str, Any]:
     """Run one turn (see ``_run_conversation_turn``) and export the current-turn boundary.
 
@@ -1675,29 +1750,83 @@ def run_conversation(
     addresses, after every history rewrite including post-turn micro-compaction.
     """
     from agent.turn_context import export_current_turn_boundary
+    from agent.voice_turn_route import end_voice_turn_route
     from tools.vision_tools_history_budget import native_turn_images
 
+    # Steer / redirect / interrupt set this mid-turn; the result reports whether the turn ran untouched.
+    agent._turn_user_intervened = False
     # Images attached natively to this user turn stay visible to vision_analyze for the turn, so
     # it does not embed the same pixels a second time into the same request (#76411).
     with native_turn_images(user_message):
-        result = _run_conversation_turn(
-            agent,
-            user_message,
-            system_message=system_message,
-            conversation_history=conversation_history,
-            task_id=task_id,
-            stream_callback=stream_callback,
-            persist_user_message=persist_user_message,
-            persist_user_timestamp=persist_user_timestamp,
-            persist_user_display_kind=persist_user_display_kind,
-            persist_user_display_metadata=persist_user_display_metadata,
-            persist_user_platform_id=persist_user_platform_id,
-            moa_config=moa_config,
-            turn_author=turn_author,
-        )
+        try:
+            result = _run_conversation_turn(
+                agent,
+                user_message,
+                system_message=system_message,
+                conversation_history=conversation_history,
+                task_id=task_id,
+                stream_callback=stream_callback,
+                persist_user_message=persist_user_message,
+                persist_user_timestamp=persist_user_timestamp,
+                persist_user_display_kind=persist_user_display_kind,
+                persist_user_display_metadata=persist_user_display_metadata,
+                persist_user_platform_id=persist_user_platform_id,
+                moa_config=moa_config,
+                turn_author=turn_author,
+                title_user_message=title_user_message,
+                prelude=prelude,
+            )
+        finally:
+            end_voice_turn_route(agent)
     result = export_current_turn_boundary(agent, result, user_message)
+    if isinstance(result, dict):
+        result["user_intervened"] = bool(getattr(agent, "_turn_user_intervened", False))
     _close_durable_failed_turn(agent, result)
     return result
+
+
+_FAILED_TURN_ERROR_MAX_CHARS = 2000
+
+
+def _failed_turn_display_metadata(agent, result: dict) -> dict:
+    """The error text and ``error_surface`` a client needs to redraw the failed turn's error
+    card from the transcript, after the live ``message.complete`` frame is gone. Every
+    string is redacted with ``force=True``: the error came from a provider/tool, so a
+    secret echoed in it must not reach the durable store (the redaction e2e boundary)."""
+    from agent.error_surface import build_error_surface_from_result
+
+    try:
+        surface = build_error_surface_from_result(
+            result, provider=agent.provider or "", model=agent.model or ""
+        )
+    except Exception:
+        logger.debug("failed-turn error surface unavailable", exc_info=True)
+        surface = None
+    error = str(result.get("error") or "").strip()[:_FAILED_TURN_ERROR_MAX_CHARS]
+    metadata = {k: v for k, v in (("error", error), ("error_surface", surface)) if v}
+    return _redact_display_metadata(metadata)
+
+
+def _redact_display_metadata(metadata: dict) -> dict:
+    """Force-redact every string in a display_metadata payload (dicts and lists included).
+
+    display_metadata is persisted via ``SessionDB.append_message`` and re-delivered to
+    clients, so it sits downstream of the turn's own content redaction: an error string
+    that escaped a provider or tool would otherwise reach the 'store' and 'export' sinks
+    verbatim. ``force=True`` keeps the boundary closed even when ``security.redact_secrets``
+    is off, matching the compressor's persistence boundary."""
+    from agent.redact import redact_sensitive_text
+
+    def _redact(value):
+        if isinstance(value, str):
+            return redact_sensitive_text(value, force=True)
+        if isinstance(value, dict):
+            return {k: _redact(v) for k, v in value.items()}
+        if isinstance(value, list):
+            return [_redact(v) for v in value]
+        return value
+
+    return {k: _redact(v) for k, v in metadata.items()}
 
 
 def _close_durable_failed_turn(agent, result: Any) -> None:
@@ -1735,9 +1864,12 @@ def _close_durable_failed_turn(agent, result: Any) -> None:
         # hedge over the whole list rather than under-report a possible side effect.
         start = result.get("current_turn_user_idx")
         turn_messages = messages[start:] if isinstance(start, int) and 0 <= start < len(messages) else messages
-        append_message(messages, {
+        boundary = {
             "role": "assistant", "content": failed_turn_notice(turn_messages), "display_kind": FAILED_TURN_DISPLAY_KIND,
-        })
+        }
+        if failure := _failed_turn_display_metadata(agent, result):
+            boundary["display_metadata"] = failure
+        append_message(messages, boundary)
         agent._flush_messages_to_session_db(messages)
     except Exception:
         logger.debug("failed-turn boundary not written", exc_info=True)

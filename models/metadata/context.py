@@ -1562,7 +1562,7 @@ def _query_local_context_length_uncached(model: str, base_url: str, api_key: str
         "lm-studio": lambda client: _lmstudio_context(client, lmstudio_url, model),
         "llamacpp": lambda client: _llamacpp_context(client, server_url, model),
     }.get(server_type)
-    probes = ([typed] if typed else []) + [_model_detail_ctx, lambda client: _openai_models_list_context(client, server_url, model)]
+    probes = ([typed] if typed else []) + ([_model_detail_ctx] if server_type is not None or model.lower().startswith("claude-") else []) + [lambda client: _openai_models_list_context(client, server_url, model)]
     try:
         with httpx.Client(timeout=3.0, headers=_auth_headers(api_key), verify=_http_verify(base_url)) as client:
             return next((ctx for ctx in (probe(client) for probe in probes) if ctx is not None), None)
@@ -1602,7 +1602,7 @@ def _query_anthropic_context_length(model: str, base_url: str, api_key: Any) -> 
 # Codex OAuth `context_window` values (what Codex enforces — lower than the direct API for the same
 # slugs). Fallback when the live probe fails; longest-key-first. gpt-5.3-codex-spark is listed so "gpt-5.3-codex" doesn't win.
 _CODEX_OAUTH_CONTEXT_FALLBACK: Dict[str, int] = {
-    "gpt-6-astra": 272_000, "gpt-6-sol": 272_000, "gpt-6-luna": 272_000,
+    "gpt-6.1-sol": 272_000, "gpt-6-astra": 272_000, "gpt-6-sol": 272_000, "gpt-6-luna": 272_000,
     "gpt-5.1-codex-max": 272_000, "gpt-5.1-codex-mini": 272_000, "gpt-5.3-codex": 272_000,
     "gpt-5.3-codex-spark": 128_000, "gpt-5.2-codex": 272_000, "gpt-5.4-mini": 272_000,
     "gpt-5.6-sol": 272_000, "gpt-5.6-terra": 272_000, "gpt-5.6-luna": 272_000, "gpt-daybreak-blue-latest": 272_000,
@@ -1617,7 +1617,7 @@ _CODEX_OAUTH_CONTEXT_FALLBACK: Dict[str, int] = {
 # carry the 5.6 verdict forward: they replace Sol/Terra/Luna on the same Codex route, and the live
 # catalog's ``max_context_window`` still caps the bump (#105443) if it publishes a lower ceiling.
 _CODEX_OAUTH_VERIFIED_ABOVE_ADVERTISED_PREFIXES: Dict[str, int] = {
-    "gpt-5.6": 900_000, "gpt-6-sol": 900_000, "gpt-6-luna": 900_000,
+    "gpt-5.6": 900_000, "gpt-6.1-sol": 900_000, "gpt-6-sol": 900_000, "gpt-6-luna": 900_000,
 }
 _CODEX_OAUTH_VERIFIED_ABOVE_ADVERTISED_EXACT: Dict[str, int] = {
     "gpt-5.4": 900_000, "gpt-daybreak-blue-latest": 900_000,
@@ -1627,7 +1627,7 @@ _CODEX_OAUTH_STALE_ADVERTISED_CTX = 272_000  # the only advertised value the bum
 CODEX_CONTEXT_VARIANT_SUFFIX = "-900k"  # picker-only opt-in suffix; never sent on the wire
 # The ONLY bases eligible for ``-900k``: routable, live-verified. No family prefixing (it would synthesize
 # dead ``-pro`` variants); dated snapshots of the 5.6 / gpt-6 tier bases are allowed. gpt-daybreak-blue-latest is a verified Sol alias.
-_CODEX_900K_SNAPSHOT_BASES = ("gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna", "gpt-6-sol", "gpt-6-luna")
+_CODEX_900K_SNAPSHOT_BASES = ("gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna", "gpt-6.1-sol", "gpt-6-sol", "gpt-6-luna")
 _CODEX_900K_ELIGIBLE_BASES = frozenset({*_CODEX_900K_SNAPSHOT_BASES, "gpt-5.4", "gpt-daybreak-blue-latest", "gpt-6-astra"})
 _CODEX_900K_SNAPSHOT_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
@@ -1692,6 +1692,8 @@ _codex_oauth_context_cache: Dict[str, Tuple[Dict[str, int], float]] = {}
 # opted-in ``-900k`` bump reads it (#105443); a catalog without the field leaves the entry empty.
 _codex_oauth_max_context_cache: Dict[str, Dict[str, int]] = {}
 _CODEX_OAUTH_CONTEXT_CACHE_TTL = 3600  # 1 hour
+_CODEX_OAUTH_CONTEXT_NEGATIVE_TTL = 60
+_codex_oauth_negative_cache: Dict[str, float] = {}
 # The Codex models endpoint reads ``client_version`` as a Codex CLI compatibility version and
 # hides models whose ``minimal_client_version`` is newer. "0.0.0" used to be the ungated sentinel
 # returning the whole account catalog, but since the GPT-6 Sol/Luna rollout it returns a FROZEN
@@ -1760,6 +1762,9 @@ def _fetch_codex_oauth_context_lengths_with_source(access_token: str, base_url: 
     cached = _codex_oauth_context_cache.get(cache_key)
     if cached is not None and now - cached[1] < _CODEX_OAUTH_CONTEXT_CACHE_TTL:
         return cached[0], False
+    missed_at = _codex_oauth_negative_cache.get(cache_key)
+    if missed_at is not None and now - missed_at < _CODEX_OAUTH_CONTEXT_NEGATIVE_TTL:
+        return {}, False
     # Without ChatGPT-Account-ID /backend-api/codex/models returns ``{"models":[]}`` (HTTP 200) and
     # the probe silently falls back; residency-enforced workspaces 401 without the residency header.
     account_headers = _context_hook("codex_account_headers")
@@ -1772,9 +1777,11 @@ def _fetch_codex_oauth_context_lengths_with_source(access_token: str, base_url: 
         )
         if status != 200:
             logger.debug("Codex /models probe returned HTTP %s; falling back to hardcoded defaults", status)
+            _codex_oauth_negative_cache[cache_key] = now
             return {}, False
     except Exception as exc:
         logger.debug("Codex /models probe failed: %s", exc)
+        _codex_oauth_negative_cache[cache_key] = now
         return {}, False
     result: Dict[str, int] = {}
     max_result: Dict[str, int] = {}
@@ -1785,8 +1792,11 @@ def _fetch_codex_oauth_context_lengths_with_source(access_token: str, base_url: 
             if isinstance(max_ctx, int) and max_ctx > 0:
                 max_result[slug.strip()] = max_ctx
     if result:
-        _codex_oauth_context_cache[cache_key] = (result, now)
+        _codex_oauth_negative_cache.pop(cache_key, None)
         _codex_oauth_max_context_cache[cache_key] = max_result
+        _codex_oauth_context_cache[cache_key] = (result, now)
+    else:
+        _codex_oauth_negative_cache[cache_key] = now
     return result, True
 
 
@@ -1820,7 +1830,11 @@ def _resolve_codex_oauth_context_length_with_source(model: str, access_token: st
         if slug is not None:
             return _apply_verified_bump(live[slug], "live" if fresh_probe else "memory", live_max.get(slug))
     hit = _longest_key_match(_CODEX_OAUTH_CONTEXT_FALLBACK, lookup_bare.lower())
-    return _apply_verified_bump(hit[1], "fallback") if hit else (None, "")
+    if not hit:
+        return None, ""
+    prior_max = _codex_oauth_max_context_cache.get(_codex_oauth_token_fingerprint(access_token, base_url), {}) if access_token else {}
+    catalog_max = prior_max.get(lookup_bare) or next((cap for key, cap in prior_max.items() if key.lower() == lookup_bare.lower()), None)
+    return _apply_verified_bump(hit[1], "fallback", catalog_max)
 
 
 def _resolve_nous_context_length(model: str, base_url: str = "", api_key: str = "") -> Tuple[Optional[int], str]:
@@ -1985,6 +1999,15 @@ def _resolve_custom_codex_route_context_length(model: str, base_url: str, api_ke
     does not know take the ordinary endpoint probes."""
     ctx, _source = _resolve_codex_oauth_context_length_with_source(model)
     if ctx:
+        if is_codex_context_variant(model) and api_key:
+            # A Codex-shaped proxy's advertised *max* may cap the verified opt-in,
+            # but its base context_window must not override the Codex OAuth table.
+            _fetch_codex_oauth_context_lengths_with_source(api_key, base_url=base_url)
+            limits = _codex_oauth_max_context_cache.get(_codex_oauth_token_fingerprint(api_key, base_url), {})
+            slug = _bare_codex_slug(strip_codex_context_variant_suffix(model))
+            cap = limits.get(slug) or next((v for k, v in limits.items() if k.lower() == slug), None)
+            if cap:
+                ctx = min(ctx, cap)
         logger.info("Using Codex OAuth context length %s for model %r (codex_responses route at %s)", f"{ctx:,}", model, base_url)
         return ctx
     return _resolve_custom_endpoint_context_length(model, base_url, api_key, provider)

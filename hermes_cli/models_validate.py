@@ -150,19 +150,19 @@ def _stock_host(provider: str) -> str:
     overlay when models.dev is cold). A foreign row is not this provider's stock
     endpoint — using it would exempt the real cloud host.
     """
-    from hermes_cli.providers import get_provider
+    from providers import get_provider_profile
     from utils import base_url_hostname
 
     token = _provider_token(provider)
     if not token:
         return ""
     try:
-        pdef = get_provider(token, allow_network=False)
+        profile = get_provider_profile(token)
     except Exception:
         return ""
-    if pdef is None or _provider_token(pdef.id) != token:
+    if profile is None or _provider_token(profile.name) != token:
         return ""
-    return base_url_hostname(pdef.base_url or "")
+    return base_url_hostname(profile.base_url or "")
 
 
 

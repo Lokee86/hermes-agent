@@ -5,6 +5,7 @@ from typing import Any
 
 from agent.portal_tags import get_affinity_scope, get_conversation_context
 from agent.prompt_cache_scope import GROK_AGGREGATOR_MODEL_PREFIXES, is_fork_cache_scope
+from agent.reasoning_effort import codex_supported_efforts
 from agent.transports.codex import _cache_scope_from_session_id
 from providers import register_provider
 from providers.base import ProviderProfile
@@ -88,6 +89,8 @@ class OpenRouterProfile(VendorQualifiedModelIdsMixin, ProviderProfile):
             # A reasoning-mandatory route 400s on a disable ("Reasoning is
             # mandatory for this endpoint and cannot be disabled") — omit
             # the field and let the model think, same as the Nous profile.
+            # OpenRouter's catalog lists ``none`` for openai/gpt-6.1-sol, but upstream 400s on it
+            # (live 2026-09-29), so the OpenAI ladder in agent.reasoning_effort wins over the catalog.
             if disabled:
                 return None if caps.mandatory else cfg
             clamped = clamp_reasoning_effort_to_supported(

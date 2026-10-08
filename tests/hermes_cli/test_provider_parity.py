@@ -63,7 +63,8 @@ def _accounts_tab_providers() -> set[str]:
 
 
 def test_every_hermes_model_provider_is_configurable_in_desktop():
-    """PARITY CONTRACT: GUI (keys ∪ accounts) ⊇ `hermes model` universe."""
+    """PARITY CONTRACT: GUI (keys ∪ accounts) == the `hermes model` universe (listed providers):
+    every listed provider is configurable, and an unlisted pre-release one is on neither tab."""
     gui = _keys_tab_providers() | _accounts_tab_providers()
     missing = [
         descriptor.slug
