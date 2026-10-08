@@ -42,6 +42,7 @@ from plugin_runtime.api import (
     unload_plugins,
 )
 from plugin_runtime.lifecycle import (
+    clear_published_gateway_message_host,
     clear_published_tui_message_host,
     discover_plugins,
     ensure_plugins_discovered as _ensure_plugins_discovered,
@@ -49,6 +50,7 @@ from plugin_runtime.lifecycle import (
     get_plugin_toolset_keys_nowait,
     get_portable_mcp_server_names_nowait,
     has_enabled_agent_plugin_mcp,
+    publish_gateway_message_host,
     publish_tui_message_host,
     start_background_plugin_discovery,
 )
@@ -102,43 +104,3 @@ from plugin_runtime.dispatch import (
     is_valid_system_prompt_section_id,
     resolve_plugin_command_result,
 )
-
-
-# ---- BEGIN PLUGIN-COMPAT (revert-scheduled; see COMPAT_MANIFEST.md) ----
-# Names external plugins imported from this module before the Sep 2026 decomposition.
-# Internal code MUST NOT use these (scripts/check_compat_pointers.py fails CI if it does).
-from typing import Iterable, Type  # noqa: F401,E402
-from contextlib import contextmanager  # noqa: F401,E402
-import contextvars  # noqa: F401,E402
-import copy  # noqa: F401,E402
-import hashlib  # noqa: F401,E402
-import time  # noqa: F401,E402
-from functools import wraps  # noqa: F401,E402
-
-
-_PLUGIN_COMPAT_LAZY = {
-    "CAPABILITY_REGISTRY": ("plugin_runtime.capabilities", "CAPABILITY_REGISTRY"),
-    "ENTRY_POINT_CAPABILITIES_GROUP": ("plugin_runtime.discovery", "ENTRY_POINT_CAPABILITIES_GROUP"),
-    "LEGACY_RELAY_PLUGIN_KEYS": ("plugin_runtime.relay_policy", "LEGACY_RELAY_PLUGIN_KEYS"),
-    "MAX_SYSTEM_PROMPT_SECTIONS": ("plugin_runtime.dispatch", "MAX_SYSTEM_PROMPT_SECTIONS"),
-    "OBSERVER_SCHEMA_VERSION": ("plugin_runtime.dispatch", "OBSERVER_SCHEMA_VERSION"),
-    "VALID_CAPABILITY_IDS": ("plugin_runtime.capabilities", "VALID_CAPABILITY_IDS"),
-    "cfg_get": ("hermes_cli.config", "cfg_get"),
-    "fast_safe_load": ("utils", "fast_safe_load"),
-    "format_system_prompt_section": ("plugin_runtime.dispatch", "format_system_prompt_section"),
-    "reset_hermes_home_override": ("hermes_constants", "reset_hermes_home_override"),
-    "set_hermes_home_override": ("hermes_constants", "set_hermes_home_override"),
-}
-
-
-def __getattr__(name):  # PEP 562 — lazy so no import cycles
-    target = _PLUGIN_COMPAT_LAZY.get(name)
-    if target is None:
-        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
-    import importlib
-
-    from plugin_runtime.compat import warn_once
-
-    warn_once(__name__, name, *target)
-    return getattr(importlib.import_module(target[0]), target[1])
-# ---- END PLUGIN-COMPAT ----

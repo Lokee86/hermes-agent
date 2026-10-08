@@ -54,15 +54,8 @@ def test_first_party_discovery_consumers_use_runtime_owner():
     assert violations == []
 
 
-def test_compat_manifest_points_discovery_export_at_runtime_owner():
-    manifest = json.loads(COMPAT_MANIFEST.read_text(encoding="utf-8"))
-    entry = next(
-        item for item in manifest["entries"]
-        if item.get("facade") == "hermes_cli.plugins"
-        and item.get("name") == "ENTRY_POINT_CAPABILITIES_GROUP"
-    )
-
-    assert entry["target"] == "plugin_runtime.discovery"
+def test_scheduled_compat_manifest_remains_removed():
+    assert not COMPAT_MANIFEST.exists()
 
 
 def test_primary_discovery_consumers_bind_canonical_runtime_exports():
@@ -169,6 +162,11 @@ def test_plugin_manager_supplies_cli_owned_catalog_lookup(monkeypatch):
         return Removed()
 
     monkeypatch.setattr(plugins_cmd_catalog, "installed_plugin_removal", lookup)
+    # Other host-binding tests deliberately clear the process-wide registry; rebind this
+    # CLI-owned callback explicitly so this test is order-independent.
+    plugins_cmd_catalog._bind_plugin_host(
+        installed_plugin_removal=plugins_cmd_catalog.installed_plugin_removal,
+    )
     manager = PluginManager()
     manifest = PluginManifest(name="fixture", key="fixture", source="user", path="/fixture")
 

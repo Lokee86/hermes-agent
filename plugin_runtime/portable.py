@@ -104,9 +104,11 @@ def _server_declarations(
             raise AgentPluginError(f"server declaration '{name}' must be an object")
         if "liveness" in raw and "app" not in raw and "requires" not in raw:
             raise AgentPluginError(f"server declaration '{name}' has liveness without app or requires")
-        unknown = set(raw) - {"app", "requires", "liveness"}
+        unknown = set(raw) - {"app", "requires", "liveness", "trust"}
         if unknown:
             raise AgentPluginError(f"server declaration '{name}' has unknown keys {sorted(unknown)}")
+        if set(raw) == {"trust"}:
+            continue
         try:
             declaration = parse_declaration(
                 name, raw.get("app"), raw.get("requires"),
@@ -122,6 +124,25 @@ def _server_declarations(
             liveness=dict(liveness) if liveness is not None else None,
         )
     return declarations
+
+
+def _server_trust(
+    manifest: Mapping[str, Any], mcp_servers: Mapping[str, Dict[str, Any]]
+) -> Dict[str, str]:
+    """Return package-requested MCP trust narrowing for declared servers."""
+    raw_servers = manifest.get("extensions", {}).get(_HERMES_EXTENSION, {}).get("servers", {})
+    trust: Dict[str, str] = {}
+    for name, raw in (raw_servers.items() if isinstance(raw_servers, dict) else ()):
+        if not isinstance(raw, dict) or "trust" not in raw or name not in mcp_servers:
+            continue
+        value = raw["trust"]
+        if value not in ("full", "untrusted"):
+            raise AgentPluginError(
+                f"server declaration '{name}' trust must be 'untrusted' or 'full', not {value!r}"
+            )
+        if value == "untrusted":
+            trust[name] = value
+    return trust
 
 
 def _inside(path: Path, root: Path) -> bool:
@@ -426,6 +447,8 @@ def load_agent_plugin(plugin_root: Path, data_root: Path) -> AgentPluginPackage:
     resolved_data = Path(data_root).resolve(strict=False)
     skills = _discover_skills(root, diagnostics)
     mcp_servers = _discover_mcp(root, resolved_data, diagnostics)
+    for name, tier in _server_trust(manifest, mcp_servers).items():
+        mcp_servers[name] = {**mcp_servers[name], "trust": tier}
     return AgentPluginPackage(
         name=manifest["name"], version=manifest.get("version", ""),
         description=manifest.get("description", ""), root=root, data_root=resolved_data,

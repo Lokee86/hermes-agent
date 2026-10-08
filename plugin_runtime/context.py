@@ -235,6 +235,34 @@ class PluginContext:
         except (OSError, RuntimeError, ValueError):
             return "custom"
 
+    @property
+    def profile_home(self) -> str:
+        """Resolved HERMES_HOME for this plugin's immutable manager scope."""
+        return str(self._manager.home_path.resolve())
+
+    def resolve_profile_home(self, name: str) -> str:
+        """Resolve a profile id through the host-owned profile path policy."""
+        callback = get_plugin_host_callback("profile_home")
+        if callback is None:
+            if name == self.profile_name:
+                return self.profile_home
+            raise RuntimeError("profile path host is unavailable")
+        return str(Path(callback(name)).resolve())
+
+    def validate_profile_name(self, name: str) -> None:
+        """Validate a profile id through the host-owned canonical policy."""
+        callback = get_plugin_host_callback("validate_profile_name")
+        if callback is None:
+            raise RuntimeError("profile validation host is unavailable")
+        callback(name)
+
+    def settled_served_profiles(self) -> tuple[str, ...]:
+        """Profiles the live Gateway has actually settled, never the desired discovery roster."""
+        callback = get_plugin_host_callback("settled_served_profiles")
+        if callback is None:
+            return ()
+        return tuple(str(name) for name in (callback() or ()) if name)
+
     def on_unload(self, callback: Callable[[], None]) -> PluginRegistration:
         """Register a cleanup callback for unload: runs in reverse acquisition order interleaved
         with registration teardown; exceptions are logged, never propagated."""

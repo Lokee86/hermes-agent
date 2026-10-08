@@ -12,7 +12,6 @@ from typing import Any, Callable, Dict, List, Mapping, Optional, Set, Tuple
 
 from hermes_constants import get_hermes_home, hermes_home_key
 from plugin_runtime.activation import activation_summaries
-from plugin_runtime import compat as plugin_compat
 from plugin_runtime.config_bridge import load_plugin_config
 from plugin_runtime.context import PluginContext
 from plugin_runtime.discovery import (
@@ -129,8 +128,8 @@ class PluginManager(PluginLoaderMixin, PluginDispatchMixin, PluginOwnershipMixin
 
     @staticmethod
     def _plugin_load_disable_reason(manifest: PluginManifest) -> Optional[str]:
-        """Apply runtime-owned plugin compatibility policy."""
-        return plugin_compat.disable_reason(manifest)
+        """No scheduled pre-decomposition import-path gate remains after 2026-09-14."""
+        return None
 
     def on_plugin_loaded(self, callback: Callable[[List[Dict[str, Any]]], Any]) -> Callable[[], None]:
         """Subscribe to discovery sweeps that load plugins this process did not already have."""
@@ -331,19 +330,6 @@ class PluginManager(PluginLoaderMixin, PluginDispatchMixin, PluginOwnershipMixin
         if manifests:
             logger.info("Plugin discovery complete: %d found, %d enabled", len(self._plugins),
                         sum(1 for p in self._plugins.values() if p.enabled))
-        self._refresh_plugin_compat_report(list(to_load.values()))
-
-    def _refresh_plugin_compat_report(self, manifests: List[PluginManifest]) -> None:
-        """Refresh HERMES_HOME/.plugin-compat-report.json from this discovery pass.
-
-        The Desktop boot modal has no Python runtime of its own and reads that file after the ``serve``
-        backend is up, so the scan must run wherever plugins are discovered — not only under the CLI
-        banner / doctor / update, which never run inside the Desktop's backend. Fail-open: never raises.
-        """
-        try:
-            plugin_compat.compat_report(manifests, force=True)
-        except Exception as exc:
-            logger.debug("plugin compat report refresh skipped: %s", exc)
 
     def _gate_manifest(
         self, manifest: PluginManifest, disabled: Set[str], enabled: Optional[Set[str]],
