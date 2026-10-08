@@ -1,10 +1,18 @@
 """Classic terminal presentation of authority events and fenced controls."""
 import asyncio
 from contextlib import suppress
+import logging
 import sys
 import uuid
 
 from hermes_cli.gateway_client import GatewayClientError
+
+logger = logging.getLogger(__name__)
+
+
+_BLOCKING_CONTROL_EVENTS = frozenset({
+    "approval.request", "approval.settled", "clarify.request", "clarify.settled",
+})
 
 
 class GatewayChatView:
@@ -71,10 +79,17 @@ class GatewayChatView:
                 self.changed.set()
                 return
             admission = params.get("admission_id") or payload.get("admission_id")
+            if self.finite and kind in _BLOCKING_CONTROL_EVENTS:
+                # Approval/clarification gates block the session FIFO, not merely one
+                # admission's output. Track them even when another admission owns the
+                # event so a queued one-shot can detach instead of waiting forever.
+                self._dispatch_event(kind, admission, payload)
+                self.changed.set()
+                continue
             if self.finite and admission:
                 if self.finite_admission is None:
                     # The owner can publish before prompt.submit's receipt reaches this client.
-                    # Hold admission-scoped events until we know which admission this invocation owns.
+                    # Hold admission-scoped output until we know which admission this invocation owns.
                     self._finite_events.append((kind, admission, payload))
                     continue
                 if admission != self.finite_admission:
@@ -145,7 +160,10 @@ class GatewayChatView:
 
     def _request(self, admission, payload):
         self.prompts[payload["prompt_id"]] = payload
-        self.show_prompt(payload)
+        # Finite invocations only need the session-blocking state so they can
+        # detach cleanly; do not print another admission's control details.
+        if not self.finite:
+            self.show_prompt(payload)
 
     def _settled(self, admission, payload):
         self.prompts.pop(payload["prompt_id"], None)
@@ -202,8 +220,17 @@ class GatewayChatView:
             self.mutations.acknowledge(original, operation, payload)
             print(f"{operation}: {target}")
             return True
+        if command == "/yolo":
+            # This session's approval bypass on the owner (same verb as the TUI's /yolo and Desktop).
+            word = rest.strip().lower()
+            if word not in {"", "on", "off"}:
+                raise GatewayClientError("Usage: /yolo [on|off]")
+            result = await self.client.rpc("config.set", session_id=self.session_id, key="yolo",
+                                           **({"value": "1" if word == "on" else "0"} if word else {}))
+            print(f"YOLO {'on' if result.get('value') == '1' else 'off'} for this session")
+            return True
         if command == "/help":
-            print("/stop, /approve <id> <choice>, /answer <id> <text>, /discard <admission_id> (turn lost during restart), /quit (detach). /branch [title], /model <model> [--provider name], /compress [here [N] | <focus>] [--preview].")
+            print("/stop, /approve <id> <choice>, /answer <id> <text>, /discard <admission_id> (turn lost during restart), /yolo [on|off], /quit (detach). /branch [title], /model <model> [--provider name], /compress [here [N] | <focus>] [--preview].")
             return True
         raise GatewayClientError("Unsupported gateway CLI command; use /help. No local command was run.")
 
@@ -219,14 +246,18 @@ class GatewayChatView:
     async def _write_usage_file(self, admission, outcome):
         """``-z --usage-file``: the same JSON ledger the in-process one-shot wrote, read from the
         result the owner committed with this admission's settlement (best-effort, never raises)."""
+        from websockets.exceptions import WebSocketException
         from hermes_cli.oneshot import _write_usage_file
         result = {}
         try:
             receipt = await self.client.rpc("prompt.receipt", session_id=self.session_id,
                                             admission_id=admission, include_result=True)
             result = dict(receipt.get("result") or {})
-        except Exception:
-            pass
+        # Transport loss / refusal, or a receipt whose ``result`` is not a mapping.
+        except (GatewayClientError, OSError, TimeoutError, WebSocketException,
+                AttributeError, TypeError, ValueError) as exc:
+            # The ledger is still written from the outcome alone; a missing receipt is not fatal.
+            logger.debug("usage-file receipt for %s unavailable: %s", admission, exc)
         result.setdefault("session_id", self.session_id)
         failure = None if outcome in ("completed", "cancelled") else (result.get("error") or outcome or "failed")
         _write_usage_file(self.usage_file, result, failure=failure)

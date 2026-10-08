@@ -47,7 +47,10 @@ def _invalid_profile_name_error(name: str) -> ValueError:
 
 def normalize_profile_name(name: str) -> str:
     if not isinstance(name, str):
-        name = str(name)
+        raise ValueError(
+            "profile name must be a string, got "
+            f"{type(name).__name__}: {name!r}"
+        )
     stripped = name.strip()
     if not stripped:
         raise ValueError("profile name cannot be empty")
