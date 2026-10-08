@@ -530,6 +530,7 @@ class TestRestartWaitsForApiServerPort:
     """Regression for #91547: ``hermes gateway restart`` waited only for the old PID; on macOS the
     replacement then hit EADDRINUSE and ran with no API server."""
 
+    @pytest.mark.skipif(sys.platform == "win32", reason="Winsock listener closure is not a deterministic accept-probe fixture")
     def test_port_is_reported_free_once_the_old_listener_closes(self):
         import socket
         import threading
@@ -541,6 +542,22 @@ class TestRestartWaitsForApiServerPort:
         threading.Timer(0.3, listener.close).start()
 
         assert gateway._wait_for_tcp_port_free("127.0.0.1", port, timeout=5.0) is True
+
+    def test_port_probe_retries_until_connection_refused(self, monkeypatch):
+        from contextlib import nullcontext
+
+        attempts = []
+
+        def connect(address, timeout):
+            attempts.append((address, timeout))
+            if len(attempts) < 3:
+                return nullcontext()
+            raise ConnectionRefusedError("listener closed")
+
+        monkeypatch.setattr("gateway.restart.socket.create_connection", connect)
+        monkeypatch.setattr("gateway.restart.time.sleep", lambda _: None)
+        assert gateway._wait_for_tcp_port_free("127.0.0.1", 7777, timeout=5.0) is True
+        assert attempts == [(("127.0.0.1", 7777), 0.2)] * 3
 
     def test_wait_targets_the_configured_api_server_port_only_when_enabled(self, monkeypatch):
         import socket
@@ -659,6 +676,9 @@ class TestStopProfileGateway:
         assert calls == [(pid, True, 100)]
 
     def test_stop_profile_gateway_keeps_pid_file_when_process_still_running(self, monkeypatch):
+        # This test asserts the POSIX SIGTERM branch; Windows uses drain IPC
+        # followed by identity-guarded taskkill instead of os.kill.
+        monkeypatch.setattr(gateway, "is_windows", lambda: False)
         calls = {"kill": 0, "alive_probes": 0, "remove": 0, "reap_calls": 0}
 
         monkeypatch.setattr("gateway.status.get_running_pid", lambda: 12345)
