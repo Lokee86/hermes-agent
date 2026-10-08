@@ -1004,7 +1004,7 @@ class _ProviderAuthResolutionError(RuntimeError):
     def is_rate_limited(self) -> bool:
         """A quota/429 cap with valid credentials must not be labelled an authentication
         failure — the cause chain (RuntimeError -> AuthError) tells them apart (#89401)."""
-        from hermes_cli.auth import is_rate_limited_auth_error
+        from auth.failure_policy import is_rate_limited_auth_error
 
         cause = self.__cause__
         cause = getattr(cause, "__cause__", None) if isinstance(cause, RuntimeError) else cause

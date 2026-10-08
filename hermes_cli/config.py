@@ -2628,7 +2628,7 @@ def _env_write_lock(env_path: Path):
     On a filesystem without flock the helper degrades to a depth-only guard
     (same behavior as auth's locks), never to a crash.
     """
-    from hermes_cli.auth import _file_lock
+    from auth.store import _file_lock
 
     with _file_lock(
         env_path.with_name(env_path.name + ".lock"),

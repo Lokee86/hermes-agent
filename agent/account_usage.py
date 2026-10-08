@@ -501,7 +501,7 @@ def _codex_snapshot_identity(token: str) -> Optional[str]:
     """Trusted per-account identity of a Codex credential: the decoded JWT principal
     (``chatgpt_account_id`` + ``sub``), never the token itself. Two credentials for one
     workspace member share it, so pool accounts are counted once, honestly."""
-    from agent.credential_pool import _codex_principal_identity
+    from auth.credential_pool import _codex_principal_identity
 
     principal = _codex_principal_identity(token)
     return f"codex:{principal[0]}:{principal[1]}" if principal else None

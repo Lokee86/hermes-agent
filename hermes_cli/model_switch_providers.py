@@ -179,7 +179,7 @@ def _credential_pool_is_usable(provider: str, *, raw_pool_present: bool = False,
     one, and limits are per-model for many providers, so another model may still work."""
     try:
         from auth.credential_pool import load_pool
-        pool = load_pool(provider, environment=credential_pool_environment())
+        pool = load_pool(provider, environment=_phase6_auth_environment())
         if pool.has_credentials():
             return for_picker or pool.has_available()
     except Exception:

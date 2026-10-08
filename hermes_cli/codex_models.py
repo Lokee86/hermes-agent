@@ -129,7 +129,7 @@ def codex_catalog_credential_identity() -> str:
         return "missing"
     if _codex_access_token_is_expiring(token, 0):
         return "expired\n" + route
-    from agent.credential_pool import _codex_principal_identity
+    from auth.credential_pool import _codex_principal_identity
 
     principal = _codex_principal_identity(token)
     return ("/".join(principal) if principal else token) + "\n" + route

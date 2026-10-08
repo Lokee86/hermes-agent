@@ -113,7 +113,7 @@ class CredentialPoolModelCooldownMixin:
         ends. Entitlement benches (a year: the plan lacks the model) aren't windows that reset, so
         they're left out. Read-only: never clears or persists a cooldown.
         """
-        from agent.credential_pool import STATUS_DEAD, _exhausted_until
+        from auth.credential_pool import STATUS_DEAD, _exhausted_until
 
         now = time.time()
         with self._lock:

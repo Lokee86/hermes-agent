@@ -255,7 +255,8 @@ class CLIAgentSetupMixin:
             if runtime is not None:
                 _primary_exc = None
         if runtime is None:
-            from hermes_cli.auth import AuthError, is_rate_limited_auth_error
+            from hermes_cli.auth import AuthError
+            from auth.failure_policy import is_rate_limited_auth_error
             self._credentials_rate_limited = bool(_primary_exc) and is_rate_limited_auth_error(_primary_exc)
             # Only an explicit re-authentication requirement is terminal. Unknown
             # resolver/network failures must not acquire the sticky Kanban block.

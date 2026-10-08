@@ -39,7 +39,7 @@ def _read() -> Dict[str, Any]:
 
 @contextmanager
 def _transaction() -> Iterator[tuple[Dict[str, Any], Any]]:
-    from hermes_cli.auth import _file_lock
+    from auth.store import _file_lock
     from utils import atomic_write_text
     path = _path()
     with _file_lock(path.with_suffix(".lock"), _LOCK, 5.0, f"Timed out waiting for the sign-in offer record ({path})"):
