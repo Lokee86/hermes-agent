@@ -87,7 +87,7 @@ def provider_names() -> frozenset[str]:
     bundled = {p.name.lower() for p in bundled_root.iterdir()
                if p.is_dir() and (p / "plugin.yaml").is_file()} if bundled_root.is_dir() else set()
     return frozenset(set(PROVIDER_PICKER_ORDER) | bundled | {
-        "openrouter", "custom", "ollama", "local", "vllm", "llamacpp", "llama.cpp", "azure", "lm-studio", "lm_studio",
+        "openrouter", "openai", "anthropic", "gemini", "xai", "custom", "ollama", "local", "vllm", "llamacpp", "llama.cpp", "azure", "lm-studio", "lm_studio",
     })
 
 

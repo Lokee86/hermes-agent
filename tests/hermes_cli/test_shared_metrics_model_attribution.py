@@ -207,7 +207,7 @@ def test_tui_switch_before_first_prompt_blames_the_configured_route(
     result = SimpleNamespace(
         success=True, new_model="gpt-5.4", target_provider="openai", base_url="https://api.openai.com/v1",
         api_key="k", api_mode="chat_completions", warning_message="", error_message="")
-    monkeypatch.setattr("hermes_cli.model_switch.switch_model", lambda **kw: result)
+    monkeypatch.setattr("tui_gateway.model_switch_resolution.resolve_tui_model_switch", lambda **kw: result)
     server._apply_model_switch("", {"agent": None}, "gpt-5.4 --provider openai", confirm_expensive_model=True)
     _flush()
 
