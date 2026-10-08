@@ -30,6 +30,10 @@ _plugin_manager: Optional[PluginManager] = None
 _plugin_managers_by_home: dict[Path, PluginManager] = {}
 _plugin_managers_lock = threading.RLock()
 
+# Process-wide messaging-gateway host, stamped onto every profile manager.
+_published_gateway_message_injector: tuple[object, Callable[..., bool]] | None = None
+_published_gateway_host_lock = threading.Lock()
+
 # Process-wide Ink TUI / desktop host, stamped onto every profile manager.
 _published_tui_message_injector: tuple[object, Callable, Optional[Callable]] | None = None
 _published_tui_host_lock = threading.Lock()
@@ -67,6 +71,38 @@ def _known_plugin_managers() -> list[PluginManager]:
         if _plugin_manager is not None and _plugin_manager not in managers:
             managers.append(_plugin_manager)
     return managers
+
+
+def publish_gateway_message_host(
+    owner: object,
+    injector: Callable[..., bool],
+) -> None:
+    """Publish the process messaging-gateway host and stamp managers that already exist."""
+    global _published_gateway_message_injector
+    with _published_gateway_host_lock:
+        _published_gateway_message_injector = (owner, injector)
+        for manager in _known_plugin_managers():
+            manager.set_gateway_message_injector(owner, injector)
+
+
+def clear_published_gateway_message_host(owner: object) -> None:
+    """Clear the process gateway host only when still owned by the supplied owner."""
+    global _published_gateway_message_injector
+    with _published_gateway_host_lock:
+        if (
+            _published_gateway_message_injector is not None
+            and _published_gateway_message_injector[0] is owner
+        ):
+            _published_gateway_message_injector = None
+        for manager in _known_plugin_managers():
+            manager.clear_gateway_message_injector(owner)
+
+
+def _attach_published_gateway_host(manager: PluginManager) -> None:
+    with _published_gateway_host_lock:
+        host = _published_gateway_message_injector
+        if host is not None and manager._gateway_message_injector is None:
+            manager.set_gateway_message_injector(*host)
 
 
 def publish_tui_message_host(
@@ -127,13 +163,14 @@ def get_plugin_manager() -> PluginManager:
                 manager = PluginManager(scope_key=hermes_home_key(current_home))
                 _plugin_managers_by_home[current_home] = manager
             _plugin_manager = manager
+    _attach_published_gateway_host(manager)
     _attach_published_tui_host(manager)
     return manager
 
 
 def reset_plugin_managers_for_tests() -> None:
     """Drop cached managers, owned plugin modules, and process-global host state."""
-    global _plugin_manager, _published_tui_message_injector
+    global _plugin_manager, _published_gateway_message_injector, _published_tui_message_injector
     with _plugin_managers_lock:
         managers = list(dict.fromkeys(_plugin_managers_by_home.values()))
         if _plugin_manager is not None and _plugin_manager not in managers:
@@ -146,6 +183,8 @@ def reset_plugin_managers_for_tests() -> None:
                 logger.debug("test plugin-manager unload failed", exc_info=True)
         _plugin_managers_by_home.clear()
         _plugin_manager = None
+    with _published_gateway_host_lock:
+        _published_gateway_message_injector = None
     with _published_tui_host_lock:
         _published_tui_message_injector = None
 

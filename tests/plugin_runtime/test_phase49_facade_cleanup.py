@@ -17,7 +17,7 @@ def _tree(path: Path) -> ast.Module:
     return ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
 
 
-def test_cli_plugin_facade_defines_only_lazy_compat_behavior() -> None:
+def test_cli_plugin_facade_is_static_reexports_only() -> None:
     tree = _tree(FACADE)
 
     functions = {
@@ -39,9 +39,9 @@ def test_cli_plugin_facade_defines_only_lazy_compat_behavior() -> None:
         if isinstance(node, ast.Expr) and isinstance(node.value, ast.Call)
     ]
 
-    assert functions == {"__getattr__"}
+    assert functions == set()
     assert classes == set()
-    assert assigned == {"_PLUGIN_COMPAT_LAZY"}
+    assert assigned == set()
     assert top_level_calls == []
 
 

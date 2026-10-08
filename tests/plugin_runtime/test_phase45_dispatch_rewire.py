@@ -86,21 +86,5 @@ def test_runtime_is_the_only_first_party_dispatch_mixin_owner():
     assert owners == ["plugin_runtime/dispatch.py"]
 
 
-def test_compat_manifest_targets_runtime_dispatch():
-    manifest = json.loads((ROOT / "compat_manifest.json").read_text(encoding="utf-8"))
-    targets = {
-        entry["name"]: entry["target"]
-        for entry in manifest["entries"]
-        if entry.get("facade") == "hermes_cli.plugins"
-        and entry.get("name") in {
-            "MAX_SYSTEM_PROMPT_SECTIONS",
-            "OBSERVER_SCHEMA_VERSION",
-            "format_system_prompt_section",
-        }
-    }
-
-    assert targets == {
-        "MAX_SYSTEM_PROMPT_SECTIONS": "plugin_runtime.dispatch",
-        "OBSERVER_SCHEMA_VERSION": "plugin_runtime.dispatch",
-        "format_system_prompt_section": "plugin_runtime.dispatch",
-    }
+def test_scheduled_dispatch_compat_manifest_remains_removed():
+    assert not (ROOT / "compat_manifest.json").exists()

@@ -235,6 +235,40 @@ class PluginContext:
         except (OSError, RuntimeError, ValueError):
             return "custom"
 
+    @property
+    def profile_home(self) -> str:
+        """Resolved HERMES_HOME for this plugin's immutable manager scope."""
+        return str(self._manager.home_path.resolve())
+
+    def resolve_profile_home(self, name: str) -> str:
+        """Resolve a profile id through the host-owned profile path policy."""
+        callback = get_plugin_host_callback("profile_home")
+        if callback is None:
+            if name == self.profile_name:
+                return self.profile_home
+            raise RuntimeError("profile path host is unavailable")
+        return str(Path(callback(name)).resolve())
+
+    def validate_profile_name(self, name: str) -> None:
+        """Validate a profile id through the host-owned canonical policy."""
+        callback = get_plugin_host_callback("validate_profile_name")
+        if callback is None:
+            raise RuntimeError("profile validation host is unavailable")
+        callback(name)
+
+    def settled_served_profiles(self) -> tuple[str, ...]:
+        """Profiles the live Gateway has actually settled, never the desired discovery roster."""
+        callback = get_plugin_host_callback("settled_served_profiles")
+        if callback is None:
+            return ()
+        return tuple(str(name) for name in (callback() or ()) if name)
+
+    def current_cron_execution(self) -> Any:
+        """The cron execution active in this context, else None."""
+        from cron.execution_identity import current_cron_execution
+
+        return current_cron_execution()
+
     def on_unload(self, callback: Callable[[], None]) -> PluginRegistration:
         """Register a cleanup callback for unload: runs in reverse acquisition order interleaved
         with registration teardown; exceptions are logged, never propagated."""
@@ -422,6 +456,7 @@ class PluginContext:
     # manager's home, never the active profile's (#65593 constraint).
     def inject_message(
         self, content: str, role: str = "user", *, session_key: str | None = None,
+        origin: Mapping[str, Any] | None = None,
     ) -> bool:
         """Inject a message into a CLI, Ink TUI/desktop, or messaging-gateway conversation.
 
@@ -433,12 +468,18 @@ class PluginContext:
         """
         cli = self._manager._cli_ref
         msg = content if role == "user" else f"[{role}] {content}"
-        if cli is not None:
+        if cli is not None and origin is None:
             queue_ = cli._interrupt_queue if getattr(cli, "_agent_running", False) else cli._pending_input
             queue_.put(msg)
             return True
-        if not session_key:
-            logger.warning("inject_message: gateway mode requires an existing session_key")
+        if session_key and origin is not None:
+            logger.warning("inject_message: pass session_key or origin, not both")
+            return False
+        if not session_key and origin is None:
+            logger.warning("inject_message: gateway mode requires an existing session_key or an origin")
+            return False
+        if origin is not None and not isinstance(origin, Mapping):
+            logger.warning("inject_message: origin must be a mapping in the SessionSource.to_dict() shape")
             return False
         if not self._gateway_injection_allowed():
             logger.warning("inject_message: gateway injection denied for plugin %s; set "
@@ -449,7 +490,7 @@ class PluginContext:
         # session_key; a miss falls through so a co-resident messaging gateway
         # still receives its own keys. An exception fails closed — do not also
         # hand the same text to the gateway.
-        if self._manager.has_tui_message_injector:
+        if session_key and self._manager.has_tui_message_injector:
             try:
                 if self._manager.inject_tui_message(
                     session_key=session_key, content=msg, plugin_id=self.plugin_id,
@@ -462,9 +503,14 @@ class PluginContext:
         if not self._manager.has_gateway_message_injector:
             logger.warning("inject_message: no live gateway is available")
             return False
+        target: Dict[str, Any]
+        if origin is None:
+            target = {"session_key": session_key}
+        else:
+            target = {"origin": dict(origin), "plugin_home": self._manager.home_path}
         try:
             return bool(self._manager.inject_gateway_message(
-                session_key=session_key, content=msg, plugin_id=self.plugin_id,
+                **target, content=msg, plugin_id=self.plugin_id,
             ))
         except Exception:
             logger.warning("inject_message: gateway scheduling failed for plugin %s", self.plugin_id,
@@ -636,6 +682,17 @@ class PluginContext:
         ``check_fn`` is False). Extra kwargs (``setup_fn``, ``emoji``, ``allowed_users_env``,
         ``platform_hint``, ``ensure_deps_fn``) forward to ``PlatformEntry``; unknown keys raise TypeError."""
         from plugin_runtime.platform_registry import platform_registry, PlatformEntry
+        if entry_kwargs.get("trusted_inbound") and self.manifest.source != "bundled":
+            core_predicate = get_plugin_host_callback("core_ships_platform")
+            if core_predicate is None:
+                raise self._refuse(
+                    f"platform '{name}' with trusted_inbound while core platform identity is unavailable"
+                )
+            if core_predicate(name):
+                raise self._refuse(
+                    f"core platform '{name}' with trusted_inbound "
+                    "(it would waive allowlists and pairing)"
+                )
         entry_kwargs.setdefault("plugin_name", self.manifest.name)
         entry = PlatformEntry(
             name=name, label=label, adapter_factory=adapter_factory, check_fn=check_fn,
@@ -702,6 +759,7 @@ class PluginContext:
     def register_auxiliary_task(
         self, key: str, *, display_name: str, description: str,
         defaults: Optional[Dict[str, Any]] = None,
+        inherit_from: Optional[str] = None,
     ) -> PluginRegistration:
         """Register an auxiliary LLM task with its own ``auxiliary.<key>`` config block (picker entry,
         ``AUXILIARY_<KEY>_*`` env bridge, defaults merged into loaded configs). ``defaults`` may
@@ -724,11 +782,31 @@ class PluginContext:
         if existing is not None and existing.get("plugin") != owner_id:
             raise ValueError(f"Plugin '{me}' cannot register auxiliary task {key!r} — already registered "
                              f"by plugin '{existing.get('plugin')}'")
+        # Invalid inheritance degrades to no inheritance; registration itself remains usable.
+        if inherit_from is not None and (
+            not isinstance(inherit_from, str)
+            or inherit_from == key
+            or (inherit_from not in reserved and inherit_from not in self._manager._aux_tasks)
+        ):
+            logger.warning(
+                "Plugin '%s' auxiliary task %r: ignoring inherit_from=%r — not a built-in "
+                "auxiliary task or one already registered by a plugin",
+                me, key, inherit_from,
+            )
+            inherit_from = None
+        task_defaults = (
+            dict(defaults or {})
+            if inherit_from
+            else {
+                "provider": "auto", "model": "", "base_url": "", "api_key": "",
+                "timeout": 60, "extra_body": {}, **(defaults or {}),
+            }
+        )
         # Plugin owns the schema; routing fields are guaranteed present so consumers don't crash.
         entry = {
             "key": key, "display_name": display_name, "description": description,
-            "defaults": {"provider": "auto", "model": "", "base_url": "", "api_key": "", "timeout": 60,
-                         "extra_body": {}, **(defaults or {})},
+            "defaults": task_defaults,
+            "inherit_from": inherit_from,
             "plugin": owner_id, "plugin_key": owner_id,
         }
         return self._register_entry("auxiliary_task", key, self._manager._aux_tasks, entry,
@@ -830,6 +908,84 @@ class PluginContext:
         logger.debug("Plugin %s subscribed to event: %s", self.manifest.name, event)
 
     @_serialized_replacement
+    def register_locale(
+        self, lang: str, source: Union[str, Path, Mapping[str, Any]], *, endonym: Optional[str] = None,
+        rtl: bool = False, surface: str = "core",
+    ) -> PluginRegistration:
+        """Register a language-pack layer for one surface."""
+        from agent.i18n_layers import (
+            SURFACES, is_language_id, load_locale_source, normalize_language_id, register_pack, unregister_pack,
+        )
+
+        lang_id = normalize_language_id(lang)
+        if not is_language_id(lang_id):
+            raise self._refuse(f"locale with invalid language id {lang!r} (expected e.g. 'pl', 'pt-br')")
+        if surface not in SURFACES:
+            raise self._refuse(
+                f"locale {lang_id!r} for unknown surface {surface!r} (one of {', '.join(SURFACES)})"
+            )
+        messages = load_locale_source(source)
+        entry = register_pack(
+            lang_id, surface, messages, source=f"plugin:{self.manifest.name}",
+            endonym=endonym, rtl=rtl,
+        )
+        handle = self._track("locale", f"{lang_id}.{surface}", lambda: unregister_pack(entry))
+        logger.debug(
+            "Plugin %s registered locale: %s/%s (%d keys)",
+            self.manifest.name, lang_id, surface, len(messages),
+        )
+        return handle
+
+    def register_locale_dir(
+        self, path: Union[str, Path], *, metadata: Optional[Mapping[str, Mapping[str, Any]]] = None,
+    ) -> List[PluginRegistration]:
+        """Register all language-pack files under a plugin locales directory."""
+        from agent.i18n_layers import scan_locale_dir
+
+        handles: List[PluginRegistration] = []
+        for lang_id, surface, file in scan_locale_dir(Path(path)):
+            meta = dict((metadata or {}).get(lang_id) or {})
+            try:
+                handles.append(self.register_locale(
+                    lang_id, file, surface=surface, endonym=meta.get("endonym"),
+                    rtl=bool(meta.get("rtl", False)),
+                ))
+            except Exception as exc:
+                logger.warning("Plugin '%s' locale file %s skipped: %s", self.manifest.name, file, exc)
+        return handles
+
+    def register_automation_blueprint(
+        self, key: str, *, title: str, description: str, schedule_template: str,
+        prompt_template: str, category: str = "general", slots=(),
+        deliver_default: str = "origin", skills=(), tags=(),
+    ) -> Optional[PluginRegistration]:
+        """Add an Automation Blueprint to this profile's plugin catalog."""
+        from cron.blueprint_plugins import build_plugin_blueprint
+
+        try:
+            blueprint = build_plugin_blueprint(
+                self.manifest.name, key, title=title, description=description,
+                schedule_template=schedule_template, prompt_template=prompt_template,
+                category=category, slots=slots, deliver_default=deliver_default,
+                skills=skills, tags=tags,
+            )
+        except ValueError as exc:
+            logger.warning(
+                "Plugin '%s' automation blueprint %r rejected: %s",
+                self.manifest.name, key, exc,
+            )
+            return None
+        if blueprint.key in self._manager._automation_blueprints:
+            logger.warning(
+                "Plugin '%s' automation blueprint %r is already registered",
+                self.manifest.name, blueprint.key,
+            )
+            return None
+        return self._register_entry(
+            "automation_blueprint", blueprint.key, self._manager._automation_blueprints,
+            blueprint, "Plugin %s registered automation blueprint: %s", blueprint.key,
+        )
+
     def register_skill(
         self, name: str, path: Path, description: str = "",
         frontmatter: Optional[Mapping[str, Any]] = None,

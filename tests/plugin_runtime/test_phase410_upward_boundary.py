@@ -28,18 +28,9 @@ def test_plugin_runtime_has_no_direct_cli_imports_outside_config_bridge() -> Non
     assert violations == []
 
 
-def test_compat_policy_uses_the_config_bridge(monkeypatch) -> None:
-    import plugin_runtime.compat as compat
-
-    seen = []
-    monkeypatch.setattr(
-        compat,
-        "load_plugin_config_readonly",
-        lambda: seen.append("read") or {"plugins": {compat.ALLOW_KEY: True}},
-    )
-
-    assert compat.allow_deprecated_imports() is True
-    assert seen == ["read"]
+def test_scheduled_plugin_compat_runtime_remains_removed() -> None:
+    assert not (ROOT / "plugin_runtime" / "compat.py").exists()
+    assert not (ROOT / "plugin_runtime" / "compat_warning.py").exists()
 
 
 def test_plugin_context_uses_host_bindings_for_host_owned_facades(monkeypatch) -> None:

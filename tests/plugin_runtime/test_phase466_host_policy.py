@@ -75,7 +75,7 @@ def test_first_party_policy_consumers_use_canonical_owner() -> None:
         "agent/tool_executor.py": "_dispatch_pre_tool_call_hooks",
         "agent/turn_stop_gates.py": "get_pre_verify_continue_message",
         "cli.py": "fire_pre_command_hook",
-        "gateway/run_inbound.py": "fire_pre_command_hook",
+        "gateway/run_inbound_hooks.py": "fire_pre_command_hook",
         "model_tools.py": "_dispatch_pre_tool_call_hooks",
     }
     for relative, symbol in expected.items():

@@ -12,7 +12,6 @@ from typing import Any, Callable, Dict, List, Mapping, Optional, Set, Tuple
 
 from hermes_constants import get_hermes_home, hermes_home_key
 from plugin_runtime.activation import activation_summaries
-from plugin_runtime import compat as plugin_compat
 from plugin_runtime.config_bridge import load_plugin_config
 from plugin_runtime.context import PluginContext
 from plugin_runtime.discovery import (
@@ -21,6 +20,7 @@ from plugin_runtime.discovery import (
     collect_directory_manifests,
     discover_entrypoint_manifests,
     gate_manifest,
+    plugin_discovery_suppressed,
     resolve_manifest_winners,
     scan_directory,
 )
@@ -91,6 +91,7 @@ class PluginManager(PluginLoaderMixin, PluginDispatchMixin, PluginOwnershipMixin
         self._plugin_commands: Dict[str, dict] = {}
         self._system_prompt_sections: Dict[str, PluginSystemPromptSection] = {}
         self._plugin_skills: Dict[str, Dict[str, Any]] = {}
+        self._automation_blueprints: Dict[str, Any] = {}
         self._portable_mcp_servers: Dict[str, Dict[str, Any]] = {}
         self._portable_mcp_server_plugins: Dict[str, str] = {}
         self._aux_tasks: Dict[str, Dict[str, Any]] = {}
@@ -123,14 +124,18 @@ class PluginManager(PluginLoaderMixin, PluginDispatchMixin, PluginOwnershipMixin
         self._predeclared_modules: Dict[str, types.ModuleType] = {}
         self._predeclared_tools: Dict[str, List[str]] = {}
 
+    def list_automation_blueprints(self) -> List[Any]:
+        """Plugin-registered AutomationBlueprints, sorted by key."""
+        return [bp for _key, bp in sorted(self._automation_blueprints.items())]
+
     def context_for(self, manifest: PluginManifest) -> PluginContext:
         """Construct the runtime-owned plugin context requested by plugin loading."""
         return PluginContext(manifest, self)
 
     @staticmethod
     def _plugin_load_disable_reason(manifest: PluginManifest) -> Optional[str]:
-        """Apply runtime-owned plugin compatibility policy."""
-        return plugin_compat.disable_reason(manifest)
+        """No scheduled pre-decomposition import-path gate remains after 2026-09-14."""
+        return None
 
     def on_plugin_loaded(self, callback: Callable[[List[Dict[str, Any]]], Any]) -> Callable[[], None]:
         """Subscribe to discovery sweeps that load plugins this process did not already have."""
@@ -203,7 +208,7 @@ class PluginManager(PluginLoaderMixin, PluginDispatchMixin, PluginOwnershipMixin
         changes / new bundled backends become visible in long-lived sessions."""
         from agent.safe_worker_policy import safe_worker_enabled
 
-        if safe_worker_enabled():
+        if safe_worker_enabled() or plugin_discovery_suppressed():
             return
         if self._discovered and not force and in_plugin_load_worker():
             # A plugin whose register() re-enters discovery (importing model_tools does) runs on a
@@ -331,19 +336,6 @@ class PluginManager(PluginLoaderMixin, PluginDispatchMixin, PluginOwnershipMixin
         if manifests:
             logger.info("Plugin discovery complete: %d found, %d enabled", len(self._plugins),
                         sum(1 for p in self._plugins.values() if p.enabled))
-        self._refresh_plugin_compat_report(list(to_load.values()))
-
-    def _refresh_plugin_compat_report(self, manifests: List[PluginManifest]) -> None:
-        """Refresh HERMES_HOME/.plugin-compat-report.json from this discovery pass.
-
-        The Desktop boot modal has no Python runtime of its own and reads that file after the ``serve``
-        backend is up, so the scan must run wherever plugins are discovered — not only under the CLI
-        banner / doctor / update, which never run inside the Desktop's backend. Fail-open: never raises.
-        """
-        try:
-            plugin_compat.compat_report(manifests, force=True)
-        except Exception as exc:
-            logger.debug("plugin compat report refresh skipped: %s", exc)
 
     def _gate_manifest(
         self, manifest: PluginManifest, disabled: Set[str], enabled: Optional[Set[str]],

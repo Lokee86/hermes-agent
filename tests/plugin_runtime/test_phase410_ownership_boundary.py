@@ -130,17 +130,17 @@ def test_phase410_retired_plugin_runtime_paths_remain_absent() -> None:
     assert missing_enforcement == []
 
 
-def test_phase410_compatibility_facades_are_facade_only() -> None:
+def test_phase410_compatibility_edges_remain_minimal() -> None:
     plugin_compat_tree = _tree(PLUGIN_COMPAT_FACADE)
-    assert not any(
-        isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
-        for node in plugin_compat_tree.body
-    )
-
-    plugins_tree = _tree(PLUGINS_FACADE)
-    assert not any(isinstance(node, (ast.AsyncFunctionDef, ast.ClassDef)) for node in plugins_tree.body)
     assert [
         node.name
-        for node in plugins_tree.body
+        for node in plugin_compat_tree.body
         if isinstance(node, ast.FunctionDef)
-    ] == ["__getattr__"]
+    ] == ["compat_report", "removal_in_effect", "summary_lines"]
+    assert not any(isinstance(node, (ast.AsyncFunctionDef, ast.ClassDef)) for node in plugin_compat_tree.body)
+
+    plugins_tree = _tree(PLUGINS_FACADE)
+    assert not any(
+        isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
+        for node in plugins_tree.body
+    )

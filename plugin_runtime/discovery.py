@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import contextlib
+import contextvars
 import importlib.metadata
 import logging
 import os
@@ -33,6 +35,26 @@ _FOREIGN_HARNESS_MANIFEST_DIRS = frozenset({
     ".devin-plugin",
     ".kimi-plugin",
 })
+
+# Set while a caller reads a profile's config without wanting that profile's plugins loaded
+# into this process (for example parked-profile multiplex preflight).
+_discovery_suppressed: contextvars.ContextVar[bool] = contextvars.ContextVar(
+    "hermes_plugin_discovery_suppressed", default=False
+)
+
+
+@contextlib.contextmanager
+def suppress_plugin_discovery():
+    """Make plugin discovery a no-op within this context without marking the manager discovered."""
+    token = _discovery_suppressed.set(True)
+    try:
+        yield
+    finally:
+        _discovery_suppressed.reset(token)
+
+
+def plugin_discovery_suppressed() -> bool:
+    return _discovery_suppressed.get()
 
 
 @dataclass(frozen=True)
