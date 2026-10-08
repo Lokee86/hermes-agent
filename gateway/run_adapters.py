@@ -783,7 +783,7 @@ class GatewayAdapterLifecycleMixin:
         (missing deps/creds), a registered plugin returning None, or an empty bot credential needs a config
         change: retrying it re-warns forever at the backoff cap (#5196 fleet nodes). Shared by startup and
         the reconnect watcher so both classify the same platform the same way."""
-        from gateway.platform_registry import platform_registry
+        from plugin_runtime.platform_registry import platform_registry
         from gateway.run import _BUILTIN_ADAPTERS, _platform_has_bot_credential
         return (
             platform not in _BUILTIN_ADAPTERS
@@ -812,7 +812,7 @@ class GatewayAdapterLifecycleMixin:
         logger.info("Reconnecting %s (attempt %d)...", platform.value, attempt)
         adapter = None
         try:
-            from gateway.platform_registry import platform_registry
+            from plugin_runtime.platform_registry import platform_registry
             # A re-armed plugin import + register() joins its load deadline: run it off the event loop.
             await self._run_in_executor_with_context(platform_registry.get, platform.value)
             adapter = self._create_adapter(platform, platform_config)

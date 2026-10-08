@@ -38,7 +38,7 @@ HERMES_PACKAGES: frozenset = frozenset({
 # ``<module>.<callable>`` that mutate a Hermes-process registry when called from plugin code.
 _DIRECT_REGISTRY_CALLS: frozenset = frozenset({
     ("tools.registry", "register"), ("tools.registry", "deregister"),
-    ("gateway.platform_registry", "register"), ("providers", "register_provider"),
+    ("plugin_runtime.platform_registry", "register"), ("providers", "register_provider"),
 })
 _MANIFEST_KIND_REASONS: Dict[str, str] = {
     "platform": "kind 'platform': gateway platform adapters run in the Hermes process",

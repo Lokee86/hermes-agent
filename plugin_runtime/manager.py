@@ -20,6 +20,7 @@ from plugin_runtime.discovery import (
     collect_directory_manifests,
     discover_entrypoint_manifests,
     gate_manifest,
+    plugin_discovery_suppressed,
     resolve_manifest_winners,
     scan_directory,
 )
@@ -90,6 +91,7 @@ class PluginManager(PluginLoaderMixin, PluginDispatchMixin, PluginOwnershipMixin
         self._plugin_commands: Dict[str, dict] = {}
         self._system_prompt_sections: Dict[str, PluginSystemPromptSection] = {}
         self._plugin_skills: Dict[str, Dict[str, Any]] = {}
+        self._automation_blueprints: Dict[str, Any] = {}
         self._portable_mcp_servers: Dict[str, Dict[str, Any]] = {}
         self._portable_mcp_server_plugins: Dict[str, str] = {}
         self._aux_tasks: Dict[str, Dict[str, Any]] = {}
@@ -121,6 +123,10 @@ class PluginManager(PluginLoaderMixin, PluginDispatchMixin, PluginOwnershipMixin
         # and contributed tool names (so `hermes plugins list` still attributes them).
         self._predeclared_modules: Dict[str, types.ModuleType] = {}
         self._predeclared_tools: Dict[str, List[str]] = {}
+
+    def list_automation_blueprints(self) -> List[Any]:
+        """Plugin-registered AutomationBlueprints, sorted by key."""
+        return [bp for _key, bp in sorted(self._automation_blueprints.items())]
 
     def context_for(self, manifest: PluginManifest) -> PluginContext:
         """Construct the runtime-owned plugin context requested by plugin loading."""
@@ -202,7 +208,7 @@ class PluginManager(PluginLoaderMixin, PluginDispatchMixin, PluginOwnershipMixin
         changes / new bundled backends become visible in long-lived sessions."""
         from agent.safe_worker_policy import safe_worker_enabled
 
-        if safe_worker_enabled():
+        if safe_worker_enabled() or plugin_discovery_suppressed():
             return
         if self._discovered and not force and in_plugin_load_worker():
             # A plugin whose register() re-enters discovery (importing model_tools does) runs on a

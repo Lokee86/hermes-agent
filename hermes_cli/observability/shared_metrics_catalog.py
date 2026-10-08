@@ -169,7 +169,7 @@ def _catalog_platform_owner(home: str, platform: str) -> str | None:
     try:
         import inspect
 
-        from gateway.platform_registry import platform_registry
+        from plugin_runtime.platform_registry import platform_registry
         from hermes_cli.plugins_provenance import read_sidecar_rows
 
         entry = platform_registry.get(platform)

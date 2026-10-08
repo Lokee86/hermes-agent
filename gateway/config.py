@@ -301,6 +301,19 @@ class Platform(Enum):
 # Built-in values snapshotted before any dynamic _missing_ lookup.
 _BUILTIN_PLATFORM_VALUES = frozenset(m.value for m in Platform.__members__.values())
 
+
+def _core_ships_platform(name: str) -> bool:
+    """Whether core ships a platform adapter for *name*, including bundled platform plugins."""
+    value = str(name or "").strip().lower()
+    bundled_names, bundled_aliases = Platform._scan_bundled_plugin_platforms()
+    return value in _BUILTIN_PLATFORM_VALUES or value in bundled_names or value in bundled_aliases
+
+
+from plugin_runtime.host_bindings import bind_plugin_host as _bind_plugin_host
+
+_bind_plugin_host(core_ships_platform=_core_ships_platform)
+
+
 # Platforms that bind a host TCP port. In a multiplexer only the default profile binds: a SECONDARY
 # profile's port-binder is built in shared-listener mode and served at /p/<profile>/<path> on the
 # default's listener (gateway/platforms/shared_ingress.py); api_server/webhook are mirrored there.

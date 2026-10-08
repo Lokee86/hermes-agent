@@ -7,6 +7,7 @@ registry first, then the legacy built-in path. Plugin side: ``platform_registry
 .register(PlatformEntry(...))``; gateway side: ``create_adapter("irc", platform_config)``.
 """
 
+import contextvars
 import logging
 import sys
 import threading
@@ -112,6 +113,12 @@ class PlatformEntry:
     # ``async (pconfig, chat_id, message, *, thread_id=None, media_files=None, force_document=False)
     # -> {"success": True, "message_id": ...} | {"error": str}``.
     standalone_sender_fn: Optional[Callable[..., Awaitable[dict]]] = None
+    # Authenticated event-bus adapters may waive user allowlists/pairing; never use for chat senders.
+    trusted_inbound: bool = False
+    # Built-in display defaults tier ("high" | "medium" | "low" | "minimal"); empty = global defaults.
+    display_tier: str = ""
+    # Env prefixes shared with a non-channel capability from the same plugin.
+    shared_env_prefixes: tuple = ()
 
 
 class PlatformRegistry:
@@ -131,7 +138,10 @@ class PlatformRegistry:
         self._scoped_deferred: dict[str, dict[str, _Loader]] = {}
         self._inflight: dict[_LoadKey, threading.Event] = {}
         self._inflight_loaders: dict[_LoadKey, _Loader] = {}
-        self._inflight_owners: dict[_LoadKey, int] = {}
+        # Load keys running in this flow; context propagates into plugin deadline workers.
+        self._loading: contextvars.ContextVar[frozenset[_LoadKey]] = contextvars.ContextVar(
+            f"platform_registry_loading_{id(self)}", default=frozenset()
+        )
         self._cancelled_inflight: set[_LoadKey] = set()
         # A failed loader is no longer discoverable, but its identity remains
         # until ownership teardown can CAS-restore the displaced predecessor.
@@ -223,6 +233,11 @@ class PlatformRegistry:
             global_key = (None, name)
             event = self._inflight.get(scoped_key)
             load_key = scoped_key
+            if event is None and name not in entries and self._loading.get():
+                from plugin_runtime.loading import in_plugin_load_worker
+
+                if in_plugin_load_worker():
+                    return
             if event is None and name not in entries:
                 loader = deferred.pop(name, None)
             if event is None and loader is None and name not in entries:
@@ -234,24 +249,23 @@ class PlatformRegistry:
                 event = threading.Event()
                 self._inflight[load_key] = event
                 self._inflight_loaders[load_key] = loader
-                self._inflight_owners[load_key] = threading.get_ident()
                 is_loader = True
             if event is None:
                 return
-            if not is_loader and self._inflight_owners.get(load_key) == threading.get_ident():
+            if not is_loader and load_key in self._loading.get():
                 logger.warning("Deferred platform '%s' recursively requested while loading", name)
                 return
         if not is_loader:
             event.wait()
-            # Teardown may have restored an older deferred generation while cancelling the one
-            # we waited for; resolve that predecessor instead of a one-shot false negative.
             self._resolve(name, active_scope)
             return
+        token = self._loading.set(self._loading.get() | {load_key})
         try:
             loader()
         except Exception as e:
             logger.warning("Deferred load of platform '%s' failed: %s", name, e, exc_info=True)
         finally:
+            self._loading.reset(token)
             with self._lock:
                 was_cancelled = load_key in self._cancelled_inflight
                 entries, deferred = self._scope_maps(load_key[0])
@@ -259,7 +273,6 @@ class PlatformRegistry:
                     self._consumed_loaders[load_key] = loader
                 self._inflight.pop(load_key, None)
                 self._inflight_loaders.pop(load_key, None)
-                self._inflight_owners.pop(load_key, None)
                 self._cancelled_inflight.discard(load_key)
                 event.set()
         if was_cancelled:
@@ -360,6 +373,17 @@ class PlatformRegistry:
         with self._lock:
             entries, deferred = self._scope_maps(self.current_scope_key())
             return entries.keys() | deferred.keys() | self._entries.keys() | self._deferred.keys()
+
+    def required_env_names(self) -> set[str]:
+        """Required env names of loaded current-scope and process-global adapters."""
+        with self._lock:
+            entries, _deferred = self._scope_maps(self.current_scope_key())
+            return {
+                name
+                for entry in (*self._entries.values(), *entries.values())
+                for name in entry.required_env
+                if isinstance(name, str)
+            }
 
     def is_registered(self, name: str) -> bool:
         # A deferred (not-yet-imported) platform still counts as registered so cheap membership

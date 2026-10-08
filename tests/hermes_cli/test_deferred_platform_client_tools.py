@@ -443,7 +443,7 @@ class TestDeferredPlatformToolPreregistration:
         """A platform whose first deferred load raises (e.g. a load-deadline overrun under startup I/O) is
         re-armed by the reconnect watcher's hook, so the next lookup imports it again and the platform
         registers, without a forced re-discovery (#126356)."""
-        from gateway.platform_registry import platform_registry
+        from plugin_runtime.platform_registry import platform_registry
         from hermes_cli.plugins import PluginManager
 
         manifest = _write_platform_plugin(tmp_path, "probeplat", with_tools_module=False)

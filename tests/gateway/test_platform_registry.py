@@ -5,9 +5,9 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from gateway.platform_registry import PlatformRegistry, PlatformEntry
+from plugin_runtime.platform_registry import PlatformRegistry, PlatformEntry
 from gateway.config import Platform, GatewayConfig
-from hermes_cli import plugins_loader
+from plugin_runtime import loading as plugins_loader
 
 
 # ── Platform enum dynamic members ─────────────────────────────────────────
