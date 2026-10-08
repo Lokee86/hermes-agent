@@ -270,14 +270,35 @@ def test_patch_collector_allows_canonical_owner(tmp_path: Path) -> None:
     assert _patched_facade_names(probe) == []
 
 
-def test_profile_tests_patch_canonical_owners_not_facade_aliases() -> None:
-    offenders: list[tuple[str, int, str]] = []
-    tests_root = REPO_ROOT / "tests"
-    tracked = subprocess.run(
+def _tracked_profile_test_files() -> list[str]:
+    result = subprocess.run(
         ["git", "grep", "-l", "-e", "hermes_cli.profiles",
          "-e", "from hermes_cli import profiles", "--", "tests"],
         cwd=REPO_ROOT, check=False, capture_output=True, text=True,
-    ).stdout.splitlines()
+    )
+    if result.returncode not in (0, 1):
+        raise AssertionError(
+            f"profile patch ownership discovery failed with git grep exit "
+            f"{result.returncode}: {result.stderr.strip() or 'no stderr'}"
+        )
+    return result.stdout.splitlines()
+
+
+def test_profile_patch_discovery_fails_closed(monkeypatch) -> None:
+    def fail(*args, **kwargs):
+        return subprocess.CompletedProcess(
+            args[0], 128, stdout="", stderr="fatal: not a git repository"
+        )
+
+    monkeypatch.setattr(subprocess, "run", fail)
+    with pytest.raises(AssertionError, match="git grep exit 128"):
+        _tracked_profile_test_files()
+
+
+def test_profile_tests_patch_canonical_owners_not_facade_aliases() -> None:
+    offenders: list[tuple[str, int, str]] = []
+    tests_root = REPO_ROOT / "tests"
+    tracked = _tracked_profile_test_files()
     for relative_text in tracked:
         if not relative_text.endswith(".py"):
             continue

@@ -72,7 +72,7 @@ def test_unreadable_profiles_dir_fails_closed_and_says_so(two_profile_host, monk
     def _boom(multiplex):
         raise PermissionError("profiles/ is unreadable")
 
-    monkeypatch.setattr(profiles_mod, "profiles_to_serve", _boom)
+    monkeypatch.setattr("gateway.profile_serving.profiles_to_serve", _boom)
 
     assert launch_profile_policy.activate_multi_profile_hosting_eagerly() is True
     assert secret_scope.is_multiplex_active()

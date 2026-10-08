@@ -54,12 +54,14 @@ def summarize_server(name: str, cfg: dict, plugin: str | None = None) -> Dict[st
         "plugin": plugin}
 
 
-# ---- BEGIN PLUGIN-COMPAT (revert-scheduled; see COMPAT_MANIFEST.md) ----
-# Names external plugins imported from this module before the Sep 2026 decomposition.
-# Internal code MUST NOT use these (scripts/check_compat_pointers.py fails CI if it does).
-# The whole block is removed by reverting the commit that added it.
-from typing import Optional  # noqa: F401,E402
-from typing import Tuple  # noqa: F401,E402
+def record_mcp_add(entry: Any, server_config: Mapping[str, Any], saved: bool) -> None:
+    """Count an ``mcp.servers.add`` as an MCP extension install. A save fails only on a suspicious
+    command/args configuration (``_save_mcp_server`` returns False)."""
+    from hermes_cli.mcp_catalog import record_mcp_install
+
+    source = "catalog" if entry is not None else ("url" if server_config.get("url") else "local")
+    record_mcp_install(source, entry.name if entry is not None else None, "success" if saved else "failed",
+                       failure_class=None if saved else "config_rejected")
 
 def resolve_profile(rid, params, err_fn) -> Tuple[Optional[Any], Optional[dict]]:
     """Resolve the optional ``profile`` param to a HERMES_HOME override token.

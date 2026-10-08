@@ -6,7 +6,6 @@ from contextlib import asynccontextmanager, suppress
 import json
 import os
 from pathlib import Path
-import socket
 import time
 
 
@@ -84,9 +83,7 @@ def _session_ticket(home: Path, endpoint, *, purpose="interactive") -> str:
         data = query_runtime_control(home, request, 5)
     else:
         deadline = time.monotonic() + 5
-        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as peer:
-            peer.settimeout(5)
-            peer.connect(str(_socket_path(home)))
+        with connect_private(home, 5) as peer:
             peer.sendall(request)
             data = bytearray()
             while b"\n" not in data:

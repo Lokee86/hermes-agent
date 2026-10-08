@@ -2,18 +2,18 @@
 import asyncio
 from contextlib import asynccontextmanager
 import json
+import sys
 import os
-from pathlib import Path
+import time
 import signal
 import subprocess
-import sys
-import time
+from pathlib import Path
 
 import pytest
 from websockets.asyncio.client import connect
 
 from gateway.client import GatewayClient
-from tests.gateway.test_normal_runtime_boot import control, model_peer  # noqa: F401
+from tests.gateway.test_normal_runtime_boot import control
 
 
 @pytest.fixture
@@ -168,7 +168,6 @@ async def test_acp_transport_shares_canonical_history_and_order(daemon, tmp_path
         assert len([e for e in events if e["type"] == "message.complete"]) == 2
         assert len(model_peer.requests) == 2
         print("ACP_SHARED_RECEIPT=" + json.dumps({"session_id": sid, "events": events, "messages": snapshot["messages"]}))
-
 
 
 @pytest.mark.platforms("linux")

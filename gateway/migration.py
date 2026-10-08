@@ -213,16 +213,30 @@ class MigrationPlan:
 def _home_env(home: Path) -> Iterator[None]:
     """Run service-manager helpers as if ``home`` were the active HERMES_HOME. Both the contextvar
     override (``get_hermes_home``) and ``os.environ`` (``gateway.status`` identity files, unit
-    generation) are switched, then restored."""
-    from hermes_constants import reset_hermes_home_override, set_hermes_home_override
+    generation) are switched, then restored.
+
+    The process keeps its LAUNCH identity while swapped (``pin_process_hermes_home``): ``os.environ``
+    still holds the launch profile's ``.env``, so a child spawned in here for ``home`` must see it as
+    a routed home and take only ``home``'s own secrets — with the env var swapped, the routed-home
+    checks read ``home`` as the launch profile and handed the launch profile's credentials to the
+    default gateway."""
+    from hermes_constants import (
+        get_routing_process_hermes_home, pin_process_hermes_home, process_hermes_home_is_pinned,
+        reset_hermes_home_override, set_hermes_home_override,
+    )
     import hermes_constants
     previous = os.environ.get("HERMES_HOME")
+    pinned_here = not process_hermes_home_is_pinned()
+    if pinned_here:
+        pin_process_hermes_home(get_routing_process_hermes_home())
     token = set_hermes_home_override(str(home))
     os.environ["HERMES_HOME"] = str(home)
     hermes_constants._default_hermes_root_memo = None
     try:
         yield
     finally:
+        if pinned_here:
+            pin_process_hermes_home(None)
         reset_hermes_home_override(token)
         if previous is None:
             os.environ.pop("HERMES_HOME", None)
@@ -431,10 +445,20 @@ def _write_multiplex_flag(default_home: Path, value: bool) -> None:
 def _profile_gateway_config(home: Path):
     """This profile's ``GatewayConfig`` read exactly the way the multiplexer reads it: under the
     profile's own secret scope with multiplexing active, so a missing token stays missing instead of
-    borrowing the CLI process's ``os.environ`` (which holds the launch profile's ``.env``)."""
+    borrowing the CLI process's ``os.environ`` (which holds the launch profile's ``.env``).
+
+    A PARKED profile stays in the inventory and the duplicate-credential guard (parking must not hide
+    a conflict), but it is inert for the host: its config is read without discovering its plugins,
+    whose ``register()`` would otherwise run in the live gateway on every boot (#123386). Only its
+    plugin-defined platforms fall out of the guard — their credentials cannot be evaluated without
+    importing the plugin; builtin bot tokens still collide.
+    """
     from gateway.config import load_gateway_config
     from gateway.run import _profile_runtime_scope
-    with _profile_runtime_scope(home):
+    from hermes_cli.plugins_discovery import suppress_plugin_discovery
+    from gateway.profile_serving import profile_is_parked
+    scope = suppress_plugin_discovery() if profile_is_parked(home) else contextlib.nullcontext()
+    with _profile_runtime_scope(home), scope:
         return load_gateway_config()
 
 
@@ -568,7 +592,9 @@ def _listener_url(default_cfg, platform_value: str, profile: str) -> str:
     host = extra.get("host") or host
     port = extra.get("port") or port
     tail = {"api_server": "/v1/...", "webhook": "/webhooks/<route>"}.get(platform_value, "/...")
-    return f"http://{host}:{port}/p/{profile}{tail}"
+    from hermes_cli.url_utils import format_url_host
+
+    return f"http://{format_url_host(host)}:{port}/p/{profile}{tail}"
 
 
 def _check_secondary_port_binders(plan: MigrationPlan, configs: dict[str, object]) -> None:
@@ -781,7 +807,12 @@ def _restart_default(
     *,
     run_as_user: Optional[str] = None,
 ) -> str:
-    """Bring the default gateway up on the new flag value; returns a one-line description."""
+    """Bring the default gateway up on the new flag value; returns a one-line description.
+
+    Boot enablement is NOT this function's job: an existing survivor unit is enabled by
+    :func:`_enable_default_at_boot` before the first removal, and the install branch enables
+    through ``systemd_install``'s own enable-on-startup.
+    """
     if plan_default.service is not None:
         kind, system = plan_default.service
         _service_op(kind, system, "restart", default_home)
@@ -909,6 +940,19 @@ def apply_migration_result(
                 False,
                 ("✗ Migration refused before changing anything:", f"  • {blocker}"),
             )
+        # Existing survivor must be boot-startable before removing the secondaries.
+        # This is an irreversible safety boundary: failure must not create a manifest
+        # or alter any profile's running service.
+        if plan.default.service is not None and plan.default.service[0] == "systemd":
+            try:
+                kind, system = plan.default.service
+                _service_op(kind, system, "enable", plan.default_home)
+            except Exception as exc:
+                return MigrationResult(
+                    False,
+                    ("✗ Migration refused before changing anything:",
+                     f"  • default gateway could not be enabled at boot ({exc})"),
+                )
         manifest = {
             "version": 1,
             "migrated_at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),

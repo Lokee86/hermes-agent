@@ -12,7 +12,6 @@ import hashlib
 import json
 import os
 from pathlib import Path
-import socket
 import threading
 import time
 
@@ -62,9 +61,7 @@ def owner_request(home, verb, params, *, timeout=30):
     else:
         from gateway.runtime_discovery import _socket_path
         from gateway.control_socket import _read_response_line
-        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as peer:
-            peer.settimeout(timeout)
-            peer.connect(str(_socket_path(home)))
+        with connect_private(home, timeout) as peer:
             peer.sendall(request)
             def read():
                 peer.settimeout(max(0.001, deadline - time.monotonic()))

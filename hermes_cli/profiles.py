@@ -16,6 +16,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
+from agent.file_safety import HOME_CREDENTIAL_DIRS
 from hermes_cli.archive_safe import archive_root_dirs, make_targz, normalize_archive_parts, safe_extract_targz
 from hermes_cli.home_data_layout import PM_RUNTIME_ROOT_DIRS
 from hermes_constants import (
@@ -170,9 +171,7 @@ _CLONE_ALL_HISTORY_EXCLUDE_ROOT: frozenset[str] = frozenset({
 # seed_profile_skills() callers (fresh-create, `hermes update` all-profile sync, the
 # dashboard) skip bundled-skill seeding. Delete the file to opt back in.
 NO_BUNDLED_SKILLS_MARKER = ".no-bundled-skills"
-
-# ``profile.yaml`` ``role`` values. A role grants backend capabilities (the setup toolset), so
-# only the backend writes one, and a copy of a profile (clone-all, import) never inherits it.
+SETUP_PROFILE_MARKER = ".setup-profile.json"
 
 # Header seeded into a profile's empty .env so it owns a credentials file from day one.
 _PLACEHOLDER_ENV = (
@@ -226,6 +225,72 @@ def _clone_all_copytree_ignore(source_dir: Path):
     return _ignore
 
 
+# OS credential dirs (file_safety.HOME_CREDENTIAL_DIRS) + direnv .envrc (_BLOCKED_PROJECT_ENV_BASENAMES).
+_OS_CREDENTIAL_STORES = (*HOME_CREDENTIAL_DIRS, ".envrc")
+
+# Credential stores in a profile home, as paths relative to it, plus the directories where Hermes
+# keeps recovery copies of them. Never shipped in a profile export, and user-owned (never
+# overwritten) on a distribution install. Add a store here when a writer or loader starts using one.
+PROFILE_CREDENTIAL_PATHS = frozenset({
+    "auth.json", ".env", "auth/google_oauth.json",
+    ".op.env",                      # 1Password service-account token (env_loader)
+    "npmrc",                        # npm registry auth (source_build)
+    ".anthropic_oauth.json",        # Anthropic OAuth tokens (credential_sources)
+    "google_token.json", "google_oauth_pending.json", "google_client_secret.json",
+    "google_chat_user_tokens", "google_chat_user_client_secret.json", "google_chat_user_oauth_pending.json",
+    "google_chat_user_token.json", "google_chat_user_oauth_pending",  # legacy single-user layouts
+    "slack_tokens.json",
+    "honcho.json",                  # Honcho apiKey + OAuth grant (oauth.refreshToken)
+    "mem0.json",                    # Mem0 api_key (self-hosted server key) next to its settings
+    "webhook_subscriptions.json",   # per-route HMAC secrets
+    "teams_pipeline_store.json",    # Graph subscription client_state (webhook shared secret)
+    "mcp-tokens",                   # MCP OAuth tokens
+    "vault",                        # vault.key + vault.json.enc
+    "browser-profile", "browser_auth", "bot-desktop",  # browser cookies / logins
+    "browser-profiles", "browser_profiles",  # live CDP profiles, Browser Use CLI dir (Cookies, Login Data)
+    "pairing", "platforms/pairing", "feishu_comment_pairing.json",
+    "whatsapp/session", "platforms/whatsapp/session", "matrix/store", "platforms/matrix/store",
+    "cache/bws_cache.json", "cache/bws_cache.enc.json",
+    "workspace/meetings/node_token.json",  # google_meet node RPC secret
+    "weixin/accounts",              # WeChat bot tokens + per-peer context tokens
+    ".copilot_jwt.json",            # exchanged Copilot API token
+    "runtime/photon-sidecar.json",  # Photon sidecar auth token
+    "proxy",                        # iron-proxy CA key + proxy tokens
+    "chrome-debug",                 # /browser connect Chrome profile (cookies, logins)
+    "home",                         # subprocess HOME: gh, git, ssh, npm and skill-CLI credentials
+    "backups", "state-snapshots",   # pre-update zips, config copies, update snapshots of the stores
+    *_OS_CREDENTIAL_STORES,
+})
+_CREDENTIAL_PATH_PARTS = tuple(tuple(p.casefold().split("/")) for p in PROFILE_CREDENTIAL_PATHS)
+
+# Copies Hermes' writers leave beside a store at the profile root, matched case-folded. Any
+# ``auth.json.*`` / ``.env.bak*`` is a credential store whoever named it; for config.yaml only the
+# writers' formats match (post_update ``.bak-<stamp>[.N]``, config_backups' legacy siblings), because a
+# hand-named ``config.yaml.bak-my-note`` is the user's and ships through the export scrub instead.
+_STORE_COPY_RE = re.compile(
+    r"auth\.json\..+|\.env\.bak.*"
+    r"|config\.yaml\.(?:bak-\d{8}t\d{6}z(?:\.\d+)?|bak\.\d+|corrupt\..*|bak-pre-migrate-.*)"
+)
+
+
+def _fold(parts: Tuple[str, ...]) -> Tuple[str, ...]:
+    return tuple(part.casefold() for part in parts)
+
+
+def profile_path_is_private(parts: Tuple[str, ...]) -> bool:
+    """True for a PROFILE_CREDENTIAL_PATHS store, anything below one, or a root copy of one.
+    Case-folded: on a case-insensitive filesystem ``Platforms/Pairing`` IS the pairing store."""
+    folded = _fold(parts)
+    if len(folded) == 1 and _STORE_COPY_RE.fullmatch(folded[0]):
+        return True
+    return any(folded[:len(store)] == store for store in _CREDENTIAL_PATH_PARTS)
+
+
+def profile_path_contains_private_store(parts: Tuple[str, ...]) -> bool:
+    """True for a strict ancestor of a store (``platforms`` holds ``platforms/pairing``)."""
+    folded = _fold(parts)
+    return any(len(store) > len(folded) and store[:len(folded)] == folded for store in _CREDENTIAL_PATH_PARTS)
+
 # Directories/files to exclude when exporting the default (~/.hermes) profile.
 # The default profile contains infrastructure (repo checkout, worktrees, DBs,
 # caches, binaries) that named profiles don't have.  We exclude those so the
@@ -240,7 +305,7 @@ _DEFAULT_EXPORT_EXCLUDE_ROOT = DEFAULT_EXPORT_EXCLUDE_ROOT = frozenset({
     "hermes-agent",         # repo checkout (multi-GB)
     ".worktrees",           # git worktrees
     "profiles",             # other profiles — never recursive-export
-    "bin",                  # installed binaries (tirith, etc.)
+    "bin",                  # installed binaries
     "node_modules",         # npm packages
     ".hermes-runtime",      # managed runtime tree (install artifact)
     "node",                 # legacy pre-split managed Node tree
@@ -766,7 +831,7 @@ def _cached_skill_count(profile_dir: Path) -> int:
     return cached[2] if cached is not None else 0
 
 
-# profile.yaml — per-profile metadata (description, role, etc.)
+# profile.yaml — per-profile metadata (description, etc.)
 # Deliberately tiny and separate from ``config.yaml`` (user-facing Hermes config, ~5000
 # lines of defaults): this is metadata ABOUT the profile. Missing file -> empty defaults,
 # never an error; the kanban decomposer falls back to the profile name.
@@ -959,10 +1024,9 @@ def _copytree_keep_junctions(src: Path, dst: Path, ignore, dirs_exist_ok: bool =
 
 
 def _clone_all_into(source_dir: Path, profile_dir: Path, canon: str) -> None:
-    """--clone-all: full copytree minus infrastructure/history, then strip runtime files,
-    the backend-assigned role, and cloned single-use OAuth grants."""
+    """--clone-all: full copytree minus infrastructure/history, then strip runtime files
+    and cloned single-use OAuth grants."""
     _copytree_keep_junctions(source_dir, profile_dir, _clone_all_copytree_ignore(source_dir))
-    _profile_drop_role(profile_dir)
     materialized = _materialize_symlinked_files(profile_dir)
     if materialized:
         logger.info("profile %s: materialized symlinked %s so the clone never writes through to %s",
@@ -991,7 +1055,7 @@ def _strip_multiplex_flag(config_path: Path) -> None:
     if not config_path.is_file():
         return
     with contextlib.suppress(Exception):  # creation must not fail over an unreadable copy
-        from hermes_cli.config import atomic_config_write, read_user_config_raw
+        from hermes_cli.config import atomic_config_replace, read_user_config_raw
         cfg = read_user_config_raw(config_path)
         gateway = cfg.get("gateway") if isinstance(cfg.get("gateway"), dict) else {}
         if "multiplex_profiles" not in cfg and "multiplex_profiles" not in gateway:
@@ -1000,8 +1064,48 @@ def _strip_multiplex_flag(config_path: Path) -> None:
         gateway.pop("multiplex_profiles", None)
         if not gateway and "gateway" in cfg:
             cfg.pop("gateway")
-        # Absent keys are deleted by the round-trip writer; the clone's comments survive.
-        atomic_config_write(config_path, cfg)
+        # Deleting the flag is deliberate, so use the replace writer (the plain writer refuses
+        # omissions); the clone's comments still survive the round-trip.
+        atomic_config_replace(config_path, cfg)
+
+
+def _clone_plugins_ignore(plugins_root: Path):
+    """copytree ignore for a cloned ``plugins/``: :func:`_non_exportable_entries` everywhere, plus
+    the installer's in-flight ``.install-*`` / ``.update-*`` staging dirs at the root."""
+    root = str(plugins_root)
+
+    def _ignore(directory: str, names: List[str]) -> set:
+        ignored = _non_exportable_entries(directory, names)
+        if directory == root:
+            # Directories only: ``.install-metadata.json`` shares the prefix and must travel.
+            ignored.update(n for n in names if n.startswith((".install-", ".update-"))
+                           and os.path.isdir(os.path.join(directory, n)))
+        return ignored
+    return _ignore
+
+
+def _clone_plugins(source_dir: Path, profile_dir: Path) -> None:
+    """Copy the source's user-installed plugins (``plugins/`` with ``.install-metadata.json``).
+
+    ``config.yaml`` already carries ``plugins.enabled`` and ``memory.provider``; without the code a
+    catalog-installed memory provider resolves nowhere in the clone, so the clone silently runs
+    without its memory (or, with lazy installs on, re-fetches the latest catalog pin instead of the
+    revision the source runs). The copy keeps each plugin's tree, revision and catalog provenance
+    (the install record). Python dependencies live in the shared venv, where the source's
+    selection of the same plugin already put them."""
+    source_plugins = source_dir / "plugins"
+    if source_plugins.is_dir():
+        _copytree_keep_junctions(source_plugins, profile_dir / "plugins",
+                                 _clone_plugins_ignore(source_plugins), dirs_exist_ok=True)
+
+
+def cloned_plugin_names(profile_dir: Path) -> List[str]:
+    """Plugins a clone now carries in ``plugins/``, for the CLI notice."""
+    try:
+        return sorted(p.name for p in (profile_dir / "plugins").iterdir()
+                      if not p.name.startswith(".") and (p.is_dir() or p.is_symlink()))
+    except OSError:
+        return []
 
 
 def _bootstrap_profile_dir(profile_dir: Path, source_dir: Optional[Path],
@@ -1028,6 +1132,7 @@ def _bootstrap_profile_dir(profile_dir: Path, source_dir: Optional[Path],
         _copytree_keep_junctions(source_skills, profile_dir / "skills", _non_exportable_entries, dirs_exist_ok=True)
     for relpath in _CLONE_SUBDIR_FILES:
         _clone_file(source_dir, profile_dir, relpath)
+    _clone_plugins(source_dir, profile_dir)
     from hermes_cli.profile_memory_config import active_memory_provider, clone_memory_provider_config
     clone_memory_provider_config(source_dir, profile_dir,
                                  active_memory_provider(_profile_load_yaml(source_dir / "config.yaml")))
@@ -1098,6 +1203,9 @@ def create_profile(
             _clone_all_into(source_dir, staging, canon)
         else:
             _bootstrap_profile_dir(staging, source_dir, sync_imports=sync_imports)
+        if source_dir is not None:
+            from hermes_cli.setup_profile import release_setup_copy, setup_marker_state
+            release_setup_copy(staging, setup_state=setup_marker_state(source_dir))
         if source_dir is not None and not clone_channels:
             from hermes_cli.profile_channels import strip_channel_settings
             stripped = strip_channel_settings(staging, include_state=clone_all, source_dir=source_dir)
@@ -1612,8 +1720,8 @@ def _maybe_unregister_gateway_service(profile_name: str) -> None:
         print(f"⚠ Could not unregister s6 gateway service: {exc}")
 
 
-def _cleanup_gateway_service(name: str, profile_dir: Path) -> None:
-    """Disable and remove systemd/launchd service for a profile."""
+def _cleanup_gateway_service(name: str, profile_dir: Path) -> bool:
+    """Disable and remove systemd/launchd service for a profile; True when a unit was removed."""
     import platform as _platform
 
     # The service name follows get_hermes_home(): bind the override (the seam a multiplexed
@@ -1631,7 +1739,10 @@ def _cleanup_gateway_service(name: str, profile_dir: Path) -> None:
         def _run(*cmd: str) -> None:
             subprocess.run(list(cmd), capture_output=True, check=False, timeout=10)
 
+        from hermes_cli.profiles_service_cleanup import remove_system_systemd_unit, remove_windows_task
+
         system = _platform.system()
+        removed = False
         if system == "Linux":
             svc_name = service_name()
             svc_file = user_unit_dir() / f"{svc_name}.service"
@@ -1641,12 +1752,20 @@ def _cleanup_gateway_service(name: str, profile_dir: Path) -> None:
                 svc_file.unlink(missing_ok=True)
                 _run("systemctl", "--user", "daemon-reload")
                 print(f"✓ Service {svc_name} removed")
+                removed = True
+            # `gateway install --system` writes the same name under /etc; a survivor there
+            # restarts the removed profile at boot exactly like the user unit at login.
+            removed = remove_system_systemd_unit() or removed
         elif system == "Darwin":
             plist_path = get_launchd_plist_path()
             if plist_path.exists():
                 _run("launchctl", "unload", str(plist_path))
                 plist_path.unlink(missing_ok=True)
                 print("✓ Launchd service removed")
+                removed = True
+        elif system == "Windows":
+            removed = remove_windows_task()
+        return removed
     except Exception as e:
         print(f"⚠ Service cleanup: {e}")
     finally:
@@ -1654,6 +1773,7 @@ def _cleanup_gateway_service(name: str, profile_dir: Path) -> None:
         os.environ.pop("HERMES_HOME", None)
         if old_home is not None:
             os.environ["HERMES_HOME"] = old_home
+    return False
 
 
 def _stop_gateway_process(profile_dir: Path) -> None:
@@ -1774,9 +1894,10 @@ def _default_export_ignore(root_dir: Path):
     """
 
     def _ignore(directory: str, contents: list) -> set:
-        # Universal exclusions (any depth) plus npm lockfiles that can appear at root.
+        # Universal exclusions and credential names (any depth) plus npm lockfiles that can appear at root.
         ignored = _non_exportable_entries(directory, contents)
         ignored.update({"package.json", "package-lock.json"} & set(contents))
+        ignored.update(_export_credential_entries(directory, contents))
         if Path(directory) == root_dir:
             ignored.update(entry for entry in contents if entry not in _DEFAULT_EXPORT_INCLUDE_ROOT)
         return ignored
@@ -1784,16 +1905,28 @@ def _default_export_ignore(root_dir: Path):
     return _ignore
 
 
-# Credential files dropped from named-profile exports. ``bot-desktop`` is the screen's runtime state:
+# Credential names dropped at ANY depth of every profile export, on top of the root-relative
+# PROFILE_CREDENTIAL_PATHS. ``bot-desktop`` is the screen's runtime state:
 # its persistent Chromium profile (Cookies, Login Data — the bot's live web sessions), Xauthority, sockets.
-_EXPORT_CREDENTIAL_FILES = frozenset({"auth.json", ".env", "bot-desktop"})
+# The OS stores are dropped wherever they sit (a skill dir copied from a home carries its ``.ssh``).
+_EXPORT_CREDENTIAL_FILES = frozenset({"auth.json", ".env", "bot-desktop", *_OS_CREDENTIAL_STORES})
+_EXPORT_CREDENTIAL_PARTS = tuple(tuple(p.split("/")) for p in _EXPORT_CREDENTIAL_FILES)
+
+
+def _export_credential_entries(directory: str, contents: list) -> set:
+    """Entries of *directory* that are an _EXPORT_CREDENTIAL_FILES store: matched on trailing path
+    components, so ``.config/gh`` drops at any depth while the rest of ``.config`` ships."""
+    parts = Path(directory).parts
+    return {entry for entry in contents for store in _EXPORT_CREDENTIAL_PARTS
+            if entry == store[-1] and parts[len(parts) + 1 - len(store):] == store[:-1]}
 
 # Text/config suffixes secret-scrubbed on export; binary DBs, images etc. are left alone.
 _EXPORT_REDACT_SUFFIXES = frozenset({
     ".md", ".txt", ".yaml", ".yml", ".json", ".jsonl", ".toml", ".ini", ".cfg", ".conf", ".py", ".sh",
     ".bash", ".zsh", ".js", ".ts", ".tsx", ".jsx", ".css", ".html", ".xml", ".csv",
 })
-# ``Path(".cursorrules").suffix`` is "" — name-match; ``*.env.example`` uses endswith.
+# ``Path(".cursorrules").suffix`` is "" — name-match; ``*.env.example`` uses endswith; a hand-named
+# config copy (``config.yaml.bak-my-note``) holds config.yaml's secrets under a suffix of its own.
 _EXPORT_REDACT_NAMES = frozenset({".cursorrules"})
 
 
@@ -1802,6 +1935,7 @@ def _should_redact_export_file(path: Path) -> bool:
     return (
         name in _EXPORT_REDACT_NAMES
         or name.lower().endswith(".env.example")
+        or name.lower().startswith("config.yaml.")
         or path.suffix.lower() in _EXPORT_REDACT_SUFFIXES
     )
 
@@ -1845,7 +1979,9 @@ def export_profile(name: str, output_path: str, extra_files: Optional[Dict[str, 
     # credential exclusion for named profiles.
     def _ignore_credentials(directory: str, contents: list) -> set:
         ignored = _non_exportable_entries(directory, contents)
-        ignored.update(_EXPORT_CREDENTIAL_FILES & set(contents))
+        ignored.update(_export_credential_entries(directory, contents))
+        rel = Path(directory).relative_to(profile_dir).parts
+        ignored.update(e for e in contents if profile_path_is_private((*rel, e)))
         if Path(directory) == profile_dir:
             ignored |= PM_RUNTIME_ROOT_DIRS & set(contents)
         return ignored
@@ -1909,60 +2045,13 @@ def import_profile(archive_path: str, name: Optional[str] = None) -> Path:
                     shutil.rmtree(child)
                 else:
                     child.unlink()
-        _profile_drop_role(final_source)
+        from hermes_cli.setup_profile import release_setup_copy, setup_marker_state
+        release_setup_copy(final_source, setup_state=setup_marker_state(final_source))
         shutil.move(str(final_source), str(profile_dir))
     return profile_dir
 
 
 # Rename
-
-def _atomic_write_json(path: Path, data: dict) -> bool:
-    """Atomic rewrite of a third-party JSON config; False on OSError (nothing partially written)."""
-    from utils import atomic_json_write
-    try:
-        atomic_json_write(path, data)
-        return True
-    except OSError:
-        return False
-
-
-def _migrate_honcho_profile_host(old_name: str, new_name: str, new_dir: Path) -> None:
-    """Rename Honcho host blocks for a renamed profile without changing peers."""
-    old_host = f"hermes_{old_name}"
-    legacy_old_host = f"hermes.{old_name}"
-    new_host = f"hermes_{new_name}"
-    candidates = [
-        new_dir / "honcho.json", _profile_default_home() / "honcho.json", Path.home() / ".honcho" / "config.json"
-    ]
-    seen: set[Path] = set()
-    for path in candidates:
-        try:
-            resolved = path.resolve()
-        except OSError:
-            resolved = path
-        if resolved in seen or not path.is_file():
-            continue
-        seen.add(resolved)
-        try:
-            raw = json.loads(path.read_text(encoding="utf-8-sig"))
-        except (OSError, json.JSONDecodeError):
-            continue
-        hosts = raw.get("hosts")
-        if not isinstance(hosts, dict):
-            continue
-        source_host = old_host if old_host in hosts else legacy_old_host
-        if source_host not in hosts:
-            continue
-        if new_host in hosts:
-            print(f"⚠ Honcho host block not migrated: {new_host} already exists in {path}")
-            continue
-        block = hosts[source_host]
-        if isinstance(block, dict) and "aiPeer" not in block:
-            block["aiPeer"] = old_name  # source_host is ``hermes_<old>`` or legacy ``hermes.<old>``
-        hosts[new_host] = hosts.pop(source_host)
-        if _atomic_write_json(path, raw):
-            print(f"✓ Honcho host updated: {source_host} → {new_host}")
-
 
 def _record_profile_rename(new_dir: Path, old_canon: str) -> None:
     """Append ``old_canon`` to the renamed profile's ``previous_names`` history.
@@ -2000,9 +2089,14 @@ def rename_profile(old_name: str, new_name: str) -> Path:
     if new_dir.exists():
         raise _profile_exists_error(new_canon)
 
-    # 1. Stop gateway if running, and the screen whose launcher holds paths under the old name
-    if _check_gateway_running(old_dir):
-        _cleanup_gateway_service(old_canon, old_dir)
+    # 1. Remove the old name's service even when its gateway is stopped: the unit is named after
+    # the old profile and runs ``--profile <old>``, so the service manager would crash-loop it on
+    # the next login or container boot. Then stop the gateway and the screen whose launcher
+    # holds paths under the old name.
+    gw_running = _check_gateway_running(old_dir)
+    service_removed = _cleanup_gateway_service(old_canon, old_dir)
+    _maybe_unregister_gateway_service(old_canon)
+    if gw_running:
         _stop_gateway_process(old_dir)
     _stop_bot_desktop(old_dir)
 
@@ -2032,6 +2126,9 @@ def rename_profile(old_name: str, new_name: str) -> Path:
         if live_mux:
             clear_named_profile_deleted(old_dir)
             _notify_multiplexer(old_canon)
+        _maybe_register_gateway_service(old_canon)
+        if service_removed:
+            print(f"⚠ The gateway service was removed. Reinstall it with: hermes -p {old_canon} gateway install")
         raise
     print(f"✓ Renamed {old_dir.name} → {new_dir.name}")
     # The tombstone lives at profiles/.deleted/<old_name>; old_dir is gone so nothing can
@@ -2045,7 +2142,8 @@ def rename_profile(old_name: str, new_name: str) -> Path:
     _record_profile_rename(new_dir, old_canon)
 
     # 3. Update profile-scoped Honcho host blocks, preserving aiPeer identity
-    _migrate_honcho_profile_host(old_canon, new_canon, new_dir)
+    from hermes_cli.profiles_honcho import migrate_honcho_profile_host
+    migrate_honcho_profile_host(old_canon, new_canon, new_dir)
 
     # 4. Update wrapper script
     remove_wrapper_script(old_canon)
@@ -2068,6 +2166,9 @@ def rename_profile(old_name: str, new_name: str) -> Path:
     # 7. Hot-serve the renamed profile now (mirrors create; a missed signal only delays it).
     if live_mux:
         _notify_multiplexer(new_canon)
+    _maybe_register_gateway_service(new_canon)
+    if service_removed:
+        print(f"⚠ The gateway service was removed. Reinstall it with: hermes -p {new_canon} gateway install")
     return new_dir
 
 

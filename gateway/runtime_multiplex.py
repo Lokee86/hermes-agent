@@ -5,9 +5,10 @@ When the multiplexer is down (restart, update, crash) the profile looks ``absent
 loop would spawn a per-profile gateway for it — a second owner that answers this client and then
 blocks the multiplexer's next all-or-nothing reserve (``Cannot reserve gateway profiles``). The
 client must start the multiplexer instead, so the start target is decided here from the same facts
-the multiplexer boots on: the default profile's explicit ``gateway.multiplex_profiles`` flag, or —
-when the flag is unset and settled at boot — the served set the last multiplexer recorded in the
-root's ``gateway_state.json`` (a standalone default gateway clears it).
+the multiplexer boots on (``gateway_multiplex_mode.host_serves_named_profile``): a profile's own
+``gateway.standalone: true``, the default profile's explicit ``true``, or — when the flag is unset or
+the retired ``false`` that boot settles like unset — the served set the last multiplexer recorded in
+the root's ``gateway_state.json`` (a standalone default gateway clears it).
 """
 from __future__ import annotations
 
@@ -27,8 +28,8 @@ def implied_host_root(home: Path) -> Path | None:
     """The root whose gateway must serve named profile *home* when nothing records a verdict.
 
     ``hermes gateway run`` refuses a ``profiles/<name>`` home a gateway of its own unless it authored
-    ``gateway.standalone: true`` (or passes ``--force``); only an explicit multiplex ``false`` on the
-    root leaves the profile to its own daemon.
+    ``gateway.standalone: true`` (or passes ``--force``); the retired ``multiplex_profiles: false``
+    no longer opts out, so only a standalone profile keeps its own daemon.
     """
     root = multiplexer_root_for(home)
     if root is None:
