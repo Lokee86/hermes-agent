@@ -2737,6 +2737,21 @@ def _make_agent(
         # Startup fallback precedes AIAgent construction; keep the configured primary
         # available to restore_primary_runtime() on subsequent turns.
         agent._pre_agent_primary = pre_agent_primary
+        agent._fallback_activated = True
+        agent._provider_fallback_active = True
+        selected_provider = str(
+            getattr(agent, "provider", runtime.get("provider")) or runtime.get("provider") or ""
+        ).strip().lower()
+        selected_model = str(getattr(agent, "model", model) or model or "").strip()
+        agent._provider_fallback_route = (selected_model, selected_provider)
+        # Continue after the fallback selected before agent construction.
+        for idx, entry in enumerate(getattr(agent, "_fallback_chain", []) or []):
+            if (
+                str(entry.get("provider") or "").strip().lower() == selected_provider
+                and str(entry.get("model") or "").strip() == selected_model
+            ):
+                agent._fallback_index = idx + 1
+                break
     return agent
 
 
