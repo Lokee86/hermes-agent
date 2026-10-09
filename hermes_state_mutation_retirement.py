@@ -20,6 +20,23 @@ def has_mutation_receipt(db, principal_id, session_id, request_id):
         return conn.execute('SELECT 1 FROM state_meta WHERE key=?', (key,)).fetchone() is not None
 
 
+_TRANSCRIPT_FIELDS = frozenset({'messages', 'last_reasoning', 'tools'})
+
+
+def _compact_result(conn, admission_id):
+    """A retired result keeps the exact-retry outcome (final response, flags, usage/accounting)
+    but not the transcript copies a turn result carries (cumulative ``messages``, reasoning)."""
+    from hermes_state_terminal import RESULT_PREFIX
+    saved = conn.execute('SELECT value FROM state_meta WHERE key=?', (RESULT_PREFIX + admission_id,)).fetchone()
+    if saved is None:
+        return
+    value = json.loads(saved[0])
+    result = value.get('result')
+    if isinstance(result, dict):
+        value['result'] = {**{k: v for k, v in result.items() if k not in _TRANSCRIPT_FIELDS}, 'messages': []}
+    conn.execute('UPDATE state_meta SET value=? WHERE key=?', (_json(value), RESULT_PREFIX + admission_id))
+
+
 def retire_terminal_receipts(conn, session_ids):
     from hermes_state_terminal import ADMISSION_PREFIX, WORKER_PREFIX, identity_key
     for sid in session_ids:
@@ -30,9 +47,12 @@ def retire_terminal_receipts(conn, session_ids):
             raise RuntimeStoreError('unknown_execution' if 'unknown' in states else 'session_busy')
         for raw in admissions:
             row = dict(raw)
+            from hermes_state_media import retire_media
+            retire_media(conn, json.loads(row['payload_json']), row['request_id'])
             # Keep the digest for exact retries, not another copy of user input/history.
             row['payload_json'] = '{}'
             row['lineage_json'] = '[]'
+            _compact_result(conn, row['admission_id'])
             conn.execute('INSERT INTO state_meta(key,value) VALUES(?,?)',
                          (ADMISSION_PREFIX + row['admission_id'], _json(row)))
             conn.execute('INSERT INTO state_meta(key,value) VALUES(?,?)',
@@ -42,11 +62,15 @@ def retire_terminal_receipts(conn, session_ids):
             receipts = [dict(r) for r in conn.execute(
                 'SELECT sequence,payload_digest,result_json FROM worker_receipts WHERE execution_id=? ORDER BY sequence',
                 (row['execution_id'],))]
-            # A terminal worker can only replay its closing receipt. Earlier results
-            # (history/context reads) are user data that must not outlive the delete;
-            # their digests stay so a late duplicate is still recognised as a conflict.
-            for receipt in receipts[:-1]:
-                receipt['result_json'] = None
+            # A terminal worker can only replay an explicit ``execution.finish`` receipt. Every
+            # other result (history/context reads) is user data that must not outlive the delete,
+            # even when it is the last one: settlement terminalizes a failed worker without a
+            # finish receipt. Digests stay so a late duplicate is still recognised as a conflict.
+            closing = admission_fingerprint(canonical_target=sid,
+                payload={'operation': 'execution.finish', 'payload': {}})
+            for receipt in receipts:
+                if receipt['payload_digest'] != closing:
+                    receipt['result_json'] = None
             row['receipts'] = receipts
             conn.execute('INSERT INTO state_meta(key,value) VALUES(?,?)',
                          (WORKER_PREFIX + row['execution_id'], _json(row)))
@@ -55,8 +79,8 @@ def retire_terminal_receipts(conn, session_ids):
         conn.execute('DELETE FROM session_admissions WHERE target_session_id=?', (sid,))
 
 
-_LIVE_LEDGER_SQL = """SELECT 1 FROM session_admissions WHERE target_session_id=? AND status!='terminal'
-    UNION ALL SELECT 1 FROM worker_executions WHERE session_id=? AND status!='terminal' LIMIT 1"""
+_LIVE_LEDGER_SQL = """SELECT 1 FROM session_admissions WHERE target_session_id=? AND status IN ('queued','started','unknown')
+    UNION ALL SELECT 1 FROM worker_executions WHERE session_id=? AND status IN ('registered','running','unknown') LIMIT 1"""
 
 
 def retire_sessions(conn, session_ids):
@@ -68,7 +92,31 @@ def retire_sessions(conn, session_ids):
     admitted a second time against it. Every delete path (canonical mutate, legacy
     ``delete_session*``, prunes and sweeps) must publish the whole fence, so it lives here once."""
     retire_terminal_receipts(conn, session_ids)
+    retire_mutation_receipts(conn, session_ids)
     retire_routes(conn, session_ids)
+    from hermes_state_local import retire_local_receipts
+    retire_local_receipts(conn, session_ids)
+
+
+# Mutation-receipt fields that copy transcript content: the rewound message and a compaction summary.
+_MUTATION_TRANSCRIPT_FIELDS = ('target_message', 'summary')
+
+
+def retire_mutation_receipts(conn, session_ids):
+    """Keep each exact-retry mutation receipt (digest, ids, revision) but drop the transcript
+    copies a rewind/compress result carries, so a retry after the delete cannot read them back."""
+    if not session_ids:
+        return
+    rows = conn.execute(
+        "SELECT key,value FROM state_meta WHERE key GLOB 'gateway.mutation.v1.*' AND "
+        "CASE WHEN json_valid(value) THEN json_extract(value,'$.result.session_id') END "
+        "IN (SELECT value FROM json_each(?))", (json.dumps(list(session_ids)),)).fetchall()
+    for key, raw in rows:
+        receipt = json.loads(raw)
+        result = receipt.get('result')
+        if isinstance(result, dict) and any(f in result for f in _MUTATION_TRANSCRIPT_FIELDS):
+            receipt['result'] = {k: (None if k in _MUTATION_TRANSCRIPT_FIELDS else v) for k, v in result.items()}
+            conn.execute('UPDATE state_meta SET value=? WHERE key=?', (_json(receipt), key))
 
 
 def retire_prunable(conn, session_ids):
@@ -94,14 +142,26 @@ def delete_in_transaction(db, conn, session_id, payload):
     return set(), {'deleted_ids': targets}
 
 
+def entry_session_id(raw):
+    """The ``session_id`` a stored routing/receipt JSON object names, else None. Unrelated rows
+    are not validated here: a malformed one (an array, invalid JSON) names no target, so it can
+    neither be retired nor abort the delete of a different session; the routing loader skips it too."""
+    try:
+        value = json.loads(raw)
+    except (TypeError, ValueError):
+        return None
+    return value.get('session_id') if isinstance(value, dict) else None
+
+
 def retire_routes(conn, session_ids):
     # OR IGNORE: the marker is a fact, not a receipt; re-retiring an id that was recreated
     # beside its tombstone must not abort the delete that removes it again.
     for sid in session_ids:
         conn.execute('INSERT OR IGNORE INTO state_meta(key,value) VALUES(?,?)',
                      (RETIRED_PREFIX + sid, '{}'))
+        conn.execute('DELETE FROM state_meta WHERE key=?', ('gateway.api.settings.v1.' + sid,))
     targets = set(session_ids)
     for row in conn.execute('SELECT scope,session_key,entry_json FROM gateway_routing').fetchall():
-        if json.loads(row['entry_json']).get('session_id') in targets:
+        if entry_session_id(row['entry_json']) in targets:
             conn.execute('DELETE FROM gateway_routing WHERE scope=? AND session_key=?',
                          (row['scope'], row['session_key']))

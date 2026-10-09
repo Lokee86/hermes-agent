@@ -141,7 +141,7 @@ def test_e2e_setsid_grandchild_killed_via_compat_wrapper(tmp_path):
         kill_popen_process_tree(proc)
 
         proc.wait(timeout=5)
-        gone, alive = psutil.wait_procs(descendants, timeout=5)
+        _gone, alive = psutil.wait_procs(descendants, timeout=5)
         assert not alive, f"survivors after tree kill: {alive}"
         time.sleep(1.0)
         assert not marker.exists()
