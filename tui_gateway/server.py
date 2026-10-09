@@ -2694,6 +2694,7 @@ def _make_agent(
     system_prompt = _startup_system_prompt(cfg, session_id or key)
     model, runtime = _resolve_agent_model_runtime(model_override, provider_override)
     fallback_notice = runtime.pop("_fallback_notice", None)
+    pre_agent_primary = runtime.pop("_pre_agent_primary", None)
     _pr = _load_provider_routing()
     platform = _resolve_agent_platform(platform_override)
     ignore_rules = is_truthy_value(os.environ.get("HERMES_IGNORE_RULES"))
@@ -2732,6 +2733,10 @@ def _make_agent(
     if fallback_notice:
         # Emitted once on the first successful reply via _emit_pending_fallback_notice -> status_callback.
         agent._pending_fallback_notice = fallback_notice
+    if isinstance(pre_agent_primary, dict):
+        # Startup fallback precedes AIAgent construction; keep the configured primary
+        # available to restore_primary_runtime() on subsequent turns.
+        agent._pre_agent_primary = pre_agent_primary
     return agent
 
 
