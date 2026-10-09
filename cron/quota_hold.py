@@ -43,7 +43,7 @@ def hold_seconds_from_failure(exc: BaseException) -> Optional[float]:
     return None
 
 
-def hold_active(job: Dict[str, Any], now: Optional[datetime] = None) -> bool:
+def hold_active(job: dict[str, Any], now: Optional[datetime] = None) -> bool:
     """True while the job is parked inside a provider window (an expired marker is inert)."""
     from cron.jobs import _instant_after, _parse_aware  # late: jobs imports this module's helpers
 
@@ -51,12 +51,12 @@ def hold_active(job: Dict[str, Any], now: Optional[datetime] = None) -> bool:
     return until is not None and _instant_after(until, now or _hermes_now())
 
 
-def clear_state(job: Dict[str, Any]) -> None:
+def clear_state(job: dict[str, Any]) -> None:
     job.pop(STATE_KEY, None)
     job.pop(SCHEDULE_EXPR_KEY, None)
 
 
-def is_recovery_fire(job: Dict[str, Any], next_run: str) -> bool:
+def is_recovery_fire(job: dict[str, Any], next_run: str) -> bool:
     """True for the exact off-lattice cron fire parked by ``plan_hold``.
 
     The expression fingerprint keeps a direct ``jobs.json`` schedule edit from inheriting the
@@ -77,7 +77,7 @@ def _window_end(hold_seconds: float) -> datetime:
 
 
 def _recovery_worthwhile(
-    job: Dict[str, Any], natural_next: datetime, window_end: datetime,
+    job: dict[str, Any], natural_next: datetime, window_end: datetime,
 ) -> bool:
     """One off-lattice recovery fire, and only for a sparse schedule.
 
@@ -97,7 +97,7 @@ def _recovery_worthwhile(
 
 
 def plan_hold(
-    job: Dict[str, Any], hold_seconds: float, *, recover_consumed_fire: bool = False,
+    job: dict[str, Any], hold_seconds: float, *, recover_consumed_fire: bool = False,
 ) -> bool:
     """Called under the jobs lock AFTER ``_advance_after_run`` computed the schedule's natural
     ``next_run_at`` for a failed run. A scheduled sparse cron may retry its consumed fire at the
@@ -137,7 +137,7 @@ def plan_hold(
     return True
 
 
-def hold_notice(job: Dict[str, Any], hold_seconds: Optional[float]) -> str:
+def hold_notice(job: dict[str, Any], hold_seconds: Optional[float]) -> str:
     """Line appended to the ONE failure alert delivered on entering the hold, else ""."""
     if not hold_seconds or (job.get("schedule") or {}).get("kind") not in {"cron", "interval"}:
         return ""

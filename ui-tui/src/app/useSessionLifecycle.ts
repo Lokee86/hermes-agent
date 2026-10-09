@@ -29,6 +29,7 @@ import { applyConnectionRequest, clearConnectionOperation } from './connectionOp
 import type { ComposerActions, GatewayRpc, StateSetter } from './interfaces.js'
 import { patchOverlayState } from './overlayStore.js'
 import { scheduleResumeScrollToBottom } from './sessionResumeView.js'
+import { renameCanonicalSession } from './slash/canonicalSessionCommands.js'
 import { captureDestination } from './submissionDestination.js'
 import { turnController } from './turnController.js'
 import { patchTurnState } from './turnStore.js'
@@ -166,12 +167,21 @@ export function useSessionLifecycle(opts: UseSessionLifecycleOptions) {
     sys
   } = opts
 
+  // Plugin on_session_finalize text comes back on the close result and is shown as system lines (never a
+  // model turn). `deferMessages`: the caller resets the transcript next and shows them itself afterwards.
+  // A canonical session is the gateway's: the view detaches, it never closes the owner's session.
   const closeSession = useCallback(
-    (targetSid?: null | string) =>
-      targetSid && !gw.isCanonical
-        ? rpc<SessionCloseResponse>('session.close', { session_id: targetSid })
-        : Promise.resolve(null),
-    [gw.isCanonical, rpc]
+    async (targetSid?: null | string, deferMessages = false) => {
+      const closed =
+        targetSid && !gw.isCanonical ? await rpc<SessionCloseResponse>('session.close', { session_id: targetSid }) : null
+
+      if (!deferMessages) {
+        closed?.messages?.forEach(message => sys(message))
+      }
+
+      return closed
+    },
+    [gw.isCanonical, rpc, sys]
   )
 
   const cancelResumeScrollRef = useRef<null | (() => void)>(null)
@@ -337,12 +347,10 @@ export function useSessionLifecycle(opts: UseSessionLifecycleOptions) {
           return null
         }
 
-        if (!keepCurrent) {
-          await closeSession(previousSid)
+        const closed = keepCurrent ? null : await closeSession(previousSid, true)
 
-          if (flight !== attachmentFlight.current) {
-            return null
-          }
+        if (flight !== attachmentFlight.current) {
+          return null
         }
 
         // HERMES_TUI_CWD is the dashboard-picked workspace: an explicit cwd on
@@ -392,11 +400,16 @@ export function useSessionLifecycle(opts: UseSessionLifecycleOptions) {
 
         reportNewSessionNotices(info, msg, sys)
 
+        // After the reset above, so the closed session's plugin messages stay visible.
+        closed?.messages?.forEach(message => sys(message))
+
         if (requestedTitle) {
-          rpc<SessionTitleResponse>('session.title', {
-            session_id: r.session_id,
-            title: requestedTitle
-          })
+          ;(gw.isCanonical
+            ? renameCanonicalSession(gw, r.session_id, requestedTitle).then(title =>
+                title === undefined ? null : ({ title } as SessionTitleResponse)
+              )
+            : rpc<SessionTitleResponse>('session.title', { session_id: r.session_id, title: requestedTitle })
+          )
             .then(result => {
               if (!result || getUiState().sid !== r.session_id) {
                 return
@@ -431,7 +444,7 @@ export function useSessionLifecycle(opts: UseSessionLifecycleOptions) {
       colsRef,
       discardStaleAttachment,
       finishAttachment,
-      gw.isCanonical,
+      gw,
       onFreshSessionStarted,
       panel,
       resetSession,

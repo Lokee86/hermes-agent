@@ -37,7 +37,7 @@ class TestLoginNous:
 
     def _run(self, monkeypatch, tmp_path):
         import hermes_cli.auth as auth_mod
-        import hermes_cli.auth_nous as auth_nous
+        from hermes_cli import auth_nous
         import hermes_cli.nous_subscription as ns
 
         seen: dict = {}
@@ -78,7 +78,6 @@ class TestLoginNous:
 
         def _capture(model_ids, **kwargs):
             seen["model_ids"] = list(model_ids)
-            return None
 
         monkeypatch.setattr(_auth_hermes_cli_auth_model_picker, "_prompt_model_selection", _capture)
 

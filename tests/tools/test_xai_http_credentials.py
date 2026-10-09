@@ -5,7 +5,7 @@ import pytest
 
 def _set_xai_oauth_unavailable(monkeypatch):
     from hermes_cli import auth
-    import hermes_cli.auth_xai as auth_xai
+    from hermes_cli import auth_xai
 
     monkeypatch.setattr(_auth_auth_providers_xai, "resolve_xai_oauth_runtime_credentials", lambda **_: {})
     monkeypatch.setattr(_auth_auth_providers_xai, "resolve_xai_oauth_runtime_credentials", lambda **_: {})

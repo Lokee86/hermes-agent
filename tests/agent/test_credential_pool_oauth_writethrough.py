@@ -34,7 +34,7 @@ from auth.credential_pool import (
     load_pool,
 )
 from hermes_cli import auth as A
-import hermes_cli.auth_codex as auth_codex
+from hermes_cli import auth_codex
 
 
 def _write_store(path, store):

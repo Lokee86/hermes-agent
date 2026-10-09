@@ -19,7 +19,7 @@ import pytest
 from hermes_cli import anon_auth, anon_sign_in, free_tier_bootstrap
 from auth.store import _load_auth_store
 
-from tests.hermes_cli.anon_portal import PORTAL, WELCOME, install_portal  # noqa: F401
+from tests.hermes_cli.anon_portal import PORTAL, WELCOME, install_portal
 
 
 @pytest.fixture

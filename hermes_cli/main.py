@@ -15,7 +15,7 @@ Usage:
 # ``hermes update`` the editable install's ``.pth`` may not list it yet; crashing
 # here would block ``hermes update``.
 try:
-    import hermes_bootstrap  # noqa: F401
+    import hermes_bootstrap
 except ModuleNotFoundError as exc:
     if exc.name != "hermes_bootstrap":
         raise  # the bootstrap exists but cannot load: skipping it would skip PM activation
@@ -46,7 +46,8 @@ import sys
 _bootstrap_root = os.path.realpath(os.path.join(os.path.dirname(__file__), os.pardir))
 if _bootstrap_root not in sys.path:
     sys.path.insert(0, _bootstrap_root)
-from hermes_cli import _startup_fast  # noqa: E402
+from hermes_cli import _startup_fast
+import itertools
 
 # A literal ``~``/``$VAR`` in HERMES_HOME (fish, or any quoted value) must become absolute
 # before the first reader — otherwise it resolves against cwd and scaffolds <cwd>/~/.hermes.
@@ -62,7 +63,7 @@ _startup_fast.normalize_hermes_home_env()
 # too — a pre-loop wedge is just as dead without a supervisor; GatewayRunner
 # disarms once the event loop is live.
 def _argv_is_gateway_run(argv: list) -> bool:
-    return any(a == "gateway" and b == "run" for a, b in zip(argv, argv[1:]))
+    return any(a == "gateway" and b == "run" for a, b in itertools.pairwise(argv))
 
 
 if _argv_is_gateway_run(sys.argv[1:]):
@@ -830,6 +831,7 @@ from hermes_cli.main_provider_setup import (
     _build_provider_picker_rows,
     _clear_stale_openai_base_url,
     _is_profile_api_key_provider,
+    _model_choice_save_count,
     _named_custom_provider_map,
     _offer_reasoning_after_pick,
     _prompt_main_reasoning_effort,
@@ -1211,7 +1213,7 @@ def _confirm_startup_expensive_model_override(args) -> None:
     except Exception as exc:
         logger.warning("startup model cost guard could not load config: %s", exc)
         config = {}
-    _dict = lambda v: v if isinstance(v, dict) else {}  # noqa: E731
+    _dict = lambda v: v if isinstance(v, dict) else {}
     config = _dict(config)
     model_cfg = _dict(config.get("model"))
     security_cfg = _dict(config.get("security"))
@@ -2060,12 +2062,13 @@ def select_provider_and_model(args=None):
     # Provider-specific setup + model selection. Flows resolve the
     # _model_flow_* names at call time so test monkeypatches on
     # hermes_cli.main keep intercepting.
+    saves_before = _model_choice_save_count()
     from hermes_cli.observability.shared_metrics_setup import cli_provider_setup
     with cli_provider_setup(selected_provider):
         flow = _PROVIDER_MODEL_FLOWS.get(selected_provider)
         if flow is None and _is_profile_plugin_flow_provider(selected_provider):
             # Registered plugin profile with no bespoke flow: the generic one, keyed by its auth_type.
-            flow = lambda c, m, a: _model_flow_plugin_provider(c, selected_provider, m)  # noqa: E731
+            flow = lambda c, m, a: _model_flow_plugin_provider(c, selected_provider, m)
         if flow is not None:
             flow(config, current_model, args)
         elif (
@@ -2088,9 +2091,7 @@ def select_provider_and_model(args=None):
         ):
             _model_flow_api_key_provider(config, selected_provider, current_model)
 
-    # Every flow persists through _save_model_choice; a changed model.default means a pick
-    # landed, so offer its reasoning effort here once instead of inside each flow.
-    _offer_reasoning_after_pick(current_model)
+    _offer_reasoning_after_pick(current_model, saves_before)
 
     # Post-switch cleanup: switching to a named provider (anything except
     # "custom") leaves a stale OPENAI_BASE_URL in ~/.hermes/.env that poisons
@@ -2589,8 +2590,8 @@ def _require_dashboard_web_deps() -> None:
     embedded runtime gets the policy guidance instead, so users stop looping on
     repair for a block repair can never lift (#63796)."""
     try:
-        import fastapi  # noqa: F401
-        import uvicorn  # noqa: F401
+        import fastapi
+        import uvicorn
     except ImportError as e:
         from hermes_cli.main_dep_hints import (
             missing_optional_deps_message,
@@ -2888,7 +2889,7 @@ def _is_tui_chat_launch(args) -> bool:
 def _bypass_chat_launch(args) -> bool:
     """--safe-mode / --ignore-user-config chat: the gateway owner freezes code defaults and runs
     the turn out of process, so the profile's display.interface must not pick a surface and the
-    client performs no discovery. Explicit --tui is refused later by the TUI's own option gate."""
+    client performs no discovery. Explicit --tui forwards the flags in its session.create policy."""
     return bool(getattr(args, "safe_mode", False) or getattr(args, "ignore_user_config", False)) \
         and not getattr(args, "tui", False)
 
@@ -2908,6 +2909,14 @@ def _command_has_dedicated_mcp_startup(args) -> bool:
 
 def _should_background_mcp_startup(args) -> bool:
     return not _is_tui_chat_launch(args) and args.command in {None, "chat", "rl"}
+
+
+def _chat_runs_at_gateway(args) -> bool:
+    """Every ``hermes`` / ``hermes chat`` turn (classic view, ``-q``, ``-z``, TUI) executes in the
+    gateway, which discovers and owns MCP servers itself. Discovery in this client only spawns a
+    second copy of every server and holds the cross-process discovery lock the cold-starting gateway
+    then waits on (measured 2.0 s with one stdio server) for tools nothing here ever calls."""
+    return args.command in {None, "chat"}
 
 
 def _prepare_agent_startup(args) -> None:
@@ -2958,9 +2967,11 @@ def _prepare_agent_startup(args) -> None:
         logger.debug("MCP server filter setup failed", exc_info=True)
 
     # TUI launches hand off to a startup path that backgrounds MCP discovery
-    # with a bounded join; acp/gateway/cron do their own on the runtime path.
+    # with a bounded join; acp/gateway/cron do their own on the runtime path;
+    # chat turns run in the gateway, which owns MCP for them.
     _run_inline_mcp_discovery = not (
         _is_tui_chat_launch(args) or _command_has_dedicated_mcp_startup(args)
+        or _chat_runs_at_gateway(args)
     )
     if _run_inline_mcp_discovery and _should_background_mcp_startup(args):
         try:
@@ -3052,7 +3063,7 @@ def _guard_noninteractive_user_config(args) -> None:
         print(f"Error: {exc}", file=sys.stderr)
         raise SystemExit(2) from exc
 
-    setattr(args, "_noninteractive_config_validated", True)
+    args._noninteractive_config_validated = True
 
 
 def _set_chat_arg_defaults(args) -> None:
@@ -3365,7 +3376,7 @@ def _build_cli_parser():
     try:
         from agent.lsp.cli import register_subparser as _lsp_register
         _lsp_register(subparsers)
-    except Exception as _lsp_err:  # noqa: BLE001
+    except Exception as _lsp_err:
         logger.debug("LSP CLI registration failed: %s", _lsp_err)
 
     build_setup_parser(subparsers, cmd_setup=cmd_setup)

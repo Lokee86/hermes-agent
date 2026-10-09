@@ -189,7 +189,7 @@ def test_resolve_nous_runtime_credentials_invoke_jwt_is_idempotent(
     monkeypatch,
 ):
     import hermes_cli.auth as auth_mod
-    import hermes_cli.auth_nous as auth_nous
+    from hermes_cli import auth_nous
 
     hermes_home = tmp_path / "hermes"
     hermes_home.mkdir(parents=True, exist_ok=True)
@@ -302,7 +302,7 @@ def test_nous_inference_auth_logs_do_not_include_secret_values(
     caplog,
 ):
     import hermes_cli.auth as auth_mod
-    import hermes_cli.auth_nous as auth_nous
+    from hermes_cli import auth_nous
 
     hermes_home = tmp_path / "hermes"
     token = _invoke_jwt(seconds=3600)
@@ -445,7 +445,7 @@ class TestLoginNousSkipKeepsCurrent:
     def _patch_login_internals(self, monkeypatch, *, prompt_returns):
         """Patch OAuth + model-list + prompt so _login_nous doesn't hit network."""
         import hermes_cli.auth as auth_mod
-        import hermes_cli.auth_nous as auth_nous
+        from hermes_cli import auth_nous
         import hermes_cli.models as models_mod
         from hermes_cli import models_pricing
         import hermes_cli.nous_subscription as ns
@@ -475,7 +475,6 @@ class TestLoginNousSkipKeepsCurrent:
 
         def _check_nous_free_tier(**kwargs):
             free_tier_calls.append(kwargs)
-            return None
 
         monkeypatch.setattr(models_mod, "check_nous_free_tier", _check_nous_free_tier)
         monkeypatch.setattr(
@@ -492,7 +491,7 @@ class TestLoginNousSkipKeepsCurrent:
         from hermes_cli.auth import PROVIDER_REGISTRY
         from hermes_cli.auth_nous import _login_nous
 
-        hermes_home, config_path, auth_path = self._setup_home_with_openrouter(
+        _hermes_home, config_path, auth_path = self._setup_home_with_openrouter(
             tmp_path, monkeypatch,
         )
         self._patch_login_internals(monkeypatch, prompt_returns=None)
@@ -524,7 +523,7 @@ class TestLoginNousSkipKeepsCurrent:
         from hermes_cli.auth import PROVIDER_REGISTRY
         from hermes_cli.auth_nous import _login_nous
 
-        hermes_home, config_path, auth_path = self._setup_home_with_openrouter(
+        _hermes_home, config_path, auth_path = self._setup_home_with_openrouter(
             tmp_path, monkeypatch,
         )
         self._patch_login_internals(
@@ -772,7 +771,7 @@ def test_runtime_refresh_503_preserves_nous_oauth_credentials(
     re-login during a Portal outage (#120976) or a Vercel Security Checkpoint deny/challenge on
     the token endpoint (#120602)."""
     import hermes_cli.auth as auth_mod
-    import hermes_cli.auth_nous as auth_nous
+    from hermes_cli import auth_nous
 
     hermes_home = tmp_path / "hermes"
     access_token = _invoke_jwt(seconds=3600)
@@ -955,7 +954,7 @@ def test_try_import_shared_rehydrates_on_success(shared_store_env, monkeypatch):
     every field persist_nous_credentials() needs.
     """
     from hermes_cli import auth as auth_mod
-    import hermes_cli.auth_nous as auth_nous
+    from hermes_cli import auth_nous
 
     _auth_auth_providers_nous_store._write_shared_nous_state(_full_state_fixture())
     fresh_jwt = _invoke_jwt(seconds=7200)
@@ -1014,7 +1013,7 @@ class TestStalePortalBaseUrlMigration:
     ):
         """An allowlisted production host is still unsafe over plain HTTP."""
         from hermes_cli import auth as auth_mod
-        import hermes_cli.auth_nous as auth_nous
+        from hermes_cli import auth_nous
 
         hermes_home = tmp_path / "hermes"
         monkeypatch.setenv("HERMES_HOME", str(hermes_home))
