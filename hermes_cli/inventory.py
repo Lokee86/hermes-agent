@@ -603,7 +603,7 @@ def _apply_featured(rows: list[dict], *, metadata_config: dict | None = None) ->
     # contain "/" and span >= 2 prefixes?) misread every Org/Model-shaped user provider as a
     # multi-lab aggregator and hid the models its owner configured by hand (#120217).
     try:
-        from hermes_cli.providers import is_routing_aggregator
+        from providers.identity import is_routing_aggregator
     except Exception:
         is_routing_aggregator = None  # type: ignore[assignment]
 
