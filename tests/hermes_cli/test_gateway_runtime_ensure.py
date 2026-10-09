@@ -75,7 +75,8 @@ def test_ensure_waits_for_real_control_owner_without_claiming_pending_is_ready(t
 
 @pytest.mark.platforms("linux")
 def test_installed_service_start_is_nonmutating_and_failed_manager_never_spawns(tmp_path, monkeypatch):
-    from hermes_cli import gateway as gw, gateway_runtime as runtime
+    from hermes_cli import gateway as gw
+    from gateway import runtime
 
     assert callable(getattr(runtime, "ensure_gateway_runtime", None))
     from gateway.runtime_service import service_suffix
@@ -165,7 +166,8 @@ def test_public_ensure_json_deadline_and_invalid_invocation(tmp_path):
 def test_update_fence_follows_update_lock_judgement(tmp_path, monkeypatch):
     """A killed update's dead or malformed marker never blocks a launch (main's launch contract);
     the same marker fences while the checkout lock is held, and a live claim always fences."""
-    from hermes_cli import gateway_runtime as runtime, update_lock
+    from gateway import runtime
+    from hermes_cli import update_lock
     from hermes_cli.update_lock import process_create_time
 
     marker = tmp_path / update_lock.MARKER_NAME
@@ -388,7 +390,7 @@ def test_named_profile_without_multiplex_evidence_starts_the_host_gateway(tmp_pa
 def test_cold_start_target_follows_boot_multiplex_policy(tmp_path, monkeypatch, flag, standalone, owner):
     """Boot settles a retired `multiplex_profiles: false` like unset (the host still serves the
     profile) and never serves a `standalone: true` secondary even under an explicit `true`."""
-    from hermes_cli import gateway_runtime as runtime, gateway_runtime_service as service, gateway_runtime_start as start
+    from gateway import runtime, runtime_service as service, runtime_start as start
 
     monkeypatch.delenv("GATEWAY_MULTIPLEX_PROFILES", raising=False)
     root = tmp_path / ".hermes"
@@ -405,4 +407,3 @@ def test_cold_start_target_follows_boot_multiplex_policy(tmp_path, monkeypatch, 
     runtime.ensure_gateway_runtime(home, timeout=0.3)
 
     assert spawned == [{"root": root, "home": home}[owner].resolve()]
-
