@@ -1,6 +1,7 @@
 """Authentication-store paths, locking and private atomic persistence."""
 
 from __future__ import annotations
+import errno
 import json
 import logging
 import os
@@ -160,6 +161,59 @@ def _kernel_lock(lock_file: Any, acquire: bool) -> None:
         )
 
 
+_LOCK_CONTENTION_ERRNOS = frozenset(
+    code for code in (errno.EACCES, errno.EAGAIN, getattr(errno, "EDEADLK", None))
+    if code is not None
+)
+
+
+def _is_lock_contention(exc: OSError) -> bool:
+    if isinstance(exc, BlockingIOError):
+        return True
+    return exc.errno in _LOCK_CONTENTION_ERRNOS
+
+
+def _lock_holder_hint(lock_path: Path) -> str:
+    """Return a live-holder hint from the pid stamped into *lock_path*, if any."""
+    try:
+        first_token = lock_path.read_text(encoding="utf-8", errors="replace").split()[0]
+        pid = int(first_token)
+    except (OSError, ValueError, IndexError):
+        return ""
+    if pid <= 0 or pid == os.getpid():
+        return ""
+    if os.name == "posix":
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            return ""
+        except OSError:
+            pass
+    return (
+        f"another hermes process (pid {pid}) probably still holds it "
+        "(e.g. a dashboard or a slow credential refresh)"
+    )
+
+
+def _stamp_lock_holder_pid(lock_file: Any) -> None:
+    try:
+        lock_file.truncate(0)
+        lock_file.write(f"{os.getpid()}\n")
+        lock_file.flush()
+    except OSError:
+        pass
+
+
+def _clear_stamped_lock_holder_pid(lock_file: Any) -> None:
+    try:
+        lock_file.truncate(0)
+        if msvcrt:
+            lock_file.write(" ")
+        lock_file.flush()
+    except OSError:
+        pass
+
+
 @contextmanager
 def _file_lock(
     lock_path: Path,
@@ -201,17 +255,23 @@ def _file_lock(
                 try:
                     _kernel_lock(lock_file, True)
                     break
-                except (BlockingIOError, OSError, PermissionError):
+                except (BlockingIOError, OSError, PermissionError) as exc:
+                    if not _is_lock_contention(exc):
+                        raise
                     if time.monotonic() >= deadline:
-                        raise TimeoutError(timeout_message)
+                        hint = _lock_holder_hint(lock_path)
+                        raise TimeoutError(f"{timeout_message}; {hint}" if hint else timeout_message)
                     time.sleep(0.05)
 
         holder.depth = 1
         try:
+            if lock_file is not None:
+                _stamp_lock_holder_pid(lock_file)
             yield
         finally:
             holder.depth = 0
             if lock_file is not None:
+                _clear_stamped_lock_holder_pid(lock_file)
                 try:
                     _kernel_lock(lock_file, False)
                 except (OSError, IOError):
@@ -230,11 +290,12 @@ def _auth_store_lock(
     reentrancy tracker and kernel lock. Lock ordering invariant: ``_auth_store_lock`` FIRST (outer),
     ``_nous_shared_store_lock`` SECOND (inner), else deadlock against a concurrent shared import."""
     auth_path = target_path if target_path is not None else _auth_file_path()
+    lock_path = auth_path.with_suffix(".lock")
     with _file_lock(
-        auth_path.with_suffix(".lock"),
+        lock_path,
         _auth_lock_holder_for(auth_path),
         timeout_seconds,
-        "Timed out waiting for auth store lock",
+        f"Timed out waiting for auth store lock ({lock_path})",
     ):
         yield
 
