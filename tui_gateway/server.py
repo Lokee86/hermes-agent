@@ -2598,6 +2598,13 @@ def _resolve_agent_model_runtime(model_override, provider_override) -> tuple[str
         primary_provider = requested_provider or (cfg_model.get("provider") if isinstance(cfg_model, dict) else None)
         resolution.runtime["_fallback_notice"] = pre_agent_fallback_notice(
             primary_provider, model, resolution.runtime.get("provider"), resolution.selected_model)
+        # The fallback was selected before agent construction. Keep the intended primary
+        # so a long-lived Desktop session can retry it on a later turn (#119195).
+        resolution.runtime["_pre_agent_primary"] = {
+            "model": model,
+            "resolve_kwargs": dict(resolve_kwargs),
+            "overrides": {k: v for k, v in overrides.items() if v},
+        }
         return resolution.selected_model, resolution.runtime
     if resolution.runtime.get("source") == "local-runtime":
         # Live supervisor beat any persisted loopback URL for this identity.
