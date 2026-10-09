@@ -112,6 +112,7 @@ def _running_beta_pause_fixture(monkeypatch, tmp_path):
     monkeypatch.setattr(profile_current, "get_active_profile_name", lambda: "default")
     monkeypatch.setattr(profile_serving, "profiles_to_serve", lambda multiplex, **_kw: [(n, h) for n, h in homes.items() if n in ("default", "beta")])
     monkeypatch.setattr(profile_paths, "get_profile_dir", lambda name: homes[name])
+    monkeypatch.setattr("hermes_cli.profiles.get_profile_dir", lambda name: homes[name])
     # Resume side.
     monkeypatch.setattr(cli_main, "_refresh_windows_gateway_launchers", lambda: None)
     relaunched: set = set()
