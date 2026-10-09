@@ -23,7 +23,7 @@ class Peer(BaseHTTPRequestHandler):
         message = {'role': 'assistant', 'content': 'POLICY_DONE'}
         if not done:
             message = {'role': 'assistant', 'content': None, 'tool_calls': [
-                {'id': 'owned', 'type': 'function', 'function': {'name': 'terminal',
+                {'id': 'owned-' + str(body.get('model')), 'type': 'function', 'function': {'name': 'terminal',
                  'arguments': json.dumps({'command': 'pwd; printf owned > policy-proof.txt'})}}]}
         payload = json.dumps({'id': 'policy', 'object': 'chat.completion', 'model': body.get('model'),
                               'choices': [{'index': 0, 'message': message, 'finish_reason': 'stop' if done else 'tool_calls'}],
@@ -42,6 +42,19 @@ class Peer(BaseHTTPRequestHandler):
         self.send_header('Content-Length', str(len(payload)))
         self.end_headers()
         self.wfile.write(payload)
+
+
+def _names_cwd(content, cwd):
+    """True when the terminal tool's own output names ``cwd`` in any spelling its shell uses."""
+    try:
+        content = json.loads(content)['output']
+    except (TypeError, ValueError, KeyError):
+        content = str(content)
+    forms = {str(cwd), cwd.as_posix()}
+    if os.name == 'nt' and cwd.drive:
+        forms.add('/' + cwd.drive[0].lower() + cwd.as_posix()[len(cwd.drive):])
+        return any(form.lower() in content.lower() for form in forms)
+    return any(form in content for form in forms)
 
 
 async def probe(peer):
@@ -66,7 +79,7 @@ async def probe(peer):
                 result = json.loads(await ws.recv())
                 if result.get('id') == method:
                     return result
-    sockets, sessions = [], []
+    sockets, sessions, created_ids = [], [], {}
     before = dict(os.environ)
     config_before = Path(os.environ['HERMES_HOME'], 'config.yaml').read_bytes()
     try:
@@ -78,10 +91,13 @@ async def probe(peer):
             params = dict(request_id=source, source=source, cwd=str(cwd), model='policy-' + source)
             if source == 'cli':
                 params['toolsets'] = ['terminal']
+            if source == 'tui':  # `hermes --tui -s policy-skill --pass-session-id`
+                params.update(skills=['policy-skill'], pass_session_id=True)
             created = await rpc(ws, 'session.create', **params)
             assert 'result' in created, created
             sid = created['result']['session_id']
             sessions.append(sid)
+            created_ids[sid] = created['result']['stored_session_id']
             from gateway.session_policy import policy_for_source
             from hermes_state_runtime import RuntimeStoreError
             live_source = authority.sessions[sid].source
@@ -111,22 +127,19 @@ async def probe(peer):
             assert agent is not None, (source, list(runner._agent_cache), peer.requests, await rpc(ws, 'session.resume', session_id=sid))
             assert agent.platform == {'cli': 'cli', 'tui': 'tui', 'gui': 'desktop'}[source], vars(agent).get('platform')
             cwd = Path(os.environ['HERMES_HOME'], source)
-            assert (cwd / 'policy-proof.txt').read_text() == 'owned'
             requests = [r for r in peer.requests if r.get('model') == 'policy-' + source]
+            tool_results = [m for r in requests for m in r['messages'] if m['role'] == 'tool']
+            assert (cwd / 'policy-proof.txt').is_file(), (source, str(cwd), tool_results)
+            assert (cwd / 'policy-proof.txt').read_text() == 'owned'
             assert len(requests) >= 2, peer.requests
-            # Terminal returns pwd in output, possibly in MSYS /c/... form.
-            tool_results = [json.loads(m['content']) for r in requests
-                            for m in r['messages'] if m['role'] == 'tool']
-            native = str(cwd.resolve()).replace('\\', '/').rstrip('/')
-            equivalents = {native}
-            if os.name == 'nt' and len(native) >= 2 and native[1] == ':':
-                equivalents.add('/' + native[0].lower() + native[2:])
-            def matches_cwd(value):
-                reported = str(value or '').strip().replace('\\', '/').rstrip('/')
-                if os.name == 'nt':
-                    return reported.casefold() in {s.casefold() for s in equivalents}
-                return reported in equivalents
-            assert any(matches_cwd(result.get('output')) for result in tool_results), tool_results
+            # Git Bash prints the MSYS form (/c/Users/...) on Windows; json.dumps doubles backslashes.
+            assert any(_names_cwd(m.get('content'), cwd) for m in tool_results), (source, str(cwd), tool_results)
+            # The preloaded skill and the session id ride every request's system prompt (frozen at
+            # creation); the sessions launched without them carry neither.
+            systems = [json.dumps([m for m in r['messages'] if m['role'] in {'system', 'developer'}]) for r in requests]
+            stored = created_ids[sid]
+            assert all(('POLICY_SKILL_BODY' in text) == (source == 'tui') for text in systems), (source, systems)
+            assert all((('Session ID: ' + stored) in text) == (source == 'tui') for text in systems), (source, systems)
             names = {t['function']['name'] for t in requests[0]['tools']}
             assert 'terminal' in names
             assert ('desktop_ui' in agent.enabled_toolsets) == (source == 'gui')
@@ -156,6 +169,9 @@ def main():
     threading.Thread(target=peer.serve_forever, daemon=True).start()
     url = f'http://127.0.0.1:{peer.server_port}/v1'
     os.environ.update(OPENAI_API_KEY='loopback-only', OPENAI_BASE_URL=url)
+    skill = Path(os.environ['HERMES_HOME'], 'skills', 'policy-skill')
+    skill.mkdir(parents=True)
+    (skill / 'SKILL.md').write_text('---\nname: policy-skill\ndescription: fixture\n---\n\nPOLICY_SKILL_BODY\n')
     Path(os.environ['HERMES_HOME'], 'config.yaml').write_text(
         f'model:\n  default: policy-default\n  provider: custom\n  base_url: {url}\n'
         'terminal:\n  env_type: local\nstreaming:\n  enabled: false\n'

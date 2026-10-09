@@ -1,11 +1,38 @@
 """Validation for the ``platform_toolsets`` config section."""
 
+import ast
 from typing import Callable, List, Optional
 
-from tools.platform_policy import platform_default_toolset
-from tools.toolset_scope import toolset_allowed_for_platform, parse_platform_toolsets_value
+from hermes_cli.platforms import PLATFORMS
+from tools.toolset_scope import toolset_allowed_for_platform
 
 _NO_TOOLS = "the agent will have no tools on this platform. Run `hermes tools` to reconfigure."
+
+
+def parse_platform_toolsets_value(value: object) -> Optional[list[str]]:
+    """The toolset list a saved ``platform_toolsets.<platform>`` value encodes, or None.
+
+    Older ``hermes config set`` builds stored a bare ``[...]`` argument as a plain string, so an
+    explicit selection like ``'["browser", "terminal"]'`` parses as str, not list (#115866).
+    Every reader and writer of the section goes through this one parser so the runtime,
+    ``hermes doctor`` and ``hermes plugins enable`` agree on what the user configured. Any other
+    shape (null, scalar, unparseable string) is None: the caller decides how to report it.
+    """
+    if isinstance(value, list):
+        return value
+    if isinstance(value, str) and value.strip().startswith("["):
+        try:
+            parsed = ast.literal_eval(value.strip())
+        except (ValueError, SyntaxError):
+            return None
+        if isinstance(parsed, list):
+            return [str(item) for item in parsed]
+    return None
+
+
+def _platform_default_toolset(platform: object) -> str:
+    info = PLATFORMS.get(platform)
+    return info.default_toolset if info is not None else f"hermes-{platform}"
 
 
 def _platform_default_is_valid(
@@ -58,20 +85,20 @@ def saved_toolset_resolver(config: dict) -> Callable[[str], bool]:
 def validate_platform_toolsets(
     platform_toolsets: object, is_valid_toolset: Callable[[str], bool],
     is_allowed_for_platform: Callable[[str, str], bool] = toolset_allowed_for_platform,
-) -> List[str]:
+) -> list[str]:
     """Return human-readable warnings for a ``platform_toolsets`` mapping.
     Reports: a toolset name ``is_valid_toolset`` rejects (suggesting ``hermes-<platform>`` when that
     would have been valid); a non-empty mapping resolving to zero valid toolsets (agent would start with
     no tools); a platform with no valid toolsets, checked per-platform because the global net is
     suppressed once any platform is valid; and non-list platform values, which fall back to the platform
     default. ``is_valid_toolset`` is injected so this does no registry imports or I/O."""
-    warnings: List[str] = []
+    warnings: list[str] = []
     if not isinstance(platform_toolsets, dict) or not platform_toolsets:
         return warnings
 
     valid_count = 0
     for platform, raw in platform_toolsets.items():
-        default = platform_default_toolset(platform)
+        default = _platform_default_toolset(platform)
         default_valid = _platform_default_is_valid(platform, default, is_valid_toolset, is_allowed_for_platform)
         platform_valid_count = 0
         toolsets = parse_platform_toolsets_value(raw)
