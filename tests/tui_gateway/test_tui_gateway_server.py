@@ -21187,6 +21187,77 @@ class TestResolveRuntimeWithFallback:
         assert captured["api_key"] == "fb-tok"
 
 
+    def test_startup_fallback_recovers_configured_primary_on_later_turn(self, monkeypatch):
+        """#119195: exercise resolver -> agent construction -> recovery, not a hand-set intent."""
+        import types
+        from agent import agent_runtime_helpers
+        from hermes_cli.auth import AuthError
+
+        available = {"primary": False}
+        primary_runtime = {
+            "provider": "openai-codex",
+            "requested_provider": "openai-codex",
+            "api_key": "recovered-token",
+            "base_url": "https://primary.invalid/v1",
+        }
+        fallback_runtime = {
+            "provider": "deepseek",
+            "api_key": "fallback-token",
+            "base_url": "https://fallback.invalid/v1",
+        }
+
+        def fake_resolve(**kwargs):
+            if kwargs.get("requested") == "openai-codex":
+                if not available["primary"]:
+                    raise AuthError("primary quota exhausted")
+                return dict(primary_runtime)
+            return dict(fallback_runtime)
+
+        def fake_agent(**kwargs):
+            return types.SimpleNamespace(
+                model=kwargs["model"],
+                provider=kwargs["provider"],
+                _fallback_chain=[{"provider": "deepseek", "model": "deepseek-v4-pro"}],
+                _fallback_index=0,
+            )
+
+        monkeypatch.delenv("HERMES_MODEL", raising=False)
+        monkeypatch.delenv("HERMES_INFERENCE_MODEL", raising=False)
+        monkeypatch.delenv("HERMES_TUI_PROVIDER", raising=False)
+        monkeypatch.setattr(server, "_load_cfg", lambda: {
+            "model": {"default": "gpt-5.5", "provider": "openai-codex"},
+            "fallback_providers": [{"provider": "deepseek", "model": "deepseek-v4-pro"}],
+        })
+        monkeypatch.setattr("hermes_cli.runtime_provider.resolve_runtime_provider", fake_resolve)
+        monkeypatch.setattr("run_agent.AIAgent", fake_agent)
+        monkeypatch.setattr(server, "_load_enabled_toolsets", lambda *_a, **_kw: ["file"])
+        monkeypatch.setattr(server, "_get_db", lambda: None)
+
+        def fake_switch_model(agent, model, provider, **kwargs):
+            assert kwargs["supersede_pre_agent_primary"] is False
+            agent.model = model
+            agent.provider = provider
+
+        monkeypatch.setattr(agent_runtime_helpers, "switch_model", fake_switch_model)
+
+        agent = server._make_agent(
+            "sid", "session-key",
+            model_override={"model": "gpt-5.5", "provider": "openai-codex"},
+        )
+        assert agent.model == "deepseek-v4-pro"
+        assert agent._pre_agent_primary["model"] == "gpt-5.5"
+        assert agent._fallback_activated is True
+        assert agent._provider_fallback_active is True
+        assert agent._fallback_index == 1
+        assert agent_runtime_helpers.restore_primary_runtime(agent) is False
+        assert agent.model == "deepseek-v4-pro"
+
+        available["primary"] = True
+        assert agent_runtime_helpers.restore_primary_runtime(agent) is True
+        assert (agent.model, agent.provider) == ("gpt-5.5", "openai-codex")
+        assert agent._pre_agent_primary is None
+        assert agent._fallback_index == 0
+
 def test_get_usage_does_not_substitute_cumulative_total_for_context_used():
     """An external context engine that does not report last_prompt_tokens must
     not have the cumulative lifetime session_total_tokens shown as its current
