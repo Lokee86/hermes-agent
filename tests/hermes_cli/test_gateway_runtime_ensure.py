@@ -9,6 +9,28 @@ import time
 
 import pytest
 
+def test_unmanaged_runtime_drops_session_config_bypass_flags(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+    from hermes_cli import gateway_runtime_start as start
+    from hermes_cli import gateway_windows
+
+    flags = ('HERMES_SAFE_MODE', 'HERMES_IGNORE_USER_CONFIG')
+    for key in flags:
+        monkeypatch.setenv(key, '1')
+    monkeypatch.setenv('RUNTIME_TEST_SENTINEL', 'retained')
+    monkeypatch.setattr(gateway_windows, 'windowless_gateway_restart_spec',
+                        lambda command: (command, None, {'RUNTIME_TEST_OVERLAY': '1'}))
+    captured = {}
+    child = SimpleNamespace(pid=123)
+    def spawn(command, **kwargs):
+        captured.update(kwargs)
+        return child
+    monkeypatch.setattr(start.subprocess, 'Popen', spawn)
+    assert start.spawn_unmanaged_gateway(tmp_path, deadline=time.monotonic() + 5) is child
+    assert all(key not in captured['env'] for key in flags)
+    assert captured['env']['RUNTIME_TEST_SENTINEL'] == 'retained'
+    assert all(os.environ[key] == '1' for key in flags)
+
 
 @pytest.mark.platforms("linux")
 def test_ensure_waits_for_real_control_owner_without_claiming_pending_is_ready(tmp_path):
@@ -202,7 +224,9 @@ def test_unmanaged_child_uses_explicit_home_and_survives_launcher_exit(tmp_path,
 
 @pytest.mark.platforms("linux")
 @pytest.mark.spawns_gateway_lookalike  # stub interpreter records env then exits; reaped below
-def test_unmanaged_runtime_does_not_inherit_client_yolo(tmp_path, monkeypatch):
+def test_unmanaged_runtime_does_not_inherit_client_launch_flags(tmp_path, monkeypatch):
+    # --yolo / --ignore-rules are frozen on the launching session's policy; inherited by the
+    # daemon they would bypass approvals or skip skills.auto_load for every later session.
     from hermes_cli import gateway_runtime_start as start
 
     home = tmp_path / 'policy-home'
@@ -215,12 +239,14 @@ def test_unmanaged_runtime_does_not_inherit_client_yolo(tmp_path, monkeypatch):
         + f'sys.path.insert(0, {str(repo)!r})\n'
         + 'from tools import approval\n'
         + f'Path({str(witness)!r}).write_text(json.dumps('
-        + "{'yolo': approval._YOLO_MODE_FROZEN, 'sentinel': os.environ.get('RUNTIME_TEST_SENTINEL')}))\n",
+        + "{'yolo': approval._YOLO_MODE_FROZEN, 'ignore_rules': os.environ.get('HERMES_IGNORE_RULES'),"
+        + " 'sentinel': os.environ.get('RUNTIME_TEST_SENTINEL')}))\n",
         encoding='utf-8',
     )
     executable.chmod(0o700)
     monkeypatch.setattr(sys, 'executable', str(executable))
     monkeypatch.setenv('HERMES_YOLO_MODE', '1')
+    monkeypatch.setenv('HERMES_IGNORE_RULES', '1')
     monkeypatch.setenv('RUNTIME_TEST_SENTINEL', 'retained')
     child = start.spawn_unmanaged_gateway(home, deadline=time.monotonic() + 5)
     try:
@@ -229,8 +255,8 @@ def test_unmanaged_runtime_does_not_inherit_client_yolo(tmp_path, monkeypatch):
         if child.poll() is None:
             child.kill()
             child.wait(timeout=5)
-    assert json.loads(witness.read_text()) == {'yolo': False, 'sentinel': 'retained'}
-    assert os.environ['HERMES_YOLO_MODE'] == '1'
+    assert json.loads(witness.read_text()) == {'yolo': False, 'ignore_rules': None, 'sentinel': 'retained'}
+    assert os.environ['HERMES_YOLO_MODE'] == os.environ['HERMES_IGNORE_RULES'] == '1'
 
 
 @pytest.mark.platforms("linux")
@@ -382,3 +408,48 @@ def test_cold_start_target_follows_boot_multiplex_policy(tmp_path, monkeypatch, 
 
     assert spawned == [{"root": root, "home": home}[owner].resolve()]
 
+
+@pytest.mark.platforms("linux", "macos")
+def test_reserved_root_never_suppresses_a_standalone_profile_start(tmp_path, monkeypatch):
+    """A held root reservation means "the multiplexer is coming" only for profiles its boot policy
+    serves; a `gateway.standalone: true` secondary must still get its own owner started."""
+    from gateway.runtime_ownership import ProfileOwnership
+    from hermes_cli import gateway_runtime as runtime, gateway_runtime_service as service, gateway_runtime_start as start
+
+    root = tmp_path / ".hermes"
+    home = root / "profiles" / "alpha"
+    home.mkdir(parents=True, mode=0o700)
+    (root / "config.yaml").write_text("model: {default: m}\n", encoding="utf-8")
+    (home / "config.yaml").write_text("gateway:\n  standalone: true\n", encoding="utf-8")
+    spawned = []
+    monkeypatch.setattr(service, "discover_existing_gateway_service", lambda *a, **k: None)
+    monkeypatch.setattr(start, "spawn_unmanaged_gateway", lambda target, **k: spawned.append(Path(target)))
+    owner = ProfileOwnership()
+    owner.reserve([root])
+    try:
+        runtime.ensure_gateway_runtime(home, timeout=0.5)
+    finally:
+        owner.close()
+    assert spawned == [home.resolve()]
+
+
+@pytest.mark.platforms("linux", "macos")
+def test_dead_unmanaged_start_is_a_prompt_terminal_verdict(tmp_path, monkeypatch):
+    """The one start this call requested exited without leaving an owner: report it, never
+    `starting` until the deadline, and never launch a second daemon."""
+    from hermes_cli import gateway_runtime as runtime, gateway_runtime_service as service, gateway_runtime_start as start
+
+    home = tmp_path / "profile"
+    home.mkdir(mode=0o700)
+    children = []
+
+    def dead_start(target, **kwargs):
+        children.append(subprocess.Popen([sys.executable, "-c", "raise SystemExit(3)"]))
+        return children[-1]
+    monkeypatch.setattr(service, "discover_existing_gateway_service", lambda *a, **k: None)
+    monkeypatch.setattr(start, "spawn_unmanaged_gateway", dead_start)
+    before = time.monotonic()
+    result = runtime.ensure_gateway_runtime(home, timeout=20.0)
+    assert time.monotonic() - before < 10
+    assert (result.state, result.reason_code) == ("inaccessible", "runtime_exited")
+    assert "status 3" in result.detail and len(children) == 1
