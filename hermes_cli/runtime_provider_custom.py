@@ -166,6 +166,15 @@ def has_named_custom_provider(requested_provider: str) -> bool:
         return False
 
 
+def _install_registry_named_custom_probe() -> None:
+    from providers import set_named_custom_provider_probe
+
+    set_named_custom_provider_probe(lambda name: has_named_custom_provider(name))
+
+
+_install_registry_named_custom_probe()
+
+
 def codex_model_provider_id(requested_provider: str) -> Optional[str]:
     """Codex ``[model_providers.<id>]`` key for a configured named custom provider — its ``custom:``
     identity without the prefix (the ``providers:`` config key; legacy ``custom_providers:`` entries

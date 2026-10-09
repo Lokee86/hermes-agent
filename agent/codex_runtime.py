@@ -552,8 +552,8 @@ def _codex_wire_model(agent, model_provider: str | None) -> str | None:
     from agent.model_metadata import strip_codex_context_variant_suffix
     model = strip_codex_context_variant_suffix(getattr(agent, "model", None)) or None
     if model and model_provider is None:
-        from hermes_cli.model_normalize import normalize_model_for_provider
-        model = normalize_model_for_provider(model, "openai-codex")
+        from models import normalize_model_id
+        model = normalize_model_id("openai-codex", model)
     return model
 
 

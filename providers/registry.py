@@ -13,6 +13,7 @@ from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Callable
 
 from providers.base import ProviderProfile
 
@@ -22,6 +23,40 @@ _ALIASES: dict[str, str] = {}
 # Where the CURRENT process-wide registration of each canonical name came from.
 _SOURCES: dict[str, str] = {}
 _PROVIDER_LIST_CACHE: list[ProviderProfile] | None = None
+
+
+_NAMED_CUSTOM_MEMO: dict[str, dict[str, bool]] = {}
+_NAMED_CUSTOM_MEMO_SIG: dict[str, object] = {}
+_NAMED_CUSTOM_MEMO_NO_SIG = object()
+_NAMED_CUSTOM_PROVIDER_PROBE: Callable[[str], bool] | None = None
+
+
+def set_named_custom_provider_probe(probe: Callable[[str], bool] | None) -> None:
+    """Install the application-owned configured-provider probe without importing application code."""
+    global _NAMED_CUSTOM_PROVIDER_PROBE
+    _NAMED_CUSTOM_PROVIDER_PROBE = probe
+    _NAMED_CUSTOM_MEMO.clear()
+    _NAMED_CUSTOM_MEMO_SIG.clear()
+
+
+def _has_named_custom_provider(name: str, home: Path | None, hkey: str) -> bool:
+    """Memoize the supplied bare-name custom-provider fact by home/config signature."""
+    from utils import file_signature
+
+    try:
+        sig = file_signature((home / "config.yaml").stat()) if home is not None else None
+    except OSError:
+        sig = None
+    memo = _NAMED_CUSTOM_MEMO.get(hkey)
+    if memo is None or _NAMED_CUSTOM_MEMO_SIG.get(hkey, _NAMED_CUSTOM_MEMO_NO_SIG) != sig:
+        memo = {}
+        _NAMED_CUSTOM_MEMO[hkey] = memo
+        _NAMED_CUSTOM_MEMO_SIG[hkey] = sig
+    if name in memo:
+        return memo[name]
+    probe = _NAMED_CUSTOM_PROVIDER_PROBE
+    memo[name] = bool(probe(name)) if probe is not None else False
+    return memo[name]
 
 
 @dataclass
@@ -149,6 +184,9 @@ def get_provider_profile(name: str) -> ProviderProfile | None:
             profile = lookup(name)
     if profile is None and is_custom_route:
         profile = lookup("custom")
+    if profile is None and isinstance(name, str) and not is_custom_route:
+        if _has_named_custom_provider(name, home, key):
+            profile = lookup("custom")
     return profile
 
 

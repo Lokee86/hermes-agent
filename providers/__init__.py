@@ -17,6 +17,7 @@ from providers.registry import (
     list_providers,
     provider_source,
     register_provider,
+    set_named_custom_provider_probe,
     routed_model_rejects_vision_tool_messages,
 )
 from providers.model_normalizers import vendor_for_model
@@ -67,6 +68,7 @@ __all__ = [
     "ResolvedProvider",
     "ConfiguredProvider",
     "register_provider",
+    "set_named_custom_provider_probe",
     "get_provider_profile",
     "list_providers",
     "provider_source",

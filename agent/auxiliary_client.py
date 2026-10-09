@@ -6122,9 +6122,7 @@ def _named_custom_provider_present(name: str) -> bool:
     (parallel lookup; each side fails independently — #76602).
     """
     try:
-        from hermes_cli.runtime_provider import _get_named_custom_provider
-
-        return _get_named_custom_provider(name) is not None
+        return get_configured_provider_entry(name) is not None
     except Exception:
         # Config not loaded yet (early import paths, tests) — fail closed:
         # never widen True just because the import / load failed.

@@ -284,9 +284,11 @@ class GatewayAgentCacheMixin:
         # Vendor prefix stripped on native providers, else the cached agent is evicted every turn,
         # destroying prompt caching.
         with suppress(Exception):
-            from hermes_cli.model_normalize import _AGGREGATOR_PROVIDERS, normalize_model_for_provider
-            if provider and provider not in _AGGREGATOR_PROVIDERS:
-                model = normalize_model_for_provider(model, provider)
+            from models import normalize_model_id
+            from providers import get_provider_profile
+            profile = get_provider_profile(provider) if provider else None
+            if provider and not (profile and profile.is_aggregator):
+                model = normalize_model_id(provider, model)
         # The Nous welcome host runs its one model whatever the chat configured (pin_model_for_route).
         with suppress(Exception):
             from hermes_cli.anon_auth import pin_model_for_route

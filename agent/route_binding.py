@@ -48,8 +48,8 @@ def bind_route_entry(agent: Any, entry: Dict[str, Any], provider: str, model: st
         base_url, api_mode = "moa://local", "chat_completions"
     else:
         try:
-            from hermes_cli.model_normalize import normalize_model_for_provider
-            model = normalize_model_for_provider(model, provider)
+            from models import normalize_model_id
+            model = normalize_model_id(provider, model)
         except Exception as norm_err:  # health: allow BLE001 -- moved verbatim from try_activate_fallback; a bad catalog entry keeps the raw id
             logger.warning("Could not normalize fallback model %r for provider %r: %s", model, provider, norm_err)
         base_url = str(client.base_url)

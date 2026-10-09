@@ -32,6 +32,12 @@ PHASE_6_AUTH = {
     "plugins/model-providers/actual/__init__.py": {"resolve_api_key_provider_credentials"},
     "plugins/model-providers/copilot-acp/__init__.py": {"resolve_external_process_provider_credentials"},
     "plugins/model-providers/opencode-zen/__init__.py": {"resolve_api_key_provider_credentials"},
+    "plugins/model-providers/solstice/auth.py": {
+        "_default_verify",
+        "_nous_portal_base_url",
+        "get_provider_auth_state",
+        "resolve_nous_access_token",
+    },
 }
 
 

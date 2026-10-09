@@ -632,13 +632,19 @@ def test_phase_5_8_5_gateway_runtime_provider_exceptions_are_exact():
         ),
         (
             "gateway/run_turn_prepare.py",
-            "_resolve_session_agent_runtime",
+            "_resolve_policy_agent_runtime",
             "hermes_cli.runtime_provider_custom",
             "_resolve_named_custom_runtime",
         ),
         (
             "gateway/run_turn_prepare.py",
-            "_resolve_session_agent_runtime",
+            "_resolve_policy_agent_runtime",
+            "hermes_cli.runtime_provider",
+            "frozen_runtime_config",
+        ),
+        (
+            "gateway/run_turn_prepare.py",
+            "_resolve_policy_agent_runtime",
             "hermes_cli.runtime_provider",
             "resolve_runtime_with_fallback",
         ),
