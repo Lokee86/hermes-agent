@@ -540,6 +540,7 @@ class TestBrowserRetrievalHints:
 def test_tool_defs_cache_key_sees_config_replacement_with_pinned_mtime(tmp_path):
     """#111105: a same-size config.yaml swapped in with the old mtime must change the memo key."""
     import os
+
     from model_tools import _tool_defs_cache_key
 
     cfg = tmp_path / "config.yaml"

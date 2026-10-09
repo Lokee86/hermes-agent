@@ -565,7 +565,7 @@ def _migrate_to_45(results: dict[str, Any], quiet: bool) -> None:
     # resolver subtracts that list last, so the append would have no effect).
     from agent.skill_utils import parse_config_string_list
     from hermes_cli.tools_config import _configurable_keys, _get_plugin_toolset_keys
-    from hermes_cli.toolset_scope import toolset_allowed_for_platform
+    from tools.toolset_scope import toolset_allowed_for_platform
 
     config = read_raw_config()
     saved = config.get("platform_toolsets")

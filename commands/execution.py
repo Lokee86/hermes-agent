@@ -2,7 +2,7 @@
 
 Invariant: an executor's output depends only on ``ctx.args`` / ``ctx.options`` — never on
 ``ctx.surface`` — so the core text is identical across surfaces for a fixed context (enforced by
-tests/hermes_cli/test_commands_execute.py).
+tests/commands/test_execution.py).
 """
 
 from __future__ import annotations
@@ -11,21 +11,19 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from typing import Any
 
-from agent.i18n import t
-
-__all__ = [
-    "EXECUTORS",
-    "CommandContext",
-    "CommandReply",
-    "execute_command",
-    "resolve_executor",
-    "run_execute",
-]
+__all__ = ["CommandContext", "CommandReply", "EXECUTORS", "execute_command", "resolve_executor",
+           "run_execute"]
 
 
 @dataclass(frozen=True)
 class CommandContext:
-    """Surface-provided inputs for a shared command executor."""
+    """Surface-provided inputs for a shared command executor.
+
+    Application boundaries supply lazy version_label / egress_status callables,
+    resolved profile_name / home_display (optional profile_label), or translate /
+    help_lines callables for Gateway catalogs. This layer never loads application
+    configuration. Callables are evaluated at execution time.
+    """
     surface: str = "cli"                # "cli" | "gateway" | "tui" — decoration only
     args: str = ""                      # raw argument string after the command word
     options: Mapping[str, Any] = field(default_factory=dict)  # surface params (page_size, ...)
@@ -44,35 +42,24 @@ class CommandReply:
 # Executors — pure formatters, no agent/session mutation.
 def _exec_version(ctx: CommandContext) -> CommandReply:
     """Core /version text — the banner version label."""
-    from hermes_cli.banner import format_banner_version_label
-    return CommandReply(format_banner_version_label())
+    return CommandReply(ctx.options["version_label"]())
 
 
 def _exec_egress(ctx: CommandContext) -> CommandReply:
     """Core /egress text — Docker egress proxy status."""
-    from hermes_cli.proxy_cli import format_status_text
-    return CommandReply(format_status_text())
+    return CommandReply(ctx.options["egress_status"]())
 
 
 def _exec_profile(ctx: CommandContext) -> CommandReply:
     """Core /profile data — active profile name + home directory.
 
     A multiplexed gateway may pre-resolve the per-source profile/home via ``options``
-    (``profile_name`` / ``home_display``); otherwise process-level values are used.
+    (``profile_name`` / ``home_display``), plus an optional presentation label.
     """
-    from hermes_cli.profiles import get_active_profile_name
-    from hermes_constants import display_hermes_home
-    profile_name = str(ctx.options.get("profile_name") or "").strip() or get_active_profile_name()
-    home_display = str(ctx.options.get("home_display") or "").strip() or display_hermes_home()
-    # Presentation-only display name (profile.yaml); `data.profile` stays the canonical id.
-    label = profile_name
-    try:
-        from hermes_cli.profiles import format_profile_label, get_profile_dir, read_profile_meta
-        display = read_profile_meta(get_profile_dir(profile_name)).get("display_name", "")
-        label = format_profile_label(profile_name, display)
-    except Exception:
-        pass
-    return CommandReply(t("gateway.profile.plain", profile=label, home=home_display),
+    profile_name = str(ctx.options["profile_name"]).strip()
+    home_display = str(ctx.options["home_display"]).strip()
+    label = ctx.options.get("profile_label", profile_name)
+    return CommandReply(f"Profile: {label}\nHome: {home_display}",
                         data={"profile": profile_name, "home": home_display})
 
 
@@ -81,18 +68,22 @@ def _exec_bundles(ctx: CommandContext) -> CommandReply:
     try:
         from agent.skill_bundles import _bundles_dir, list_bundles
     except Exception as exc:  # pragma: no cover - env-specific
-        return CommandReply(t("gateway.bundles.unavailable", error=exc), data={"error": str(exc)})
+        return CommandReply(f"Bundles subsystem unavailable: {exc}", data={"error": str(exc)})
     bundles = list_bundles()
     bundles_dir = str(_bundles_dir())
     if not bundles:
-        return CommandReply(t("gateway.bundles.none_plain", dir=bundles_dir), data={"bundles": [], "dir": bundles_dir})
-    lines = [t("gateway.bundles.header_plain", count=len(bundles))]
+        return CommandReply(
+            "No skill bundles installed.\n"
+            "Create one with: hermes bundles create <name> --skill <s1> --skill <s2>\n"
+            f"Directory: {bundles_dir}",
+            data={"bundles": [], "dir": bundles_dir})
+    lines = [f"Skill Bundles ({len(bundles)} installed):"]
     for info in bundles:
         skills = info.get("skills", [])
-        desc = info.get("description") or t("gateway.bundles.default_desc", count=len(skills))
-        lines.append(t("gateway.bundles.item_plain", slug=info["slug"], desc=desc, count=len(skills)))
+        desc = info.get("description") or f"Load {len(skills)} skills"
+        lines.append(f"/{info['slug']} — {desc} ({len(skills)} skills)")
         lines.extend(f"    · {s}" for s in skills)
-    lines.append(t("gateway.bundles.invoke_hint_plain"))
+    lines.append("Invoke a bundle with /<slug> to load all its skills.")
     return CommandReply("\n".join(lines), data={"bundles": bundles, "dir": bundles_dir})
 
 
@@ -107,7 +98,8 @@ def _skill_commands() -> dict:
 
 def _exec_help(ctx: CommandContext) -> CommandReply:
     """Core gateway /help body (pre platform mention decoration)."""
-    from hermes_cli.commands import gateway_help_lines
+    t = ctx.options["translate"]
+    gateway_help_lines = ctx.options["help_lines"]
     # ``allowed_commands`` (gateway, non-admin caller): only the commands the slash-access
     # policy lets this user run; skill commands are hidden too since the gate refuses them.
     allowed = ctx.options.get("allowed_commands")
@@ -131,7 +123,8 @@ def _exec_commands(ctx: CommandContext) -> CommandReply:
 
     ``ctx.options["page_size"]`` is a surface parameter (Telegram uses 15, everything else 20).
     """
-    from hermes_cli.commands import gateway_help_lines
+    t = ctx.options["translate"]
+    gateway_help_lines = ctx.options["help_lines"]
     try:
         requested_page = int((ctx.args or "").strip() or 1)
     except ValueError:
@@ -197,7 +190,7 @@ def run_execute(cmd_def: Any, ctx: CommandContext) -> CommandReply | None:
 
 def execute_command(name: str, ctx: CommandContext) -> CommandReply:
     """Run the shared executor for ``name``; ``LookupError`` when unknown or not migrated."""
-    from hermes_cli.commands import resolve_command
+    from commands import resolve_command
     cmd_def = resolve_command(name)
     reply = run_execute(cmd_def, ctx) if cmd_def is not None else None
     if reply is None:

@@ -532,7 +532,7 @@ def test_register_skill_command_callback_dispatches_by_name(adapter):
     ]
 
     with patch(
-        "hermes_cli.commands_platforms.discord_skill_commands_by_category",
+        "gateway.command_platforms.discord_skill_commands_by_category",
         return_value=(mock_categories, mock_uncategorized, 0),
     ):
         adapter._register_slash_commands()
@@ -582,7 +582,7 @@ def test_register_skill_command_payload_fits_discord_8kb_limit(adapter):
         ]
 
     with patch(
-        "hermes_cli.commands_platforms.discord_skill_commands_by_category",
+        "gateway.command_platforms.discord_skill_commands_by_category",
         return_value=(large_categories, [], 0),
     ):
         adapter._register_slash_commands()

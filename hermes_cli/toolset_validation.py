@@ -4,7 +4,7 @@ import ast
 from typing import Callable, List, Optional
 
 from hermes_cli.platforms import PLATFORMS
-from hermes_cli.toolset_scope import toolset_allowed_for_platform
+from tools.toolset_scope import toolset_allowed_for_platform
 
 _NO_TOOLS = "the agent will have no tools on this platform. Run `hermes tools` to reconfigure."
 
