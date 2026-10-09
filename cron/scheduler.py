@@ -521,6 +521,7 @@ from cron.executions import (
     get_execution, mark_execution_handoff_pending, mark_execution_running,
     recover_interrupted_executions, settle_unstarted_execution, terminalize_dead_owner)
 from cron.scheduler_liveness import ExecutionProgressStamper, _inactivity_watchdog_loop
+from cron.scheduler_bookkeeping import _classify_delivery_outcome
 
 # Response marker that suppresses delivery (output is still saved locally for audit).
 SILENT_MARKER = "[SILENT]"
@@ -561,8 +562,8 @@ def _is_cron_silence_response(text: str) -> bool:
 # Keyed by profile home: one host gateway multiplexes every profile, and ``max_parallel_jobs`` is a
 # per-profile config key — a single process-global pool is sized by whichever profile ticked first
 # and then imposes that limit on all the others.
-_parallel_pools: Dict[str, concurrent.futures.ThreadPoolExecutor] = {}
-_parallel_pool_max_workers: Dict[str, Optional[int]] = {}
+_parallel_pools: dict[str, concurrent.futures.ThreadPoolExecutor] = {}
+_parallel_pool_max_workers: dict[str, Optional[int]] = {}
 
 
 def _inflight_key(job_id: str, home: Optional[Union[Path, str]] = None) -> tuple:
@@ -579,7 +580,7 @@ def _inflight_key(job_id: str, home: Optional[Union[Path, str]] = None) -> tuple
 # Home key -> the real home Path that produced it. ``hermes_home_key`` normcases (it lower-cases on
 # Windows), so ``Path(key[0])`` is a case-folded path that matches nothing else on disk; bookkeeping
 # that needs the profile home reads it here instead of reconstructing it from the key.
-_inflight_home_paths: Dict[str, Path] = {}
+_inflight_home_paths: dict[str, Path] = {}
 
 
 def _remember_inflight_home(home: Path) -> Path:
@@ -2642,7 +2643,7 @@ def run_job(
         return True, output, final_response, None
 
     except Exception as e:
-        error_msg = f"{type(e).__name__}: {str(e)}"
+        error_msg = f"{type(e).__name__}: {e!s}"
         logger.exception("Job '%s' failed: %s", job_name, error_msg)
         # Cowork-style unreachable-model re-run (cron/unreachable_retry.py): flag failures where
         # the model was never reached (transient network/DNS, zero API calls) so the bookkeeping
@@ -2935,28 +2936,6 @@ def _record_fire_ownership_lost(
             error="Fire claim ownership lost; stale result was discarded.")
 
 
-def _classify_delivery_outcome(
-    *, delivery_error, should_deliver: bool, unresolved_origin: bool,
-    normalized_deliver: str, incident_acked: bool, success: bool,
-    delivery_queued=None, notification_suppressed: bool = False,
-) -> str:
-    if delivery_error:
-        return "failed"
-    if should_deliver and delivery_queued:
-        return "queued"
-    if notification_suppressed:
-        return "suppressed"
-    if should_deliver and unresolved_origin:
-        return "not_configured"
-    if should_deliver and normalized_deliver != "local":
-        return "delivered"
-    if incident_acked and not success:
-        # Failure ping withheld for a known signature: operator acked it, or it was already
-        # alerted inside the reminder cooldown (vs. plain "suppressed").
-        return "suppressed_acked"
-    return "suppressed"
-
-
 def _compose_run_delivery(
     job: dict, *, success: bool, error, final_response: str, output_file,
     agent_declared: bool = False,
@@ -3141,23 +3120,30 @@ def _save_compose_deliver(
 
     if not d.should_deliver:
         return
-    execution_id = job.get('execution_id')
-    if execution_id and not job.get('no_agent'):
-        from cron.delivery_queue import enqueue
-        if _normalize_deliver_value(_delivery_lane_value(job, for_failure=not d.success)) == "local":
-            return
-        queued_job = dict(job)
-        if d.failure_incident_id:
-            queued_job["_failure_incident_id"] = d.failure_incident_id
-        queued = enqueue(execution_id, queued_job, deliver_content, for_failure=not d.success)
-        # The queue owns this send even if subsequent bookkeeping fails.
-        d.delivery_attempted = True
-        job['last_delivery_queued'] = {'canonical': {'status': queued['status'], 'execution_id': execution_id}}
-        return
     d.unresolved_origin = (
         _normalize_deliver_value(_delivery_lane_value(job, for_failure=not d.success)) == "origin"
         and not _resolve_delivery_targets(job, for_failure=not d.success)
     )
+    execution_id = job.get('execution_id')
+    if execution_id and not job.get('no_agent'):
+        from cron.delivery_queue import enqueue
+        # Nothing to send: an origin-less job is ``not_configured``, never a queued "delivery".
+        if d.unresolved_origin or _normalize_deliver_value(
+                _delivery_lane_value(job, for_failure=not d.success)) == "local":
+            return
+        queued_job = dict(job)
+        if d.failure_incident_id:
+            queued_job["_failure_incident_id"] = d.failure_incident_id
+        # The queue row IS the send: publish it under the same fence as a direct send, so a claim
+        # stolen after the lost() sample above cannot leave this stale fire's notice queued.
+        with fence.side_effect_fence() as owns_delivery:
+            if not owns_delivery:
+                raise _FireClaimLostDuringSideEffect
+            queued = enqueue(execution_id, queued_job, deliver_content, for_failure=not d.success)
+            # The queue owns this send even if subsequent bookkeeping fails.
+            d.delivery_attempted = True
+        job['last_delivery_queued'] = {'canonical': {'status': queued['status'], 'execution_id': execution_id}}
+        return
     try:
         with fence.side_effect_fence() as owns_delivery:
             if not owns_delivery:
@@ -3179,27 +3165,7 @@ def _save_compose_deliver(
         logger.error("Delivery failed for job %s: %s", job["id"], de)
 
 
-def _finish_interrupted_run(job: dict, execution_id: str, delivery_error: Optional[str]) -> None:
-    """Shutdown already wrote last_status, so mark_job_run is skipped (a second call would skip a
-    fire or auto-delete the job); an unsent notice is recorded via update_job instead."""
-    if delivery_error:
-        try:
-            # The gateway shutdown already wrote last_status for this run, so mark_job_run is skipped below
-            # — but it could not know that the notice we just tried to send never left the process (the
-            # adapters were torn down first, #82232). Record the delivery failure on its own via update_job:
-            # mark_job_run also advances next_run_at and the repeat counter, and running that a second time
-            # for one run would skip a fire or auto-delete the job early.
-            from cron.jobs import update_job
-            update_job(job["id"], {"last_delivery_error": delivery_error})
-        except Exception as _rec_err:
-            logger.debug(
-                "Failed recording delivery_error for interrupted job %s: %s", job["id"], _rec_err)
-    finish_execution(
-        execution_id, success=False,
-        error="Interrupted by gateway shutdown before terminal completion.")
-
-
-def _finish_completed_run(d: _RunDelivery, fire_owner: Optional[str], execution_id: str) -> bool:
+def _finish_completed_run(d: _RunDelivery, fire_owner: Optional[str], execution_id: str, *, recovered=False) -> bool:
     """mark_job_run (owner-fenced) + execution ledger row for a run that reached delivery."""
     job = d.job
     if not d.should_deliver and job.get("last_delivery_queued"):
@@ -3256,8 +3222,17 @@ def _finish_completed_run(d: _RunDelivery, fire_owner: Optional[str], execution_
     if delivery_outcome in ("delivered", "not_configured") and not d.success:
         # Failure ping left the process (or had a configured target): mark the incident alerted.
         _mark_incident_alerted(d.failure_incident_id)
-    finish_execution(
+    from functools import partial
+    from cron.executions import get_execution, recover_receipted_execution
+    finish = partial(recover_receipted_execution, job_id=job['id']) if recovered else finish_execution
+    finished = finish(
         execution_id, success=d.success, error=d.error, delivery_outcome=delivery_outcome)
+    if recovered and finished is None:
+        current = get_execution(execution_id)
+        # A live foreign firer still owns this row. Keep its only recovery link until settlement.
+        # Legacy direct calls may have no execution row; an already-finished row is also safe.
+        if current is not None and current['status'] not in {'completed', 'failed'}:
+            return False
     if job.get("last_delivery_queued"):
         # A drain that settled before this run's own bookkeeping landed found nothing to fence on.
         settle_quietly(job["id"], execution_id)
@@ -3487,10 +3462,8 @@ def _run_one_job_body(
             _record_fire_ownership_lost(job, fire_owner, execution_id)
             return True
 
-        # Empty final_response is a soft failure so last_status is not "ok".
-        if d.success and not final_response.strip():
-            d.success = False
-            d.error = "Agent completed but produced empty response (model error, timeout, or misconfiguration)"
+        from cron.scheduler_bookkeeping import fail_empty_response
+        fail_empty_response(d, final_response)
 
         if _fire_claim_ownership_lost():
             # #105861: the claim check is one sample; a miss AFTER a completed delivery must not
@@ -3513,12 +3486,13 @@ def _run_one_job_body(
                 return True
 
         if _consume_interrupted_flag(job["id"], execution_token):
-            _finish_interrupted_run(job, execution_id, delivery_error)
+            from cron.scheduler_bookkeeping import finish_interrupted_run
+            finish_interrupted_run(job, execution_id, delivery_error)
             return True
 
         return _finish_completed_run(d, fire_owner, execution_id)
 
-    except BaseException as e:  # noqa: BLE001 — deliberate: see below
+    except BaseException as e:
         from cron.scheduler_authority import CronExecutionUnknown
         if isinstance(e, CronExecutionUnknown):
             from cron.jobs import pause_job
@@ -4116,7 +4090,7 @@ def create_job_with_scheduler_registration(**kwargs) -> dict:
 # ticks every profile each cycle, and a process-global slot would let the
 # first profile starve all the others.
 _DEAD_OWNER_REAP_INTERVAL_SECONDS = 300.0
-_last_dead_owner_reap_at: Dict[str, float] = {}
+_last_dead_owner_reap_at: dict[str, float] = {}
 
 # Worktree prune throttle: the cron tick is the only reliably periodic process on gateway boxes.
 _WORKTREE_MAINTENANCE_INTERVAL_SECONDS = 6 * 3600.0
@@ -4124,7 +4098,7 @@ _last_worktree_maintenance_at: Optional[float] = None
 _worktree_maintenance_lock = threading.Lock()
 
 
-def _worktree_maintenance_repos() -> List[str]:
+def _worktree_maintenance_repos() -> list[str]:
     """Repos whose ``.worktrees/`` to keep pruned: the hermes checkout plus job workdir repo roots,
     filtered to those that actually have a ``.worktrees/`` dir."""
     repos: set = set()
@@ -4459,26 +4433,26 @@ def _sweep_mcp_orphans_when_all_done(futures: list) -> None:
         _f.add_done_callback(_on_done)
 
 
-from cron.scheduler_tick import tick  # noqa: E402
+from cron.scheduler_tick import tick
 
 
 # ---------------------------------------------------------------------------
 # Split modules. Imported at the bottom (import cycle: they late-bind ``cron.scheduler`` as
 # ``_sched``). Only names this module itself calls; everything else lives in the split module.
 # ---------------------------------------------------------------------------
-from cron.scheduler_delivery import (  # noqa: E402
+from cron.scheduler_delivery import (
     _deliver_result, _delivery_lane_value, _normalize_deliver_value, _resolve_delivery_target,
     _resolve_delivery_targets,
 )
-from cron.scheduler_script import (  # noqa: E402
+from cron.scheduler_script import (
     _get_session_db_timeout, _run_job_script_with_claim_heartbeat, _start_heartbeat_thread,
 )
-from cron.scheduler_prompt import (  # noqa: E402
+from cron.scheduler_prompt import (
     _PROMPT_FRAME, _PROMPT_HEADING, _PROMPT_SEPARATOR, _RESPONSE_FRAME, _RESPONSE_HEADING,
     _RESPONSE_TERMINATOR, _block_and_pause_job, _build_job_prompt, _guard_job_credential_exfil,
     _parse_wake_gate,
 )
-from cron.scheduler_preflight import (  # noqa: E402
+from cron.scheduler_preflight import (
     BLOCKED_CONFIG_MARKER, BLOCKED_CONFIG_SILENT_MARKER, _cron_preflight_enabled,
     _empty_requested_mcp_toolsets, _is_transient_provider_resolve_error, _preflight_job_config,
 )
