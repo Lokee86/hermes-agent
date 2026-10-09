@@ -51,6 +51,8 @@ class AuthorityConnection:
         from profiles.registry import profile_matches_home
         if profile_matches_home(profile, Path(self.authority.profile_id)):
             return None
+        if self._identity.get('profile_scope') != 'host':
+            raise RuntimeStoreError('profile_mismatch')
         registry = getattr(getattr(self.authority, 'runner', None), 'session_authorities', None)
         for sibling in (registry or ()):
             if sibling is not self.authority and profile_matches_home(profile, Path(sibling.profile_id)):

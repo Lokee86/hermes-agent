@@ -1,6 +1,7 @@
 import type { GatewayClient } from '../gatewayClient.js'
 import type { InputDetectDropResponse, PromptSubmitResponse, SessionActivateResponse } from '../gatewayTypes.js'
 import type { QueueItem } from '../hooks/useQueue.js'
+import { t } from '../i18n/runtime.js'
 import { stageImagePath } from '../lib/imageAttachments.js'
 import { pendingInputOwner, savePendingInput } from '../lib/pendingInputs.js'
 import type { Msg } from '../types.js'
@@ -52,11 +53,11 @@ export function markNextSubmitVoice(text: string): void {
   pendingVoiceTranscript = text
 }
 
-function takeVoiceTurn(submitText: string): boolean {
-  const voice = pendingVoiceTranscript !== null && pendingVoiceTranscript === submitText.trim()
+function takeVoiceTranscript(): null | string {
+  const transcript = pendingVoiceTranscript
   pendingVoiceTranscript = null
 
-  return voice
+  return transcript
 }
 
 interface SubmitPromptOpts {
@@ -119,7 +120,8 @@ function submitParams(
   sid: string,
   item: QueueItem | undefined,
   submitText: string,
-  attachments: SubmitPromptOpts['attachments']
+  attachments: SubmitPromptOpts['attachments'],
+  voice: boolean
 ) {
   return {
     session_id: sid,
@@ -128,7 +130,7 @@ function submitParams(
     ...(item?.controlMethod ? { execution_generation: item.executionGeneration } : {}),
     ...(item && !item.controlMethod ? { submission_id: item.submissionId, queued: item.queued !== false } : {}),
     // A busy correction (steer/redirect) is not a turn: it never claims the voice route.
-    ...(!item?.controlMethod && takeVoiceTurn(submitText) && { voice_turn: true })
+    ...(!item?.controlMethod && voice && { voice_turn: true })
   }
 }
 
@@ -146,7 +148,7 @@ function settleControlReply(
   item.settle?.(accepted)
 
   if (focused()) {
-    deps.sys(accepted ? `correction ${control.status}` : 'correction rejected — input retained')
+    deps.sys(accepted ? t('canonical.submit.correction', control.status) : t('canonical.submit.correctionRejected'))
   }
 }
 
@@ -177,8 +179,8 @@ function settleAdmissionReply(item: QueueItem, r: PromptSubmitResponse, ctx: Adm
   }
 
   if (!accepted && focused()) {
-    deps.sys('admission not confirmed — input retained; use Alt+K to retry with the same identity')
-    patchUiState({ status: 'admission unconfirmed' })
+    deps.sys(t('canonical.submit.admissionNotConfirmed'))
+    patchUiState({ status: t('canonical.submit.statusAdmissionUnconfirmed') })
   }
 }
 
@@ -220,7 +222,7 @@ function refreshExecutionStatus({ deps, focused, owner, sid }: AdmissionContext)
     })
     .catch((error: Error) => {
       if (focused()) {
-        deps.sys(`execution status unconfirmed: ${error.message}`)
+        deps.sys(t('canonical.submit.executionUnconfirmed', error.message))
       }
     })
 }
@@ -233,7 +235,7 @@ async function submitLegacy(
   focused: () => boolean
 ): Promise<void> {
   if (focused()) {
-    deps.sys('durable admission unavailable for this session — using legacy delivery')
+    deps.sys(t('canonical.submit.legacyDelivery'))
   }
 
   try {
@@ -256,18 +258,16 @@ async function submitLegacy(
       if (r?.voice_stopped) {
         patchUiState({ busy: false, status: 'ready' })
       } else if (!accepted) {
-        deps.sys('legacy delivery unconfirmed — input retained; check the session before sending a new input')
-        patchUiState({ status: 'delivery unconfirmed' })
+        deps.sys(t('canonical.submit.legacyUnconfirmed'))
+        patchUiState({ status: t('canonical.submit.statusDeliveryUnconfirmed') })
       }
     }
   } catch (error) {
     item.settle?.(false)
 
     if (focused()) {
-      deps.sys(
-        `legacy delivery unconfirmed: ${error instanceof Error ? error.message : String(error)} — input retained; check the session before sending a new input`
-      )
-      patchUiState({ status: 'delivery unconfirmed' })
+      deps.sys(t('canonical.submit.legacyUnconfirmedWith', error instanceof Error ? error.message : String(error)))
+      patchUiState({ status: t('canonical.submit.statusDeliveryUnconfirmed') })
     }
   }
 }
@@ -286,6 +286,9 @@ export function submitPrompt(
   displayOverride?: string,
   opts: SubmitPromptOpts = {}
 ): void {
+  // The voice marker belongs to the input submitted right after it, whatever happens to that input
+  // (busy correction, refusal): consumed here, so a later identical typed prompt never inherits it.
+  const voiceTranscript = takeVoiceTranscript()
   const destination = opts.destination ?? captureDestination()
   const owner = pendingInputOwner(opts.queueItem?.ownerDestination ?? destination)
   const { sid } = owner
@@ -304,8 +307,8 @@ export function submitPrompt(
     opts.queueItem.settle?.(false)
 
     if (focused()) {
-      deps.sys('delivery unconfirmed — check the session before sending a new input; retained input was not resent')
-      patchUiState({ status: 'delivery unconfirmed' })
+      deps.sys(t('canonical.submit.deliveryNotResent'))
+      patchUiState({ status: t('canonical.submit.statusDeliveryUnconfirmed') })
     }
 
     return
@@ -331,7 +334,7 @@ export function submitPrompt(
       item.settle?.(false)
 
       if (focused()) {
-        deps.sys('busy corrections accept text only — image input retained; submit it with /queue')
+        deps.sys(t('canonical.submit.busyTextOnly'))
       }
 
       return
@@ -340,7 +343,7 @@ export function submitPrompt(
     deps.gw
       .request<PromptSubmitResponse>(
         item?.controlMethod ?? 'prompt.submit',
-        submitParams(sid, item, submitText, opts.attachments)
+        submitParams(sid, item, submitText, opts.attachments, voiceTranscript === submitText.trim())
       )
       .then(r => {
         if (item?.controlMethod) {
@@ -377,8 +380,8 @@ export function submitPrompt(
           item.settle?.(false)
 
           if (focused()) {
-            deps.sys(`input retained: ${e.message} — Alt+K retries the same submission`)
-            patchUiState({ status: 'admission unconfirmed' })
+            deps.sys(t('canonical.submit.inputRetained', e.message))
+            patchUiState({ status: t('canonical.submit.statusAdmissionUnconfirmed') })
           }
 
           return
@@ -440,10 +443,10 @@ export function submitPrompt(
           opts.queueItem?.settle?.(false)
 
           if (focused()) {
-            deps.sys(`image not submitted: ${error.message} — input retained`)
+            deps.sys(t('canonical.submit.imageNotSubmitted', error.message))
 
             if (ownsTurn()) {
-              patchUiState({ busy: false, status: 'image not submitted' })
+              patchUiState({ busy: false, status: t('canonical.submit.statusImageNotSubmitted') })
             }
           }
         })

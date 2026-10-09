@@ -286,6 +286,11 @@ class GatewayACPAgent(acp.Agent):
             self._submitting.discard(session_id)
         admission_id = receipt["admission_id"]
         self._admissions[session_id] = admission_id
+        if receipt.get("status") == "terminal":
+            await self._settled_receipt(client, held_id, session_id, receipt)
+        elif receipt.get("status") == "unknown":
+            self._admissions.pop(session_id, None)
+            raise GatewayClientError(self._unknown_recovery(session_id, admission_id))
         if session_id in self._pending_cancels:
             self._pending_cancels.discard(session_id)
             await self._cancel_admission(session_id, admission_id)
