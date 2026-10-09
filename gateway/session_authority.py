@@ -8,6 +8,7 @@ from __future__ import annotations
 import asyncio
 from dataclasses import asdict, dataclass, field
 from functools import partial
+import sqlite3
 import uuid
 
 from gateway.session_contract import (
@@ -22,6 +23,9 @@ from hermes_state_runtime import (
     list_session_admissions, recover_session_inputs, resolve_unknown_session_input,
 )
 
+# Capped backoff for a claim refused by transient storage (writer lock, full disk).
+_CLAIM_RETRY_MIN_S, _CLAIM_RETRY_MAX_S = 0.25, 5.0
+
 
 @dataclass
 class LiveSession:
@@ -34,6 +38,7 @@ class LiveSession:
     # The messaging ingress tells the platform user once per pause episode (unknown head,
     # preflight refusal), not per message; the drain clears it when the FIFO moves again.
     pause_notified: bool = False
+    mutation_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
 
     def __post_init__(self):
         self.controls = PendingControls(self.event_stream)
@@ -59,9 +64,19 @@ class SessionAuthority:
         self.events = {}
         self.native_waiters = set()
         self.pending_results = {}
+        # Replies of recovered no-waiter turns, sent only once their terminal outcome commits.
+        self.pending_deliveries = {}
         # Stops accepted for a running generation whose agent does not exist yet
         # (first-turn construction); consumed by adopt_agent, keyed session -> generation.
         self.pending_stops = {}
+        # session -> generation of the last Stop delivered to a live agent. A repeated
+        # Stop can land on the session's reusable cached agent after that turn's finalizer
+        # cleared it; the next generation's adopt_agent drops it instead of starting interrupted.
+        self.delivered_stops = {}
+        # Queued admissions whose cancellation may have committed before its observers settled.
+        self.cancel_obligations = set()
+        # Set by profile retirement (unserve): the drain claims no successor after its running turn.
+        self.retiring = False
 
     def authorize(self, actor, ref, capability):
         """Every handler calls this first, so a later ``self.sessions[ref.session_id]`` is
@@ -93,7 +108,7 @@ class SessionAuthority:
             raise RuntimeStoreError('permission_denied')
 
     def _require_admission_open(self):
-        if self.runner._draining:
+        if self.runner._draining or self.retiring:
             raise RuntimeStoreError('runtime_draining')
 
     def logical_owner(self, session_id):
@@ -119,7 +134,8 @@ class SessionAuthority:
         return SessionRef(self.profile_id, sid)
 
     def agent(self, ref):
-        return self.runner._cached_agent_for(self.sessions[ref.session_id].route)
+        lookup = getattr(self.runner, '_resident_agent_for', None) or self.runner._cached_agent_for
+        return lookup(self.sessions[ref.session_id].route)
 
     def _handle(self, ref):
         row = self.db.get_session(ref.session_id)
@@ -201,27 +217,41 @@ class SessionAuthority:
             # this is the only place a viewer learns the CAS revision a later
             # prepared mutation must present.
             live.event_stream.publish(ref.session_id, {
-                'stored_session_id': ref.session_id, 'pending': pending,
+                'stored_session_id': ref.session_id, 'pending': pending, 'authority_epoch': self.epoch,
                 'desktop_protocol': CANONICAL_GATEWAY_PROTOCOL,
                 'running': handle.execution_state == 'running',
                 'execution_generation': handle.execution_generation,
                 'revision': handle.revision,
             }, event_type='session.info')
+        from gateway.session_bot_mailbox import wake_bot_receipts
+        wake_bot_receipts(self, ref.session_id)
 
     def _schedule(self, ref):
         live = self.sessions[ref.session_id]
         if live.task is None or live.task.done():
             live.task = asyncio.create_task(self._drain(ref))
             live.task.add_done_callback(_log_drain_failure)
+            from gateway.session_runtime_workers import persist_work_count
+            live.task.add_done_callback(lambda task: persist_work_count(self, task))
+
+    def wake_after_worker(self, session_id):
+        """A worker execution on ``session_id`` (a logical owner or its compression continuation)
+        ended: a drain that parked behind it re-runs. A no-op while a drain is running."""
+        for sid in dict.fromkeys((session_id, self.logical_owner(session_id))):
+            if sid in self.sessions:
+                self._schedule(SessionRef(self.profile_id, sid))
 
     def _pause(self, ref, reason):
         """The FIFO stopped without claiming its head. Committed rows stay queued for a later
-        drain; only the process-local messaging delivery waiters on this session are released,
+        drain; process-local delivery/HTTP/producer waiters on this session are released,
         with the reason instead of a reply, so an adapter loop is never parked on a turn that
-        will not run. The ingress turns that refusal into one user-facing notice per episode."""
+        will not run. The ingress turns that refusal into one user-facing notice per episode.
+        ``session_busy`` is transient (a registered worker finishes and wakes the FIFO), so only
+        the messaging delivery waiters are released for it; an API/webhook/Bot observer keeps
+        waiting for the answer instead of reporting accepted work as a conflict."""
         for row in list_session_admissions(self.db, session_id=ref.session_id):
             admission_id = row['admission_id']
-            if admission_id not in self.native_waiters:
+            if reason == 'session_busy' and admission_id not in self.native_waiters:
                 continue
             self.native_waiters.discard(admission_id)
             waiter = self.waiters.pop(admission_id, None)
@@ -295,6 +325,12 @@ class SessionAuthority:
 
     async def submit(self, actor: Principal, request: Submission, *, _authorize_write=None):
         self.authorize(actor, request.ref, 'session:submit')
+        async with self.sessions[request.ref.session_id].mutation_lock:
+            # Deletion can retire this session while the caller waits on its writer.
+            self.authorize(actor, request.ref, 'session:submit')
+            return await self._submit(actor, request, _authorize_write=_authorize_write)
+
+    async def _submit(self, actor, request, *, _authorize_write=None):
         self._require_admission_open()
         if (request.intent != 'queue' or not {'text'} <= set(request.payload) <= {
                 'text', 'attachments', 'finite', 'unattended', 'surface', 'voice_context', 'interrupted',
@@ -305,8 +341,17 @@ class SessionAuthority:
         from gateway.session_finite import admit_finite
         from gateway.session_surface import admit_surface
         finite = admit_finite(request.payload)
+        def admitted():
+            # The exact durable identity (authenticated principal + target + request id); the
+            # attachment fields it yields still pass the full payload-digest comparison below.
+            with self.db._read_ctx() as conn:
+                row = conn.execute('SELECT * FROM session_admissions WHERE principal_id=? AND '
+                                   'target_session_id=? AND request_id=?', (actor.subject,
+                                   request.ref.session_id, request.request_id)).fetchone()
+            from hermes_state_runtime import _row
+            return _row(row) if row is not None else None
         payload = {'text': request.payload['text'], **finite, **admit_surface(request.payload),
-                   **admit_attachments(request.payload.get('attachments'))}
+                   **admit_attachments(request.payload.get('attachments'), admitted=admitted)}
         source = self.sessions[request.ref.session_id].source
         if source is not None and source.user_id != actor.subject:
             # Durable server authorization, not a client payload field. The original
@@ -316,13 +361,34 @@ class SessionAuthority:
             payload['local_operator_v1'] = {
                 'profile_id': self.profile_id, 'session_id': request.ref.session_id,
                 'principal_id': actor.subject}
-        row = admit_session_input(self.db, epoch=self.epoch, principal_id=actor.subject,
-                                  session_id=request.ref.session_id, request_id=request.request_id,
-                                  payload=payload, intent=request.intent,
-                                  _authorize_write=_authorize_write)
+        try:
+            row = admit_session_input(self.db, epoch=self.epoch, principal_id=actor.subject,
+                                      session_id=request.ref.session_id, request_id=request.request_id,
+                                      payload=payload, intent=request.intent,
+                                      _authorize_write=_authorize_write)
+        except Exception:
+            self._release_refused_capture(request, payload)
+            raise
         self._publish_pending(request.ref)
         self._schedule(request.ref)
         return self._receipt(row)
+
+    def _release_refused_capture(self, request, payload):
+        """A refused submission's captured bytes have no owner unless another admission holds the
+        same bytes. They become durable retirement candidates (collected again by delete/prune if
+        this pass fails), then a holder-aware release runs. Its failure is logged and never replaces
+        the refusal the client must see (e.g. ``admission_conflict``)."""
+        media = payload.get('attachments_v1', {}).get('media', [])
+        if not media:
+            return
+        from hermes_state_media import collect_retired_media, retire_media
+        try:
+            self.db._execute_write(lambda conn: retire_media(conn, {'attachments_v1': {'media': media}}))
+            collect_retired_media(self.db)
+        except Exception:
+            import logging
+            logging.getLogger(__name__).exception(
+                'Releasing refused attachments of request %s failed', request.request_id)
 
     async def receipt(self, actor, ref, admission_id):
         self.authorize(actor, ref, 'session:submit')
@@ -335,12 +401,28 @@ class SessionAuthority:
 
     async def cancel_queued(self, actor, ref, admission_id):
         before = await self.receipt(actor, ref, admission_id)
-        row = cancel_session_input(self.db, epoch=self.epoch, admission_id=admission_id)
+        if before.status == 'queued':
+            # Owed from before the write: a commit that reports failure, or anything raising
+            # between the commit and observer settlement, leaves it for an exact retry to pay.
+            self.cancel_obligations.add(admission_id)
+        try:
+            row = cancel_session_input(self.db, epoch=self.epoch, admission_id=admission_id)
+        except RuntimeStoreError:
+            self.cancel_obligations.discard(admission_id)  # a definite refusal: nothing committed
+            raise
+        if (row['status'], row['outcome']) == ('terminal', 'cancelled') and admission_id in self.cancel_obligations:
+            self._settle_cancelled(ref, admission_id)
+        else:
+            if row['status'] != 'queued':
+                self.cancel_obligations.discard(admission_id)
+            self._publish_pending(ref)
+        # Media collection is its own write txn after the committed, settled cancellation: its
+        # failure surfaces to the caller, and an exact retry collects again without re-settling.
         from gateway.session_ingress_media import release_admission_media
         release_admission_media(self.db, admission_id)
-        if before.status != 'queued' or row['status'] != 'terminal':
-            self._publish_pending(ref)
-            return self._receipt(row)
+        return self._receipt(row)
+
+    def _settle_cancelled(self, ref, admission_id):
         # The only place a queued row becomes terminal: every observer kind that waits on
         # the admission (native delivery, API/webhook/hosted waiters, ACP and viewer streams)
         # settles here, or a cancelled row that never reaches _drain blocks them forever.
@@ -356,6 +438,8 @@ class SessionAuthority:
                     'text': '', 'content': '', 'admission_id': admission_id, 'outcome': 'cancelled'})
             finally:
                 live.event_stream.execution = running
+        # Published once: a later exact retry re-collects media but never repeats the completion.
+        self.cancel_obligations.discard(admission_id)
         self.native_waiters.discard(admission_id)
         waiter = self.waiters.pop(admission_id, None)
         if waiter is not None and not waiter.done():
@@ -363,19 +447,23 @@ class SessionAuthority:
         # A paused drain (preclaim refusal on this head) ended its task; the successors
         # need a fresh drain that revalidates them on their own merits.
         self._schedule(ref)
-        return self._receipt(row)
 
     async def resolve_unknown(self, actor, ref, admission_id, generation):
         """Operator acknowledgement that a turn lost across an owner restart will not
         finish; the paused FIFO behind it resumes. Never requeues the lost input."""
         self.authorize(actor, ref, 'session:control')
         await self.receipt(actor, ref, admission_id)
-        row = resolve_unknown_session_input(self.db, epoch=self.epoch, admission_id=admission_id,
-                                            generation=generation)
-        # Before the follower is scheduled: its request must not carry the discarded text merged in.
-        from gateway.session_local_recovery import transcript_target
+        # The transcript boundary commits WITH the terminal transition: a follower can never be
+        # claimed with the discarded text left open to be merged into its request.
         from gateway.session_results import close_discarded_turn
-        close_discarded_turn(self.db, transcript_target(self, ref))
+        row = resolve_unknown_session_input(self.db, epoch=self.epoch, admission_id=admission_id,
+                                            generation=generation,
+                                            _terminal_write=lambda conn, lost: close_discarded_turn(self.db, conn, lost))
+        self.pending_results.pop(admission_id, None)
+        # Its own write txn + unlink, so it runs after the resolution commits; a discarded image
+        # would otherwise stay on disk forever (the drain releases only settled turns).
+        from gateway.session_ingress_media import release_admission_media
+        release_admission_media(self.db, admission_id)
         self._publish_pending(ref)
         self._schedule(ref)
         return self._receipt(row)
@@ -389,6 +477,7 @@ class SessionAuthority:
             agent = self.agent(ref)
             if agent is not None:
                 agent.interrupt()
+                self.delivered_stops[ref.session_id] = generation
             else:
                 # Accepted for this exact claim; the turn must not construct its agent
                 # afterwards and run the work as if no Stop had arrived.
@@ -397,7 +486,13 @@ class SessionAuthority:
 
     def adopt_agent(self, session_id, generation, agent):
         """The turn installs its agent for the running claim; a Stop latched while there
-        was no agent to deliver it to fires now, never against a later generation."""
+        was no agent to deliver it to fires now, never against a later generation. A Stop
+        delivered to the cached agent for an earlier generation may have landed after that
+        turn's finalizer cleared it, so it is dropped rather than cancelling this turn. A managed
+        worker is a fresh process per turn and carries no earlier flag to drop."""
+        clear = getattr(agent, 'clear_interrupt', None)
+        if self.delivered_stops.pop(session_id, generation) != generation and clear is not None:
+            clear()
         if self.pending_stops.get(session_id) == generation:
             del self.pending_stops[session_id]
             agent.interrupt()
@@ -448,64 +543,95 @@ class SessionAuthority:
                 raise RuntimeStoreError("invalid_params")
             return live.controls.respond(ref.session_id, generation, prompt_id, response, kind=kind)
 
-    async def _drain(self, ref):
-        from gateway.session_finite import execute_finite_admission
-        live = self.sessions[ref.session_id]
-        while True:
-            try:
-                pending = list_session_admissions(self.db, session_id=ref.session_id)
-                if any(row['status'] == 'unknown' for row in pending):
-                    self._pause(ref, 'unknown_execution')
-                    return
-                first = next((row for row in pending if row['status'] == 'queued'), None)
-                from gateway.config import Platform
-                if first is not None and live.source.platform == Platform.LOCAL:
-                    from gateway.session_local_recovery import restore_local_session
-                    restore_local_session(self, ref.session_id)
-                    if first['request_id'].startswith('hosted:'):
-                        from gateway.session_hosted_transport import check_remote_hosted_admission
-                        if not await asyncio.to_thread(check_remote_hosted_admission, self, ref, first):
-                            service = getattr(self, 'hosted_room_service', None)
-                            if service is None:
-                                raise RuntimeStoreError('permission_denied')
-                            await asyncio.to_thread(service.check_admission, ref, first)
-                        # Cancellation may advance the FIFO while the source owner is awaited;
-                        # the successor must earn its own reauthorization, not inherit this one.
-                        current = get_session_admission(self.db, admission_id=first['admission_id'])
-                        if current is None or current['status'] != 'queued':
-                            continue
-                    if 'local_automation_v1' in first['payload']:
-                        from gateway.session_automation import check_local_automation
-                        check_local_automation(self, ref, first)
-                    else:
-                        from gateway.session_operator import check_local_input
-                        check_local_input(self, ref, first)
-                    # The first real turn reopens a finalized row (#85303): mounts are reads, and
-                    # SessionStore would route a stamped row as stale onto a FRESH session.
-                    from gateway.session_local_recovery import reopen_local_session
-                    reopen_local_session(self, ref)
-                if first is not None and 'native_text_v1' in first['payload']:
-                    from gateway.session_envelope import check_native_route
-                    await check_native_route(self.runner, first['payload'], self.physical_target(ref), live.source,
-                                       self.runner._adapter_for_source(live.source))
-                    # Cancellation may advance FIFO while the connector is awaited.
-                    # Never let the successor inherit this row's fresh verdict.
+    async def _claim_next(self, ref, live):
+        # False asks the pump to re-read after a queued head changed during preflight.
+        async with live.mutation_lock:
+            pending = list_session_admissions(self.db, session_id=ref.session_id)
+            if any(row['status'] == 'unknown' for row in pending):
+                raise RuntimeStoreError('unknown_execution')
+            first = next((row for row in pending if row['status'] == 'queued'), None)
+            from gateway.config import Platform
+            if first is not None and live.source.platform == Platform.LOCAL:
+                from gateway.session_local_recovery import restore_local_session
+                restore_local_session(self, ref.session_id)
+                if first['request_id'].startswith('hosted:'):
+                    from gateway.session_hosted_transport import check_remote_hosted_admission
+                    if not await asyncio.to_thread(check_remote_hosted_admission, self, ref, first):
+                        service = getattr(self, 'hosted_room_service', None)
+                        if service is None:
+                            raise RuntimeStoreError('permission_denied')
+                        await asyncio.to_thread(service.check_admission, ref, first)
+                    # Cancellation may advance the FIFO while the source owner is awaited;
+                    # the successor must earn its own reauthorization, not inherit this one.
                     current = get_session_admission(self.db, admission_id=first['admission_id'])
                     if current is None or current['status'] != 'queued':
-                        continue
-                if first is not None and live.source.platform == Platform.API_SERVER:
-                    from gateway.session_api_turn import check_api_turn
-                    check_api_turn(self, ref, first['payload'])
-                self._require_admission_open()
-                row = claim_session_input(self.db, epoch=self.epoch, session_id=ref.session_id)
+                        return False, first
+                if 'local_automation_v1' in first['payload']:
+                    from gateway.session_automation import check_local_automation
+                    check_local_automation(self, ref, first)
+                else:
+                    from gateway.session_operator import check_local_input
+                    check_local_input(self, ref, first)
+                # The first real turn reopens a finalized row (#85303): mounts are reads, and
+                # SessionStore would route a stamped row as stale onto a FRESH session.
+                from gateway.session_local_recovery import reopen_local_session
+                reopen_local_session(self, ref)
+            if first is not None and 'native_text_v1' in first['payload']:
+                from gateway.session_envelope import check_native_route
+                await check_native_route(self.runner, first['payload'], self.physical_target(ref), live.source,
+                                   self.runner._adapter_for_source(live.source))
+                # Cancellation may advance FIFO while the connector is awaited.
+                # Never let the successor inherit this row's fresh verdict.
+                current = get_session_admission(self.db, admission_id=first['admission_id'])
+                if current is None or current['status'] != 'queued':
+                    return False, first
+            if first is not None and live.source.platform == Platform.API_SERVER:
+                from gateway.session_api_turn import check_api_turn
+                check_api_turn(self, ref, first['payload'])
+            self._require_admission_open()
+            row = claim_session_input(self.db, epoch=self.epoch, session_id=ref.session_id)
+            return row, first
+
+    async def _drain(self, ref):
+        from gateway.session_finite import execute_finite_admission
+        from gateway.session_managed_worker import ManagedExecutionUnknown
+        live = self.sessions[ref.session_id]
+        backoff = 0.0
+        while True:
+            try:
+                row, first = await self._claim_next(ref, live)
             except RuntimeStoreError as exc:
                 import logging
                 logging.getLogger(__name__).warning('Session %s paused: %s', ref.session_id, exc.reason)
                 self._pause(ref, exc.reason)
                 return
+            except (OSError, sqlite3.OperationalError) as exc:
+                # A writer held past its patience or a full disk is transient, and every _schedule
+                # caller is event-driven: a dead drain would strand the committed head and hang its
+                # waiters until the next submit. Retry in place (like recover_failed_settlement),
+                # keeping waiters: releasing them fails requests that would run a moment later.
+                if self.runner._draining or self.retiring or self.sessions.get(ref.session_id) is not live:
+                    self._pause(ref, 'runtime_draining')
+                    return
+                backoff = min(max(backoff * 2, _CLAIM_RETRY_MIN_S), _CLAIM_RETRY_MAX_S)
+                import logging
+                logging.getLogger(__name__).warning(
+                    'Session %s claim deferred by storage (%r); retrying in %.1fs', ref.session_id, exc, backoff)
+                await asyncio.sleep(backoff)
+                continue
+            backoff = 0.0
+            if row is False:
+                continue
+            if row is None and first is not None:
+                # A live worker (or a claim this drain does not own) blocks the head: the same
+                # pause episode, so its notice is not repeated for every message queued behind it.
+                self._pause(ref, 'session_busy')
+                return
             # The FIFO is moving again (or empty): the next pause is a new episode.
             live.pause_notified = False
             if row is None:
+                from gateway.session_acp_lifecycle import end_idle_acp_session
+                end_idle_acp_session(self, ref.session_id)
                 return
             admission_id = row['admission_id']
             with live.event_stream.lock:
@@ -517,60 +643,85 @@ class SessionAuthority:
             try:
                 response = await execute_finite_admission(self, ref, row)
                 outcome = 'completed'
+            except ManagedExecutionUnknown:
+                with live.event_stream.lock:
+                    live.event_stream.execution = {}
+                self.pending_stops.pop(ref.session_id, None)
+                self._pause(ref, 'unknown_execution')
+                return
             except Exception:
                 import logging
                 logging.getLogger(__name__).exception('Admitted turn %s failed', admission_id)
                 response = 'The admitted turn failed.'
                 outcome = 'failed'
+            settled = None
+            settlement = {}
             try:
-                with live.event_stream.lock:
-                    from gateway.session_results import finish_result
-                    captured = self.pending_results.pop(admission_id, None)
-                    settled, response = finish_result(self.db, epoch=self.epoch, row=row,
-                        response=response, outcome=outcome, result=captured)
-                    live.controls.snapshot(ref.session_id, None)
-                    from gateway.session_ingress_media import release_admission_media
-                    release_admission_media(self.db, admission_id)
-                    # ``status`` is the message.complete contract's TurnStatus: the Desktop
-                    # extends a Stopped bubble to the persisted partial only on 'interrupted'.
-                    complete = {
-                        'text': response, 'content': response, 'admission_id': admission_id,
-                        'outcome': 'cancelled' if settled['outcome'] == 'interrupted' else settled['outcome'],
-                        'status': {'completed': 'complete', 'interrupted': 'interrupted'}.get(
-                            settled['outcome'], 'error')}
-                    # Only the agent's reuse site sets this (never inferred from equal text): the
-                    # final repeats a reply the viewer already painted, so it settles in place.
-                    captured_result = (captured or {}).get('result') or {}
-                    if response and captured_result.get('response_reused'):
-                        complete['response_reused'] = True
-                    # The committed row addresses of the turn: a viewer binds the streamed reply to
-                    # its stored row, so a transcript read racing this frame never paints it twice.
-                    # ``submission_id`` names whose turn it is: the sending viewer binds its optimistic
-                    # prompt (``user-<submission_id>``), which the queued admission ack could not name.
-                    if isinstance(captured_result.get('persisted_turn'), dict):
-                        complete['persisted_turn'] = {**captured_result['persisted_turn'],
-                                                      'submission_id': row['request_id']}
-                    live.event_stream.publish(ref.session_id, complete)
-                    # The idle snapshot (running=false) follows the completion, as on every other
-                    # host: a viewer that read running=false first settled the reply as a turn whose
-                    # terminal frame was lost and raced its own transcript read against the real one.
+                # Redaction, encoding and the SQLite write run off-loop: one turn's settlement must
+                # not stall every other session. Commit and completion share one stream-lock hold
+                # there; a tracked writer outlives a cancelled drain like the recovery stamp does.
+                from gateway.session_settlement_recovery import settle_with_retry
+                captured = self.pending_results.get(admission_id)
+                try:
+                    await settle_with_retry(self, live, ref, row, response, outcome, captured, settlement)
+                finally:
+                    if 'settled' in settlement:
+                        settled, response = settlement['settled'], settlement['response']
+                        self.pending_results.pop(admission_id, None)
+                # Idle follows the completion; its bot receipt wakeups are loop tasks. A delete
+                # that committed while the write yielded already retired this live entry.
+                if self.sessions.get(ref.session_id) is live:
                     self._publish_pending(ref)
             except Exception:
-                # The settle fence lost (a reset/compression moved runtime_generation under
-                # the turn). The row stays `started` for recovery -> `unknown`; re-settling
-                # it here would forge an outcome the ledger refused. The pump itself must
-                # not die silently: log with the id and fall through to release observers.
                 import logging
                 logging.getLogger(__name__).exception(
-                    'Settlement of admission %s failed; left for recovery', admission_id)
-                response = 'The admitted turn could not be settled.'
+                    'Settlement or publication of admission %s failed', admission_id)
+                if settled is None:
+                    self.pending_results.setdefault(admission_id, {
+                        'result': {'final_response': response, 'failed': outcome == 'failed'}, 'usage': {}})
+                    from gateway.session_settlement_recovery import recover_failed_settlement
+                    try:
+                        status = await recover_failed_settlement(self, row)
+                    except RuntimeStoreError:
+                        # Ownership moved; this owner may only release its process-local observers.
+                        self._pause(ref, 'unknown_execution')
+                        return
+                    # Discard can race the off-loop recovery stamp; its terminal decision wins.
+                    current = get_session_admission(self.db, admission_id=admission_id)
+                    status = current['status']
+                    if status == 'unknown':
+                        self._publish_pending(ref)
+                        self._pause(ref, 'unknown_execution')
+                        return
+                    # A write can commit before reporting failure. Re-read its exact result,
+                    # then publish the terminal outcome rather than inventing uncertainty.
+                    from gateway.session_results import admission_result
+                    from gateway.session_settlement_recovery import publish_terminal
+                    with live.event_stream.lock:
+                        captured = admission_result(self.db, admission_id)
+                        self.pending_results.pop(admission_id, None)
+                        if captured is None:
+                            # An operator discarded uncertainty while recovery yielded. There is
+                            # no committed answer to replay; its queued successor may now run.
+                            waiter = self.waiters.pop(admission_id, None)
+                            if waiter is not None and not waiter.done():
+                                waiter.set_exception(RuntimeStoreError('unknown_execution'))
+                            continue
+                        settled = current
+                        response = captured['result'].get('final_response') or ''
+                        publish_terminal(self, ref, row, settled, response, captured)
             finally:
                 # The stamp names a claimed, unsettled execution. Left in place, idle
                 # mutations (session.updated) would carry a terminal generation and
                 # a versioned viewer fence would discard them as late frames.
                 with live.event_stream.lock:
                     live.event_stream.execution = {}
-            self.pending_stops.pop(ref.session_id, None)
+                self.pending_stops.pop(ref.session_id, None)
+                if settled is None:
+                    # Uncommitted (unknown or discarded): the user is not told an answer the FIFO lost.
+                    self.pending_deliveries.pop(admission_id, None)
+            from gateway.session_ingress import deliver_settled
+            await deliver_settled(self, admission_id)
             waiter = self.waiters.pop(admission_id, None)
             if waiter is not None and not waiter.done():
                 waiter.set_result(response)

@@ -10,6 +10,7 @@ import {
 } from '@hermes/shared'
 import { atom } from 'nanostores'
 
+import { canonicalOwnerProfile } from '@/api/canonical-protocol'
 import type { HermesConnection } from '@/global'
 import { HermesGateway, setApiRequestConnection } from '@/hermes'
 import { translateNow } from '@/i18n'
@@ -20,6 +21,7 @@ import {
 } from '@/lib/gateway-liveness-policy'
 import { isMissingRpcMethod } from '@/lib/gateway-rpc'
 import { traceIdentityChange } from '@/lib/identity-trace'
+import { isPermanentLocalGatewayEnsureError } from '@/lib/local-gateway-ensure-failure'
 import {
   isTimeoutError,
   RECONNECT_ATTEMPT_TIMEOUT_MS,
@@ -351,7 +353,7 @@ function dispatchServerRequest(request: ServerRequest, profile: string, connecti
     return false
   }
 
-  g.config.onServerRequest({ ...request, ...(connectionId ? { connectionId } : {}), profile })
+  g.config.onServerRequest({ ...request, ...(connectionId ? { connectionId } : {}), profile: canonicalOwnerProfile(request) ?? profile })
 
   return true
 }
@@ -989,10 +991,18 @@ async function reconnectSecondary(entry: Secondary): Promise<void> {
       return
     }
 
-    // Only a successful open resets the stall budget (the 'open' state
-    // listener): a treadmill that alternates slot-wait timeouts with a
-    // spawned-but-unresponsive socket must still run out of budget.
-    if (isStalledDialError(error)) {
+    // An ensure refusal no redial can fix (incompatible runtime, no ensure protocol, an invalid
+    // endpoint, an unsafe control path): each automatic redial would spawn another
+    // `hermes gateway ensure` against the same install forever. Park at once, keeping the entry:
+    // an explicit open, focus/wake nudge or Reconnect re-arms it after the user's repair.
+    if (isPermanentLocalGatewayEnsureError(error)) {
+      console.warn(`[gateway] parking scope="${entry.scope}": local gateway ensure refused permanently`, error)
+      entry.wantOpen = false
+      entry.stalledDials = 0
+    } else if (isStalledDialError(error)) {
+      // Only a successful open resets the stall budget (the 'open' state
+      // listener): a treadmill that alternates slot-wait timeouts with a
+      // spawned-but-unresponsive socket must still run out of budget.
       entry.stalledDials += 1
 
       if (entry.stalledDials >= SECONDARY_STALLED_DIAL_BUDGET) {
@@ -1062,12 +1072,11 @@ function createSecondary(profile: string, connectionId: null | string = null): S
     activationLeaseUntil: 0
   }
 
-  // Events keep carrying the bare profile — session routing is profile-keyed
-  // everywhere. A pool secondary with no registry connection has no exact
-  // connection id, so stamp this closure-owned profile before registry fan-in;
-  // the recorder must not promote an arbitrary wire `profile` field instead.
+  // Canonical adapters prove the owner from their attachment; legacy pooled
+  // sockets prove it through this closure. Stamp before registry fan-in,
+  // never promote an arbitrary wire `profile` field into ownership.
   entry.offEvent = gateway.onEvent(event => {
-    const scopedEvent = stampSecondaryProfileOwner({ ...event, ...(connectionId ? { connectionId } : {}) }, profile)
+    const scopedEvent = stampSecondaryProfileOwner({ ...event, ...(connectionId ? { connectionId } : {}) }, canonicalOwnerProfile(event) ?? profile)
 
     g.config?.onEvent(scopedEvent)
     releaseTerminalTurnLease(entry.scope, event)

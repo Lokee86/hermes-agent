@@ -20,6 +20,7 @@ import {
   resolveDesktopCommand
 } from '@/lib/desktop-slash-commands'
 import { isMissingRpcMethod } from '@/lib/gateway-rpc'
+import { type GuardedModelSwitchResult, surfaceModelSwitchConfirm } from '@/lib/guarded-model-switch'
 import { applyReasoningSlashResult, reasoningSlashParams } from '@/lib/reasoning-slash'
 import { setSessionYolo } from '@/lib/yolo-session'
 import { openCommandPalettePage } from '@/store/command-palette'
@@ -68,7 +69,7 @@ import type {
   SlashExecResponse
 } from '../../../types'
 
-import { preparedSubmissionKey, readPreparedSubmission } from './prepared-submissions'
+import { adoptPreparedSubmission, preparedSubmissionKey } from './prepared-submissions'
 import { queueKickoffIfSessionBusy } from './queue-if-busy'
 import { resolveTargetSessionId } from './resolve-target-session'
 import { captureSubmissionDestination } from './submission-destination'
@@ -229,6 +230,7 @@ export function useSlashCommand(deps: SlashCommandDeps) {
         options?.destination ?? captureSubmissionDestination(initialStoredId ?? initialRuntimeId, ambientRequestGateway)
 
       const requestGateway = destination.requestGateway
+
       // `hidden` (the first-run `/initiate-setup`) types the saved user row hidden: no bubble, live
       // or after a reload. It rides retryOptions so a prepared-submission retry stays hidden too.
       const retryOptions = {
@@ -238,7 +240,7 @@ export function useSlashCommand(deps: SlashCommandDeps) {
       }
 
       try {
-        const prepared = await readPreparedSubmission(
+        const prepared = (await adoptPreparedSubmission(
           preparedSubmissionKey(
             resolveComposerSessionKey(initialStoredId ?? initialRuntimeId, $sessions.get()),
             destination,
@@ -246,7 +248,7 @@ export function useSlashCommand(deps: SlashCommandDeps) {
             options?.attachments ?? $composerAttachments.get(),
             retryOptions
           )
-        )
+        ))?.entry
 
         if (prepared) {
           return await submitPromptText(prepared.text, {
@@ -334,6 +336,36 @@ export function useSlashCommand(deps: SlashCommandDeps) {
       // `exec` commands (and unknown skill / quick commands the backend owns)
       // run on the gateway and render their text output inline. This is the only
       // path that talks to slash.exec / command.dispatch.
+      // A typed `/model` the owner refused as a guarded target (cost / data policy / large
+      // context) was NOT applied: ask with the shared model-switch dialog (the picker's) and
+      // resend once on "switch anyway". True when the answer was such a refusal.
+      const confirmGuardedModelExec = (
+        name: string,
+        result: unknown,
+        execParams: Record<string, unknown>,
+        render: (text: string) => void
+      ): boolean => {
+        const refusal = result as (GuardedModelSwitchResult & { target_model?: string }) | null
+
+        if (name !== 'model' || !refusal?.confirm_required) {
+          return false
+        }
+
+        void surfaceModelSwitchConfirm<GuardedModelSwitchResult & SlashExecResponse>({
+          confirmMessage: refusal.confirm_message,
+          failureMessage: copy.modelSwitchFailed,
+          finish: confirmed => render(confirmed?.output || '/model: no output'),
+          model: refusal.target_model,
+          requestConfirmed: () =>
+            requestGateway<GuardedModelSwitchResult & SlashExecResponse>('slash.exec', {
+              ...execParams,
+              confirm_expensive_model: true
+            })
+        })
+
+        return true
+      }
+
       async function runExec(ctx: SlashActionCtx): Promise<void> {
         const { arg, command, name } = ctx
         const resolved = await withSlashOutput(ctx)
@@ -485,10 +517,12 @@ export function useSlashCommand(deps: SlashCommandDeps) {
         }
 
         try {
-          const result = await requestGateway<unknown>('slash.exec', {
-            session_id: sessionId,
-            command: command.replace(/^\/+/, '')
-          })
+          const execParams = { session_id: sessionId, command: command.replace(/^\/+/, '') }
+          const result = await requestGateway<unknown>('slash.exec', execParams)
+
+          if (confirmGuardedModelExec(name, result, execParams, renderSlashOutput)) {
+            return
+          }
 
           const dispatch = parseCommandDispatch(result)
 

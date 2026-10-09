@@ -10,7 +10,7 @@ import hermes_cli.plugin_policy as plugin_policy
 @pytest.mark.parametrize("blocked_by", ["hook", "execution"])
 def test_remote_entries_run_request_hook_and_execution_policies(monkeypatch, blocked_by):
     import model_tools
-    import hermes_cli.plugins as plugins
+    from hermes_cli import plugins
     from tools.registry import invalidate_check_fn_cache
     from tools.connectors.gateway import bridge, config
 
