@@ -1274,7 +1274,7 @@ _SERVICE_RETRY_MAX_S = 3600.0
 def _service_gateway_ready(name: str, profile: str | None, timeout_s: float | None = None) -> list[int]:
     """The stable gateway *name*'s service process supervises (in *profile*'s home when known): SCM
     ``running`` proves only the wrapper started, not that the gateway it hosts came up."""
-    from hermes_cli import gateway_windows
+    from gateway import windows_service as gateway_windows
     from hermes_cli.profiles import get_profile_dir
     psutil, service = _win_service(name)
 
