@@ -1275,7 +1275,7 @@ def _service_gateway_ready(name: str, profile: str | None, timeout_s: float | No
     """The stable gateway *name*'s service process supervises (in *profile*'s home when known): SCM
     ``running`` proves only the wrapper started, not that the gateway it hosts came up."""
     from hermes_cli import gateway_windows
-    from hermes_cli.profiles import get_profile_dir
+    from profiles.paths import get_profile_dir
     psutil, service = _win_service(name)
 
     def under_service(pids):
@@ -1502,7 +1502,7 @@ def _verify_relaunched_gateways_alive(token: dict, profiles: dict, unmapped: lis
     with _abort_on_error("Could not load Windows gateway liveness helpers"):
         from gateway.status import _pid_exists
         from hermes_cli import gateway_windows
-        from hermes_cli.profiles import get_profile_dir
+        from profiles.paths import get_profile_dir
     deadline = _time.monotonic() + _relaunch_verify_timeout_s(profiles, unmapped, _pid_exists)
     taken: set = set()
     # Profiles first: a gateway on a profile's home is that profile's, never an unmapped entry's.

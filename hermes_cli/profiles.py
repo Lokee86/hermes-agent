@@ -1859,6 +1859,8 @@ def _inside_git_checkout(path: Path) -> bool:
 def _profile_export_directory() -> Path:
     """Choose an export directory that cannot become source-tree input."""
     import tempfile
+    from profiles.paths import _get_default_hermes_home
+
     export_dir = _get_default_hermes_home() / "profile-exports"
     if not _inside_git_checkout(export_dir):
         return export_dir
