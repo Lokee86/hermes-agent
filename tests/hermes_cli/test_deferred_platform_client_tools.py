@@ -461,14 +461,14 @@ class TestDeferredPlatformToolPreregistration:
         assert platform_registry.get("probeplat") is None
         assert platform_registry.get("probeplat") is None  # a failed load is never retried by a lookup
         with monkeypatch.context() as m:  # a placeholder the user disabled is never imported by a re-arm
-            m.setattr("hermes_cli.plugins_discovery._get_disabled_plugins", lambda: {"probeplat-platform"})
+            m.setattr("plugin_runtime.discovery._get_disabled_plugins", lambda: {"probeplat-platform"})
             mgr._gate_manifest(manifest, {"probeplat-platform"}, None)
             assert mgr.rearm_failed_platform("probeplat") is False
         with monkeypatch.context() as m:  # nor one built for another Hermes version
-            m.setattr("hermes_cli.plugins_manifest.requires_hermes_error", lambda _manifest: "needs newer hermes")
+            m.setattr("plugin_runtime.loading.requires_hermes_error", lambda _manifest: "needs newer hermes")
             assert mgr.rearm_failed_platform("probeplat") is False
 
-        from hermes_cli import plugins_loader
+        from plugin_runtime import loading as plugins_loader
         release = threading.Event()
         hung = threading.Thread(target=release.wait, name=f"{plugins_loader._LOADER_THREAD_PREFIX}probeplat-platform",
                                 daemon=True)
@@ -477,7 +477,7 @@ class TestDeferredPlatformToolPreregistration:
         assert mgr.rearm_failed_platform("probeplat") is False  # its hung load is still running
         release.set()
         hung.join()
-        monkeypatch.setattr("hermes_cli.plugins_loader._ABANDONED_LOADERS", [])
+        monkeypatch.setattr("plugin_runtime.loading._ABANDONED_LOADERS", [])
         assert mgr.rearm_failed_platform("probeplat") is True
         assert platform_registry.get("probeplat") is not None
         assert probe.adapter_imports == 2
