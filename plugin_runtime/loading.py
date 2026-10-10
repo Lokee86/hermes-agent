@@ -314,6 +314,35 @@ class PluginLoaderMixin:
             return
         self._register_deferred_platform_tools(manifest, loaded)
 
+    def rearm_failed_platform(self, platform_name: str) -> bool:
+        """Re-lease a failed deferred platform loader for the next registry lookup.
+
+        Do not retry disabled or incompatible plugins, or a timed-out load whose
+        abandoned worker remains active.
+        """
+        from plugin_runtime.discovery import _get_disabled_plugins, _get_enabled_plugins, gate_manifest
+
+        with self._discovery_lock, plugin_home_scope(self.home_path):
+            failed = next(
+                (p.manifest for p in self._plugins.values()
+                 if p.error and not p.enabled and p.manifest.kind == "platform"
+                 and self._platform_name_from_manifest(p.manifest) == platform_name),
+                None,
+            )
+            if failed is None or requires_hermes_error(failed) or gate_manifest(
+                failed, _get_disabled_plugins(), _get_enabled_plugins()
+            ).action not in ("defer", "load"):
+                return False
+            with _ABANDONED_LOADERS_LOCK:
+                if any(
+                    t.is_alive() and t.name == f"plugin-load:{manifest_key(failed)}"
+                    for t in _ABANDONED_LOADERS
+                ):
+                    return False
+            logger.info("Re-arming failed platform plugin load: %s", platform_name)
+            self._register_deferred_platform(failed)
+            return True
+
     @_serialized_replacement
     def _lease_deferred_platform(self, manifest: PluginManifest, lookup_key: str) -> bool:
         """Publish the deferred loader as a ledger-owned lease; False when the registry refused it."""
