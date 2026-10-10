@@ -45,7 +45,8 @@ _MAX_LOAD_TIMEOUT_SECS = 600.0
 _MAX_ABANDONED_LOADERS = 8
 _ABANDONED_LOADERS: List[threading.Thread] = []
 _ABANDONED_LOADERS_LOCK = threading.Lock()
-_IN_PLUGIN_LOAD = threading.local()
+_LOADER_THREAD_PREFIX = "plugin-load:"
+_IN_PLUGIN_LOAD: contextvars.ContextVar[list[PluginLoadContext] | None] = contextvars.ContextVar("plugin_load_scope", default=None)
 
 
 @dataclass
@@ -86,7 +87,7 @@ class PluginLoadTimeout(Exception):
 
 def in_plugin_load_worker() -> bool:
     """True on a deadline worker thread; re-entrant discovery must not block on its own parent."""
-    return bool(getattr(_IN_PLUGIN_LOAD, "active", False))
+    return _IN_PLUGIN_LOAD.get() is not None
 
 
 def _resolve_plugin_load_timeout() -> float:
@@ -128,31 +129,42 @@ def _reserve_abandoned_loader_slot() -> None:
 
 
 def run_with_load_deadline(plugin_key: str, ctx: PluginLoadContext, fn: Callable[[], Any]) -> Any:
-    """Run a plugin import/register operation under the configured deadline."""
+    """Run plugin loading under a deadline; nested loads share the outer worker."""
+    outer_scope = _IN_PLUGIN_LOAD.get()
+    if outer_scope is not None:
+        outer_scope.append(ctx)
+        try:
+            return fn()
+        finally:
+            outer_scope.remove(ctx)
     timeout = _resolve_plugin_load_timeout()
     if timeout <= 0:
         return fn()
     _reserve_abandoned_loader_slot()
     outcome: List[Any] = []
     failure: List[BaseException] = []
+    scope = [ctx]
 
     def _worker() -> None:
-        _IN_PLUGIN_LOAD.active = True
+        token = _IN_PLUGIN_LOAD.set(scope)
         try:
             outcome.append(fn())
         except BaseException as exc:
             failure.append(exc)
+        finally:
+            _IN_PLUGIN_LOAD.reset(token)
 
     worker = threading.Thread(
         target=contextvars.copy_context().run,
         args=(_worker,),
-        name=f"plugin-load:{plugin_key}",
+        name=f"{_LOADER_THREAD_PREFIX}{plugin_key}",
         daemon=True,
     )
     worker.start()
     worker.join(timeout)
     if worker.is_alive():
-        ctx._abandon_load()
+        for loaded_ctx in scope:
+            loaded_ctx._abandon_load()
         with _ABANDONED_LOADERS_LOCK:
             _ABANDONED_LOADERS.append(worker)
         raise PluginLoadTimeout(f"load timed out after {timeout:g}s (import + register() never returned)")
@@ -335,7 +347,7 @@ class PluginLoaderMixin:
                 return False
             with _ABANDONED_LOADERS_LOCK:
                 if any(
-                    t.is_alive() and t.name == f"plugin-load:{manifest_key(failed)}"
+                    t.is_alive() and t.name == f"{_LOADER_THREAD_PREFIX}{manifest_key(failed)}"
                     for t in _ABANDONED_LOADERS
                 ):
                     return False
