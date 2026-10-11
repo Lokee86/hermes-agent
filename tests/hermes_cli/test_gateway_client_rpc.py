@@ -4,7 +4,7 @@ import json
 
 import pytest
 
-from hermes_cli.gateway_client import GatewayClient, GatewayRPCError
+from gateway.client import GatewayClient, GatewayRPCError
 
 
 class _Socket:

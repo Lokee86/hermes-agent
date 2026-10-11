@@ -6,7 +6,7 @@ import acp
 import pytest
 
 from acp_adapter.gateway_server import GatewayACPAgent
-from hermes_cli.gateway_client import GatewayClientError
+from gateway.client import GatewayClientError
 
 
 @pytest.mark.asyncio

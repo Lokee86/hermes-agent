@@ -166,7 +166,7 @@ async def test_forward_wakes_on_the_completion_frame_instead_of_a_fixed_100ms_po
     import asyncio
     import time
     from websockets.asyncio.server import serve
-    import hermes_cli.gateway_client as gateway_client
+    from gateway import client as gateway_client
     import hermes_cli.gateway_runtime as gateway_runtime
     from gateway.session_a2a import forward_to_owner
 

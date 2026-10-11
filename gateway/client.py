@@ -7,10 +7,30 @@ import json
 import os
 from pathlib import Path
 import time
+from websockets.exceptions import ConnectionClosed
 
 
 class GatewayClientError(ValueError):
     pass
+
+
+class GatewayRPCError(GatewayClientError):
+    """A bounded owner refusal preserving its machine-readable code and scalar data."""
+
+    def __init__(self, reason, *, code=None, data=None):
+        super().__init__(reason)
+        self.code = code
+        self.data = data or {}
+
+
+GATEWAY_WS_PROTOCOL = "hermes-gateway-v1"
+
+
+def gateway_ws_target(endpoint, ticket):
+    return (
+        endpoint.api_origin.replace("https:", "wss:").replace("http:", "ws:") + "/api/ws",
+        [GATEWAY_WS_PROTOCOL, "hermes-gateway-ticket." + ticket],
+    )
 
 
 class GatewayClient:
@@ -39,17 +59,34 @@ class GatewayClient:
                     if "error" in frame:
                         # Only bounded authority reason codes, never raw remote diagnostics.
                         reason = frame["error"].get("message", "request_failed")
+                        if isinstance(reason, str) and reason.startswith("unknown method:"):
+                            reason = "unknown_method"
                         if not isinstance(reason, str) or not reason.replace("_", "").isalnum() or len(reason) > 80:
                             reason = "request_failed"
-                        future.set_exception(GatewayClientError(reason))
+                        detail = frame["error"]
+                        data = detail.get("data") if isinstance(detail.get("data"), dict) else {}
+                        safe_data = {
+                            k: v for k, v in data.items()
+                            if isinstance(k, str) and len(k) <= 80 and (
+                                isinstance(v, (bool, int, float))
+                                or isinstance(v, str) and len(v) <= 256
+                                or isinstance(v, list) and len(v) <= 32
+                                and all(isinstance(x, str) and len(x) <= 256 for x in v)
+                            )
+                        }
+                        if reason.startswith("unknown method:"):
+                            reason = "unknown_method"
+                        future.set_exception(
+                            GatewayRPCError(reason, code=detail.get("code"), data=safe_data)
+                        )
                     else:
                         future.set_result(frame.get("result", {}))
                 elif "method" in frame:
                     self.events.put_nowait(frame)
-        except (OSError, ValueError, asyncio.QueueFull):
+        except (OSError, ValueError, asyncio.QueueFull, ConnectionClosed):
             pass
         finally:
-            error = GatewayClientError("Gateway disconnected; accepted work was not cancelled. Resume the printed session ID.")
+            error = GatewayClientError("Gateway disconnected; turn outcome is unknown; do not resend. Accepted work was not cancelled. Resume the printed session ID.")
             for future in self.pending.values():
                 if not future.done():
                     future.set_exception(error)
@@ -65,7 +102,10 @@ class GatewayClient:
         self.pending[rid] = future
         try:
             await self.websocket.send(json.dumps({"jsonrpc": "2.0", "id": rid, "method": method, "params": params}))
-            return await asyncio.wait_for(future, 30)
+            return await asyncio.wait_for(
+                future, 300 if method == "session.mutate" and params.get("operation") == "compress"
+                else 30,
+            )
         finally:
             self.pending.pop(rid, None)
 
@@ -125,8 +165,7 @@ async def connect_gateway():
             raise GatewayClientError(f"Gateway {result.state}: {result.reason_code or 'not_ready'}{detail}")
         endpoint = result.endpoint
         ticket = await asyncio.to_thread(_session_ticket, home, endpoint)
-        url = endpoint.api_origin.replace("https:", "wss:").replace("http:", "ws:") + "/api/ws"
-        protocols = ["hermes-gateway-v1", "hermes-gateway-ticket." + ticket]
+        url, protocols = gateway_ws_target(endpoint, ticket)
     try:
         # The gateway is a loopback (or explicitly named) peer, never something to route through the
         # user's HTTP(S) proxy; websockets>=14 reads HTTP_PROXY/HTTPS_PROXY by default and a proxy that

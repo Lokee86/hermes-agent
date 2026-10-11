@@ -81,7 +81,7 @@ def classic_cell(name, gateway):
 
 
 def acp_cell(name, gateway):
-    from hermes_cli.gateway_client import GatewayClientError
+    from gateway.client import GatewayClientError
     from hermes_cli.gateway_mutations import slash_mutation
     try:
         operation, _ = slash_mutation("/" + name, "x" if name == "model" else "")

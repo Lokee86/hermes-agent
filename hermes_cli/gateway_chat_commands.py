@@ -17,7 +17,7 @@ CLI ran in-process, mapped onto what the owner serves -- the mapping Ink uses
 import sys
 import uuid
 
-from hermes_cli.gateway_client import GatewayClientError
+from gateway.client import GatewayClientError
 
 PARITY_DOC = "https://hermes-agent.nousresearch.com/docs/developer-guide/gateway-command-parity"
 
@@ -154,7 +154,7 @@ async def _tools(view, rest):
 
 async def forward(view, name, rest):
     """Run a registry command (or a skill) on the owner; its refusal names where the command stands."""
-    from hermes_cli.gateway_client import GatewayRPCError
+    from gateway.client import GatewayRPCError
     try:
         reply = await view.client.rpc("slash.exec", session_id=view.session_id,
                                       command=name + (" " + rest if rest else ""))

@@ -78,6 +78,8 @@ class GatewayACPAgent(acp.Agent):
         self._failure = None
         self._permissions = {}
         self._admissions = {}
+        # An ambiguous submit response must reuse the original admission identity.
+        self._pending_submissions = {}
         self._submitting = set()
         self._pending_cancels = set()
         self._tool_args = {}
@@ -255,7 +257,7 @@ class GatewayACPAgent(acp.Agent):
             raise GatewayClientError("not_found")
         from acp_adapter.content import _content_blocks_to_openai_user_content
         text, attachments = _stage_user_content(_content_blocks_to_openai_user_content(prompt))
-        if text.lstrip().startswith('/') and not attachments:
+        if text.lstrip() and text.lstrip().split(None, 1)[0] in ('/model', '/compress', '/branch', '/reset') and not attachments:
             from hermes_cli.gateway_mutations import slash_mutation
             parts = text.strip().split(None, 1)
             operation, payload = slash_mutation(parts[0], parts[1] if len(parts) > 1 else '')
@@ -275,11 +277,17 @@ class GatewayACPAgent(acp.Agent):
         submit = {'text': text}
         if attachments:
             submit['attachments'] = attachments
+        pending = self._pending_submissions.get(session_id)
+        if pending is None or pending[0] != submit:
+            pending = (submit, uuid.uuid4().hex)
+            self._pending_submissions[session_id] = pending
         self._submitting.add(session_id)
         try:
             receipt = await client.rpc("prompt.submit", session_id=session_id,
-                                       input_id=uuid.uuid4().hex, **submit)
+                                       input_id=pending[1], **submit)
         except BaseException:
+            # The owner may have accepted a disconnected request. Keep input_id
+            # until an acknowledgment or definitive refusal resolves its status.
             self._pending_cancels.discard(session_id)
             raise
         finally:
@@ -303,6 +311,8 @@ class GatewayACPAgent(acp.Agent):
             # already advanced while this coroutine unwinds.
             if self._admissions.get(session_id) == admission_id:
                 self._admissions.pop(session_id, None)
+                if self._pending_submissions.get(session_id) == pending:
+                    self._pending_submissions.pop(session_id, None)
         outcome = terminal.get("outcome")
         if outcome == "failed":
             raise GatewayClientError("admitted_turn_failed")

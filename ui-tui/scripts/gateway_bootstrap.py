@@ -68,7 +68,7 @@ def bootstrap(start: bool, recover: bool = False) -> dict:
             or grant.get("profile_id") != endpoint.profile_id
             or not isinstance(grant.get("ticket"), str)):
         raise RuntimeError("gateway private bootstrap rejected")
-    from hermes_cli.gateway_client import gateway_ws_target
+    from gateway.client import gateway_ws_target
     url, protocols = gateway_ws_target(endpoint, grant["ticket"])
     return {"url": url, "protocols": protocols,
             "profile_id": endpoint.profile_id, "instance_id": endpoint.instance_id}

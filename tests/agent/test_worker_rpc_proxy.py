@@ -15,7 +15,7 @@ def test_worker_persistence_explicitly_bypasses_proxy(tmp_path, monkeypatch):
                         lambda *a, **k: next(discoveries))
     monkeypatch.setattr('hermes_cli.gateway_runtime.control_home_for', lambda home, endpoint: home)
     monkeypatch.setattr('hermes_cli.gateway_runtime_discovery.query_identify', lambda *a, **k: {'pid': -1})
-    monkeypatch.setattr('hermes_cli.gateway_client._session_ticket', lambda *a, **k: 'ticket')
+    monkeypatch.setattr('gateway.client._session_ticket', lambda *a, **k: 'ticket')
     calls = []
     @contextmanager
     def connect(url, **kwargs):

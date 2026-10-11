@@ -17,7 +17,7 @@ class _Bridge:
         self.connection, self.events = connection, asyncio.Queue()
 
     async def rpc(self, method, **params):
-        from hermes_cli.gateway_client import GatewayClientError
+        from gateway.client import GatewayClientError
         reply = await self.connection.dispatch({'id': 1, 'method': method, 'params': params})
         if 'error' in reply:
             raise GatewayClientError(reply['error']['message'])

@@ -8,7 +8,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from hermes_cli.gateway_client import GatewayClientError
+from gateway.client import GatewayClientError
 
 
 class _Owner:

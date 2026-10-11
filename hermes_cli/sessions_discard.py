@@ -13,7 +13,7 @@ import sys
 
 async def _resume(client, name):
     """Exact session id first, then title, as ``hermes chat --resume`` / ``-c`` resolve it."""
-    from hermes_cli.gateway_client import GatewayClientError
+    from gateway.client import GatewayClientError
     for key in ("session_id", "title"):
         try:
             return await client.rpc("session.resume", **{key: name})
@@ -34,7 +34,7 @@ def _confirm(session_id, rows):
 
 
 async def _discard(args):
-    from hermes_cli.gateway_client import GatewayClientError, connect_gateway
+    from gateway.client import GatewayClientError, connect_gateway
     async with connect_gateway() as client:
         snapshot = await _resume(client, args.session)
         session_id = snapshot.get("session_id") or snapshot["stored_session_id"]
@@ -79,7 +79,7 @@ def add_discard_parser(sessions_subparsers) -> None:
 def cmd_discard(args) -> int:
     import asyncio
     from websockets.exceptions import WebSocketException
-    from hermes_cli.gateway_client import GatewayClientError
+    from gateway.client import GatewayClientError
     try:
         return asyncio.run(_discard(args))
     except (GatewayClientError, OSError, TimeoutError, WebSocketException) as exc:

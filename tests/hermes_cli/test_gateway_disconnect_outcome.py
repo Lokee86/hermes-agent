@@ -7,7 +7,7 @@ import json
 import pytest
 from websockets.exceptions import ConnectionClosedError
 
-from hermes_cli.gateway_client import GatewayClient, GatewayClientError
+from gateway.client import GatewayClient, GatewayClientError
 
 
 @pytest.mark.asyncio
