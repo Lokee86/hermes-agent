@@ -601,49 +601,6 @@ class PluginLoaderMixin:
             self._predeclared_tools.pop(plugin_key, None)
         self._plugins[plugin_key] = loaded
 
-    def _track_tool_override_policy(self, manifest: PluginManifest, module_name: str) -> None:
-        """Install the plugin's tool-override policy in tools.registry as a ledger-owned lease."""
-        from tools.registry import registry as _registry
-        scope = self.scope_key
-        with replacement_coordinator.transaction():
-            previous_policy = _registry.snapshot_plugin_override_policy(module_name, scope=scope)
-            current_policy = _registry.register_plugin_override_policy(
-                module_name, self.context_for(manifest)._tool_override_allowed(""), scope=scope,
-            )
-            policy_lease = replacement_coordinator.acquire(
-                ("tool_override_policy", scope, module_name), current=current_policy,
-                previous=previous_policy,
-                restore=lambda replacement: _registry.restore_plugin_override_policy(
-                    module_name, current_policy, replacement, scope=scope,
-                ),
-            )
-            self._track_registration(manifest, "tool_override_policy", module_name, policy_lease.dispose)
-
-    def _attribute_registrations(
-        self, loaded: LoadedPlugin, plugin_key: str, registration_start: int
-    ) -> None:
-        """Fill ``loaded.*_registered`` from the ledger slice this plugin's register() produced."""
-        registrations = [
-            r for r in self._registration_order[registration_start:]
-            if r.plugin_key == plugin_key and r.active
-        ]
-
-        def _keys(kind: str) -> List[str]:
-            return [r.key for r in registrations if r.kind == kind]
-
-        # Discovery-time tools predate registration_start; credit them back or `hermes plugins list`
-        # under-reports once the deferred adapter materializes.
-        predeclared = [t for t in self._predeclared_tools.pop(plugin_key, []) if t in self._plugin_tool_names]
-        loaded.tools_registered = predeclared + [k for k in _keys("tool") if k not in predeclared]
-        loaded.hooks_registered = _keys("hook")
-        loaded.middleware_registered = _keys("middleware")
-        loaded.commands_registered = _keys("command")
-        logger.debug(
-            "  registered: %d tool(s), %d hook(s), %d middleware, %d slash command(s), %d CLI command(s)",
-            len(loaded.tools_registered), len(loaded.hooks_registered),
-            len(loaded.middleware_registered), len(loaded.commands_registered),
-            sum(1 for c in self._cli_commands if c in _keys("cli_command")),
-        )
 
     def _load_portable_plugin(self, manifest: PluginManifest, loaded: LoadedPlugin) -> None:
         """Load validated portable components without importing Python code."""
