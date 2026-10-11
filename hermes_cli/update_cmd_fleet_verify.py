@@ -356,7 +356,7 @@ def _verify_fleet_after_update(restart, *, _pre_update_plan, _windows_gateway_re
     # Fleet is healthy on the new code: fold per-profile gateways into one multiplexer when nothing
     # blocks it (deterministic; never prompts), else print the blockers and the one-liner to run later.
     try:
-        from hermes_cli.gateway_migrate import maybe_auto_migrate_after_update
+        from nous_cli.gateway_migrate import maybe_auto_migrate_after_update
         maybe_auto_migrate_after_update()
     except (Exception, SystemExit) as exc:  # health: allow BLE001 -- a SystemExit here must not fail a committed update
         logger.warning('Multiplex auto-migration after update failed: %s', exc)

@@ -209,7 +209,7 @@ def _update_fenced(homes) -> bool:
     return False
 
 
-def ensure_gateway_runtime(profile_home: str | Path, *, timeout: float = DEFAULT_ENSURE_TIMEOUT) -> GatewayDiscovery:
+def ensure_gateway_runtime(profile_home: str | Path, *, timeout: float = DEFAULT_ENSURE_TIMEOUT, idle_exit: bool = False) -> GatewayDiscovery:
     """Ensure once, never install/replace; pending remains pending at deadline.
 
     A successful service command or Popen is not session readiness. After an
@@ -264,7 +264,7 @@ def ensure_gateway_runtime(profile_home: str | Path, *, timeout: float = DEFAULT
                     start_existing_gateway_service(service, deadline=deadline)
                 else:
                     from gateway.runtime_start import spawn_unmanaged_gateway
-                    spawn_unmanaged_gateway(target, deadline=deadline)
+                    spawn_unmanaged_gateway(target, deadline=deadline, idle_exit=idle_exit)
                 requested = True
             time.sleep(min(delay, remaining(deadline)))
             delay = min(delay * 1.5, 0.25)

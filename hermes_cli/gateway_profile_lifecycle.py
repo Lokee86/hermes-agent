@@ -23,7 +23,7 @@ def host_scope_for_all_verb(owner):
     with the host DOWN ``-p X gateway start|restart --all`` re-launched X's own gateway, which the
     named-profile guard then refused (exit 78): the host stayed down after a Desktop update.
     """
-    from hermes_cli.gateway_migrate import _home_env
+    from gateway.migration import _home_env
     return _home_env(owner.home if owner is not None else get_default_hermes_root())
 
 
