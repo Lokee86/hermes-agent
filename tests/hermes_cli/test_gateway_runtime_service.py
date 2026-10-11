@@ -301,7 +301,7 @@ def test_gateway_wrapper_requires_actual_python_entrypoint(outer, tmp_path):
 def test_android_python_reaches_the_unmanaged_start(tmp_path, monkeypatch):
     """Termux is supported and has no service manager; Python 3.13+ there reports
     sys.platform == "android". Ensure must start the gateway unmanaged, not refuse the platform."""
-    from hermes_cli import gateway_runtime as runtime, gateway_runtime_service as service, gateway_runtime_start as start
+    from gateway import runtime, runtime_service as service, runtime_start as start
 
     home = tmp_path / "profile"
     home.mkdir(mode=0o700)
@@ -315,19 +315,17 @@ def test_android_python_reaches_the_unmanaged_start(tmp_path, monkeypatch):
     assert spawned == [home.resolve()]
 
 
-def test_windows_startup_folder_entry_still_restarts_a_stopped_owner(tmp_path, monkeypatch):
-    """The Startup-folder fallback is login persistence only (no start verb, no identity): with it
-    present and no Scheduled Task registered, ensure takes the same detached direct spawn manual
-    `hermes gateway start` uses instead of refusing until the next login."""
+def test_windows_startup_folder_entry_requires_login_instead_of_second_owner(tmp_path, monkeypatch):
+    """A Startup-folder installation cannot be bypassed by a competing unmanaged owner."""
     from types import SimpleNamespace
-    from hermes_cli import gateway_runtime as runtime, gateway_runtime_service as service, gateway_runtime_start as start
-    from hermes_cli import gateway_windows
+    from gateway import runtime, runtime_service as service, runtime_start as start
+    from gateway import windows_service as gateway_windows
 
     home = tmp_path / "profile"
     home.mkdir(mode=0o700)
     startup = tmp_path / "Startup"
     startup.mkdir()
-    (startup / f"Hermes_Gateway_{service.service_suffix(home)}.vbs").write_text("' fallback\r\n")
+    (startup / f"Hermes_Gateway_{service.service_suffix_for_home(home)}.vbs").write_text("' fallback\r\n")
     monkeypatch.setattr(gateway_windows, "_startup_dir", lambda: startup)
     queries, spawned = [], []
     monkeypatch.setattr(service, "_run", lambda argv, *a, **k: queries.append(argv) or SimpleNamespace(returncode=0, stdout=""))
@@ -335,6 +333,6 @@ def test_windows_startup_folder_entry_still_restarts_a_stopped_owner(tmp_path, m
     monkeypatch.setattr(runtime, "discover_gateway_endpoint", lambda *a, **k: runtime.GatewayDiscovery("absent"))
     monkeypatch.setattr(start, "spawn_unmanaged_gateway", lambda target, **k: spawned.append(Path(target)))
     result = runtime.ensure_gateway_runtime(home, timeout=0.3)
-    assert result.reason_code != "startup_service_requires_login"
-    assert spawned == [home.resolve()]
+    assert result.reason_code == "startup_service_requires_login"
+    assert spawned == []
     assert all(argv[:2] == ["schtasks.exe", "/Query"] for argv in queries)  # nothing installed or run

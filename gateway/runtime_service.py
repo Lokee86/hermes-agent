@@ -191,6 +191,9 @@ def _windows(home: Path, deadline: float) -> ExistingService | None:
 
 
 def discover_existing_gateway_service(home: Path, *, deadline: float) -> ExistingService | None:
+    # Android/Termux has no supported native service manager; use an unmanaged start.
+    if sys.platform == "android":
+        return None
     backend = {"linux": _systemd, "darwin": _launchd, "win32": _windows}.get(sys.platform)
     if backend is None:
         raise RuntimeStartError("unsupported_supervisor_platform")
