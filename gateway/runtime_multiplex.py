@@ -34,7 +34,6 @@ def implied_host_root(home: Path) -> Path | None:
     root = multiplexer_root_for(home)
     if root is None:
         return None
-    from gateway.multiplex_mode import explicit_multiplex_flag
     from gateway.profile_serving import profile_is_standalone
     if profile_is_standalone(home):
         return None
