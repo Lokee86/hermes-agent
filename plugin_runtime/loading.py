@@ -333,6 +333,7 @@ class PluginLoaderMixin:
         abandoned worker remains active.
         """
         from plugin_runtime.discovery import _get_disabled_plugins, _get_enabled_plugins, gate_manifest
+        from plugin_runtime.manager import _installed_plugin_removal
 
         with self._discovery_lock, plugin_home_scope(self.home_path):
             failed = next(
@@ -342,7 +343,8 @@ class PluginLoaderMixin:
                 None,
             )
             if failed is None or requires_hermes_error(failed) or gate_manifest(
-                failed, _get_disabled_plugins(), _get_enabled_plugins()
+                failed, _get_disabled_plugins(), _get_enabled_plugins(),
+                installed_plugin_removal=_installed_plugin_removal,
             ).action not in ("defer", "load"):
                 return False
             with _ABANDONED_LOADERS_LOCK:
