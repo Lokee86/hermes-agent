@@ -15,7 +15,7 @@ from hermes_constants import hermes_home_key
 
 
 _lock = threading.RLock()
-_module_scopes: dict[str, Set[Optional[str]]] = {}
+_module_scopes: dict[str, set[Optional[str]]] = {}
 
 
 def _scope_key(scope: Optional[str]) -> Optional[str]:

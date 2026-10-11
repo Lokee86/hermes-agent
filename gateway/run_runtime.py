@@ -126,6 +126,27 @@ async def initialize_gateway_runtime(runner):
     # Publish this boot's verdict (an empty map clears a previous run's parked set).
     _record_parked_profiles(parked_profile_map(runner))
     runner.session_ticket_store = TicketStore(instance_id, registry.profile_ids())
+    release_unknown_turn_markers(runner)
+
+
+def release_unknown_turn_markers(runner):
+    """Before the unclean-start pass reads crash-left turn markers: a marked turn whose canonical
+    admission recovered ``unknown`` (the owner died before its terminal commit) owes no reply, so
+    its marker is cleared rather than ledgered as a delivery the FIFO never committed. A terminal
+    admission keeps its marker: its persisted reply is ledgered and sent once, never re-run."""
+    from gateway.session_authorities import admission_owner, owner_scope
+    store = getattr(runner, 'session_store', None)
+    if store is None:
+        return
+    for authority in _authorities(runner):
+        with owner_scope(authority):
+            unknown = {row['target_session_id'] for row in authority.db._read_all(
+                "SELECT DISTINCT target_session_id FROM session_admissions WHERE status='unknown'")}
+            if not unknown:
+                continue
+            for entry in store.list_sessions():
+                if entry.active_turn_token and admission_owner(authority, entry.session_id) in unknown:
+                    store.clear_turn_active(entry.session_key, entry.active_turn_token)
 
 
 def _publish_served_set(runner):
@@ -207,7 +228,9 @@ def stop_authority_turns(authority, *, in_process=False):
         generation = live.event_stream.execution.get('execution_generation')
         if generation is None or sid in workers:
             continue
-        agent = running.get(live.route)
+        adopted_generation, agent = authority.adopted.get(sid, (None, None))
+        if adopted_generation != generation:
+            agent = running.get(live.route)
         if agent is None or agent is _AGENT_PENDING_SENTINEL:
             authority.pending_stops[sid] = generation
         else:
@@ -221,24 +244,35 @@ def stop_managed_turns(runner):
     return sum(stop_authority_turns(authority) for authority in _authorities(runner))
 
 
-async def _retire_profile_authority(authority):
+async def _retire_profile_authority(authority, timeout=None):
     """Stop profile-local services and turns before its ownership is released.
 
     Claims are refused from here on; every executing turn gets a cooperative Stop, and its session
     task is joined (an in-process turn's task ends only after its executor thread returned and the
-    admission settled). False when a turn misses TURN_SETTLE_SECONDS: its thread may still call tools
-    and write history, so the caller must keep the profile's reservation and store handles."""
+    admission settled). The hosted-room stop runs alongside that join under the same deadline: it
+    never interrupts accepted turns and its room threads wait for the member turns they observe, so
+    those turns must be signalled first or the room stop cannot finish. False when a turn or room
+    thread misses *timeout* (default TURN_SETTLE_SECONDS): it may still call tools and write
+    history, so the caller must keep the profile's reservation and store handles."""
     from gateway.session_cron import unbind_owner
-    from gateway.session_runtime_workers import join_authority_work
+    from gateway.session_runtime_workers import join_authority_work, stop_authority_work
+    timeout = TURN_SETTLE_SECONDS if timeout is None else timeout
     authority.retiring = True
+    if getattr(authority.runner, 'session_ticket_store', None) is not None:
+        _publish_served_set(authority.runner)  # discovery and tickets stop naming it now
+    stop_authority_work(authority)
     service = getattr(authority, 'hosted_room_service', None)
-    if service is not None:
-        if await asyncio.to_thread(service.stop, timeout=5) is False:
-            return False
+    rooms = None if service is None else asyncio.ensure_future(asyncio.to_thread(service.stop, timeout=timeout))
     try:
-        await join_authority_work(authority, TURN_SETTLE_SECONDS)
+        await join_authority_work(authority, timeout)
+        workers_stopped = True
     except TimeoutError:
         logger.error('Profile %s workers did not stop; ownership retained', authority.profile_id)
+        workers_stopped = False
+    rooms_stopped = rooms is None or await rooms is not False
+    if not rooms_stopped:
+        logger.error('Profile %s hosted rooms did not stop; ownership retained', authority.profile_id)
+    if not (workers_stopped and rooms_stopped):
         return False
     # Idle drains and receipt watchers wait on admissions this profile will no longer run.
     rest = _authority_tasks(authority)
@@ -247,7 +281,22 @@ async def _retire_profile_authority(authority):
     if rest:
         await asyncio.gather(*rest, return_exceptions=True)
     unbind_owner(authority)
+    # Ownership is released next; until a successor bumps the epoch, A's epoch still fences its
+    # writes as current, so a stale connection to A must find it retired instead.
+    authority.retired = True
+    # No drain is left to answer an observer (a session_busy pause keeps API/webhook/Bot ones
+    # waiting): release them all. Their rows stay queued for the next owner, so nothing is resent.
+    from hermes_state_runtime import RuntimeStoreError
+    authority.native_waiters.clear()
+    for waiter in authority.waiters.values():
+        if not waiter.done():
+            waiter.set_exception(RuntimeStoreError('runtime_draining'))
+    authority.waiters.clear()
     return True
+
+
+class ProfileOwnershipRetained(RuntimeError):
+    """A retired attempt's writer is still live: the profile keeps its reservation and authority."""
 
 
 async def serve_profile_runtime(runner, name, home):
@@ -261,8 +310,16 @@ async def serve_profile_runtime(runner, name, home):
     from gateway.platforms.webhook_ingress import recover_webhook_finalizations
     home = await asyncio.to_thread(Path(home).resolve)
     registry = runner.session_authorities
-    if registry.for_home(home) is not None:
-        return registry.for_home(home)
+    existing = registry.for_home(home)
+    if existing is not None and getattr(existing, 'retiring', False):
+        # An earlier failed attempt kept this authority because its writer outlived Stop. It refuses
+        # every admission, so serving it would start adapters on a dead profile: finish its
+        # retirement without waiting, or refuse (the caller parks and keeps the reservation).
+        if not await _retire_profile_authority(existing, timeout=0):
+            raise ProfileOwnershipRetained(f'an earlier serve of {home} is still stopping')
+        registry.remove(home)
+    elif existing is not None:
+        return existing
     authority = await _build_profile_authority(runner, name, home, register=False)
     try:
         with owner_scope(authority):

@@ -4,7 +4,7 @@ Reuse the private native route envelope and FIFO, retaining nonhuman turn semant
 A producer ACK means committed input, not successful inference or outbound delivery.
 """
 from copy import deepcopy
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 import json
 
 from gateway.config import Platform
@@ -40,7 +40,7 @@ def completion_admission(runner, event):
     return None
 
 
-def _owner(runner, event):
+def _owner(runner, event, authority):
     route = event.metadata.get('gateway_session_key') or runner.session_store._generate_session_key(event.source)
     entry = runner.session_store.lookup_by_session_key(route)
     if entry is None or entry.suspended:
@@ -52,8 +52,7 @@ def _owner(runner, event):
         raise RuntimeStoreError('admission_conflict')
     if expected != entry.session_id:
         # A completed child may follow compression, but never /new or an unrelated resume.
-        from gateway.session_authorities import active_authority
-        if active_authority(runner).db.get_compression_tip(expected) != entry.session_id:
+        if authority.db.get_compression_tip(expected) != entry.session_id:
             raise RuntimeStoreError('admission_conflict')
     return entry
 
@@ -96,7 +95,7 @@ def snapshot_automation(authority, adapter, event, identity):
             or set(event.metadata) - _AUTOMATION_METADATA):
         raise RuntimeStoreError('invalid_params')
     notification = automation_notification_metadata(event.metadata) | automation_display_metadata(event.metadata)
-    entry = _owner(runner, event)
+    entry = _owner(runner, event, authority)
     if event.source.platform == Platform.LOCAL:
         return snapshot_local_automation(authority, adapter, event, identity, entry)
     from gateway.session_envelope import restore_native
@@ -121,7 +120,7 @@ def snapshot_automation(authority, adapter, event, identity):
     # Producer timestamps and platform reply IDs change on retry. Neither belongs
     # in the identity/fingerprint of the same immutable completion.
     envelope = {'source': source, 'route': entry.session_key,
-        'timestamp': datetime.fromtimestamp(0, timezone.utc).isoformat(),
+        'timestamp': datetime.fromtimestamp(0, UTC).isoformat(),
         'event': {'message_id': identity}, 'provenance': provenance,
         'automation': {'identity': identity, 'owner': owner}}
     envelope['automation'].update(notification)
@@ -137,10 +136,13 @@ def check_automation_route(runner, payload, session_id, available_source, adapte
     from gateway.session_envelope import restore_native
     event = restore_native(payload, runner)
     envelope = payload['native_text_v1']
-    entry = _owner(runner, event)
     from gateway.session_authorities import active_authority
+    authority = active_authority(runner)
+    if authority is None:  # a late preflight for a profile this runtime no longer serves
+        raise RuntimeStoreError('not_found')
+    entry = _owner(runner, event, authority)
     if (entry.session_id != session_id
-            or envelope['automation']['owner'] != active_authority(runner).logical_owner(session_id)
+            or envelope['automation']['owner'] != authority.logical_owner(session_id)
             or runner.session_store._generate_session_key(available_source) != entry.session_key
             or adapter is None or runner._adapter_for_source(event.source) is not adapter):
         raise RuntimeStoreError('admission_conflict')
@@ -210,9 +212,10 @@ async def admit_automation(authority, adapter, event, identity):
     sid = (payload.get('local_automation_v1') or payload['native_text_v1']['automation'])['owner']
     ref = SessionRef(authority.profile_id, sid)
     authority.sessions.setdefault(ref.session_id, LiveSession(event.source, entry.session_key))
-    row = admit_session_input(authority.db, epoch=authority.epoch, principal_id='automation:' + entry.session_key,
-        session_id=ref.session_id, request_id=identity, payload=deepcopy(payload))
-    event._gateway_accepted = True
-    authority._publish_pending(ref)
-    authority._schedule(ref)
-    return authority._receipt(row)
+    from functools import partial
+    from gateway.session_runtime_workers import tracked_write
+    return await tracked_write(authority, partial(
+        admit_session_input, authority.db, epoch=authority.epoch, principal_id='automation:' + entry.session_key,
+        session_id=ref.session_id, request_id=identity, payload=deepcopy(payload),
+        _authorize_write=authority._admission_gate()), then=partial(authority._admitted, ref, event), ordered=True,
+        after=partial(authority._schedule_admitted, ref))

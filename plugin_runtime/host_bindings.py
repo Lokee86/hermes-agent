@@ -36,4 +36,4 @@ def clear_plugin_host_bindings() -> None:
         _bindings.clear()
 
 
-__all__ = ["bind_plugin_host", "get_plugin_host_callback", "clear_plugin_host_bindings"]
+__all__ = ["bind_plugin_host", "clear_plugin_host_bindings", "get_plugin_host_callback"]

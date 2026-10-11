@@ -106,7 +106,7 @@ def test_dashboard_enable_on_a_fresh_config_keeps_the_core_tools(home):
     """Desktop/TUI/dashboard enable with no saved ``platform_toolsets`` must not write one: the old
     seed ``platform_toolsets.cli: [<plugin_ts>]`` replaced the ``hermes-cli`` composite, so the model
     lost every built-in tool (27 -> 2, no ``terminal``). The plugin toolset is on by default anyway."""
-    from hermes_cli.tools_config import _get_platform_tools
+    from tools.platform_policy import get_platform_tools as _get_platform_tools
     from tools.registry import registry
 
     _write_tool_plugin(home / "plugins", "zzseed")

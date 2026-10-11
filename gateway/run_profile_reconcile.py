@@ -34,7 +34,7 @@ _PROFILE_SIGNATURE_FILES = ("config.yaml", ".env")
 _OWN_GATEWAY_PROBE_TIMEOUT_SECS = 5.0
 
 
-def profile_serve_signature(home: "Path") -> tuple:
+def profile_serve_signature(home: Path) -> tuple:
     """Cheap change detector for a served profile's credentials/config: file signature per file."""
     sig = []
     for name in _PROFILE_SIGNATURE_FILES:
@@ -49,7 +49,7 @@ def profile_serve_signature(home: "Path") -> tuple:
 class GatewayProfileReconcileMixin:
     """Runtime reconciliation of the multiplexed served-profile set (hot add / unroute / credential-add)."""
 
-    _served_profile_homes: Optional[dict[str, "Path"]] = None
+    _served_profile_homes: Optional[dict[str, Path]] = None
     _served_profile_signatures: Optional[dict[str, tuple]] = None
     _profile_reconcile_lock: Optional[asyncio.Lock] = None
     _profile_own_gateway_warned: Optional[set[str]] = None
@@ -134,7 +134,7 @@ class GatewayProfileReconcileMixin:
                     pid = await asyncio.wait_for(
                         self._run_housekeeping_in_executor(live_gateway_pid_for_home, live[name]),
                         timeout=_OWN_GATEWAY_PROBE_TIMEOUT_SECS)
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     # Unprovable is not "own gateway running": skip it this cycle without
                     # warning about (or remembering) a gateway that may not exist. Warn once
                     # per stall; a peer that stays wedged repeats at DEBUG every cycle.
@@ -261,7 +261,7 @@ class GatewayProfileReconcileMixin:
         from gateway.run_runtime import parked_profile_map
         return list(parked_profile_map(self))
 
-    async def _serve_profile_runtime(self, name: str, home: "Path") -> Optional[str]:
+    async def _serve_profile_runtime(self, name: str, home: Path) -> Optional[str]:
         """Grow the reservation by *home* and build its session authority (boot's per-secondary
         steps). Returns the park reason — reservation released — when another gateway owns the home
         (a stray per-profile daemon) or its store cannot be opened; None when served. An
@@ -278,6 +278,13 @@ class GatewayProfileReconcileMixin:
         try:
             await serve_profile_runtime(self, name, home)
         except Exception as exc:
+            if self.session_authorities.for_home(home) is not None:
+                # Retirement of the failed attempt missed its deadline: its writer may still use
+                # this home, so the reservation and authority stay; the profile is parked (no
+                # adapters) and the batch goes on for every other profile.
+                logger.error("[MULTIPLEX] Profile '%s' not served (%s); a turn outlived its Stop, "
+                             "ownership retained", name, exc, exc_info=True)
+                return f"stopping after a failed serve; ownership retained: {exc}"
             logger.error("[MULTIPLEX] Profile '%s' not served: its session store is unusable (%s): %s",
                          name, home, exc, exc_info=True)
             release_profile_home(self, home)
@@ -313,7 +320,7 @@ class GatewayProfileReconcileMixin:
             except Exception:
                 logger.warning("MCP tool discovery failed for profile '%s'", profile_name, exc_info=True)
 
-    async def _unserve_profile(self, name: str, home: "Path") -> None:
+    async def _unserve_profile(self, name: str, home: Path) -> None:
         """Stop and unroute one profile: cancel its reconnects, tear down its adapters, drop its
         bookkeeping and release this process's handles into its home so the deleter's rmtree succeeds.
         The releasing process is not always the deleter (#130244): under multiplexing THIS gateway
@@ -371,8 +378,8 @@ class GatewayProfileReconcileMixin:
                 from hermes_state_registry import close_all_under
                 close_all_under(home)
             with _log_suppressed(logging.DEBUG, "memory-store release failed", exc_info=True):
-                from plugins.memory.holographic.store import MemoryStore
-                MemoryStore.release_all_under(home)
+                from plugins.memory import import_provider_module  # catalog plugin since it left core
+                import_provider_module("holographic", "store").MemoryStore.release_all_under(home)
             # The gateway process is a second holder the CLI-side delete cannot reach: its routed
             # log files (logs/.__agent.lock, logs/.__errors.lock) and its scoped MCP servers'
             # mcp-stderr.log handle live HERE, so unserve must release them in this process too

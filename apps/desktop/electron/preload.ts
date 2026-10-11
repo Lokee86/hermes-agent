@@ -432,7 +432,9 @@ contextBridge.exposeInMainWorld('hermesDesktop', {
   },
   preparedSubmissions: {
     read: () => ipcRenderer.invoke('hermes:prepared-submissions:read'),
-    update: (key, entry) => ipcRenderer.invoke('hermes:prepared-submissions:update', key, entry)
+    update: (key, entry) => ipcRenderer.invoke('hermes:prepared-submissions:update', key, entry),
+    compareAndSet: (key, expected, entry) =>
+      ipcRenderer.invoke('hermes:prepared-submissions:compare-and-set', key, expected, entry)
   },
   zoom: {
     // Current zoom of this window, as { level, percent }.
@@ -656,8 +658,7 @@ contextBridge.exposeInMainWorld('hermesDesktop', {
   updates: {
     check: opts => ipcRenderer.invoke('hermes:updates:check', opts),
     apply: opts => ipcRenderer.invoke('hermes:updates:apply', opts),
-    getBranch: () => ipcRenderer.invoke('hermes:updates:branch:get'),
-    setBranch: name => ipcRenderer.invoke('hermes:updates:branch:set', name),
+    setChannel: name => ipcRenderer.invoke('hermes:updates:channel:set', name),
     onProgress: callback => {
       const listener = (_event, payload) => callback(payload)
       ipcRenderer.on('hermes:updates:progress', listener)

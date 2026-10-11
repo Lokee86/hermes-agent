@@ -36,7 +36,7 @@ def _yaml_stems(root: Path) -> frozenset[str]:
 
 @functools.cache
 def slash_command_names() -> frozenset[str]:
-    from hermes_cli.commands import COMMAND_REGISTRY
+    from commands import COMMAND_REGISTRY
 
     return frozenset(command.name for command in COMMAND_REGISTRY)
 
@@ -207,7 +207,7 @@ def slash_command_metric_name(raw: object) -> str:
     if not name:
         return "unknown"
     try:
-        from hermes_cli.commands import resolve_command
+        from commands import resolve_command
 
         command = resolve_command(name)
     except Exception:

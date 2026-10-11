@@ -11,6 +11,7 @@ from types import SimpleNamespace
 import pytest
 
 from gateway import status
+from datetime import UTC
 
 
 class TestGatewayPidState:
@@ -1186,7 +1187,7 @@ class TestTakeoverMarker:
             "target_start_time": 100,
             "replacer_pid": 99999,
             "replacer_hermes_home": str(tmp_path / "profiles" / "other"),
-            "written_at": datetime.now(timezone.utc).isoformat(),
+            "written_at": datetime.now(UTC).isoformat(),
         }))
 
         result = status.consume_takeover_marker_for_self()
@@ -1208,7 +1209,7 @@ class TestTakeoverMarker:
             "target_pid": os.getpid(),
             "target_start_time": 100,
             "replacer_pid": 99999,
-            "written_at": datetime.now(timezone.utc).isoformat(),
+            "written_at": datetime.now(UTC).isoformat(),
         }))
 
         result = status.consume_takeover_marker_for_self()
@@ -1522,6 +1523,9 @@ class TestPermissionErrorOnLockFile:
         monkeypatch.setenv("HERMES_HOME", str(tmp_path))
         lock = tmp_path / "gateway.lock"
         lock.write_text("existing owner")
+        # The owner is live (its gateway.pid names a running process): an unopenable lock with no
+        # provable holder is the stale #42685 case and is replaced (test_runtime_ownership).
+        (tmp_path / "gateway.pid").write_text(json.dumps({"pid": os.getpid()}), encoding="utf-8")
         inode = lock.stat().st_ino
         lock.chmod(0)
         try:
@@ -1555,7 +1559,7 @@ class TestNormalizeUpdatedAt:
         assert isinstance(result, str)
         parsed = datetime.fromisoformat(result)
         assert parsed.tzinfo is not None
-        assert parsed == datetime.fromtimestamp(1750000000, tz=timezone.utc)
+        assert parsed == datetime.fromtimestamp(1750000000, tz=UTC)
 
 
     def test_iso_with_z_suffix_accepted(self):
@@ -1565,7 +1569,7 @@ class TestNormalizeUpdatedAt:
         assert result is not None
         parsed = datetime.fromisoformat(result)
         assert parsed.tzinfo is not None
-        assert parsed == datetime(2026, 7, 21, 12, 0, 0, tzinfo=timezone.utc)
+        assert parsed == datetime(2026, 7, 21, 12, 0, 0, tzinfo=UTC)
 
     def test_naive_iso_coerced_to_utc(self):
         from datetime import datetime, timezone
@@ -1575,7 +1579,7 @@ class TestNormalizeUpdatedAt:
         parsed = datetime.fromisoformat(result)
         assert parsed.tzinfo is not None
         assert parsed.utcoffset().total_seconds() == 0
-        assert parsed == datetime(2026, 7, 21, 12, 0, 0, tzinfo=timezone.utc)
+        assert parsed == datetime(2026, 7, 21, 12, 0, 0, tzinfo=UTC)
 
     def test_offset_aware_iso_round_trips_canonically(self):
         canonical = "2026-07-21T12:00:00+00:00"

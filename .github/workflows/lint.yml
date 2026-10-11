@@ -139,7 +139,7 @@ jobs:
         with:
           command: python -m scripts.ci.python_packages ruff==0.15.10
 
-      - name: ruff check .
+      - name: ruff check  .
         # No --exit-zero, no || true. Exit code propagates to the job,
         # which propagates to the required-check gate.
         run: |

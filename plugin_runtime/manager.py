@@ -80,26 +80,26 @@ class PluginManager(PluginLoaderMixin, PluginDispatchMixin, PluginOwnershipMixin
         # plugins, hooks, middleware, CLI + slash commands, prompt sections, skills (qualified name ->
         # metadata), portable MCP servers, auxiliary tasks, approval transports, Slack action handlers
         # (matcher, callback, plugin_name), platform handler factories (lowercase platform -> list).
-        self._plugins: Dict[str, LoadedPlugin] = {}
-        self._hooks: Dict[str, List[Callable]] = {}
+        self._plugins: dict[str, LoadedPlugin] = {}
+        self._hooks: dict[str, list[Callable]] = {}
         # Fallback hooks registered by a memory provider before general discovery.
-        self._memory_hook_registrations: Dict[Tuple[str, str], List[PluginRegistration]] = {}
-        self._middleware: Dict[str, List[Callable]] = {}
-        self._plugin_tool_names: Set[str] = set()
-        self._plugin_platform_names: Set[str] = set()
-        self._cli_commands: Dict[str, dict] = {}
-        self._plugin_commands: Dict[str, dict] = {}
-        self._system_prompt_sections: Dict[str, PluginSystemPromptSection] = {}
-        self._plugin_skills: Dict[str, Dict[str, Any]] = {}
-        self._automation_blueprints: Dict[str, Any] = {}
-        self._portable_mcp_servers: Dict[str, Dict[str, Any]] = {}
-        self._portable_mcp_server_plugins: Dict[str, str] = {}
-        self._aux_tasks: Dict[str, Dict[str, Any]] = {}
-        self._approval_transports: Dict[str, Any] = {}
-        self._slack_action_handlers: List[tuple] = []
-        self._platform_handler_factories: Dict[str, List[tuple]] = {}
+        self._memory_hook_registrations: dict[tuple[str, str], list[PluginRegistration]] = {}
+        self._middleware: dict[str, list[Callable]] = {}
+        self._plugin_tool_names: set[str] = set()
+        self._plugin_platform_names: set[str] = set()
+        self._cli_commands: dict[str, dict] = {}
+        self._plugin_commands: dict[str, dict] = {}
+        self._system_prompt_sections: dict[str, PluginSystemPromptSection] = {}
+        self._plugin_skills: dict[str, dict[str, Any]] = {}
+        self._automation_blueprints: dict[str, Any] = {}
+        self._portable_mcp_servers: dict[str, dict[str, Any]] = {}
+        self._portable_mcp_server_plugins: dict[str, str] = {}
+        self._aux_tasks: dict[str, dict[str, Any]] = {}
+        self._approval_transports: dict[str, Any] = {}
+        self._slack_action_handlers: list[tuple] = []
+        self._platform_handler_factories: dict[str, list[tuple]] = {}
         # Process-owned discovery listeners (``on_plugin_loaded``); never cleared by unload().
-        self._plugin_loaded_listeners: List[Callable] = []
+        self._plugin_loaded_listeners: list[Callable] = []
         self._init_dispatch_runtime_state()
         # Ledger per plugin (ownership) plus global order (reverse teardown across plugins). Process-
         # global registries are shared across profiles while several managers coexist, so the ledger
@@ -111,20 +111,20 @@ class PluginManager(PluginLoaderMixin, PluginDispatchMixin, PluginOwnershipMixin
         # tools/registry.py and gateway/platform_registry.py) carry the profile dimension; anything still
         # process-global is guarded by the identity checks. TODO(#64178): extend explicit profile keying to
         # any remaining process-global slots when the symmetric force-reload lands.
-        self._ownership_ledger: Dict[str, List[PluginRegistration]] = {}
-        self._registration_order: List[PluginRegistration] = []
+        self._ownership_ledger: dict[str, list[PluginRegistration]] = {}
+        self._registration_order: list[PluginRegistration] = []
         # Force re-discovery drains this via _evict_stale_persistent_registrations(): entries whose plugin
         # re-registered the same (kind, key) are kept (the upsert rotated them in place), the rest are
         # disposed so a disabled/removed auth plugin's provider does not outlive its plugin (#91701
         # follow-up).
-        self._persistent_carryover: List[PluginRegistration] = []
+        self._persistent_carryover: list[PluginRegistration] = []
         # Deferred platforms whose client tools registered at discovery (see
         # _register_deferred_platform_tools): imported package (don't re-execute on materialize)
         # and contributed tool names (so `hermes plugins list` still attributes them).
-        self._predeclared_modules: Dict[str, types.ModuleType] = {}
-        self._predeclared_tools: Dict[str, List[str]] = {}
+        self._predeclared_modules: dict[str, types.ModuleType] = {}
+        self._predeclared_tools: dict[str, list[str]] = {}
 
-    def list_automation_blueprints(self) -> List[Any]:
+    def list_automation_blueprints(self) -> list[Any]:
         """Plugin-registered AutomationBlueprints, sorted by key."""
         return [bp for _key, bp in sorted(self._automation_blueprints.items())]
 
@@ -137,7 +137,7 @@ class PluginManager(PluginLoaderMixin, PluginDispatchMixin, PluginOwnershipMixin
         """No scheduled pre-decomposition import-path gate remains after 2026-09-14."""
         return None
 
-    def on_plugin_loaded(self, callback: Callable[[List[Dict[str, Any]]], Any]) -> Callable[[], None]:
+    def on_plugin_loaded(self, callback: Callable[[list[dict[str, Any]]], Any]) -> Callable[[], None]:
         """Subscribe to discovery sweeps that load plugins this process did not already have."""
         if not callable(callback):
             raise ValueError("on_plugin_loaded requires a callable")
@@ -306,7 +306,7 @@ class PluginManager(PluginLoaderMixin, PluginDispatchMixin, PluginOwnershipMixin
 
     def _discover_and_load_inner(self) -> None:
         """The actual discovery sweep — see :meth:`discover_and_load`."""
-        manifests: List[PluginManifest] = self._collect_directory_manifests()
+        manifests: list[PluginManifest] = self._collect_directory_manifests()
         # Entry points are separate from the directory scan: the startup MCP probe must not import
         # or register them.
         # An installed directory plugin keeps its identity when its own pip dependency also ships an
@@ -338,7 +338,7 @@ class PluginManager(PluginLoaderMixin, PluginDispatchMixin, PluginOwnershipMixin
                         sum(1 for p in self._plugins.values() if p.enabled))
 
     def _gate_manifest(
-        self, manifest: PluginManifest, disabled: Set[str], enabled: Optional[Set[str]],
+        self, manifest: PluginManifest, disabled: set[str], enabled: Optional[set[str]],
     ) -> bool:
         """Route one winning manifest per :func:`gate_manifest`: load now, defer, or record as
         skipped (introspection-only placeholder). Returns True only for plugins that go through the
@@ -384,7 +384,7 @@ class PluginManager(PluginLoaderMixin, PluginDispatchMixin, PluginOwnershipMixin
             return None
         return registered
 
-    def _collect_directory_manifests(self) -> List[PluginManifest]:
+    def _collect_directory_manifests(self) -> list[PluginManifest]:
         """Directory manifests in full-discovery order (see :func:`collect_directory_manifests`)."""
         return collect_directory_manifests()
 
@@ -397,7 +397,7 @@ class PluginManager(PluginLoaderMixin, PluginDispatchMixin, PluginOwnershipMixin
         if not isinstance(plugins_config, dict):
             return False
 
-        def _names(value: Any) -> Set[str]:
+        def _names(value: Any) -> set[str]:
             return {v for v in value if isinstance(v, str)} if isinstance(value, list) else set()
 
         enabled = _names(plugins_config.get("enabled"))
@@ -418,29 +418,29 @@ class PluginManager(PluginLoaderMixin, PluginDispatchMixin, PluginOwnershipMixin
         return False
 
     def _scan_directory(
-        self, path: Path, source: str, skip_names: Optional[Set[str]] = None,
-    ) -> List[PluginManifest]:
+        self, path: Path, source: str, skip_names: Optional[set[str]] = None,
+    ) -> list[PluginManifest]:
         """Read manifests under *path* (see :func:`scan_directory`)."""
         return scan_directory(path, source, skip_names=skip_names)
 
-    def _scan_entry_points(self) -> List[PluginManifest]:
+    def _scan_entry_points(self) -> list[PluginManifest]:
         """Read installed plugin entry points (see :func:`discover_entrypoint_manifests`)."""
         return discover_entrypoint_manifests()
 
-    def get_slack_action_handlers(self) -> List[tuple]:
+    def get_slack_action_handlers(self) -> list[tuple]:
         """``(action_id, callback, plugin_name)`` tuples for the Slack adapter to wire at connect."""
         return list(self._slack_action_handlers)
 
-    def get_platform_handler_factories(self, platform: str) -> List[tuple]:
+    def get_platform_handler_factories(self, platform: str) -> list[tuple]:
         """``(factory, plugin_name)`` tuples for one platform; adapters call ``factory(native,
         adapter)`` at connect (see :meth:`PluginContext.register_platform_handler`)."""
         return list(self._platform_handler_factories.get((platform or "").strip().lower(), []))
 
-    def get_telegram_handler_factories(self) -> List[tuple]:
+    def get_telegram_handler_factories(self) -> list[tuple]:
         """Back-compat alias for ``get_platform_handler_factories("telegram")``."""
         return self.get_platform_handler_factories("telegram")
 
-    def list_plugins(self) -> List[Dict[str, Any]]:
+    def list_plugins(self) -> list[dict[str, Any]]:
         """Return a list of info dicts for all discovered plugins."""
         return [
             {
@@ -457,12 +457,12 @@ class PluginManager(PluginLoaderMixin, PluginDispatchMixin, PluginOwnershipMixin
         entry = self._plugin_skills.get(qualified_name)
         return entry["path"] if entry else None
 
-    def list_plugin_skills(self, plugin_name: str) -> List[str]:
+    def list_plugin_skills(self, plugin_name: str) -> list[str]:
         """Return sorted bare names of all skills registered by *plugin_name*."""
         prefix = f"{plugin_name}:"
         return sorted(e["bare_name"] for qn, e in self._plugin_skills.items() if qn.startswith(prefix))
 
-    def list_plugin_skill_metadata(self) -> List[Dict[str, Any]]:
+    def list_plugin_skill_metadata(self) -> list[dict[str, Any]]:
         """Return progressive-disclosure metadata for registered plugin skills."""
         return [
             {
@@ -474,11 +474,11 @@ class PluginManager(PluginLoaderMixin, PluginDispatchMixin, PluginOwnershipMixin
     def has_portable_mcp_servers(self) -> bool:
         return bool(self._portable_mcp_servers)
 
-    def get_portable_mcp_servers(self) -> Dict[str, Dict[str, Any]]:
+    def get_portable_mcp_servers(self) -> dict[str, dict[str, Any]]:
         """Return a defensive copy of enabled portable MCP server configs."""
         return {name: dict(config) for name, config in self._portable_mcp_servers.items()}
 
-    def get_portable_mcp_server_plugins(self) -> Dict[str, str]:
+    def get_portable_mcp_server_plugins(self) -> dict[str, str]:
         return dict(self._portable_mcp_server_plugins)
 
     def remove_plugin_skill(self, qualified_name: str) -> None:

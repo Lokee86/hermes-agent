@@ -116,6 +116,10 @@ export const sessionCommands: SlashCommand[] = [
         return ctx.transcript.sys(t('slashCmd.session.bg.usage'))
       }
 
+      if (ctx.gateway.gw?.isCanonical) {
+        return ctx.transcript.sys(t('canonical.controls.notAvailable', 'bg'))
+      }
+
       ctx.gateway.rpc<BackgroundStartResponse>('prompt.background', { session_id: ctx.sid, text: arg }).then(
         ctx.guarded<BackgroundStartResponse>(r => {
           if (!r.task_id) {
@@ -135,6 +139,10 @@ export const sessionCommands: SlashCommand[] = [
     run: (arg, ctx) => {
       if (!arg) {
         return ctx.transcript.sys(t('slashCmd.session.btw.usage'))
+      }
+
+      if (ctx.gateway.gw?.isCanonical) {
+        return ctx.transcript.sys(t('canonical.controls.notAvailable', 'btw'))
       }
 
       ctx.gateway.rpc<BackgroundStartResponse>('prompt.btw', { session_id: ctx.sid, text: arg }).then(
@@ -258,6 +266,12 @@ export const sessionCommands: SlashCommand[] = [
     run: (arg, ctx) => {
       if (!arg) {
         return
+      }
+
+      // The shared owner serves this setting's read, not its write (a config.yaml / per-session
+      // setting it has no frozen-policy verb for yet): say so instead of a bare invalid_params.
+      if (ctx.gateway.gw?.isCanonical) {
+        return ctx.transcript.sys(t('canonical.controls.notAvailable', 'personality'))
       }
 
       ctx.gateway.rpc<ConfigSetResponse>('config.set', { key: 'personality', session_id: ctx.sid, value: arg }).then(
@@ -384,6 +398,12 @@ export const sessionCommands: SlashCommand[] = [
         normalized === 'on' || normalized === 'off' || normalized === 'tts' || normalized === 'status'
           ? normalized
           : 'status'
+
+      // Read-aloud ran in the sidecar's own turn; a shared-gateway turn runs on the owner, which
+      // never speaks a TUI reply, so the toggle would say "on" and stay silent.
+      if (action === 'tts' && ctx.gateway.gw?.isCanonical) {
+        return ctx.transcript.sys(t('canonical.controls.notAvailable', 'voice tts'))
+      }
 
       ctx.gateway.rpc<VoiceToggleResponse>('voice.toggle', { action }).then(
         ctx.guarded<VoiceToggleResponse>(r => {
@@ -516,6 +536,12 @@ export const sessionCommands: SlashCommand[] = [
         return ctx.transcript.sys(t('slashCmd.session.theme.usage'))
       }
 
+      // The shared owner serves this setting's read, not its write (a config.yaml / per-session
+      // setting it has no frozen-policy verb for yet): say so instead of a bare invalid_params.
+      if (ctx.gateway.gw?.isCanonical) {
+        return ctx.transcript.sys(t('canonical.controls.notAvailable', 'theme'))
+      }
+
       // Apply only after the write is confirmed (mirrors /indicator): a
       // failed config.set must not leave the session showing a theme that
       // reverts on restart. A few ms later than an optimistic flip, but the
@@ -550,6 +576,12 @@ export const sessionCommands: SlashCommand[] = [
           )
       }
 
+      // The shared owner serves this setting's read, not its write (a config.yaml / per-session
+      // setting it has no frozen-policy verb for yet): say so instead of a bare invalid_params.
+      if (ctx.gateway.gw?.isCanonical) {
+        return ctx.transcript.sys(t('canonical.controls.notAvailable', 'skin'))
+      }
+
       ctx.gateway
         .rpc<ConfigSetResponse>('config.set', { key: 'skin', value: arg })
         .then(
@@ -579,6 +611,12 @@ export const sessionCommands: SlashCommand[] = [
 
       if (!(INDICATOR_STYLES as readonly string[]).includes(value)) {
         return ctx.transcript.sys(t('slashCmd.session.indicator.usage', INDICATOR_STYLES.join('|')))
+      }
+
+      // The shared owner serves this setting's read, not its write (a config.yaml / per-session
+      // setting it has no frozen-policy verb for yet): say so instead of a bare invalid_params.
+      if (ctx.gateway.gw?.isCanonical) {
+        return ctx.transcript.sys(t('canonical.controls.notAvailable', 'indicator'))
       }
 
       ctx.gateway.rpc<ConfigSetResponse>('config.set', { key: 'indicator', value }).then(
@@ -627,6 +665,12 @@ export const sessionCommands: SlashCommand[] = [
           )
       }
 
+      // The shared owner serves this setting's read, not its write (a config.yaml / per-session
+      // setting it has no frozen-policy verb for yet): say so instead of a bare invalid_params.
+      if (ctx.gateway.gw?.isCanonical) {
+        return ctx.transcript.sys(t('canonical.controls.notAvailable', 'reasoning'))
+      }
+
       ctx.gateway.rpc<ConfigSetResponse>('config.set', reasoningConfigPayload(arg, ctx.sid ?? '')).then(
         ctx.guarded<ConfigSetResponse>(r => {
           if (!r.value) {
@@ -673,6 +717,12 @@ export const sessionCommands: SlashCommand[] = [
             )
           )
           .catch(ctx.guardedErr)
+      }
+
+      // The shared owner serves this setting's read, not its write (a config.yaml / per-session
+      // setting it has no frozen-policy verb for yet): say so instead of a bare invalid_params.
+      if (ctx.gateway.gw?.isCanonical) {
+        return ctx.transcript.sys(t('canonical.controls.notAvailable', 'fast'))
       }
 
       ctx.gateway

@@ -56,7 +56,7 @@ class PluginToolOverrideError(PermissionError):
 class PluginContext:
     """Facade given to plugins so they can register tools and hooks."""
 
-    def __init__(self, manifest: PluginManifest, manager: "PluginManager"):
+    def __init__(self, manifest: PluginManifest, manager: PluginManager):
         self.manifest = manifest
         self._manager = manager
         self._llm: Any = None  # lazy; tests preseed it (see ``llm``)
@@ -145,7 +145,7 @@ class PluginContext:
         return self._track(kind, key, lease.dispose)
 
     def _track_mapping_entry(
-        self, kind: str, key: str, mapping: Dict[str, Any], entry: Any, previous: Any = _UNSET,
+        self, kind: str, key: str, mapping: dict[str, Any], entry: Any, previous: Any = _UNSET,
     ) -> PluginRegistration:
         """Store ``entry`` under ``key`` in a manager-local mapping and lease the slot; unload restores
         ``previous`` (default: the displaced entry, or removes the key) only while ``entry`` is still
@@ -159,7 +159,7 @@ class PluginContext:
         )
 
     def _register_entry(
-        self, kind: str, key: str, mapping: Dict[str, Any], entry: Any, log_fmt: str, *log_args: Any,
+        self, kind: str, key: str, mapping: dict[str, Any], entry: Any, log_fmt: str, *log_args: Any,
         previous: Any = _UNSET,
     ) -> PluginRegistration:
         """Shared tail of the manager-mapping registrars: store + lease the entry, then log
@@ -278,7 +278,7 @@ class PluginContext:
         logger.debug("Plugin %s registered on_unload callback", self.manifest.name)
         return handle
 
-    def spawn_task(self, coro, *, name: Optional[str] = None) -> "asyncio.Task":
+    def spawn_task(self, coro, *, name: Optional[str] = None) -> asyncio.Task:
         """Spawn a supervised asyncio task; unload/force reload cancels it. Needs a running loop."""
         if not asyncio.iscoroutine(coro):
             raise TypeError("spawn_task expects a coroutine")
@@ -369,9 +369,9 @@ class PluginContext:
         return plugin_capability_granted(self.plugin_id, capability)
 
     def call_mcp(
-        self, server: str, tool: str, arguments: Optional[Dict[str, Any]] = None,
+        self, server: str, tool: str, arguments: Optional[dict[str, Any]] = None,
         timeout: float = 30,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Call ``tool`` on MCP ``server`` synchronously through :mod:`tools.mcp_tool`'s native client
         (same trust gates, breaker, reconnect — never a parallel connection). Servers not in
         ``plugins.entries.<plugin_id>.mcp_allowlist`` raise ``PermissionError`` (default-deny). ``timeout``
@@ -402,7 +402,7 @@ class PluginContext:
     _MCP_RESULT_CHAR_CAP = 65536
 
     @classmethod
-    def _mcp_envelope(cls, raw: Any) -> Dict[str, Any]:
+    def _mcp_envelope(cls, raw: Any) -> dict[str, Any]:
         """Normalize an MCP handler result string into a stable envelope."""
         if not isinstance(raw, str):
             raw = "" if raw is None else str(raw)
@@ -414,7 +414,7 @@ class PluginContext:
         except (ValueError, TypeError):
             parsed = None
         if isinstance(parsed, dict) and "error" in parsed:
-            envelope: Dict[str, Any] = {"ok": False, "error": parsed["error"]}
+            envelope: dict[str, Any] = {"ok": False, "error": parsed["error"]}
         elif isinstance(parsed, dict) and "result" in parsed:
             envelope = {"ok": True, "result": parsed["result"]}
             if "structuredContent" in parsed:
@@ -424,7 +424,7 @@ class PluginContext:
         return {**envelope, "truncated": True} if truncated else envelope
 
     @staticmethod
-    def _mcp_allowlist(plugin_id: str) -> List[str]:
+    def _mcp_allowlist(plugin_id: str) -> list[str]:
         """Operator-granted MCP server allowlist; missing/unreadable -> [] (default-deny)."""
         return read_plugin_mcp_allowlist(plugin_id)
 
@@ -503,7 +503,7 @@ class PluginContext:
         if not self._manager.has_gateway_message_injector:
             logger.warning("inject_message: no live gateway is available")
             return False
-        target: Dict[str, Any]
+        target: dict[str, Any]
         if origin is None:
             target = {"session_key": session_key}
         else:
@@ -758,7 +758,7 @@ class PluginContext:
     @_serialized_replacement
     def register_auxiliary_task(
         self, key: str, *, display_name: str, description: str,
-        defaults: Optional[Dict[str, Any]] = None,
+        defaults: Optional[dict[str, Any]] = None,
         inherit_from: Optional[str] = None,
     ) -> PluginRegistration:
         """Register an auxiliary LLM task with its own ``auxiliary.<key>`` config block (picker entry,
@@ -839,8 +839,8 @@ class PluginContext:
         )
 
     def _track_callback(
-        self, kind: str, key: str, callback: Callable, mapping: Dict[str, List[Callable]],
-        valid: Set[str],
+        self, kind: str, key: str, callback: Callable, mapping: dict[str, list[Callable]],
+        valid: set[str],
     ) -> PluginRegistration:
         """Append ``callback`` under ``key`` (warning on unknown ``key``) and lease its removal."""
         if key not in valid:
@@ -852,7 +852,7 @@ class PluginContext:
         return handle
 
     def register_system_prompt_section(
-        self, id: str, content: Union[str, Callable[[Mapping[str, Any]], str]], *,
+        self, id: str, content: str | Callable[[Mapping[str, Any]], str], *,
         position: str = "after_memory", max_chars: int = DEFAULT_SYSTEM_PROMPT_SECTION_MAX_CHARS,
     ) -> PluginRegistration:
         """Register bounded context frozen into each new session prompt. Callables receive a
@@ -909,7 +909,7 @@ class PluginContext:
 
     @_serialized_replacement
     def register_locale(
-        self, lang: str, source: Union[str, Path, Mapping[str, Any]], *, endonym: Optional[str] = None,
+        self, lang: str, source: str | Path | Mapping[str, Any], *, endonym: Optional[str] = None,
         rtl: bool = False, surface: str = "core",
     ) -> PluginRegistration:
         """Register a language-pack layer for one surface."""
@@ -937,12 +937,12 @@ class PluginContext:
         return handle
 
     def register_locale_dir(
-        self, path: Union[str, Path], *, metadata: Optional[Mapping[str, Mapping[str, Any]]] = None,
-    ) -> List[PluginRegistration]:
+        self, path: str | Path, *, metadata: Optional[Mapping[str, Mapping[str, Any]]] = None,
+    ) -> list[PluginRegistration]:
         """Register all language-pack files under a plugin locales directory."""
         from agent.i18n_layers import scan_locale_dir
 
-        handles: List[PluginRegistration] = []
+        handles: list[PluginRegistration] = []
         for lang_id, surface, file in scan_locale_dir(Path(path)):
             meta = dict((metadata or {}).get(lang_id) or {})
             try:
@@ -1023,7 +1023,7 @@ class PluginContext:
 # type-check, register in the scope-keyed process-global registry, lease the slot so unload restores
 # the displaced entry. Rows: (method, kind, registry module, base-class module:attr, label, docstring,
 # options). ``normalize``: ``strip`` (default), ``lower`` (strip+lowercase) or ``None`` (raw name).
-_SCOPED_PROVIDER_REGISTRARS: Tuple[Tuple[str, str, str, str, str, str, Dict[str, Any]], ...] = (
+_SCOPED_PROVIDER_REGISTRARS: tuple[tuple[str, str, str, str, str, str, dict[str, Any]], ...] = (
     ("register_image_gen_provider", "image_gen_provider", "agent.image_gen_registry",
      "agent.image_gen_provider:ImageGenProvider", "image_gen provider",
      "Register an :class:`agent.image_gen_provider.ImageGenProvider`; "
@@ -1070,7 +1070,7 @@ _SCOPED_PROVIDER_REGISTRARS: Tuple[Tuple[str, str, str, str, str, str, Dict[str,
      "type: command`` entry shares it (command-providers win).", {"normalize": "lower"}),
 )
 
-_NAME_NORMALIZERS: Dict[Optional[str], Optional[Callable[[str], str]]] = {
+_NAME_NORMALIZERS: dict[Optional[str], Optional[Callable[[str], str]]] = {
     "strip": lambda n: n.strip(), "lower": lambda n: n.strip().lower(), None: None,
 }
 

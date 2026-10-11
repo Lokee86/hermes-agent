@@ -106,7 +106,11 @@ RUN_JOB_FLAGS = ('_model_unreachable', '_quota_hold_seconds')
 
 async def operation(authority, name, params, actor=None):
     actor = _actor(authority, actor)
-    authority._require_admission_open()
+    from gateway.session_authorities import require_serving
+    require_serving(authority)  # released ownership: nothing here is ours to touch
+    # Only new work is fenced by a drain. ``recover``/``status``/``cancel`` observe or stop work
+    # already admitted, which the drain is waiting for: refusing them makes the firer give up
+    # (CronExecutionUnknown pauses the job) on every restart that overlaps a cron run.
     if name == 'recover':
         from gateway.session_local_recovery import local_identity
         if (set(params) != {'job_id', 'request_id', 'extra_prompt'}
@@ -132,16 +136,19 @@ async def operation(authority, name, params, actor=None):
         state['job'] = frozen['cron_job']
         return state
     if name == 'submit':
+        authority._require_admission_open()
         from gateway.session_authorities import owner_scope
         # The job id, jobs file and gateway config belong to the OWNING profile.
         with owner_scope(authority):
             ref, request_id = _create(authority, actor, params)
-        row = admit_session_input(authority.db, epoch=authority.epoch, principal_id=actor.subject,
-                                  session_id=ref.session_id, request_id=request_id,
-                                  payload={'text': params['extra_prompt'] or ''})
-        authority._publish_pending(ref)
-        authority._schedule(ref)
-        return {'session_id': ref.session_id, 'admission_id': row['admission_id']}
+        from functools import partial
+        from gateway.session_runtime_workers import tracked_write
+        receipt = await tracked_write(authority, partial(
+            admit_session_input, authority.db, epoch=authority.epoch, principal_id=actor.subject,
+            session_id=ref.session_id, request_id=request_id, payload={'text': params['extra_prompt'] or ''},
+            _authorize_write=authority._admission_gate()), then=partial(authority._admitted, ref, None), ordered=True,
+            after=partial(authority._schedule_admitted, ref))
+        return {'session_id': ref.session_id, 'admission_id': receipt.admission_id}
     if set(params) != {'session_id', 'admission_id'} or name not in {'status', 'cancel'}:
         raise RuntimeStoreError('invalid_params')
     ref = SessionRef(authority.profile_id, params['session_id'])
@@ -165,7 +172,9 @@ async def operation(authority, name, params, actor=None):
         flags = (saved['result'].get('cron_job_flags') or {}) if saved else {}
         if result is None:
             result = [False, '', '', row.get('outcome') or 'unknown_execution']
-    return {'status': row['status'], 'result': result, 'job_flags': flags}
+    from cron.scheduler_liveness import owner_progress
+    return {'status': row['status'], 'result': result, 'job_flags': flags,
+            'progress_at': owner_progress.get(row['request_id'].rsplit(':', 1)[-1])}
 
 
 def _cancellations(authority):
@@ -183,7 +192,7 @@ def scheduler_execution_id(job_id, request_id):
     """The scheduler's execution id this admission carries: ``_create`` admits under
     ``cron:<job>:<request_id>`` and the ticker's ``request_id`` IS its ``cron/executions`` row id."""
     prefix = 'cron:' + job_id + ':'
-    return request_id[len(prefix):] if request_id.startswith(prefix) else request_id
+    return request_id.removeprefix(prefix)
 
 
 def _run_identified(run_job, job, execution_id, **kwargs):
@@ -211,8 +220,9 @@ async def execute(authority, ref, row, policy):
         raise RuntimeStoreError('admission_conflict')
     cancellations = _cancellations(authority)
     cancel = cancellations.setdefault(row['admission_id'], threading.Event())
-    job = data['cron_job']
-    execution_id = scheduler_execution_id(job['id'], row['request_id'])
+    execution_id = scheduler_execution_id(data['cron_job']['id'], row['request_id'])
+    # The frozen snapshot predates the fire's ledger row; the run's progress stamps need its id.
+    job = dict(data['cron_job'], execution_id=execution_id)
     token = _execution.set((authority, ref.session_id, job['id'], execution_id))
     try:
         db_path = await asyncio.to_thread(Path(authority.db.db_path).resolve)
@@ -229,5 +239,7 @@ async def execute(authority, ref, row, policy):
             raise RuntimeError(result[3] or 'cron execution failed')
         return result[2]
     finally:
+        from cron.scheduler_liveness import owner_progress
+        owner_progress.pop(execution_id, None)
         _execution.reset(token)
         cancellations.pop(row['admission_id'], None)

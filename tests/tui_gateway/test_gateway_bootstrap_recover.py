@@ -28,6 +28,11 @@ def _load_bootstrap():
     ({"gateway_state": "running", "pid": 999999}, True),  # SIGKILL / OOM: dead process still claims live
     ({"gateway_state": "stopped", "pid": 999999}, False),  # `hermes gateway stop`
     ({"gateway_state": "running", "desired_state": "stopped"}, False),  # durable operator stop intent
+    # An auto-started owner ended itself (idle exit) while the TUI was suspended: the next client
+    # starts a fresh one. Its reason, not the bare `stopped`, tells it from an operator stop.
+    ({"gateway_state": "stopped", "exit_reason": "auto-started gateway idle for 600s "
+      "(gateway.unmanaged_idle_exit_seconds)"}, True),
+    ({"gateway_state": "stopped", "exit_reason": "Gateway restart requested"}, False),
 ])
 def test_recover_reensures_only_a_crashed_owner(monkeypatch, tmp_path, record, ensured):
     module = _load_bootstrap()
@@ -39,9 +44,9 @@ def test_recover_reensures_only_a_crashed_owner(monkeypatch, tmp_path, record, e
                         lambda h, timeout=5: SimpleNamespace(state="absent", endpoint=None, reason_code=None))
     calls = []
 
-    def ensure(h, timeout=30):
+    def ensure(h, timeout=30, idle_exit=False):
         calls.append(Path(h))
-        return SimpleNamespace(state="starting", endpoint=None, reason_code="deadline")
+        return SimpleNamespace(state="starting", endpoint=None, reason_code="deadline", detail=None)
 
     monkeypatch.setattr(gateway_runtime, "ensure_gateway_runtime", ensure)
 
@@ -53,3 +58,24 @@ def test_recover_reensures_only_a_crashed_owner(monkeypatch, tmp_path, record, e
     with pytest.raises(RuntimeError, match="absent"):
         module.bootstrap(False)
     assert calls == []
+
+
+def test_started_daemon_does_not_inherit_the_launch_time_kanban_board(monkeypatch, tmp_path):
+    """`hermes --tui` pins HERMES_KANBAN_BOARD for its own launch; the shared daemon this bootstrap
+    starts (spawn_unmanaged_gateway copies os.environ) must keep the profile's current board."""
+    module = _load_bootstrap()
+    home = (tmp_path / "home").resolve()
+    home.mkdir()
+    monkeypatch.setattr(hermes_constants, "get_hermes_home", lambda: home)
+    monkeypatch.setenv("HERMES_KANBAN_BOARD", "launch-board")
+    seen = []
+
+    def ensure(h, timeout=30, idle_exit=False):
+        import os
+        seen.append(os.environ.get("HERMES_KANBAN_BOARD"))
+        return SimpleNamespace(state="starting", endpoint=None, reason_code="deadline", detail=None)
+
+    monkeypatch.setattr(gateway_runtime, "ensure_gateway_runtime", ensure)
+    with pytest.raises(RuntimeError):
+        module.bootstrap(True)
+    assert seen == [None]

@@ -2510,7 +2510,7 @@
     },
     {
       "name": "process.stop",
-      "summary": "Kill every background process in the registry (``/stop``), answering the count killed.",
+      "summary": "``/stop``: on the shared owner, kill the background processes ``session_id`` owns (required); a standalone sidecar kills every process it holds. Answers the count killed.",
       "params": [
         {
           "name": "params",
@@ -9357,6 +9357,34 @@
             "default": null,
             "title": "Title"
           },
+          "latest": {
+            "anyOf": [
+              {
+                "enum": [
+                  "cli",
+                  "tui"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Latest"
+          },
+          "workspace": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Workspace"
+          },
           "source": {
             "anyOf": [
               {
@@ -9381,6 +9409,18 @@
             ],
             "default": null,
             "title": "Editor"
+          },
+          "api_key": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Api Key"
           },
           "defer_history": {
             "default": false,
@@ -9775,6 +9815,37 @@
         "title": "CanonicalSessionRef",
         "type": "object"
       },
+      "CanonicalShellExecParams": {
+        "additionalProperties": false,
+        "properties": {
+          "session_id": {
+            "title": "Session Id",
+            "type": "string"
+          },
+          "command": {
+            "title": "Command",
+            "type": "string"
+          },
+          "profile": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Profile"
+          }
+        },
+        "required": [
+          "session_id",
+          "command"
+        ],
+        "title": "CanonicalShellExecParams",
+        "type": "object"
+      },
       "CanonicalSnapshot": {
         "additionalProperties": false,
         "properties": {
@@ -10072,6 +10143,31 @@
             "default": false,
             "title": "Voice Turn",
             "type": "boolean"
+          },
+          "display_kind": {
+            "anyOf": [
+              {
+                "const": "hidden",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Display Kind"
+          },
+          "title_preview": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Title Preview"
           }
         },
         "required": [
@@ -29738,6 +29834,18 @@
             "default": null,
             "title": "Confirm Empty Truncate"
           },
+          "confirm_deep_truncate": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Confirm Deep Truncate"
+          },
           "rebind_survivor_row_ids": {
             "anyOf": [
               {
@@ -35043,6 +35151,77 @@
           "session_id"
         ],
         "title": "SessionParams",
+        "type": "object"
+      },
+      "SessionPruneParams": {
+        "additionalProperties": false,
+        "description": "Exactly one of ``filters`` (``SessionDB.prune_sessions`` keyword filters, as\n``hermes sessions prune`` builds them) or ``never_active_days`` (``--never-active``).",
+        "properties": {
+          "filters": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Filters"
+          },
+          "never_active_days": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Never Active Days"
+          }
+        },
+        "title": "SessionPruneParams",
+        "type": "object"
+      },
+      "SessionPruneResult": {
+        "additionalProperties": false,
+        "properties": {
+          "deleted": {
+            "title": "Deleted",
+            "type": "integer"
+          },
+          "routing_deleted": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Routing Deleted"
+          },
+          "skipped": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Skipped"
+          }
+        },
+        "required": [
+          "deleted"
+        ],
+        "title": "SessionPruneResult",
         "type": "object"
       },
       "SessionReclaimedPayload": {
@@ -44190,6 +44369,24 @@
       }
     },
     {
+      "name": "session.prune",
+      "summary": "Local operator only: the owner deletes the ended sessions `hermes sessions prune` selected, skipping busy sessions and retained reset owners.",
+      "params": [
+        {
+          "name": "params",
+          "schema": {
+            "$ref": "#/components/schemas/SessionPruneParams"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/SessionPruneResult"
+        }
+      }
+    },
+    {
       "name": "session.redirect",
       "summary": "",
       "params": [
@@ -44240,6 +44437,24 @@
         "name": "result",
         "schema": {
           "$ref": "#/components/schemas/CanonicalCorrectionResult"
+        }
+      }
+    },
+    {
+      "name": "shell.exec",
+      "summary": "Ink ``!cmd`` / ``{!cmd}`` on the shared owner: one safe command for a local session, in its frozen launch cwd (``gateway/session_shell.py``).",
+      "params": [
+        {
+          "name": "params",
+          "schema": {
+            "$ref": "#/components/schemas/CanonicalShellExecParams"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/ShellExecResult"
         }
       }
     },

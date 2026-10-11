@@ -380,6 +380,7 @@ _E2E_LANES: dict[str, tuple[str, ...]] = {
         "tests/gateway/test_native_role_reauthorization.py",
         "tests/gateway/test_native_telegram_startup_recovery.py",
         "tests/gateway/test_native_pause_notice.py",
+        "tests/gateway/test_native_reply_crash_recovery.py",
     ),
     "e2e_upgrade": (
         *_PY_TEST_HARNESS,
@@ -393,6 +394,8 @@ _E2E_LANES: dict[str, tuple[str, ...]] = {
         "hermes_cli/update_",
         "hermes_cli/_update_",
         "hermes_cli/old_updater",
+        # The downgrade refusal (hermes_cli/update_downgrade_guard.py) reads state.db through it.
+        "hermes_state_holders.py",
         "hermes_cli/_old_updater",
         "hermes_cli/post_update",
         "hermes_cli/config_migrations",

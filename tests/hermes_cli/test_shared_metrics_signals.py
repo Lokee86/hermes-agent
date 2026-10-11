@@ -524,7 +524,7 @@ def test_settings_skills_plugins_transitions_only_count_moves_from_and_back_to_d
 
 
 def test_toolset_transitions_use_the_real_resolver():
-    from hermes_cli.tools_config import _get_platform_tools
+    from tools.platform_policy import get_platform_tools as _get_platform_tools
 
     default = sorted(_get_platform_tools({}, "cli", include_default_mcp_servers=False))
     assert "memory" in default
@@ -612,7 +612,7 @@ def test_diff_and_record_run_off_the_callers_lock_in_the_owning_profile(marks, m
     monkeypatch.setattr(disabled_metrics, "config_transitions", slow)
     token = set_hermes_home_override(str(tmp_path / "b"))
     try:
-        with threading.Lock():  # the caller's write lock (the dashboard's _CONFIG_MUTATION_LOCK)
+        with threading.Lock():  # noqa: PLW2101 -- inert on purpose: a stand-in for the caller's _CONFIG_MUTATION_LOCK, which record_config_saved documents running outside of; the caller's write lock (the dashboard's _CONFIG_MUTATION_LOCK)
             disabled_metrics.record_config_saved({}, {"memory": {"memory_enabled": False}})
             assert marks.rows == []  # returned without diffing
     finally:

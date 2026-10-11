@@ -88,6 +88,9 @@ async def probe(mode, peer):
             assert not event._gateway_accepted
         finally:
             digest_dir.unlink()
+        # Capture only admits (the owner is killed below with media-1 still queued and the second
+        # row claimed here). Admission commits off-loop, so a drain would otherwise run first.
+        authority._schedule = lambda ref: None
         receipt = await authority.admit_native(event)
         assert event._gateway_accepted
         saved = rows(receipt.ref.session_id)[0]
@@ -110,7 +113,9 @@ async def probe(mode, peer):
         assert claim_session_input(authority.db, epoch=authority.epoch, session_id=unknown.ref.session_id)
         evidence = dict(sid=receipt.ref.session_id, saved=saved, unknown_sid=unknown.ref.session_id,
                         retained=str(retained), unknown=rows(unknown.ref.session_id))
-        (state / 'accepted.json').write_text(json.dumps(evidence))
+        # Published by rename: the parent SIGKILLs this process the moment the file exists.
+        (state / 'accepted.tmp').write_text(json.dumps(evidence))
+        os.replace(state / 'accepted.tmp', state / 'accepted.json')
         threading.Event().wait(60)
         raise AssertionError('parent failed to kill owner')
 

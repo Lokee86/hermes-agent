@@ -1,4 +1,5 @@
 """Authenticated WS projection of the gateway authority; no TUI execution fallback."""
+import asyncio
 from dataclasses import asdict
 from pathlib import Path
 import sqlite3
@@ -58,7 +59,9 @@ class AuthorityConnection:
         for sibling in (registry or ()):
             if sibling is not self.authority and profile_matches_home(profile, Path(sibling.profile_id)):
                 connection = self._siblings.get(sibling.profile_id)
-                if connection is None:
+                # A re-served profile is a new authority under the same id: never keep routing to
+                # the retired one (it refuses every admission for the rest of this socket's life).
+                if connection is None or connection.authority is not sibling:
                     identity = dict(self._identity, profile_id=sibling.profile_id, instance_id=sibling.instance_id)
                     connection = AuthorityConnection(sibling, self.transport, identity, operator=self._operator)
                     self._siblings[sibling.profile_id] = connection
@@ -93,9 +96,13 @@ class AuthorityConnection:
         handlers.update(config_handlers(self))
         from gateway.session_ancillary import handlers as ancillary_handlers
         handlers.update(ancillary_handlers(self))
+        from gateway.session_shell import handlers as shell_handlers
+        handlers.update(shell_handlers(self))
         from gateway.session_images import attach_bytes
         from functools import partial
         handlers['image.attach_bytes'] = partial(attach_bytes, self)
+        from gateway.session_prune import prune
+        handlers['session.prune'] = partial(prune, self)
         return handlers
 
     async def dispatch(self, request):
@@ -255,7 +262,6 @@ class AuthorityConnection:
             if 'skills' in params:
                 # Skill files are read off the owner loop, once per NEW session (a retried
                 # request_id resumes the frozen policy and never re-renders).
-                import asyncio
                 from gateway.session_local_recovery import local_identity
                 from gateway.session_policy import render_launch_skills
                 params.setdefault('request_id', uuid.uuid4().hex)
@@ -264,15 +270,14 @@ class AuthorityConnection:
                     skills_prompt = await asyncio.to_thread(render_launch_skills, params, sid)
             ref = create_local_session(self.authority, self.actor, params, skills_prompt=skills_prompt)
             if params.get('accept_hooks') is True:
-                import asyncio
                 from gateway.session_policy import accept_launch_hooks, restore_policy
                 from hermes_state_local import local_receipt
                 policy = restore_policy(local_receipt(self.authority.db, ref.session_id)['policy'])
                 await asyncio.to_thread(accept_launch_hooks, policy)
             if title:
-                title_new_session(self.authority, ref, title)
+                await asyncio.to_thread(title_new_session, self.authority, ref, title)
             if hidden:
-                self.authority.db.set_session_hidden(ref.session_id, True)
+                await asyncio.to_thread(self.authority.db.set_session_hidden, ref.session_id, True)
         return await self.resume(ref, {})
 
     async def ping(self, ref, params):
@@ -346,19 +351,30 @@ class AuthorityConnection:
 
     async def resume(self, ref, params):
         from gateway.session_local import local_session_info
-        if 'title' in params:
+        if 'latest' in params:
+            # Bare `-c` / `--resume latest`: the most recent session of that surface family the
+            # actor may read (workspace first), resolved by the owner like a title.
+            from gateway.session_local_title import resolve_latest_session
+            ref = resolve_latest_session(self.authority, self.actor, params['latest'], params.get('workspace'))
+        elif 'title' in params:
             from gateway.session_local_title import resolve_titled_session
             ref = resolve_titled_session(self.authority, self.actor, params['title'])
-        if 'title' not in params:
+        else:
             from gateway.session_local_migration import resolve_local_target
+            from hermes_state_local_migration import LEGACY_LOCAL_SOURCES
             row = self.authority.db.get_session(ref.session_id)
-            if row and row['source'] in {'cli', 'tui', 'gui'}:
+            if row and row['source'] in LEGACY_LOCAL_SOURCES:
                 ref = resolve_local_target(self.authority, self.actor,
                     self.authority.db.get_compression_tip(ref.session_id) or ref.session_id)
         if params.get('editor') is not None:
             self.authority.authorize(self.actor, ref, 'session:control')
             from gateway.session_local_mcp import resume_editor_mcp
             resume_editor_mcp(self.authority, ref, params['editor'])
+        if 'api_key' in params:
+            # A launch-only key re-supplied after a restart (`--resume <id> --api-key`).
+            self.authority.authorize(self.actor, ref, 'session:control')
+            from gateway.session_policy import rebind_launch_key
+            rebind_launch_key(self.authority, ref, params['api_key'])
         # Read-only mount (#85303): an ended row stays ended until the first admitted turn
         # reopens it (``reopen_local_session`` in the drain), so opening a finished chat
         # never re-lights DB-derived liveness with no new activity.
@@ -410,15 +426,17 @@ class AuthorityConnection:
         if ref.session_id not in self.subscriptions:
             raise RuntimeStoreError('permission_denied')
         forbidden = set(params) - {'session_id', 'text', 'submission_id', 'input_id', 'queued', 'attachments', 'finite', 'unattended',
-                                   'surface', 'voice_context', 'interrupted', 'voice_turn'}
+                                   'surface', 'voice_context', 'interrupted', 'voice_turn', 'display_kind', 'title_preview'}
         if forbidden:
             raise RuntimeStoreError('invalid_params')
         request_id = params.get('submission_id') or params.get('input_id')
         if not isinstance(request_id, str) or not request_id:
             raise RuntimeStoreError('invalid_params')
         from gateway.session_finite import admit_finite
+        from gateway.session_display import submit_display_fields
         from gateway.session_surface import submit_surface_fields
-        payload = {'text': params.get('text'), **admit_finite(params), **submit_surface_fields(params)}
+        payload = {'text': params.get('text'), **admit_finite(params), **submit_surface_fields(params),
+                   **submit_display_fields(params)}
         if 'attachments' in params:
             payload['attachments'] = params['attachments']
         receipt = await self.authority.submit(self.actor, Submission(request_id, ref, payload, 'queue'))

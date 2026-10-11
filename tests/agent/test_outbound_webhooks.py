@@ -598,6 +598,7 @@ class TestDelivery:
         )
         proc = subprocess.run(
             [_sys.executable, str(script)], capture_output=True, timeout=30,
+            check=False,
         )
         assert proc.returncode == 0, proc.stderr.decode()
         deadline = time.monotonic() + 5

@@ -69,7 +69,7 @@ def _rank_slash_completions(items: list[dict], usage, origin_of, *, browsing: bo
         *(() if score_of is None else (score_of(item),)), -usage(name_of(item)), name_of(item)))
     if browsing:
         if registry_command_names is None:
-            from hermes_cli.commands import GATEWAY_KNOWN_COMMANDS
+            from commands import GATEWAY_KNOWN_COMMANDS
             registry_command_names = GATEWAY_KNOWN_COMMANDS
         fixed = [c for c in commands if name_of(c) in registry_command_names]
         other = [c for c in commands if name_of(c) not in registry_command_names]
@@ -292,5 +292,3 @@ def slash_completions(text: str = "", scope=None) -> dict:
     if (details_items := _details_completions(text)) is not None:
         return {"items": details_items, "replace_from": text.rfind(" ") + 1 if " " in text else len(text)}
     return {"items": items, "replace_from": text.rfind(" ") + 1 if " " in text else 1}
-
-

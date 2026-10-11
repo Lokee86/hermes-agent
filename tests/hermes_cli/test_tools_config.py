@@ -138,12 +138,14 @@ def test_get_platform_tools_homeassistant_toolset_enabled_for_cron_when_hass_tok
     monkeypatch.setenv("HASS_TOKEN", "fake-test-token")
 
     cron_enabled = get_platform_tools({}, "cron", xai_credentials_present=has_xai_tool_credentials)
-    assert "homeassistant" in cron_enabled
+    # Home Assistant is now a separately enabled plugin toolset; credentials
+    # alone do not opt a fresh profile into its tool schemas.
+    assert "homeassistant" not in cron_enabled
     # moa must stay off — the original goal of #14798
     assert "moa" not in cron_enabled
 
     cli_enabled = get_platform_tools({}, "cli", xai_credentials_present=has_xai_tool_credentials)
-    assert "homeassistant" in cli_enabled
+    assert "homeassistant" not in cli_enabled
 
 
 def test_get_platform_tools_homeassistant_uses_active_profile_token(monkeypatch):
@@ -155,8 +157,8 @@ def test_get_platform_tools_homeassistant_uses_active_profile_token(monkeypatch)
     secret_scope.set_multiplex_active(True)
     token = secret_scope.set_secret_scope({"HASS_TOKEN": "profile-token"})
     try:
-        assert "homeassistant" in get_platform_tools({}, "cron", xai_credentials_present=has_xai_tool_credentials)
-        assert "homeassistant" in get_platform_tools({}, "cli", xai_credentials_present=has_xai_tool_credentials)
+        assert "homeassistant" not in get_platform_tools({}, "cron", xai_credentials_present=has_xai_tool_credentials)
+        assert "homeassistant" not in get_platform_tools({}, "cli", xai_credentials_present=has_xai_tool_credentials)
     finally:
         secret_scope.reset_secret_scope(token)
         secret_scope.set_multiplex_active(False)
@@ -295,6 +297,9 @@ class TestPlatformToolsetConsistency:
         from toolsets import TOOLSETS
 
         for platform, meta in PLATFORMS.items():
+            if platform == "homeassistant":
+                # The integration moved HA tools out of core into its plugin.
+                continue
             ts_name = meta["default_toolset"]
             assert ts_name in TOOLSETS, (
                 f"Platform {platform!r} references toolset {ts_name!r} "
@@ -308,7 +313,7 @@ class TestPlatformToolsetConsistency:
 
         gateway_includes = set(TOOLSETS["hermes-gateway"]["includes"])
         # Exclude non-messaging platforms from the check
-        non_messaging = {"cli", "api_server", "cron"}
+        non_messaging = {"cli", "api_server", "cron", "homeassistant"}
         for platform, meta in PLATFORMS.items():
             if platform in non_messaging:
                 continue
@@ -421,35 +426,28 @@ class TestBrowserUseCliInstalledForAllNonCamofoxBackends:
             _run_post_setup("camofox")
         ensure.assert_not_called()
 
-    def test_ensure_helper_always_delegates_to_install_cli(self):
-        """MANAGED-FIRST: a browser-use on PATH must not short-circuit the
-        helper — install_cli() owns the managed-copy check and provisions
-        $HERMES_HOME/bin when only side installs exist."""
-        with patch(
-            "hermes_cli.tools_config_post_setup.shutil.which", return_value="/usr/bin/browser-use"
-        ), patch(
-            "tools.browser_use_cli.install_cli",
-            return_value=(True, "browser-use CLI already installed (/managed/bin/browser-use)"),
-        ) as install:
-            from hermes_cli.tools_config import _ensure_browser_use_cli
-
-            _ensure_browser_use_cli()
-        install.assert_called_once()
-
-    def test_ensure_helper_install_failure_is_non_fatal(self):
-        """A failed install must warn and fall back, never raise — the
-        uvx zero-install path and the built-in tools remain available."""
+    def test_ensure_helper_uses_bundled_browser_harness(self):
+        """The installed Python harness is authoritative; no side CLI installation."""
         from hermes_cli.tools_config import _ensure_browser_use_cli
 
-        with patch(
-            "hermes_cli.tools_config_post_setup.shutil.which", return_value=None
-        ), patch(
-            "tools.browser_use_cli.install_cli",
-            return_value=(False, "`uv tool install browser-use` failed:\nboom"),
-        ), patch("hermes_cli.tools_config_post_setup._print_warning") as warn:
-            _ensure_browser_use_cli()  # must not raise
+        with patch("tools.browser_use_cli._find_cli", return_value="/managed/browser-harness") as find, patch(
+            "hermes_cli.tools_config_post_setup._print_success"
+        ) as success:
+            _ensure_browser_use_cli()
+        find.assert_called_once()
+        assert any("ready" in c.args[0] for c in success.call_args_list)
 
-        assert any("failed" in c.args[0] for c in warn.call_args_list)
+    def test_missing_bundled_browser_harness_warns_without_installing(self):
+        """A broken venv requires re-sync; setup reports it without attempting an install."""
+        from hermes_cli.tools_config import _ensure_browser_use_cli
+
+        with patch("tools.browser_use_cli._find_cli", return_value=None), patch(
+            "hermes_cli.tools_config_post_setup._print_warning"
+        ) as warn, patch("hermes_cli.tools_config_post_setup._print_info") as info:
+            _ensure_browser_use_cli()
+
+        assert any("missing" in c.args[0] for c in warn.call_args_list)
+        assert any("hermes update" in c.args[0] for c in info.call_args_list)
 
 
 class TestImagegenBackendRegistry:

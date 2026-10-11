@@ -185,7 +185,7 @@ def _run_and_exit_oneshot(
         _exit_after_oneshot(rc)
 
 
-def _warn_if_unsupervised_pid1(pid: "int | None" = None) -> None:
+def _warn_if_unsupervised_pid1(pid: int | None = None) -> None:
     """Warn when this process is PID 1 with nothing above it to reap orphans.
 
     The official image's ENTRYPOINT (``docker/entrypoint-dispatch.sh`` -> s6-overlay's
@@ -244,7 +244,7 @@ def _set_process_title() -> None:
 # in: mouse-residue suppression reads this BEFORE `_apply_profile_override()`
 # sets HERMES_HOME, and a cache keyed on nothing pinned every later caller to
 # the default home's interface for the whole run (#116902).
-_EARLY_INTERFACE_CACHE: "tuple[str, str] | None" = None
+_EARLY_INTERFACE_CACHE: tuple[str, str] | None = None
 
 
 def _early_interface_config_path() -> str:
@@ -280,7 +280,7 @@ def _config_default_interface_early() -> str:
     return value
 
 
-def _wants_tui_early(argv: "list[str] | None" = None) -> bool:
+def _wants_tui_early(argv: list[str] | None = None) -> bool:
     """Earliest TUI decision, usable before argparse/config imports.
 
     Precedence: ``--cli`` wins, then ``--tui``/``HERMES_TUI=1``, then a
@@ -905,6 +905,7 @@ from hermes_cli.main_web_build import (  # frozen updater surface: update_cmd*.p
 from hermes_cli.main_tui_launch import (
     _launch_tui,
     _pin_kanban_board_env,
+    _refuse_unforwarded_tui_flags,
     _resolve_use_tui,
     _sync_bundled_skills_quietly,
 )
@@ -1060,10 +1061,7 @@ def _dotenv_has_provider_key(env_file: Path, provider_env_vars: set) -> bool:
             line = line.strip()
             if line.startswith("#") or "=" not in line:
                 continue
-            if line.startswith("export "):
-                # Strip the bash-compatible ``export `` prefix so lines like ``export API_KEY=...`` parse as
-                # ``API_KEY`` rather than being stored under the wrong key ``"export API_KEY"`` (#6659).
-                line = line[7:]
+            line = line.removeprefix("export ")
             key, _, val = line.partition("=")
             if key.strip() in provider_env_vars and val.strip().strip("'\""):
                 return True
@@ -1286,6 +1284,7 @@ def _resolve_workspace_key() -> Optional[str]:
         result = subprocess.run(
             ["git", "rev-parse", "--show-toplevel"],
             capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=5,
+            check=False,
         )
         if result.returncode == 0 and result.stdout.strip():
             return os.path.abspath(result.stdout.strip())
@@ -1712,6 +1711,7 @@ def cmd_chat(args):
     if stream_json_requested(args) or _bypass_chat_launch(args) or not _resolve_use_tui(args):
         from hermes_cli.gateway_chat_startup import launch_gateway_chat
         sys.exit(launch_gateway_chat(args))
+    _refuse_unforwarded_tui_flags(args)
     _apply_safe_mode(args)
     _apply_user_config_bypass(args)
     _guard_noninteractive_user_config(args)
@@ -1726,7 +1726,10 @@ def cmd_chat(args):
     from hermes_cli.free_tier_bootstrap import run_bootstrap
 
     run_bootstrap(announce=False)
-    if not _has_any_provider_configured():
+    # The TUI owns its first-run state: it renders "Setup Required" with in-place /setup.
+    # The classic prompt only fronts the classic CLI.
+    provider_configured = _has_any_provider_configured()
+    if not use_tui and not provider_configured:
         _first_run_setup_guard(args)
         return
 
@@ -1752,7 +1755,10 @@ def cmd_chat(args):
     _pin_kanban_board_env()
     from hermes_cli.observability.shared_metrics_consent import offer_consent_before_chat
 
-    offer_consent_before_chat(args)
+    # Not before setup: a blank install meets "Setup Required" first. The offer stays
+    # undecided, so it is asked on the first launch with a provider.
+    if provider_configured:
+        offer_consent_before_chat(args)
     _confirm_startup_expensive_model_override(args)
 
     passthrough = {k: getattr(args, k, d) for k, d in _CHAT_PASSTHROUGH}
@@ -2907,6 +2913,14 @@ def _should_background_mcp_startup(args) -> bool:
     return not _is_tui_chat_launch(args) and args.command in {None, "chat", "rl"}
 
 
+def _chat_runs_at_gateway(args) -> bool:
+    """Every ``hermes`` / ``hermes chat`` turn (classic view, ``-q``, ``-z``, TUI) executes in the
+    gateway, which discovers and owns MCP servers itself. Discovery in this client only spawns a
+    second copy of every server and holds the cross-process discovery lock the cold-starting gateway
+    then waits on (measured 2.0 s with one stdio server) for tools nothing here ever calls."""
+    return args.command in {None, "chat"}
+
+
 def _prepare_agent_startup(args) -> None:
     """Discover plugins/MCP/hooks for commands that can run an agent turn."""
     # --yolo chokepoint: HERMES_YOLO_MODE must be set before any discovery
@@ -2955,9 +2969,11 @@ def _prepare_agent_startup(args) -> None:
         logger.debug("MCP server filter setup failed", exc_info=True)
 
     # TUI launches hand off to a startup path that backgrounds MCP discovery
-    # with a bounded join; acp/gateway/cron do their own on the runtime path.
+    # with a bounded join; acp/gateway/cron do their own on the runtime path;
+    # chat turns run in the gateway, which owns MCP for them.
     _run_inline_mcp_discovery = not (
         _is_tui_chat_launch(args) or _command_has_dedicated_mcp_startup(args)
+        or _chat_runs_at_gateway(args)
     )
     if _run_inline_mcp_discovery and _should_background_mcp_startup(args):
         try:

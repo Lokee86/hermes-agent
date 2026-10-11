@@ -23,6 +23,9 @@ HELLO_SECONDS = 60
 # After Stop the child interrupts its agent and emits its result; the owner terminates a
 # child that has not acknowledged within this window instead of waiting on the pipe forever.
 STOP_ACK_SECONDS = 30
+# Own session (POSIX): a worker whose owner died kills its whole group (managed_worker
+# _die_with_owner); on Windows it exits itself.
+WORKER_POPEN = {'start_new_session': True, 'close_fds': True}
 
 
 class ManagedExecutionUnknown(RuntimeError):
@@ -65,7 +68,8 @@ def _bootstrap(authority, ref, row, policy, scope):
     request = dict(json.loads(policy.request_json), turn_v1={
         'finite': row['payload'].get('finite', False), 'unattended': row['payload'].get('unattended') is True,
         'yolo': _session_yolo(authority, live.route, policy),
-        **({'surface_v1': row['payload']['surface_v1']} if row['payload'].get('surface_v1') else {})})
+        **({'surface_v1': row['payload']['surface_v1']} if row['payload'].get('surface_v1') else {}),
+        **({'display_v1': row['payload']['display_v1']} if row['payload'].get('display_v1') else {})})
     from gateway.session_worker_construct import construct_inputs
     request['construct_v1'] = construct_inputs(authority, policy, live.source.chat_id)
     hydrated = replace(policy, config_json=json.dumps(_worker_config(authority, policy)), request_json=json.dumps(request),
@@ -115,23 +119,26 @@ def worker_turn_scope(frame):
     never park a prompt, the session's current YOLO governs this child and a HUD / live-voice /
     voice turn reaches the model as it does in process. Frames without it bind nothing."""
     from gateway.session_finite import finite_turn_scope
+    from gateway.session_display import display_turn_scope, restore_display
     from gateway.session_surface import restore_surface, surface_turn_scope
     turn = json.loads(frame['policy'].get('request_json') or '{}').get('turn_v1')
     if turn is None:
         yield
         return
-    flags = {k: v for k, v in turn.items() if k != 'surface_v1'} if isinstance(turn, dict) else None
+    flags = {k: v for k, v in turn.items() if k not in ('surface_v1', 'display_v1')} if isinstance(turn, dict) else None
     if (flags is None or set(flags) != {'finite', 'unattended', 'yolo'}
             or any(type(v) is not bool for v in flags.values()) or (turn['unattended'] and not turn['finite'])):
         raise ValueError('invalid_managed_worker_bootstrap')
     try:
         surface = restore_surface(turn['surface_v1']) if 'surface_v1' in turn else None
+        display = restore_display(turn['display_v1']) if 'display_v1' in turn else None
     except RuntimeStoreError as exc:
         raise ValueError('invalid_managed_worker_bootstrap') from exc
     if turn['yolo']:
         from tools.approval import enable_session_yolo
         enable_session_yolo(frame['route'])
-    with finite_turn_scope(turn['finite'], turn['unattended']), surface_turn_scope(surface):
+    with finite_turn_scope(turn['finite'], turn['unattended']), surface_turn_scope(surface), \
+            display_turn_scope(frame['scope']['execution_id'], display):
         yield
 
 
@@ -226,10 +233,9 @@ class ManagedWorker:
             raise RuntimeStoreError('worker_control_backpressure') from exc
 
     def _stop_budget(self, ack):
-        """Seconds left of the ``ack`` window that opened at the first Stop (zero before the
-        child can receive controls)."""
-        if self.stopped_at is None:
-            self.stopped_at = time.monotonic()
+        """Seconds left of the ``ack`` window that opened at the first Stop. Pure: only
+        ``control`` stamps ``stopped_at``, so a read before any Stop (the hello) never starts
+        the window a later Stop must receive in full."""
         return self.stopped_at + ack - time.monotonic()
 
     async def next_frame(self, timeout, ack):
@@ -252,9 +258,11 @@ class ManagedWorker:
                 await asyncio.wait({arrived, stopper}, timeout=timeout, return_when=asyncio.FIRST_COMPLETED)
                 if not self._frames and not self.stop.is_set():
                     raise RuntimeStoreError('managed_worker_hello_timeout')
-            remaining = self._stop_budget(ack)
-            if not self._frames and remaining > 0:
-                await asyncio.wait({arrived}, timeout=remaining)
+            if not self._frames:
+                # Only a latched Stop gets here; its window runs from the first Stop.
+                remaining = self._stop_budget(ack)
+                if remaining > 0:
+                    await asyncio.wait({arrived}, timeout=remaining)
             if not self._frames:
                 raise RuntimeStoreError('managed_worker_stopped')
             return self._take()
@@ -434,7 +442,7 @@ async def execute_managed(authority, ref, row, policy):
         log_path = worker_log_path(authority.profile_id)
         process = await acquire_process(subprocess.Popen, [sys.executable, '-m', 'agent.managed_worker'],
             cwd=cwd, stdin=subprocess.PIPE, env=env, stdout=subprocess.PIPE,
-            stderr=subprocess.DEVNULL if log_path is None else subprocess.PIPE, close_fds=True)
+            stderr=subprocess.DEVNULL if log_path is None else subprocess.PIPE, **WORKER_POPEN)
     except asyncio.CancelledError:
         # acquire_process owns late-child cleanup; no bootstrap or reservation was sent.
         return _interrupted_before_bootstrap(authority, row)

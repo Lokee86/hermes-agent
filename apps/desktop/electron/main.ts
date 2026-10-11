@@ -218,6 +218,7 @@ import { liveWindowState, overlayWindowState } from './connection-window-state'
 import { describeCrashReason, installCrashForensics } from './crash-forensics'
 import { adoptServedDashboardToken } from './dashboard-token'
 import { resolveDesktopHermesHome, resolveDesktopUserData } from './data-paths'
+import { registerDeepLinkProtocol as registerDeepLinkProtocolWith } from './deep-link-protocol'
 import { loadOrCreateInstallationId, sshOwnershipId } from './desktop-installation'
 import { formatDesktopLogLine, formatLogStamp } from './desktop-log-line'
 import {
@@ -619,8 +620,8 @@ import { ChannelResolver, type ChannelTarget } from './updater/channel'
 import { inspectRunningChannelApp } from './updater/channel-native'
 import { ChannelStrategy } from './updater/channel-strategy'
 import { verifyPreparedChannelInstaller } from './updater/channel-windows-host'
-import { createCheckoutStrategy } from './updater/checkout'
-import { readSourceUpdate, type SourceUpdate } from './updater/checkout-source'
+import { type CheckoutStrategy, createCheckoutStrategy } from './updater/checkout'
+import { readSourceUpdate, sourceChannelName, type SourceUpdate } from './updater/checkout-source'
 import { ExternalStrategy } from './updater/external'
 import { readUpdatesFeedBaseFromConfig, resolveFeedBaseUrl } from './updater/feed-config'
 import { createChannelMacStrategy, createMacStrategy } from './updater/mac-client'
@@ -3390,11 +3391,6 @@ function writeFileAtomic(targetPath, data, encoding?: BufferEncoding) {
   fs.renameSync(tmp, targetPath)
 }
 
-function writeDesktopUpdateConfig(config) {
-  fs.mkdirSync(path.dirname(DESKTOP_UPDATE_CONFIG_PATH), { recursive: true })
-  writeFileAtomic(DESKTOP_UPDATE_CONFIG_PATH, JSON.stringify(config, null, 2))
-}
-
 // ─── Main-window geometry persistence (window-state.json) ──────────────────
 
 function readWindowState() {
@@ -3691,21 +3687,25 @@ function requireBundledPayload(mechanism: UpdaterStrategy['mechanism']): Payload
  * entrypoints dispatch only through this strategy — there is no other
  * production path to the checkout arms.
  */
-function resolveCheckoutUpdateStrategy(): UpdaterStrategy {
+function resolveCheckoutUpdateStrategy(): CheckoutStrategy {
   return createCheckoutStrategy({
     hermesHome: HERMES_HOME,
     isWindows: IS_WINDOWS,
     isMac: IS_MAC,
     defaultUpdateBranch: DEFAULT_UPDATE_BRANCH,
     updateHandoffDwellMs: UPDATE_HANDOFF_DWELL_MS,
-    readSourceUpdate: async (updateRoot: string, opts: { force?: boolean }): Promise<SourceUpdate | null> =>
+    readSourceUpdate: async (
+      updateRoot: string,
+      opts: { force?: boolean; setChannel?: 'main' | 'stable' }
+    ): Promise<SourceUpdate | null> =>
       readSourceUpdate({
         python: await findPythonForRoot(updateRoot),
         git: resolveGitBinary(),
         updateRoot,
         hermesHome: HERMES_HOME,
         branchConfigPath: DESKTOP_UPDATE_CONFIG_PATH,
-        force: opts.force
+        force: opts.force,
+        setChannel: opts.setChannel
       }),
     resolveUpdateRoot,
     resolveUpdaterBinary,
@@ -17521,18 +17521,12 @@ ipcMain.handle('hermes:updates:apply', async (_event, payload) =>
   }))
 )
 
-ipcMain.handle('hermes:updates:branch:get', async () => readDesktopUpdateConfig())
+// About ▸ Updates channel selector; source checkouts only (packages bake their channel).
+ipcMain.handle('hermes:updates:channel:set', async (_event, name: unknown): Promise<UpdaterStatusWire> => {
+  assertSourceUpdateChannel(INSTALL_STAMP)
 
-ipcMain.handle(
-  'hermes:updates:branch:set',
-  async (_event: Electron.IpcMainInvokeEvent, name: unknown): Promise<{ branch: string }> => {
-    assertSourceUpdateChannel(INSTALL_STAMP)
-    const branch: string = typeof name === 'string' && name.trim() ? name.trim() : DEFAULT_UPDATE_BRANCH
-    writeDesktopUpdateConfig({ branch })
-
-    return { branch }
-  }
-)
+  return resolveCheckoutUpdateStrategy().check({ force: true, setChannel: sourceChannelName(name) })
+})
 
 function resolveHermesVersion(scope: { connectionId?: string; profile?: string } = {}): Promise<string> {
   return resolveGatewayVersion(path => handleHermesApiRequest({ ...scope, path, timeoutMs: 5000 }))
@@ -18084,21 +18078,10 @@ ipcMain.handle('hermes:deep-link-ready', () => {
 })
 
 function registerDeepLinkProtocol() {
-  try {
-    if (process.defaultApp && process.argv.length >= 2) {
-      // Dev: register with the electron exec path + entry script so the OS can
-      // relaunch us with the URL. argv[1] is usually "." when launched via
-      // `electron .` from apps/desktop — resolve against cwd.
-      const entry = path.resolve(process.argv[1])
-      app.setAsDefaultProtocolClient(HERMES_PROTOCOL, process.execPath, [entry])
-    } else {
-      app.setAsDefaultProtocolClient(HERMES_PROTOCOL)
-    }
-
-    rememberLog(`[deeplink] registered ${HERMES_PROTOCOL}:// handler`)
-  } catch (err) {
-    rememberLog(`[deeplink] protocol registration failed: ${err.message}`)
-  }
+  registerDeepLinkProtocolWith({
+    app, protocol: HERMES_PROTOCOL, env: process.env, defaultApp: Boolean(process.defaultApp),
+    argv: process.argv, execPath: process.execPath, resolve: entry => path.resolve(entry), log: rememberLog
+  })
 }
 
 // macOS: register the deep link before the lock. Launch Services relaunches

@@ -199,7 +199,7 @@ def _capture_run_kwargs(timeout: int) -> dict:
 
 
 def _captured_exec(rid, cmd, timeout: int, *, on_result, timeout_err: tuple, fail_code: int,
-                   shell: bool = False, env: "dict | None" = None) -> dict:
+                   shell: bool = False, env: dict | None = None) -> dict:
     """Run ``cmd`` captured (see ``_capture_run_kwargs``) and hand the CompletedProcess to
     ``on_result``; TimeoutExpired → ``timeout_err`` (code, message), other errors → ``fail_code``."""
     try:
@@ -970,7 +970,7 @@ def _cmd_skills(rid, params, session, name, arg):
     never a staged-write review. The allowlist mirrors the registry-declared review slice
     (``CommandDef("skills", desktop_subcommands=...)`` in hermes_cli/commands.py)."""
     sub = (arg or "").split()
-    commands = _tools_mod("hermes_cli.commands")
+    commands = _tools_mod("commands")
     allowed = getattr(commands.resolve_command("skills"), "desktop_subcommands", None) or ()
     if not sub or sub[0].lower() not in allowed:
         return None

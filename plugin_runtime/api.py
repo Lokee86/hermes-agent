@@ -15,24 +15,24 @@ from plugin_runtime.loading import LoadedPlugin
 from plugin_runtime.manifest import PluginManifest
 
 
-def invoke_hook(hook_name: str, **kwargs: Any) -> List[Any]:
+def invoke_hook(hook_name: str, **kwargs: Any) -> list[Any]:
     """Invoke a lifecycle hook after lazy plugin discovery."""
     return delivery_manager().invoke_hook(hook_name, **kwargs)
 
 
-async def ainvoke_hook(hook_name: str, **kwargs: Any) -> List[Any]:
+async def ainvoke_hook(hook_name: str, **kwargs: Any) -> list[Any]:
     """Async hook invocation through the canonical delivery manager."""
     return await delivery_manager().ainvoke_hook(hook_name, **kwargs)
 
 
 def render_system_prompt_sections(
     session_info: Mapping[str, Any],
-) -> List[RenderedPluginSystemPromptSection]:
+) -> list[RenderedPluginSystemPromptSection]:
     """Render plugin prompt sections after idempotent discovery."""
     return ensure_plugins_discovered().render_system_prompt_sections(session_info)
 
 
-def invoke_middleware(kind: str, **kwargs: Any) -> List[Any]:
+def invoke_middleware(kind: str, **kwargs: Any) -> list[Any]:
     """Invoke registered middleware after lazy plugin discovery."""
     return delivery_manager().invoke_middleware(kind, **kwargs)
 
@@ -67,18 +67,18 @@ def get_plugin_command_handler(name: str) -> Optional[Callable]:
     return entry["handler"] if entry else None
 
 
-def get_plugin_commands() -> Dict[str, dict]:
+def get_plugin_commands() -> dict[str, dict]:
     """Return plugin commands after idempotent discovery."""
     return ensure_plugins_discovered()._plugin_commands
 
 
-def get_plugin_auxiliary_tasks() -> List[Dict[str, Any]]:
+def get_plugin_auxiliary_tasks() -> list[dict[str, Any]]:
     """Return plugin auxiliary-task registrations sorted by key."""
     manager = ensure_plugins_discovered()
     return [manager._aux_tasks[key] for key in sorted(manager._aux_tasks)]
 
 
-def get_plugin_toolsets() -> List[tuple]:
+def get_plugin_toolsets() -> list[tuple]:
     """Return plugin toolsets as ``(key, label, description)`` tuples."""
     manager = get_plugin_manager()
     if not manager._plugin_tool_names:
@@ -88,13 +88,13 @@ def get_plugin_toolsets() -> List[tuple]:
     except Exception:
         return []
 
-    toolset_tools: Dict[str, List[str]] = {}
+    toolset_tools: dict[str, list[str]] = {}
     for tool_name in manager._plugin_tool_names:
         entry = registry.get_entry(tool_name)
         if entry:
             toolset_tools.setdefault(entry.toolset, []).append(entry.name)
 
-    toolset_plugin: Dict[str, LoadedPlugin] = {}
+    toolset_plugin: dict[str, LoadedPlugin] = {}
     for loaded in manager._plugins.values():
         for tool_name in loaded.tools_registered:
             entry = registry.get_entry(tool_name)
@@ -117,7 +117,7 @@ def get_plugin_toolsets() -> List[tuple]:
     return result
 
 
-def get_plugin_subscriptions() -> Dict[str, List[Callable]]:
+def get_plugin_subscriptions() -> dict[str, list[Callable]]:
     """Return an event-name -> callback snapshot after idempotent discovery."""
     manager = ensure_plugins_discovered()
     with manager._event_lock:
@@ -128,7 +128,7 @@ def get_plugin_subscriptions() -> Dict[str, List[Callable]]:
 
 
 def unload_plugins(
-    plugin: Union[str, PluginManifest, LoadedPlugin, None] = None,
+    plugin: str | PluginManifest | LoadedPlugin | None = None,
 ) -> bool:
     """Unload one plugin or all plugins after joining background discovery."""
     join_background_discovery()

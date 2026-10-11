@@ -38,14 +38,15 @@ logger = logging.getLogger("hermes_cli.plugins")
 
 _NS_PARENT = "hermes_plugins"
 _MODULE_NAMESPACE_LOCK = threading.RLock()
-_BARE_MODULE_SCOPE: Dict[str, str] = {}
+_BARE_MODULE_SCOPE: dict[str, str] = {}
 
 _LOAD_TIMEOUT_SECS = 10.0
 _MAX_LOAD_TIMEOUT_SECS = 600.0
 _MAX_ABANDONED_LOADERS = 8
-_ABANDONED_LOADERS: List[threading.Thread] = []
+_ABANDONED_LOADERS: list[threading.Thread] = []
 _ABANDONED_LOADERS_LOCK = threading.Lock()
-_IN_PLUGIN_LOAD = threading.local()
+_LOADER_THREAD_PREFIX = "plugin-load:"
+_IN_PLUGIN_LOAD: contextvars.ContextVar[list[PluginLoadContext] | None] = contextvars.ContextVar("plugin_load_scope", default=None)
 
 
 @dataclass
@@ -54,10 +55,10 @@ class LoadedPlugin:
 
     manifest: PluginManifest
     module: Optional[types.ModuleType] = None
-    tools_registered: List[str] = field(default_factory=list)
-    hooks_registered: List[str] = field(default_factory=list)
-    middleware_registered: List[str] = field(default_factory=list)
-    commands_registered: List[str] = field(default_factory=list)
+    tools_registered: list[str] = field(default_factory=list)
+    hooks_registered: list[str] = field(default_factory=list)
+    middleware_registered: list[str] = field(default_factory=list)
+    commands_registered: list[str] = field(default_factory=list)
     enabled: bool = False
     error: Optional[str] = None
     # Bundled platform recorded as a not-yet-imported loader (see _register_deferred_platform).
@@ -86,7 +87,7 @@ class PluginLoadTimeout(Exception):
 
 def in_plugin_load_worker() -> bool:
     """True on a deadline worker thread; re-entrant discovery must not block on its own parent."""
-    return bool(getattr(_IN_PLUGIN_LOAD, "active", False))
+    return _IN_PLUGIN_LOAD.get() is not None
 
 
 def _resolve_plugin_load_timeout() -> float:
@@ -128,31 +129,42 @@ def _reserve_abandoned_loader_slot() -> None:
 
 
 def run_with_load_deadline(plugin_key: str, ctx: PluginLoadContext, fn: Callable[[], Any]) -> Any:
-    """Run a plugin import/register operation under the configured deadline."""
+    """Run plugin loading under a deadline; nested loads share the outer worker."""
+    outer_scope = _IN_PLUGIN_LOAD.get()
+    if outer_scope is not None:
+        outer_scope.append(ctx)
+        try:
+            return fn()
+        finally:
+            outer_scope.remove(ctx)
     timeout = _resolve_plugin_load_timeout()
     if timeout <= 0:
         return fn()
     _reserve_abandoned_loader_slot()
-    outcome: List[Any] = []
-    failure: List[BaseException] = []
+    outcome: list[Any] = []
+    failure: list[BaseException] = []
+    scope = [ctx]
 
     def _worker() -> None:
-        _IN_PLUGIN_LOAD.active = True
+        token = _IN_PLUGIN_LOAD.set(scope)
         try:
             outcome.append(fn())
         except BaseException as exc:
             failure.append(exc)
+        finally:
+            _IN_PLUGIN_LOAD.reset(token)
 
     worker = threading.Thread(
         target=contextvars.copy_context().run,
         args=(_worker,),
-        name=f"plugin-load:{plugin_key}",
+        name=f"{_LOADER_THREAD_PREFIX}{plugin_key}",
         daemon=True,
     )
     worker.start()
     worker.join(timeout)
     if worker.is_alive():
-        ctx._abandon_load()
+        for loaded_ctx in scope:
+            loaded_ctx._abandon_load()
         with _ABANDONED_LOADERS_LOCK:
             _ABANDONED_LOADERS.append(worker)
         raise PluginLoadTimeout(f"load timed out after {timeout:g}s (import + register() never returned)")
@@ -259,7 +271,7 @@ def _load_directory_module(
 
 def _load_entrypoint_module(
     manifest: PluginManifest,
-) -> Union[types.ModuleType, Callable[..., Any]]:
+) -> types.ModuleType | Callable[..., Any]:
     """Load a pip-installed plugin via its entry-point reference."""
     for ep in _select_entry_point_group(importlib.metadata.entry_points(), ENTRY_POINTS_GROUP):
         if ep.name == manifest.name:
@@ -287,7 +299,7 @@ class PluginLoaderMixin:
 
     def _load_entrypoint_module(
         self, manifest: PluginManifest,
-    ) -> Union[types.ModuleType, Callable[..., Any]]:
+    ) -> types.ModuleType | Callable[..., Any]:
         return _load_entrypoint_module(manifest)
 
     @staticmethod
@@ -314,6 +326,37 @@ class PluginLoaderMixin:
             return
         self._register_deferred_platform_tools(manifest, loaded)
 
+    def rearm_failed_platform(self, platform_name: str) -> bool:
+        """Re-lease a failed deferred platform loader for the next registry lookup.
+
+        Do not retry disabled or incompatible plugins, or a timed-out load whose
+        abandoned worker remains active.
+        """
+        from plugin_runtime.discovery import _get_disabled_plugins, _get_enabled_plugins, gate_manifest
+        from plugin_runtime.manager import _installed_plugin_removal
+
+        with self._discovery_lock, plugin_home_scope(self.home_path):
+            failed = next(
+                (p.manifest for p in self._plugins.values()
+                 if p.error and not p.enabled and p.manifest.kind == "platform"
+                 and self._platform_name_from_manifest(p.manifest) == platform_name),
+                None,
+            )
+            if failed is None or requires_hermes_error(failed) or gate_manifest(
+                failed, _get_disabled_plugins(), _get_enabled_plugins(),
+                installed_plugin_removal=_installed_plugin_removal,
+            ).action not in ("defer", "load"):
+                return False
+            with _ABANDONED_LOADERS_LOCK:
+                if any(
+                    t.is_alive() and t.name == f"{_LOADER_THREAD_PREFIX}{manifest_key(failed)}"
+                    for t in _ABANDONED_LOADERS
+                ):
+                    return False
+            logger.info("Re-arming failed platform plugin load: %s", platform_name)
+            self._register_deferred_platform(failed)
+            return True
+
     @_serialized_replacement
     def _lease_deferred_platform(self, manifest: PluginManifest, lookup_key: str) -> bool:
         """Publish the deferred loader as a ledger-owned lease; False when the registry refused it."""
@@ -332,6 +375,12 @@ class PluginLoaderMixin:
 
             previous = platform_registry.snapshot_registration(platform_name, scope=scope)
             platform_registry.register_deferred(platform_name, _loader, scope=scope)
+            # Make an env-only platform discoverable without eagerly importing its adapter.
+            platform_registry.note_activation_env(
+                platform_name,
+                [entry.get('name') if isinstance(entry, dict) else entry
+                 for entry in manifest.requires_env or ()],
+            )
             current = platform_registry.snapshot_registration(platform_name, scope=scope)
             if current[0] is None and current[1] is _loader:
                 self._plugin_platform_names.add(platform_name)
@@ -387,7 +436,7 @@ class PluginLoaderMixin:
             return
         before = set(self._plugin_tool_names)  # lets the failure path credit partial registrations
 
-        def _credit() -> List[str]:
+        def _credit() -> list[str]:
             """Attribute every tool registered since ``before`` to this plugin."""
             registered = [t for t in self._plugin_tool_names if t not in before]
             if registered:
@@ -558,49 +607,6 @@ class PluginLoaderMixin:
             self._predeclared_tools.pop(plugin_key, None)
         self._plugins[plugin_key] = loaded
 
-    def _track_tool_override_policy(self, manifest: PluginManifest, module_name: str) -> None:
-        """Install the plugin's tool-override policy in tools.registry as a ledger-owned lease."""
-        from tools.registry import registry as _registry
-        scope = self.scope_key
-        with replacement_coordinator.transaction():
-            previous_policy = _registry.snapshot_plugin_override_policy(module_name, scope=scope)
-            current_policy = _registry.register_plugin_override_policy(
-                module_name, self.context_for(manifest)._tool_override_allowed(""), scope=scope,
-            )
-            policy_lease = replacement_coordinator.acquire(
-                ("tool_override_policy", scope, module_name), current=current_policy,
-                previous=previous_policy,
-                restore=lambda replacement: _registry.restore_plugin_override_policy(
-                    module_name, current_policy, replacement, scope=scope,
-                ),
-            )
-            self._track_registration(manifest, "tool_override_policy", module_name, policy_lease.dispose)
-
-    def _attribute_registrations(
-        self, loaded: LoadedPlugin, plugin_key: str, registration_start: int
-    ) -> None:
-        """Fill ``loaded.*_registered`` from the ledger slice this plugin's register() produced."""
-        registrations = [
-            r for r in self._registration_order[registration_start:]
-            if r.plugin_key == plugin_key and r.active
-        ]
-
-        def _keys(kind: str) -> List[str]:
-            return [r.key for r in registrations if r.kind == kind]
-
-        # Discovery-time tools predate registration_start; credit them back or `hermes plugins list`
-        # under-reports once the deferred adapter materializes.
-        predeclared = [t for t in self._predeclared_tools.pop(plugin_key, []) if t in self._plugin_tool_names]
-        loaded.tools_registered = predeclared + [k for k in _keys("tool") if k not in predeclared]
-        loaded.hooks_registered = _keys("hook")
-        loaded.middleware_registered = _keys("middleware")
-        loaded.commands_registered = _keys("command")
-        logger.debug(
-            "  registered: %d tool(s), %d hook(s), %d middleware, %d slash command(s), %d CLI command(s)",
-            len(loaded.tools_registered), len(loaded.hooks_registered),
-            len(loaded.middleware_registered), len(loaded.commands_registered),
-            sum(1 for c in self._cli_commands if c in _keys("cli_command")),
-        )
 
     def _load_portable_plugin(self, manifest: PluginManifest, loaded: LoadedPlugin) -> None:
         """Load validated portable components without importing Python code."""
@@ -661,106 +667,6 @@ class PluginLoaderMixin:
             logger.warning("Agent Plugin '%s' disabled: %s", lookup_key, loaded.error)
         self._plugins[lookup_key] = loaded
 
-    def _warn_python_dependencies(self, manifest: PluginManifest) -> None:
-        """Warn about declared pip dependencies missing at load time; never install from the loader."""
-        deps = manifest.python_dependencies
-        if not deps:
-            return
-        key = manifest_key(manifest)
-        missing = [req for req in deps if _dist_installed(req) is False]
-        if missing:
-            logger.warning(
-                "Plugin %s declares Python dependencies that are not "
-                "installed: %s. Run `hermes plugins enable %s` to install them, "
-                "or install them yourself: pip install %s",
-                key, ", ".join(missing), key, " ".join(f"'{m}'" for m in missing),
-            )
-        else:
-            logger.debug("Plugin %s python_dependencies satisfied: %s", key, ", ".join(deps))
-
-    def _validate_plugin_config_schema(self, manifest: PluginManifest) -> None:
-        """Warn, without blocking, when configured plugin settings violate the declared schema."""
-        if not manifest.config_schema:
-            return
-        plugin_id = manifest_key(manifest)
-        settings = read_plugin_settings(plugin_id)
-        for warning in validate_config_schema(plugin_id, manifest.config_schema, settings):
-            logger.warning("Plugin %s config: %s", plugin_id, warning)
-
-    def _load_plugin(self, manifest: PluginManifest) -> None:
-        """Import a plugin module and call its ``register(ctx)`` function."""
-        with self._discovery_lock, plugin_home_scope(self.home_path):
-            self._load_plugin_scoped(manifest)
-
-    def _load_plugin_scoped(self, manifest: PluginManifest) -> None:
-        """Load one plugin with the manager's immutable Hermes-home scope bound as current."""
-        loaded = LoadedPlugin(manifest=manifest)
-        plugin_key = manifest_key(manifest)
-        logger.debug(
-            "Loading plugin '%s' (source=%s, kind=%s, path=%s)",
-            plugin_key, manifest.source, manifest.kind, manifest.path,
-        )
-        if manifest.portable:
-            self._load_portable_plugin(manifest, loaded)
-            return
-        reason = requires_hermes_error(manifest)
-        if reason:
-            loaded.error = reason
-            logger.warning("Plugin '%s' skipped: %s", plugin_key, reason)
-            self._plugins[plugin_key] = loaded
-            return
-        reason = self._plugin_load_disable_reason(manifest)
-        if reason:
-            loaded.error = reason
-            logger.warning("Plugin '%s' not loaded: %s", manifest.name, reason)
-            self._plugins[plugin_key] = loaded
-            return
-        registration_start = len(self._registration_order)
-        module_name = self._policy_module_name(manifest)
-        self._track_tool_override_policy(manifest, module_name)
-        ctx = self.context_for(manifest)
-
-        def _import_and_register() -> bool:
-            """Import + register() — the part a plugin controls, so the part the deadline covers."""
-            module = self._predeclared_modules.pop(plugin_key, None)
-            if module is None and manifest.source in {"user", "project", "bundled"}:
-                module = self._load_directory_module(manifest, module_name=module_name)
-            elif module is None:
-                module = self._load_entrypoint_module(manifest)
-            register_fn = None
-            if module is not None and not isinstance(module, types.ModuleType) and callable(module):
-                register_fn = module
-                module = sys.modules.get(getattr(register_fn, "__module__", ""))
-            loaded.module = module
-            if register_fn is None:
-                register_fn = getattr(module, "register", None)
-            if register_fn is None:
-                loaded.error = "no register() function"
-                logger.warning("Plugin '%s' has no register() function", manifest.name)
-                return False
-            register_fn(ctx)
-            return True
-
-        try:
-            if run_with_load_deadline(plugin_key, ctx, _import_and_register):
-                self._attribute_registrations(loaded, plugin_key, registration_start)
-                loaded.enabled = True
-                self._drop_fallback_hooks(_hook_source_of(manifest.name, loaded.module))
-        except (Exception, SystemExit) as exc:
-            owned = [r for r in self._registration_order if r.plugin_key == plugin_key]
-            self._dispose_registrations(owned)
-            self._forget_registrations(owned)
-            loaded.error = _load_error_text(exc)
-            logger.warning(
-                "Failed to load plugin '%s': %s",
-                manifest.name,
-                _load_error_text(exc),
-                exc_info=plugin_debug_enabled(),
-            )
-        if not loaded.enabled:
-            self._predeclared_tools.pop(plugin_key, None)
-        self._plugins[plugin_key] = loaded
-
     def _track_tool_override_policy(self, manifest: PluginManifest, module_name: str) -> None:
         """Install the plugin's tool-override policy in tools.registry as a ledger-owned lease."""
         from tools.registry import registry as _registry
@@ -790,7 +696,7 @@ class PluginLoaderMixin:
             if r.plugin_key == plugin_key and r.active
         ]
 
-        def _keys(kind: str) -> List[str]:
+        def _keys(kind: str) -> list[str]:
             return [r.key for r in registrations if r.kind == kind]
 
         predeclared = [

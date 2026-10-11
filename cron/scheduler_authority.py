@@ -62,11 +62,18 @@ def run_canonical_job(job, *, extra_prompt=None, cancel_event=None, execution_id
             raise
         record['receipt'] = receipt
         save()
-        delay = .1
+        delay, progress = .1, None
         while True:
             if cancel_event is not None and cancel_event.is_set():
                 await call('cancel', receipt)
             state = await call('status', receipt)
+            if state.get('progress_at') not in (None, progress):
+                # The owner's agent is still working: refresh OUR ledger row (the owner's stamp is
+                # fenced to the row's owner), once per owner stamp, so the stale-claim sweep measures
+                # the run's silence. A wedged owner stops stamping and the sweep still fires.
+                from cron.executions import touch_execution_progress
+                progress = state['progress_at']
+                await asyncio.to_thread(touch_execution_progress, request_id)
             if state['status'] == 'terminal':
                 job.update(state.get('job_flags') or {})
                 return tuple(state['result'])
@@ -109,8 +116,8 @@ def reconcile_pending(*, allow_connect=True):
     from cron.executions import execution_owner_live
     from cron.jobs import pause_job
     from cron.scheduler import (_RunDelivery, _FireOwnership, _apply_agent_failure_marker,
-                                _save_compose_deliver, _finish_completed_run)
-    from cron.scheduler_bookkeeping import fail_empty_response
+                                _save_compose_deliver)
+    from cron.scheduler_bookkeeping import fail_empty_response, finish_completed_run
     from utils import atomic_json_write
     import logging
 
@@ -159,6 +166,6 @@ def reconcile_pending(*, allow_connect=True):
             _save_compose_deliver(delivery, fence, answer, output, adapters=None, loop=None,
                                  verbose=False, execution_token=None)
             fail_empty_response(delivery, answer)
-            _finish_completed_run(delivery, None, params['request_id'], recovered=True)
+            finish_completed_run(delivery, None, params['request_id'], recovered=True)
         except Exception:
             logging.getLogger(__name__).warning('Cron receipt recovery deferred: %s', journal, exc_info=True)

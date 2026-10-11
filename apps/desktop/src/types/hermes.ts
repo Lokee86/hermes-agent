@@ -841,6 +841,9 @@ export interface SessionResumeResult {
 export interface SessionRuntimeInfo {
   stored_session_id?: string
   pending_submissions?: unknown
+  /** Canonical snapshot only: the session replay epoch and event sequence its pending set reflects. */
+  replay_epoch?: string
+  last_sequence?: number
   approval_mode?: 'manual' | 'off' | 'smart'
   branch?: string
   config_warning?: string
@@ -1498,8 +1501,8 @@ export interface LocalCatalogModel {
   native_context_label: string
   recommended: boolean
   /** Why the resolver picked this entry (recommended rows only):
-   *  product-default | best-quality-resident | speed-gated-quality | fastest-resident |
-   *  least-painful-spilled. Renders as the Recommended badge's tooltip. */
+   *  product-default | best-quality-resident | speed-gated-quality.
+   *  Renders as the Recommended badge's tooltip. */
   recommended_reason?: string | null
   downloaded: boolean
   downloaded_model_id?: string | null

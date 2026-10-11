@@ -5,6 +5,7 @@ transactions. Local reset prepares its replacement in the receipt transaction;
 branch/compress/model still require their own prepared runtime publication.
 """
 import asyncio
+from contextlib import nullcontext
 
 from hermes_state_runtime import RuntimeStoreError, mutate_runtime_session
 
@@ -37,6 +38,7 @@ def _authorize_control(authority, actor, ref, params):
     # A receipt authorizes only its original principal's exact retry; the
     # transaction still verifies the entire digest and current epoch.
     if not has_mutation_receipt(authority.db, actor.subject, ref.session_id, params['request_id']):
+        ref = _owner_ref(authority, ref, params)
         if ref.session_id not in authority.sessions:
             from hermes_state_mutation_binding import authorize_history
             with authority.db._read_ctx() as conn:
@@ -46,6 +48,19 @@ def _authorize_control(authority, actor, ref, params):
         if not cold_history:
             authority.authorize(actor, ref, 'session:control')
     return cold_history
+
+
+def _owner_ref(authority, ref, params):
+    """A delete names the listed row, which may be a later reset segment of a local conversation;
+    the conversation's creation id owns its policy, FIFO and live session, so control and the
+    session gate are checked on that owner (the store deletes the whole lineage either way)."""
+    if params.get('operation') != 'delete':
+        return ref
+    from gateway.session_contract import SessionRef
+    from hermes_state_local import local_lineage_owner
+    with authority.db._read_ctx() as conn:
+        owner = local_lineage_owner(conn, ref.session_id)
+    return ref if owner == ref.session_id else SessionRef(ref.profile_id, owner)
 
 
 async def mutate_session(authority, actor, ref, params):
@@ -61,19 +76,26 @@ async def _owned_mutation(authority, actor, ref, params):
     if (params.get('operation') in {'model', 'compress', 'reset', 'rewind'}
             and ref.session_id not in authority.sessions and 'request_id' in params):
         _authorize_control(authority, actor, ref, params)
-    live = authority.sessions.get(ref.session_id)
+    live = authority.sessions.get(_owner_ref(authority, ref, params).session_id)
     if live is None:
         return await _mutate_session(authority, actor, ref, params)
     # Prepared policy/route publication is inseparable from its durable commit
     # for admission and claim: neither may observe a half-published policy.
-    async with live.mutation_lock:
-        result = await _mutate_session(authority, actor, ref, params)
+    if params.get('operation') == 'compress':
+        # The summarization (an LLM call) runs outside the session gate, so a submit or metadata
+        # edit is not parked behind it; the commit is revision/generation-fenced against anything
+        # that lands meanwhile. Claims wait on ``claim_gate``, so no turn runs under it.
+        async with live.claim_gate:
+            result = await _mutate_session(authority, actor, ref, params, commit_lock=live.mutation_lock)
+    else:
+        async with live.mutation_lock:
+            result = await _mutate_session(authority, actor, ref, params)
     if params.get('operation') in {'model', 'compress', 'reset'}:
         authority._schedule(ref)
     return result
 
 
-async def _mutate_session(authority, actor, ref, params):
+async def _mutate_session(authority, actor, ref, params, *, commit_lock=None):
     if (set(params) - {'expected_generation'} != _FIELDS
             or params['session_id'] != ref.session_id):
         raise RuntimeStoreError('invalid_params')
@@ -119,7 +141,8 @@ async def _mutate_session(authority, actor, ref, params):
 
     prepared = None
     if operation in {'model', 'compress'}:
-        prepared = mutate_runtime_session(authority.db, epoch=authority.epoch,
+        # Its own BEGIN IMMEDIATE, so off the loop like the commit below.
+        prepared = await asyncio.to_thread(mutate_runtime_session, authority.db, epoch=authority.epoch,
             principal_id=actor.subject, session_id=ref.session_id, request_id=params['request_id'],
             expected_revision=params['expected_revision'], expected_generation=params.get('expected_generation'),
             operation=operation, payload=params['payload'], _live_guard=live_guard, _prepare_only=True)
@@ -133,31 +156,32 @@ async def _mutate_session(authority, actor, ref, params):
                 # ``--preview`` is a read-only report and a guarded model target awaits the user's
                 # confirmation: no receipt, no publication, no eviction.
                 return {'session_id': ref.session_id, 'operation': operation, **prepared}
-    if prepared is not None and 'snapshot' not in prepared:
-        # Exact retry: the durable receipt is the result. Never re-prepare (compress
-        # would summarize again); the runtime repairs below still run, because the
-        # first attempt may have committed and then failed before publishing them.
-        result = prepared
-    else:
-        # The receipt transaction is synchronous SQLite: run it off the event loop so a large
-        # state.db or a contended writer lock never stalls other clients (main 1769024ca3b).
-        result = await asyncio.to_thread(mutate_runtime_session, authority.db, epoch=authority.epoch,
-            principal_id=actor.subject, session_id=ref.session_id, request_id=params['request_id'],
-            expected_revision=params['expected_revision'], expected_generation=params.get('expected_generation'),
-            operation=operation, payload=params['payload'], _live_guard=live_guard, _prepared=prepared,
-            _authorize_write=authorize_write if cold_history or operation == 'import' else None)
-    # Post-commit projections are idempotent reads of the committed receipt, so exact
-    # retries repeat them (like delete's retirement); only the one-shot event is fenced.
-    current = authority.db.get_session(ref.session_id)
-    owns_projection = current is not None and (
-        current['runtime_generation'] == result.get('execution_generation', params.get('expected_generation')))
-    if operation not in {'model', 'reset', 'compress', 'rewind'} or owns_projection:
-        _project_committed(authority, ref, operation, result)
-    if live is not None:
-        if operation == 'rewind' and owns_projection:
-            authority.runner._evict_cached_agent(live.route)
-        if applied:
-            live.event_stream.publish(ref.session_id, result, event_type='session.updated')
+    async with commit_lock or nullcontext():
+        if prepared is not None and 'snapshot' not in prepared:
+            # Exact retry: the durable receipt is the result. Never re-prepare (compress
+            # would summarize again); the runtime repairs below still run, because the
+            # first attempt may have committed and then failed before publishing them.
+            result = prepared
+        else:
+            # The receipt transaction is synchronous SQLite: run it off the event loop so a large
+            # state.db or a contended writer lock never stalls other clients (main 1769024ca3b).
+            result = await asyncio.to_thread(mutate_runtime_session, authority.db, epoch=authority.epoch,
+                principal_id=actor.subject, session_id=ref.session_id, request_id=params['request_id'],
+                expected_revision=params['expected_revision'], expected_generation=params.get('expected_generation'),
+                operation=operation, payload=params['payload'], _live_guard=live_guard, _prepared=prepared,
+                _authorize_write=authorize_write if cold_history or operation == 'import' else None)
+        # Post-commit projections are idempotent reads of the committed receipt, so exact
+        # retries repeat them (like delete's retirement); only the one-shot event is fenced.
+        current = authority.db.get_session(ref.session_id)
+        owns_projection = current is not None and (
+            current['runtime_generation'] == result.get('execution_generation', params.get('expected_generation')))
+        if operation not in {'model', 'reset', 'compress', 'rewind'} or owns_projection:
+            _project_committed(authority, ref, operation, result)
+        if live is not None:
+            if operation == 'rewind' and owns_projection:
+                authority.runner._evict_cached_agent(live.route)
+            if applied:
+                live.event_stream.publish(ref.session_id, result, event_type='session.updated')
     if operation == 'delete':
         # After the synchronous projections (no yield before retirement), off the loop: the
         # retired-media owner check is a messages-table pass (exact retries repeat it too).
@@ -196,14 +220,20 @@ def _project_committed(authority, ref, operation, result):
     if operation == 'delete':
         # Repeat local retirement on an exact retry too: publication may have
         # failed after the transaction committed. Never repeat the event.
-        store = getattr(authority.runner, 'session_store', None)
-        if store is not None:
-            store.retire_runtime_sessions(result['deleted_ids'])
-        from gateway.session_policy import release_launch_secrets
-        release_launch_secrets(authority, result['deleted_ids'])
-        for sid in result['deleted_ids']:
-            candidate = authority.sessions.pop(sid, None)
-            if candidate is not None:
-                evict = getattr(authority.runner, '_evict_cached_agent', None)
-                if callable(evict):
-                    evict(candidate.route)
+        retire_live_sessions(authority, result['deleted_ids'])
+
+
+def retire_live_sessions(authority, session_ids):
+    """Drop committed deletions from this owner's memory: routes, launch secrets, live sessions
+    and their cached agents. Shared by canonical delete and the owner-run bulk prune."""
+    store = getattr(authority.runner, 'session_store', None)
+    if store is not None:
+        store.retire_runtime_sessions(session_ids)
+    from gateway.session_policy import release_launch_secrets
+    release_launch_secrets(authority, session_ids)
+    for sid in session_ids:
+        candidate = authority.sessions.pop(sid, None)
+        if candidate is not None:
+            evict = getattr(authority.runner, '_evict_cached_agent', None)
+            if callable(evict):
+                evict(candidate.route)

@@ -9,7 +9,7 @@ import { map, type MapStore } from 'nanostores'
 
 import type { HermesApiRequest } from '@/global'
 
-import { CANONICAL_GATEWAY_PROTOCOL, CanonicalDesktopProtocol, canonicalProfile, canonicalSessionKey, recordCanonicalOwner } from './canonical-protocol'
+import { CANONICAL_GATEWAY_PROTOCOL, CanonicalDesktopProtocol, canonicalProfile, canonicalSessionKey, recordCanonicalOwner, splitRewindSubmit } from './canonical-protocol'
 
 // Desktop startup fires a burst of read-only data calls (config, profiles,
 // model info/options, cron) the moment the backend passes readiness. On a
@@ -43,7 +43,7 @@ export const GATEWAY_NOT_CONNECTED_MESSAGE = 'Hermes gateway is not connected'
 // the same `onRequest` registry as a request whose `respond` issues the RPC.
 const CANONICAL_PROMPT_EVENTS: Record<string, 'approval' | 'clarify'> = { 'approval.request': 'approval', 'clarify.request': 'clarify' }
 
-const ATTACH_REQUIRED = new Set(['prompt.submit', 'approval.respond', 'clarify.respond', 'session.interrupt', 'prompt.cancel'])
+const ATTACH_REQUIRED = new Set(['prompt.submit', 'approval.respond', 'clarify.respond', 'session.interrupt', 'prompt.cancel', 'session.rewind'])
 // A branch is a CAS mutation on the PARENT: an un-attached parent (right-click on a sidebar row
 // that was never opened) has no cached revision, so attach it first to learn one.
 const PARENT_ATTACH_REQUIRED = new Set(['session.branch_stored', 'session.branch_whole'])
@@ -51,8 +51,13 @@ const PARENT_ATTACH_REQUIRED = new Set(['session.branch_stored', 'session.branch
 // Canonical-only identity keys. The legacy `hermes serve` contract refuses an unknown key as
 // version skew (4000), so they are stripped on a non-canonical dial. `prompt.submit` keeps its
 // `submission_id` on purpose: the submit path retries identityless on that exact refusal and
-// records the send as legacy-attempted, which a silent strip here would hide.
-const LEGACY_STRIP: Record<string, string[]> = { 'session.create': ['request_id'], 'session.branch_stored': ['request_id'] }
+// records the send as legacy-attempted, which a silent strip here would hide. A message-level
+// `session.branch` keeps its legacy `count` prefix; only the canonical row boundary is dropped.
+const LEGACY_STRIP: Record<string, string[]> = {
+  'session.create': ['request_id'],
+  'session.branch_stored': ['request_id'],
+  'session.branch': ['through_message_id']
+}
 
 function legacyParams(method: string, params: Record<string, unknown>): Record<string, unknown> {
   const strip = LEGACY_STRIP[method]
@@ -319,6 +324,14 @@ export class HermesGateway extends JsonRpcGatewayClient {
     if (!this.canonical) { return super.request<T>(method, legacyParams(method, params), timeoutMs, signal) }
     const generation = this.connectionGeneration
     const deadline = Date.now() + (timeoutMs ?? DEFAULT_GATEWAY_REQUEST_TIMEOUT_MS)
+    // A truncating submit (edit / regenerate / restore) is the owner's rewind, then the submit.
+    const rewind = method === 'prompt.submit' ? splitRewindSubmit(params) : null
+
+    if (rewind) {
+      if (rewind.rewind) { await this.request('session.rewind', rewind.rewind, remainingRequestBudget(deadline, signal), signal) }
+
+      return this.request<T>('prompt.submit', rewind.submit, remainingRequestBudget(deadline, signal), signal)
+    }
 
     // A question's owner is immutable even when a second profile attaches an
     // equal stored session ID while the first card remains open.
