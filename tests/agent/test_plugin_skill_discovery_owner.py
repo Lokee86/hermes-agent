@@ -1,5 +1,6 @@
 """Regression coverage for canonical plugin skill discovery ownership."""
 
+import builtins
 from unittest.mock import patch
 
 from agent.skill_commands import get_plugin_skill_commands, invalidate_plugin_skill_commands
@@ -11,9 +12,17 @@ def test_plugin_skill_commands_uses_runtime_discovery_owner(tmp_path):
     home = tmp_path / "isolated-hermes-home"
     home.mkdir()
     token = set_hermes_home_override(home)
+    original_import = builtins.__import__
+
+    def reject_retired_owner(name, *args, **kwargs):
+        if name == "hermes_cli.plugins_discovery":
+            raise ModuleNotFoundError("retired plugin discovery owner", name=name)
+        return original_import(name, *args, **kwargs)
+
     try:
         invalidate_plugin_skill_commands()
         with (
+            patch("builtins.__import__", side_effect=reject_retired_owner),
             patch("plugin_runtime.lifecycle.discover_plugins") as discover,
             patch("plugin_runtime.lifecycle.get_plugin_manager") as get_manager,
             patch("agent.skill_utils.get_disabled_skill_names", return_value=set()),

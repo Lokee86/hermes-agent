@@ -120,6 +120,57 @@ def test_phase410_first_party_does_not_consume_legacy_plugins_api() -> None:
     assert violations == []
 
 
+def test_phase410_first_party_does_not_reference_retired_runtime_owners() -> None:
+    """Reject direct imports, qualified attributes, and literal late lookups."""
+    violations = []
+    retired = RETIRED_PLUGIN_RUNTIME_MODULES
+    for path in _production_sources():
+        tree = _tree(path)
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                references = [alias.name for alias in node.names]
+            elif isinstance(node, ast.ImportFrom) and node.module:
+                references = [node.module] + [
+                    f"{node.module}.{alias.name}" for alias in node.names
+                ]
+            elif isinstance(node, ast.Constant) and isinstance(node.value, str):
+                # A retained logging category is not a module reference.
+                if not any(
+                    node.value == name or node.value.startswith(name + ".")
+                    for name in retired
+                ):
+                    continue
+                if any(
+                    isinstance(parent, ast.Call)
+                    and node in parent.args
+                    and isinstance(parent.func, ast.Attribute)
+                    and parent.func.attr == "getLogger"
+                    for parent in ast.walk(tree)
+                ):
+                    continue
+                references = [node.value]
+            elif isinstance(node, ast.Attribute):
+                components = []
+                current = node
+                while isinstance(current, ast.Attribute):
+                    components.append(current.attr)
+                    current = current.value
+                if isinstance(current, ast.Name):
+                    components.append(current.id)
+                references = [".".join(reversed(components))]
+            else:
+                continue
+            for reference in references:
+                if any(
+                    reference == retired_name or reference.startswith(retired_name + ".")
+                    for retired_name in retired
+                ):
+                    violations.append(
+                        (path.relative_to(ROOT).as_posix(), node.lineno, reference)
+                    )
+    assert violations == []
+
+
 def test_phase410_retired_plugin_runtime_paths_remain_absent() -> None:
     missing_enforcement = [
         module.replace(".", "/") + ".py"
