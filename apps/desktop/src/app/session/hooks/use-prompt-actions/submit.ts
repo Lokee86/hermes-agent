@@ -444,13 +444,23 @@ export function useSubmitPrompt(deps: SubmitPromptDeps) {
       let retainedKey: string | undefined
 
       try {
-        const adopted = await adoptPreparedSubmission(retryKeyForTarget())
+        // Only an explicit retry (the caller names the uncertain send's identity) reuses a
+        // retained entry; a new message with the same text is a new turn.
+        const adopted = options?.submission_id
+          ? await adoptPreparedSubmission(retryKeyForTarget(), options.submission_id)
+          : undefined
+
         retained = adopted?.entry
         retainedKey = adopted?.key
 
         // A legacy send has no deduplication identity. After an ambiguous ACK
-        // even an upgraded server cannot safely admit it under the saved ID.
-        if (retained?.legacyAttempted) {
+        // even an upgraded server cannot safely admit it under the saved ID, so
+        // the retry is refused once, visibly, and the entry is retired: sending
+        // the words again afterwards is the user's informed new turn.
+        if (retained?.legacyAttempted && retainedKey) {
+          await removePreparedSubmission(retainedKey, retained.id).catch(error => console.warn('[prepared-submission-retire]', error))
+          notify({ kind: 'warning', title: copy.promptFailed, message: translateNow('promptNotices.legacySendUnconfirmed') })
+
           return false
         }
       } catch (err) {
@@ -1174,7 +1184,7 @@ export function useSubmitPrompt(deps: SubmitPromptDeps) {
               !legacyAccepted &&
               ((result?.submission_id ?? result?.admission_id) !== submissionId ||
                 (result?.session_id !== undefined && result.session_id !== receiptSessionId) ||
-                !['queued', 'started', 'terminal'].includes(result?.status ?? ''))
+                !['queued', 'started', 'terminal', 'unknown'].includes(result?.status ?? ''))
             ) {
               dropOptimistic(sessionId)
               releaseBusy()
@@ -1193,7 +1203,10 @@ export function useSubmitPrompt(deps: SubmitPromptDeps) {
               // Queued is also the initial receipt for an idle session's first
               // turn. Keep its input and any start event that raced this ACK;
               // explicit queue-only sends never inserted an optimistic bubble.
-              if (result.status === 'terminal') {
+              // An exact retry of an admission the owner lost mid-turn answers `unknown`: it was
+              // admitted (never replay it) and no turn will run. Keep the bubble; the pending
+              // fanout's lost card offers Discard (prompt.resolve_unknown).
+              if (result.status === 'terminal' || result.status === 'unknown') {
                 // Deduplication does not start a turn or promise another terminal
                 // event. Remove our duplicate bubble, but preserve any live turn
                 // that an owner event established while the receipt was in flight.
@@ -1201,7 +1214,7 @@ export function useSubmitPrompt(deps: SubmitPromptDeps) {
                   receiptSessionId,
                   state => ({
                     ...state,
-                    messages: state.messages.filter(message => message.id !== optimisticId),
+                    messages: result.status === 'unknown' ? state.messages : state.messages.filter(message => message.id !== optimisticId),
                     ...(!state.turnLive &&
                       !state.streamId &&
                       !state.sawAssistantPayload && {

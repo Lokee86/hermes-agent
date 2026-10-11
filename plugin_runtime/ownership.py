@@ -75,7 +75,7 @@ class PluginOwnershipMixin:
         )
         return self._track_registration(manifest, kind, name, lease.dispose)
 
-    def _active_persistent(self) -> List[PluginRegistration]:
+    def _active_persistent(self) -> list[PluginRegistration]:
         """Live persistent registrations across every plugin in the ownership ledger."""
         return [r for owned in self._ownership_ledger.values() for r in owned if r.persistent and r.active]
 
@@ -109,7 +109,7 @@ class PluginOwnershipMixin:
         del values[index]
         return True
 
-    def _remove_callback(self, mapping: Dict[str, List[Callable]], key: str, callback: Callable) -> None:
+    def _remove_callback(self, mapping: dict[str, list[Callable]], key: str, callback: Callable) -> None:
         callbacks = mapping.get(key)
         if callbacks is None:
             return
@@ -117,7 +117,7 @@ class PluginOwnershipMixin:
         if not callbacks:
             mapping.pop(key, None)
 
-    def _restore_mapping(self, mapping: Dict[str, Any], key: str, current: Any, previous: Optional[Any]) -> bool:
+    def _restore_mapping(self, mapping: dict[str, Any], key: str, current: Any, previous: Optional[Any]) -> bool:
         """Restore a manager-local mapping only when *current* is still present."""
         if mapping.get(key) is not current:
             return False
@@ -134,7 +134,7 @@ class PluginOwnershipMixin:
         setattr(self, attribute, previous)
         return True
 
-    def _remove_name_if_unowned(self, kind: str, names: Set[str], name: str) -> None:
+    def _remove_name_if_unowned(self, kind: str, names: set[str], name: str) -> None:
         """Drop *name* from the manager-local name set once no active ledger entry owns it."""
         if not any(r.active and r.kind == kind and r.key == name for r in self._registration_order):
             names.discard(name)
@@ -145,7 +145,7 @@ class PluginOwnershipMixin:
     def _remove_platform_name_if_unowned(self, name: str) -> None:
         self._remove_name_if_unowned("platform", self._plugin_platform_names, name)
 
-    def _forget_registrations(self, registrations: List[PluginRegistration]) -> None:
+    def _forget_registrations(self, registrations: list[PluginRegistration]) -> None:
         if not registrations:
             return
         ids = {id(r) for r in registrations}
@@ -163,7 +163,7 @@ class PluginOwnershipMixin:
         """Resolve an unload target without importing the CLI loaded-plugin type."""
         return resolve_plugin_key(plugin)
 
-    def _dispose_registrations(self, registrations: List[PluginRegistration]) -> None:
+    def _dispose_registrations(self, registrations: list[PluginRegistration]) -> None:
         """Dispose registrations in reverse acquisition order, best effort."""
         debug = plugin_debug_enabled()
         for registration in reversed(registrations):
@@ -232,13 +232,13 @@ class PluginOwnershipMixin:
                 self._plugins.pop(key, None)
         return found
 
-    def _unload_target_keys(self, requested: str) -> Set[str]:
+    def _unload_target_keys(self, requested: str) -> set[str]:
         """Resolve a targeted-unload request to canonical plugin keys (exact key, else by name)."""
         if requested in self._ownership_ledger or requested in self._plugins:
             return {requested}
         return {key for key, loaded in self._plugins.items() if loaded.manifest.name == requested}
 
-    def _reset_after_unload_all(self, registrations: List[PluginRegistration]) -> None:
+    def _reset_after_unload_all(self, registrations: list[PluginRegistration]) -> None:
         """Sweep pre-ledger global state and clear every manager-local container."""
         # Handles are authoritative for global registries; names present in the manager-local sets without a
         # ledger entry (pre-ledger or manually set state) are swept here so they do not survive a force reload

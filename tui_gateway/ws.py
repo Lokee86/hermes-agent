@@ -204,7 +204,7 @@ class WSTransport:
                 payload = _sanitize_ws_text(line)
                 try:
                     await asyncio.wait_for(self._ws.send_text(payload), timeout=_WS_SEND_DEADLINE_S)
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     # The loop is responsive (the timer fired) but the socket never drained: unlike the
                     # loop-stall wait in write(), this is a dead peer. Latch under the writer lock so queued
                     # batches bail, and close the socket so handle_ws's read loop ends and its teardown
@@ -294,7 +294,7 @@ def _disable_nagle(ws: Any) -> None:
         _log.debug("ws TCP_NODELAY skip: %s", exc)
 
 
-def _authority_connection(ws: Any, transport: "WSTransport", auth_identity: dict | None, operator: bool):
+def _authority_connection(ws: Any, transport: WSTransport, auth_identity: dict | None, operator: bool):
     """The session-authority connection for this socket (route scope, else app state), or None
     when this backend has no authority and requests go to the legacy ``server.dispatch``."""
     authority = (getattr(ws, 'scope', None) or {}).get('hermes.session_authority') or getattr(
@@ -305,7 +305,7 @@ def _authority_connection(ws: Any, transport: "WSTransport", auth_identity: dict
     return AuthorityConnection(authority, transport, auth_identity or {}, operator=operator)
 
 
-async def _dispatch_request(authority_connection: Any, req: Any, req_method: Any, transport: "WSTransport") -> Any:
+async def _dispatch_request(authority_connection: Any, req: Any, req_method: Any, transport: WSTransport) -> Any:
     """One request through the authority when attached, else the legacy dispatcher."""
     if authority_connection is None:
         return await asyncio.to_thread(server.dispatch, req, transport)

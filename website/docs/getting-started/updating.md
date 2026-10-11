@@ -30,8 +30,26 @@ For a managed source installation:
 hermes update
 ```
 
-Source installs track `main`, the only valid source channel. The update
-prepares dependencies through PM and reports configuration changes and process-restart results.
+A source checkout of the official repository tracks the **stable** channel: the
+latest published `vX.Y.Z` GitHub release (never a draft, prerelease or canary tag),
+checked out at its exact commit. `hermes update` and the Desktop update button move
+only from one release to the next, never commit by commit. Forks and mirrors keep
+tracking their `main` branch. The update prepares dependencies through PM and
+reports configuration changes and process-restart results.
+
+```bash
+hermes update --set-channel main     # follow every commit on main instead
+hermes update --set-channel stable   # back to releases only
+hermes update --channel main         # one run against main; nothing is saved
+```
+
+The choice is stored per install under `update.installs` in `config.yaml`. An
+install that never chose a channel only moves forward: a checkout already newer
+than the latest release (for example one that tracked `main` before this default)
+stays where it is until a newer release ships. Running `--set-channel stable`
+pins the checkout to the exact release commit, even when that is older.
+Windows Store, MSIX and bundled desktop installs are unaffected; their channel
+is baked into the package (see below).
 
 ### Bundled desktop updates
 
@@ -132,14 +150,39 @@ API, ACP, cron, Bot Chat). What an existing install sees on its first update:
 - **Work interrupted by the cutover restart is never replayed.** On the first gateway
   start, an input that was mid-turn (`started`) and any managed worker that was running
   become `unknown`; queued inputs behind it wait. Inspect the session, then acknowledge
-  with `/discard <admission_id>` in `hermes chat` (or the Desktop/TUI equivalent) before
-  later inputs run. A cron delivery a gateway had claimed but not finished is likewise
+  with `/discard <admission_id>` in `hermes chat` (or the Desktop/TUI equivalent), or from a
+  script with `hermes sessions discard <session> --yes`, before later inputs run. A cron delivery a gateway had claimed but not finished is likewise
   fenced `unknown` and recorded `delivery_failed`.
-- **Rolling back after the new gateway has written `state.db`:** the new runtime-ledger
-  tables reference `sessions` with `ON DELETE RESTRICT`, so an older release that deletes
-  or prunes such a session fails with `FOREIGN KEY constraint failed`. To go back, restore
-  the pre-update snapshot (`hermes update --backup` takes a full one) rather than running
-  the older release on the upgraded database.
+- **Rolling back is unsupported once the new gateway has written `state.db`.** See
+  [Rolling back to an older release](#rolling-back-to-an-older-release).
+
+### Rolling back to an older release
+
+An older release cannot run on a `state.db` the gateway runtime has written. Each place
+that could do it refuses instead of corrupting history:
+
+- **`hermes update`** refuses a target (`--branch`, a channel switch, a pinned release)
+  that predates the gateway runtime while any profile's `state.db` holds gateway runtime
+  history. It stops before touching the checkout, lists the affected stores and the way
+  back.
+- **An older release run on the upgraded store** (a hand `git checkout` of an old tag)
+  cannot delete or prune sessions with gateway runtime history. `hermes sessions delete`
+  and `prune` stop with `Refused to delete a session that has gateway runtime history`.
+  Older releases still print this inside a traceback, and `prune` rolls back its whole
+  batch.
+- **A running gateway** whose checkout is moved back to such a release stops itself
+  within about 30 seconds, so the older release can start its own.
+
+To go back anyway, restore the state from before the update instead of running the
+older release on the upgraded database:
+
+1. `hermes gateway stop`
+2. Check out the older release.
+3. Restore the newest pre-update snapshot (`/snapshot restore <id>`), or a full backup
+   taken with `hermes update --backup` (`hermes import <backup.zip>`). Quick snapshots
+   skip a `state.db` larger than 1 GiB; large stores need the full backup.
+
+Sessions and messages created after the update are not in that snapshot.
 
 ### Why the gateway restart can take a while
 
@@ -256,8 +299,8 @@ git -C "$repo" -c gc.writeCommitGraph=false gc --auto
 
 ### Updating against a non-default branch: `--branch`
 
-Source installs track `origin/main`. Use
-`--branch NAME` for a one-run branch override:
+`--branch NAME` is a one-run override that updates against a branch tip
+instead of the selected channel:
 
 ```bash
 hermes update --branch release-candidate
@@ -313,7 +356,8 @@ You can pass `--keep-stash` to a terminal `hermes update` too if you want the sa
 
 ### Preview-only: `hermes update --check`
 
-`hermes update --check` compares the checkout with `origin/main`
+`hermes update --check` compares the checkout with the selected channel's
+target (the latest stable release by default, `origin/main` on the main channel)
 without applying code, installing dependencies, or restarting gateways. The
 comparison can fetch Git metadata; it is not a promise of zero filesystem writes.
 Package-owned installs report their external update method.

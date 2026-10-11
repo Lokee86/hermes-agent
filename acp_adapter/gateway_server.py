@@ -122,8 +122,9 @@ class GatewayACPAgent(acp.Agent):
         self._permissions = {}
         self._admissions = {}
         self._submitting = set()
-        # (session, content fingerprint) -> input_id of a submit whose ack never arrived. The
-        # editor's retry of that prompt reuses it, so the authority returns the same admission.
+        # Session -> (content fingerprint, input_id) of a submit whose ack never arrived. The
+        # editor's retry (that session's next prompt, same content) reuses it, so the authority
+        # returns the same admission.
         self._unacked = {}
         # Admissions whose message.complete the pump is projecting right now.
         self._settling = set()
@@ -345,6 +346,7 @@ class GatewayACPAgent(acp.Agent):
         if (mcp_servers or _normalize_cwd_for_compare(info.get('cwd', '')) !=
                 _normalize_cwd_for_compare(_translate_acp_cwd(cwd))):
             raise GatewayClientError('cwd_policy_conflict')
+        self._unacked.pop(session_id, None)
         result = await self._mutations.apply(client, session_id, 'branch', {})
         child = result['branched_session_id']
         self._snapshots[child] = await client.rpc('session.resume', session_id=child)
@@ -356,6 +358,7 @@ class GatewayACPAgent(acp.Agent):
         session_id = self._aliases.get(session_id, session_id)
         client = await self._client()
         payload = {'model': model_id}
+        self._unacked.pop(session_id, None)  # a control between a lost submit and its repeat retires it
         result = await self._mutations.apply(client, session_id, 'model', payload,
                                              confirm=self._model_confirmer(session_id))
         if result.get('status') == 'cancelled':
@@ -416,6 +419,10 @@ class GatewayACPAgent(acp.Agent):
             raise GatewayClientError(self._unknown_recovery(session_id, submitted=False))
         from acp_adapter.content import _content_blocks_to_openai_user_content
         text, attachments = _stage_user_content(_content_blocks_to_openai_user_content(prompt))
+        # Only this session's very next prompt may be the editor's retry of an un-acked submit; any
+        # prompt (slash work included) retires the retained identity, so a later repeat is new work.
+        retained = self._unacked.pop(session_id, None)
+        self._mutations.retire(session_id)  # ... and every prepared control's (a slash re-keeps its own)
         command = _slash_command(text) if not attachments else None
         if command is not None:
             from hermes_cli.gateway_mutations import slash_mutation
@@ -444,7 +451,7 @@ class GatewayACPAgent(acp.Agent):
         if attachments:
             submit['attachments'] = attachments
         retry_key = await asyncio.to_thread(_submit_fingerprint, session_id, text, attachments)
-        input_id = self._unacked.pop(retry_key, None) or uuid.uuid4().hex
+        input_id = retained[1] if retained is not None and retained[0] == retry_key else uuid.uuid4().hex
         self._submitting.add(session_id)
         try:
             receipt = await client.rpc("prompt.submit", session_id=session_id, input_id=input_id, **submit)
@@ -452,8 +459,8 @@ class GatewayACPAgent(acp.Agent):
             from hermes_cli.gateway_client import GatewayRPCError
             if not isinstance(exc, GatewayRPCError):
                 # Transport loss, timeout or cancel before the ack: the owner may hold this admission.
-                # Keep its identity for the editor's retry of the same prompt (latest 64 kept).
-                self._unacked[retry_key] = input_id
+                # Keep its identity for the editor's retry of the same prompt (latest 64 sessions).
+                self._unacked[session_id] = (retry_key, input_id)
                 while len(self._unacked) > 64:
                     self._unacked.pop(next(iter(self._unacked)))
             self._pending_cancels.discard(session_id)
@@ -672,12 +679,24 @@ class GatewayACPAgent(acp.Agent):
             return
         key = (session_id, prompt["prompt_id"], prompt["execution_generation"])
         if key not in self._permissions:
-            self._permissions[key] = asyncio.create_task(answer(session_id, prompt))
+            task = asyncio.create_task(answer(session_id, prompt))
+            self._permissions[key] = task
+            task.add_done_callback(lambda done: self._retire_unanswered(key, done))
+
+    def _retire_unanswered(self, key, task):
+        """A card whose response the owner did not accept (editor cancel, transport loss, lost
+        respond RPC) gives up its key, so the next snapshot that still lists the prompt (reattach,
+        ``session/load``) shows a NEW card. An earlier answer is never replayed. An accepted one
+        keeps its key until ``*.settled``, so a replayed request raises no second card."""
+        if self._permissions.get(key) is task and (task.cancelled() or task.exception() is not None
+                                                   or task.result() is not True):
+            del self._permissions[key]
 
     async def _answer_clarify(self, session_id, prompt):
         from acp.schema import AllowedOutcome
         from acp_adapter.elicitation import (
-            ELICITATION_METHOD, build_clarify_elicitation, build_clarify_permission, elicited_answer,
+            ELICITATION_METHOD, SKIP_OPTION, build_clarify_elicitation, build_clarify_permission,
+            elicited_answer,
         )
         editor_id = self._editor_id(session_id)
         try:
@@ -688,16 +707,20 @@ class GatewayACPAgent(acp.Agent):
                 tool_call, options, answers = build_clarify_permission(prompt)
                 response = await self._conn.request_permission(
                     session_id=editor_id, tool_call=tool_call, options=options)
+                # A dismissed card (also what ACP answers for the editor's own Stop) is the Skip a
+                # form decline sends; only an unknown option id is no answer.
                 answer = (answers.get(response.outcome.option_id)
-                          if isinstance(response.outcome, AllowedOutcome) else None)
-            # No answer (transport loss, editor cancel) leaves the canonical waiter to other viewers.
+                          if isinstance(response.outcome, AllowedOutcome) else answers[SKIP_OPTION])
+            # No answer (editor transport loss) leaves the canonical waiter to other viewers.
             if answer is None:
-                return
+                return False
             await self._gateway.rpc("clarify.respond", session_id=session_id, prompt_id=prompt["prompt_id"],
                 execution_generation=prompt["execution_generation"], answer=answer)
+            return True
         except Exception:
             # Boundary: as for approvals, a detached editor or expired prompt is not an answer.
             logger.info("ACP clarify viewer detached or control expired", exc_info=True)
+            return False
 
     async def _answer_permission(self, session_id, prompt):
         from acp.schema import AllowedOutcome
@@ -719,16 +742,18 @@ class GatewayACPAgent(acp.Agent):
             # Transport loss/cancel is not a denial: the canonical waiter belongs
             # to the execution and may still be answered by another viewer.
             if not isinstance(response.outcome, AllowedOutcome):
-                return
+                return False
             if response.outcome.option_id not in {option.option_id for option in options}:
-                return
+                return False
             await self._gateway.rpc("approval.respond", session_id=session_id,
                 prompt_id=prompt["prompt_id"], execution_generation=prompt["execution_generation"],
                 choice=_OPTION_ID_TO_HERMES[response.outcome.option_id])
+            return True
         except Exception:
             # Boundary: a detached viewer or expired control is not a denial; the canonical
             # waiter stays answerable by another viewer, so nothing propagates.
             logger.info("ACP permission viewer detached or control expired", exc_info=True)
+            return False
 
     async def aclose(self):
         for task in self._permissions.values():

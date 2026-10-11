@@ -19,7 +19,7 @@ from tests.gateway.restart_test_helpers import make_restart_runner
 async def test_drain_counts_managed_turns_and_the_timeout_path_stops_them(tmp_path):
     from gateway.session_managed_worker import ManagedWorker
     seen = tmp_path / 'controls'
-    child = subprocess.Popen([sys.executable, '-c', 'import sys; open(sys.argv[1], "wb").write(sys.stdin.buffer.readline())',
+    child = subprocess.Popen([sys.executable, '-c', 'import sys; open(sys.argv[1], "wb").write(sys.stdin.buffer.readline())',  # noqa: ASYNC220 -- Popen returns immediately; the test drives the child through its handle
                               str(seen)], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
     worker = ManagedWorker(child)
     worker.writer.start()
@@ -51,7 +51,7 @@ def test_settlement_stops_a_silent_managed_worker_instead_of_waiting_unbounded(m
     ref = SessionRef('profile', 's')
     live = SimpleNamespace(task=None, route='r', event_stream=SimpleNamespace(execution={}))
     authority = SimpleNamespace(profile_id='profile', pending_results={}, waiters={}, sessions={'s': live},
-                                check_approval_generation=lambda *a: None, pending_stops={},
+                                check_approval_generation=lambda *a: None, pending_stops={}, adopted={},
                                 adopt_agent=lambda session_id, generation, worker: None)
     runner = SimpleNamespace(session_authority=authority)
     authority.runner = runner  # settle also hard-stops in-process turns through the runner

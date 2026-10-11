@@ -15,7 +15,7 @@ import time
 def test_authenticated_relay_uses_canonical_admission(tmp_path):
     env = dict(os.environ, HOME=str(tmp_path), HERMES_HOME=str(tmp_path), PYTHONUNBUFFERED='1')
     result = subprocess.run([sys.executable, __file__, 'peer'], env=env,
-                            capture_output=True, text=True, timeout=100)
+                            capture_output=True, text=True, timeout=100, check=False)
     assert result.returncode == 0, result.stdout + result.stderr
     receipt = json.loads((tmp_path / 'relay-receipt.json').read_text())
     assert receipt['same_agent'] and receipt['negative_controls']
@@ -93,8 +93,12 @@ async def probe(peer):
                     entries = list(authority.sessions.values())
                     rows = list_session_admissions(authority.db, session_id=next(iter(authority.sessions)),
                         pending_only=False) if entries else []
-                    if any(r['request_id'] == raw_event['message_id'] and r['status'] == 'terminal' for r in rows):
-                        while adapter._active_sessions:
+                    settled = [r for r in rows if r['request_id'] == raw_event['message_id'] and r['status'] == 'terminal']
+                    if settled:
+                        # The drain hands the reply to the adapter only AFTER the terminal commit
+                        # (deliver_settled); the entry leaves pending_deliveries once that send
+                        # returned. Closing the connector before then drops the final mid-send.
+                        while adapter._active_sessions or settled[0]['admission_id'] in authority.pending_deliveries:
                             await asyncio.sleep(.01)
                         assert any(f.get('type') == 'inbound_ack' and f.get('bufferId') == raw_event['message_id']
                                    for f in outgoing), outgoing

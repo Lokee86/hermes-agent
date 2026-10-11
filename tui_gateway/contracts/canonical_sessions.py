@@ -42,8 +42,14 @@ class CanonicalCreateParams(ProfileParams):
 class CanonicalResumeParams(ProfileParams):
     session_id: str = ''
     title: str | None = None
+    # Bare `-c` / `--resume latest`: the owner resolves the most recent session of this surface
+    # family (``workspace`` = the caller's git root / cwd, tried first).
+    latest: Literal['cli', 'tui'] | None = None
+    workspace: str | None = None
     source: str | None = None
     editor: dict[str, JsonValue] | None = None
+    # Re-supplies a launch-only key a restart revoked; never durable, must match the launch's.
+    api_key: str | None = None
     defer_history: bool = False
     omit_messages: bool = False
     cols: int | None = None
@@ -143,6 +149,11 @@ class CanonicalSubmitParams(CanonicalSessionParams):
     voice_context: str | None = None
     interrupted: bool = False
     voice_turn: bool = False
+    # Desktop composer presentation, committed per admission (``display_v1``): a hidden widget
+    # intent persists ``display_kind=hidden`` (never a user bubble); a large paste's preview is
+    # titler input only, never model input.
+    display_kind: Literal['hidden'] | None = None
+    title_preview: str | None = None
 
 
 class CanonicalControlParams(CanonicalSessionParams):

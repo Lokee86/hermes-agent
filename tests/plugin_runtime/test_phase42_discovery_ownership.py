@@ -147,12 +147,18 @@ def test_catalog_recall_lookup_runs_only_after_runtime_gates():
     assert verdict.error == "removed from the Hermes plugin catalog: fixture recall"
 
 
-def test_plugin_manager_supplies_cli_owned_catalog_lookup(monkeypatch):
+def test_plugin_manager_supplies_cli_owned_catalog_lookup(monkeypatch, request):
     from hermes_cli import plugins_cmd_catalog
     from plugin_runtime.manager import PluginManager
     from plugin_runtime.manifest import PluginManifest
 
     calls = []
+    original_lookup = plugins_cmd_catalog.installed_plugin_removal
+    # _bind_plugin_host installs a process-global callback, unlike monkeypatch's
+    # module attribute override. Restore it before subsequent plugin tests.
+    request.addfinalizer(lambda: plugins_cmd_catalog._bind_plugin_host(
+        installed_plugin_removal=original_lookup,
+    ))
 
     class Removed:
         reason = "manager fixture"

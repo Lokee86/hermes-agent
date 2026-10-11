@@ -12,10 +12,8 @@ def test_unsupported_launch_options_fail_before_connection(monkeypatch, capsys):
         args = argparse.Namespace(**{option: True})
         assert gateway_chat.launch_from_args(args) == 2
         assert option.replace("_", "-") in capsys.readouterr().err
-    # Bare -c (breadcrumb/MRU) and a nameless --create-if-missing stay refused; only a
-    # titled -c is a gateway-resolvable selector.
-    assert gateway_chat.launch_from_args(argparse.Namespace(continue_last=True)) == 2
-    assert "--continue" in capsys.readouterr().err
+    # A nameless --create-if-missing stays refused (bare -c resolves on the owner, see
+    # test_gateway_chat_flags_live.py).
     assert gateway_chat.launch_from_args(argparse.Namespace(create_if_missing=True)) == 2
     assert "create-if-missing" in capsys.readouterr().err
     # Creation flags on resume are judged against the frozen route: repeating the launch
@@ -185,3 +183,131 @@ def test_every_relocation_hint_names_a_command_that_parses():
     for hint in gateway_chat._RELOCATED.values():
         for command in re.findall(r"`(hermes [^`]*)`", hint):
             parser.parse_args([arg for arg in shlex.split(command)[1:] if not arg.startswith("<")])
+
+
+def test_one_letter_alias_refusal_names_a_flag_the_user_can_type(monkeypatch, capsys):
+    """`cli.main(w=True)` (`python cli.py -w`) is refused as `-w`; `--w` is not an option anywhere."""
+    from hermes_cli import gateway_chat
+    monkeypatch.setattr(gateway_chat, "connect_gateway", lambda: pytest.fail("connected"))
+    assert gateway_chat.launch_from_args(argparse.Namespace(w=True)) == 2
+    err = capsys.readouterr().err
+    assert "options: -w." in err and "\n  -w: use `hermes --tui -w`" in err and "--w" not in err
+
+
+@pytest.mark.asyncio
+async def test_documented_env_opt_ins_ride_the_classic_create_and_bypass_needs_a_model(monkeypatch, tmp_path, capsys):
+    """N24: the auto-started owner no longer inherits the environment, so HERMES_YOLO_MODE /
+    HERMES_IGNORE_RULES / HERMES_SAFE_MODE / HERMES_IGNORE_USER_CONFIG / HERMES_ACCEPT_HOOKS
+    must ride session.create (Ink's localCreationOptions set), and an env bypass without -m is
+    refused before connecting, exactly as the flag is."""
+    from contextlib import asynccontextmanager
+    from hermes_cli import gateway_chat
+    from hermes_cli.gateway_chat_view import GatewayChatView
+    flags = ["yolo", "ignore_rules", "safe_mode", "ignore_user_config", "accept_hooks"]
+    created = []
+
+    class Peer:
+        async def rpc(self, method, **params):
+            if method == "runtime.describe":
+                return {"session_create": {"sources": ["cli"], "parameters": [
+                    "cwd", "model", "request_id", "source", *flags]}}
+            created.append(params)
+            return {"stored_session_id": "stored"}
+
+    @asynccontextmanager
+    async def connected():
+        yield Peer()
+
+    async def rendered(self, query, *, oneshot):
+        return 0
+
+    monkeypatch.setattr(gateway_chat, "connect_gateway", connected)
+    monkeypatch.setattr(GatewayChatView, "run", rendered)
+    monkeypatch.chdir(tmp_path)
+    for name in ("HERMES_YOLO_MODE", "HERMES_IGNORE_RULES", "HERMES_SAFE_MODE", "HERMES_ACCEPT_HOOKS"):
+        monkeypatch.setenv(name, "1")
+    monkeypatch.setenv("HERMES_IGNORE_USER_CONFIG", "true")
+    assert await gateway_chat.run_gateway_chat(argparse.Namespace(query="q", quiet=True, model="m")) == 0
+    assert all(created[0].get(flag) is True for flag in flags), created[0]
+    monkeypatch.setattr(gateway_chat, "connect_gateway", lambda: pytest.fail("connected"))
+    for name in ("HERMES_YOLO_MODE", "HERMES_IGNORE_RULES", "HERMES_SAFE_MODE", "HERMES_ACCEPT_HOOKS"):
+        monkeypatch.delenv(name)
+    assert gateway_chat.launch_from_args(argparse.Namespace(query="q")) == 1
+    assert "--model" in capsys.readouterr().err
+
+
+@pytest.mark.asyncio
+async def test_launch_key_flags_are_never_silently_dropped(monkeypatch, tmp_path, capsys):
+    """N23: `--tui` cannot carry --api-key/--base-url/--reasoning into Ink's create yet, so it
+    refuses them (exit 2) instead of running on the profile's endpoint; classic chat re-supplies
+    the launch key on resume (an owner restart revoked it) and `/new` keeps it."""
+    from contextlib import asynccontextmanager
+    from hermes_cli import gateway_chat, gateway_chat_commands, main as main_mod
+    from hermes_cli.gateway_chat_view import GatewayChatView
+    monkeypatch.setattr(main_mod, "_launch_tui", lambda *_a, **_k: pytest.fail("TUI launched without the flags"))
+    for flag in ("api_key", "base_url", "reasoning"):
+        with pytest.raises(SystemExit) as refused:
+            main_mod.cmd_chat(argparse.Namespace(tui=True, **{flag: "x"}))
+        assert refused.value.code == 2 and "--" + flag.replace("_", "-") in capsys.readouterr().err
+    calls = []
+
+    class Peer:
+        async def rpc(self, method, **params):
+            calls.append((method, params))
+            if method == "runtime.describe":
+                return {"session_create": {"sources": ["cli"], "parameters": ["cwd", "model", "api_key", "source"]}}
+            if method == "session.info":
+                return {"launch_request": {"source": "cli", "model": "m"}, "cwd": str(tmp_path)}
+            return {"stored_session_id": "stored", "execution_generation": 0,
+                    "info": {"launch_request": {"source": "cli", "model": "m"}}}
+
+    @asynccontextmanager
+    async def connected():
+        yield Peer()
+
+    async def rendered(self, query, *, oneshot):
+        await gateway_chat_commands._new(self, "")
+        return 0
+
+    monkeypatch.setattr(gateway_chat, "connect_gateway", connected)
+    monkeypatch.setattr(GatewayChatView, "run", rendered)
+    args = argparse.Namespace(resume="stored", api_key="launch-key", query="q", quiet=True)
+    assert await gateway_chat.run_gateway_chat(args) == 0
+    sent = {method: params for method, params in calls}
+    assert sent["session.resume"] == {"session_id": "stored", "api_key": "launch-key"}
+    assert sent["session.create"]["api_key"] == "launch-key"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("command", ["/new", "/branch"])
+async def test_new_and_branch_move_the_terminal_continue_pointer(monkeypatch, tmp_path, command):
+    """P3: a bare `hermes -c` after `/new` or `/branch` continues the session this terminal is
+    now on (the in-process CLI re-wrote its breadcrumb on every switch), not the old one."""
+    from hermes_cli import gateway_chat_commands, terminal_breadcrumbs
+    from hermes_cli.gateway_chat_view import GatewayChatView
+    monkeypatch.setenv("HERMES_HOME", str(tmp_path))
+    monkeypatch.setenv("TMUX_PANE", "%9")
+    monkeypatch.setattr(terminal_breadcrumbs.os, "ttyname", lambda fd: (_ for _ in ()).throw(OSError()))
+
+    class Peer:
+        async def rpc(self, method, **params):
+            if method == "runtime.describe":
+                return {"session_create": {"sources": ["cli"], "parameters": ["cwd", "source"]}}
+            if method == "session.info":
+                return {"launch_request": {"source": "cli"}, "cwd": str(tmp_path)}
+            if method == "session.mutate":
+                return {"status": "applied", "branched_session_id": "moved"}
+            return {"stored_session_id": "moved", "execution_generation": 0, "info": {}}
+
+    view = GatewayChatView(Peer(), {"stored_session_id": "old", "execution_generation": 0, "info": {}}, quiet=True)
+    terminal_breadcrumbs.write_breadcrumb("old")
+
+    async def apply(client, original, operation, payload, confirm=None):
+        return await client.rpc("session.mutate")
+
+    monkeypatch.setattr(view.mutations, "apply", apply)
+    if command == "/new":
+        await gateway_chat_commands._new(view, "")
+    else:
+        assert await view.command(command) is True
+    assert terminal_breadcrumbs.read_breadcrumb()["session_id"] == "moved"

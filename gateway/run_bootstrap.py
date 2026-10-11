@@ -230,6 +230,8 @@ def _start_gateway_claim_pid_file(force: bool = False) -> bool:
         return False
     atexit.register(remove_pid_file)
     atexit.register(release_gateway_runtime_lock)
+    from hermes_cli.gateway_multiplex_mode import publish_pending_multiplex_decision
+    publish_pending_multiplex_decision()
     _claim_host_gateway_role(force=force)
     return True
 
@@ -261,6 +263,8 @@ async def _start_gateway_start_control_socket(runner):
                 "served_profiles", "parked_profiles", "capabilities") if key in descriptor})
             if getattr(runner, '_draining', False):
                 payload.update(state='draining', capabilities=[])
+            if payload.get('state') == 'draining' and descriptor.get('drain_reason'):
+                payload['drain_reason'] = descriptor['drain_reason']
             payload["supervisor"] = {"manual": "none", "desktop": "none"}.get(
                 payload.get("supervisor"), payload.get("supervisor", "none"))
             return payload
@@ -611,11 +615,26 @@ async def _start_gateway_run_runner(runner, _signal_initiated_shutdown: list) ->
     return None
 
 
+def _start_gateway_early_environment_probe() -> None:
+    """Background-start the host toolchain probe the warm-up and first prompt read (idempotent;
+    honours ``agent.environment_probe: false``). Never raises: the warm-up still runs it lazily."""
+    try:
+        from hermes_cli.config import load_config_readonly
+        agent_cfg = load_config_readonly().get("agent")
+        if isinstance(agent_cfg, dict) and not agent_cfg.get("environment_probe", True):
+            return
+        from tools.env_probe import warm_environment_probe_async
+        warm_environment_probe_async()
+    except Exception:
+        logger.debug("early environment probe did not start", exc_info=True)
+
+
 async def start_gateway(config: Optional[GatewayConfig] = None, replace: bool = False,
-                        verbosity: Optional[int] = 0, force: bool = False) -> bool:
+                        verbosity: Optional[int] = 0, force: bool = False, idle_exit: bool = False) -> bool:
     """Start the gateway and run until interrupted; False if it failed to start (non-zero exit so
     systemd can auto-restart). ``replace`` kills any existing instance first (avoids restart-loop
-    deadlocks); ``force`` starts without consulting the host owner at all."""
+    deadlocks); ``force`` starts without consulting the host owner at all; ``idle_exit`` arms the
+    unmanaged idle exit (``gateway.run_idle_exit``) for a client-started daemon."""
     from gateway.run import (
         GatewayRunner,
         _best_effort,
@@ -647,6 +666,9 @@ async def start_gateway(config: Optional[GatewayConfig] = None, replace: bool = 
     # Config verdicts come before the duplicate-instance guard: `--replace` must not stop a healthy
     # gateway for a launch that cannot start.
     resolved_config = config if config is not None else load_gateway_config_for_runner()
+    # The first turn's prompt needs the host toolchain probe (five subprocess calls); start it now
+    # so it runs beside the boot imports instead of serially inside the pre-READY warm-up.
+    _start_gateway_early_environment_probe()
     profile_homes = (_multiplex_profile_homes(resolved_config)
                      if getattr(resolved_config, 'multiplex_profiles', False) else [])
     if profile_homes and not _launch_home_may_multiplex(resolved_config):
@@ -775,6 +797,15 @@ async def start_gateway(config: Optional[GatewayConfig] = None, replace: bool = 
         from gateway.run_runtime import publish_gateway_runtime_ready
         publish_gateway_runtime_ready(runner)
         runner._start_systemd_watchdog()
+        if idle_exit:
+            from gateway.run_idle_exit import arm_unmanaged_idle_exit
+            arm_unmanaged_idle_exit(runner)
+        else:
+            # A supervised/explicit gateway serves Desktop and the dashboard SPA, which call the
+            # dashboard routes right away: mount them now, after READY. A client's own idle-exit
+            # gateway (chat -q, TUI) only uses the native WebSocket; it mounts on first request.
+            from gateway.run_api import warm_gateway_dashboard
+            warm_gateway_dashboard(runner)
 
         from gateway.run_runtime import wait_gateway_runtime
         try:

@@ -240,15 +240,20 @@ export function useSlashCommand(deps: SlashCommandDeps) {
       }
 
       try {
-        const prepared = (await adoptPreparedSubmission(
-          preparedSubmissionKey(
-            resolveComposerSessionKey(initialStoredId ?? initialRuntimeId, $sessions.get()),
-            destination,
-            rawCommand,
-            options?.attachments ?? $composerAttachments.get(),
-            retryOptions
-          )
-        ))?.entry
+        // An explicit retry of this exact invocation reuses its retained expansion; the same
+        // command typed again is a new invocation.
+        const prepared = options?.submission_id
+          ? (await adoptPreparedSubmission(
+              preparedSubmissionKey(
+                resolveComposerSessionKey(initialStoredId ?? initialRuntimeId, $sessions.get()),
+                destination,
+                rawCommand,
+                options?.attachments ?? $composerAttachments.get(),
+                retryOptions
+              ),
+              options.submission_id
+            ))?.entry
+          : undefined
 
         if (prepared) {
           return await submitPromptText(prepared.text, {
@@ -654,9 +659,12 @@ export function useSlashCommand(deps: SlashCommandDeps) {
 
           const { render: renderSlashOutput, sessionId: initialSessionId, storedSessionId } = resolved
           const lines: string[] = []
+          // The shared owner stops only the processes this chat owns, so process.stop names the
+          // id session.interrupt resolved (a recovered runtime when the old one was reaped).
+          let stopSessionId = initialSessionId
 
           try {
-            await withSessionNotFoundResume(
+            ;({ sessionId: stopSessionId } = await withSessionNotFoundResume(
               initialSessionId,
               storedSessionId,
               liveId => requestGateway('session.interrupt', { session_id: liveId }),
@@ -669,14 +677,14 @@ export function useSlashCommand(deps: SlashCommandDeps) {
                   }
                 }
               }
-            )
+            ))
             lines.push('Stopped the active turn.')
           } catch (err) {
             lines.push(`Could not stop the active turn: ${err instanceof Error ? err.message : String(err)}`)
           }
 
           try {
-            const result = await requestGateway<unknown>('process.stop', {})
+            const result = await requestGateway<unknown>('process.stop', { session_id: stopSessionId })
             const processMessage = renderRpcResult(result, ctx.name)
 
             if (processMessage) {

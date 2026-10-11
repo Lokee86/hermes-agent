@@ -762,7 +762,7 @@ def _admitted_live_dm(tmp_path, monkeypatch, delivery_id):
 
 def test_live_dm_wait_reports_reply_after_initial_wait_budget(tmp_path, monkeypatch, capsys):
     """A retained admission still delivers its reply after the first wait window (main a94b9758313)."""
-    live, authority, record = _admitted_live_dm(tmp_path, monkeypatch, "a" * 32)
+    _live, authority, record = _admitted_live_dm(tmp_path, monkeypatch, "a" * 32)
     settling = threading.Timer(0.05, lambda: authority.settle(record["delivery_id"], status="settled", reply="PONG"))
     settling.start()
     try:
@@ -1311,5 +1311,3 @@ def test_poll_reply_is_persisted_as_a_delivery_row_when_the_runner_exits(tmp_pat
     assert kw["display_kind"] == "process_complete"
     assert "PAYLOAD_SENTINEL_42" in kw["content"]
     assert procs[0].id in kw["content"]
-
-

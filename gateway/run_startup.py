@@ -273,7 +273,7 @@ class GatewayStartupMixin:
         """Done-callback for boot-path tasks that outlive the startup-restore gate: surface a late
         failure otherwise swallowed once the task leaves ``_background_tasks``. Cancellation is
         expected (shutdown), not an error."""
-        def _report(task: "asyncio.Task") -> None:
+        def _report(task: asyncio.Task) -> None:
             if task.cancelled():
                 return
             exc = task.exception()
@@ -421,7 +421,7 @@ class GatewayStartupMixin:
                     try:
                         await asyncio.wait_for(wake.wait(), timeout=delay)
                         continue  # A shorter sibling may now be due first.
-                    except asyncio.TimeoutError:
+                    except TimeoutError:
                         pass
                     if getattr(self, "_running", False):
                         await self._redeliver_failed_obligations_for_platform(target, profile=profile)
@@ -429,7 +429,7 @@ class GatewayStartupMixin:
                 pending.pop(key, None)
                 wakes.pop(key, None)
 
-        task = asyncio.create_task(_redeliver_after_wait(), name="flood-redelivery:%s:%s" % key)
+        task = asyncio.create_task(_redeliver_after_wait(), name="flood-redelivery:{}:{}".format(*key))
         pending[key] = task
         # The gateway's ordinary shutdown drain must cancel sleeping timers too.
         background = getattr(self, "_background_tasks", None)
@@ -611,10 +611,11 @@ class GatewayStartupMixin:
         for entry in candidates:
             # Canonical admissions own restart decisions, including unknown pauses.
             # Legacy synthetic resume must not race their restored FIFO.
-            from gateway.session_authorities import all_authorities
+            from gateway.session_authorities import admission_owner, all_authorities
             if any(authority.db._read_one(
-                    'SELECT 1 FROM session_admissions WHERE target_session_id=? LIMIT 1',
-                    (entry.session_id,)) for authority in all_authorities(self)):
+                    'SELECT 1 FROM session_admissions WHERE target_session_id IN (?,?) LIMIT 1',
+                    (entry.session_id, admission_owner(authority, entry.session_id)))
+                   for authority in all_authorities(self)):
                 continue
             # Epoch math: the marker was stamped naive-local by the previous process, possibly
             # on the other side of a DST change; wall-clock subtraction is off by the shift.
@@ -1033,7 +1034,11 @@ class GatewayStartupMixin:
         allow_all_vars = ["GATEWAY_ALLOW_ALL_USERS", *self._BUILTIN_ALLOW_ALL_VARS]
         with suppress(Exception):
             from plugin_runtime.platform_registry import platform_registry
-            entries = platform_registry.plugin_entries()
+            # Enabled plugin platforms were materialized by the config passes; an unconfigured
+            # adapter's allowlist var cannot gate anything, so never import one just to read it.
+            entries = [e for e in (*platform_registry.loaded_entries(), *filter(None, (
+                platform_registry.get(p.value) for p, cfg in self.config.platforms.items() if cfg.enabled)))
+                if e.source == "plugin"]
             allowed_vars += [e.allowed_users_env for e in entries if e.allowed_users_env]
             allow_all_vars += [e.allow_all_env for e in entries if e.allow_all_env]
         # An API-server/webhook/local-only gateway has no messaging sender to gate, so the
@@ -1599,6 +1604,8 @@ class GatewayStartupMixin:
         self._spawn_reconnect_watcher()
         for method in self._POST_RECONNECT_WATCHERS:
             self._spawn_supervised(getattr(self, method), method[1:])
+        from gateway.runtime_downgrade_exit import runtime_downgrade_watcher
+        self._spawn_supervised(lambda: runtime_downgrade_watcher(self), "runtime_downgrade_watcher")
         # Scale-to-zero watcher ONLY when opted in, messaging is relay-only/absent, and a wakeUrl exists.
         try:
             if self._scale_to_zero_should_arm():
@@ -1735,7 +1742,7 @@ class GatewayStartupMixin:
 
     async def _handoff_resolve_destination(
         self, row: dict[str, Any], profile_name: Optional[str]
-    ) -> "GatewayStartupMixin._HandoffDestination":
+    ) -> GatewayStartupMixin._HandoffDestination:
         """Resolve platform, transport, home channel, thread and destination source for a row."""
         from gateway.delivery import resolve_delivery_transport
         cli_session_id = row["id"]

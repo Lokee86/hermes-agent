@@ -17,7 +17,7 @@ _GATEWAY_TRANSFORM_HOOKS = frozenset({
 })
 
 
-def plugin_activation_summary(manager: Any, plugin_key: str) -> Dict[str, Any]:
+def plugin_activation_summary(manager: Any, plugin_key: str) -> dict[str, Any]:
     """``{name, key, activated_now: {kind: [names]}, deferred: {kind: [names]}}`` for one loaded plugin,
     read from what it actually registered (ownership ledger + handler registries), not from what its
     manifest promises. Keys appear only when non-empty.
@@ -30,10 +30,10 @@ def plugin_activation_summary(manager: Any, plugin_key: str) -> Dict[str, Any]:
     manifest = getattr(loaded, "manifest", None)
     name = getattr(manifest, "name", None) or plugin_key
     regs = [r for r in manager._ownership_ledger.get(plugin_key, []) if getattr(r, "active", True)]
-    kinds: Dict[str, List[str]] = {}
+    kinds: dict[str, list[str]] = {}
     for reg in regs:
         kinds.setdefault(reg.kind, []).append(str(reg.key))
-    now: Dict[str, List[str]] = {}
+    now: dict[str, list[str]] = {}
     if kinds.get("command"):
         now["gateway_commands"] = sorted(kinds["command"])
     hooks = set(kinds.get("hook", ()))
@@ -46,7 +46,7 @@ def plugin_activation_summary(manager: Any, plugin_key: str) -> Dict[str, Any]:
     callbacks += [f"slack:{a}" for a in kinds.get("slack_action_handler", ())]
     if callbacks:
         now["callbacks"] = callbacks
-    deferred: Dict[str, List[str]] = {}
+    deferred: dict[str, list[str]] = {}
     tools = sorted(set(kinds.get("tool", ())) | set(getattr(loaded, "tools_registered", None) or ())
                    | set(getattr(manifest, "provides_tools", None) or ()))
     if tools:
@@ -60,7 +60,7 @@ def plugin_activation_summary(manager: Any, plugin_key: str) -> Dict[str, Any]:
     return {"name": name, "key": plugin_key, "activated_now": now, "deferred": deferred}
 
 
-def activation_summaries(manager: Any) -> List[Dict[str, Any]]:
+def activation_summaries(manager: Any) -> list[dict[str, Any]]:
     """One summary per loaded (non-deferred-platform, non-errored) plugin — the ``on_plugin_loaded`` payload."""
     out = []
     for key, loaded in list(manager._plugins.items()):
@@ -70,7 +70,7 @@ def activation_summaries(manager: Any) -> List[Dict[str, Any]]:
     return out
 
 
-def find_activation(summaries: Optional[List[Dict[str, Any]]], name: str) -> Optional[Dict[str, Any]]:
+def find_activation(summaries: Optional[list[dict[str, Any]]], name: str) -> Optional[dict[str, Any]]:
     """The summary for ``name`` (manifest name, canonical key, or bare leaf of the key)."""
     for entry in summaries or ():
         key = str(entry.get("key") or "")
@@ -79,7 +79,7 @@ def find_activation(summaries: Optional[List[Dict[str, Any]]], name: str) -> Opt
     return None
 
 
-def load_and_go_live(name: str) -> Optional[Dict[str, Any]]:
+def load_and_go_live(name: str) -> Optional[dict[str, Any]]:
     """Force-rediscover plugins in THIS process under the caller's profile scope, connect ``name``'s
     MCP servers and hand them (and its skills) to this profile's open chats with a turn note. Returns
     the activation summary with ``live_now: {mcp_servers, skills}``; ``deferred`` then keeps only what
@@ -92,7 +92,7 @@ def load_and_go_live(name: str) -> Optional[Dict[str, Any]]:
         return _go_live(name)
 
 
-def _go_live(name: str) -> Optional[Dict[str, Any]]:
+def _go_live(name: str) -> Optional[dict[str, Any]]:
     from plugin_runtime.activation_live import connect_plugin_mcp, live_notice, plugin_skills
     try:
         from plugin_runtime.lifecycle import (

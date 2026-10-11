@@ -38,7 +38,7 @@ class PluginRegistration:
     plugin_key: str = ""
     persistent: bool = False
     _disposed: bool = field(default=False, init=False, repr=False)
-    _on_dispose: Callable[["PluginRegistration"], None] | None = field(default=None, init=False, repr=False)
+    _on_dispose: Callable[[PluginRegistration], None] | None = field(default=None, init=False, repr=False)
 
     @property
     def active(self) -> bool:
@@ -61,13 +61,13 @@ class PluginRegistration:
 class ReplacementLease:
     """One ownership generation in a replaceable registry slot."""
 
-    coordinator: "ReplacementCoordinator"
+    coordinator: ReplacementCoordinator
     slot: Hashable
     current: Any
     previous: Any
     restore: Callable[[Any], bool]
     finalize: Callable[[], None] | None = None
-    predecessor: "ReplacementLease | None" = None
+    predecessor: ReplacementLease | None = None
     active: bool = field(default=True, init=False)
 
     def dispose(self) -> None:

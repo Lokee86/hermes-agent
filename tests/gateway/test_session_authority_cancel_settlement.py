@@ -81,12 +81,15 @@ async def test_cancelling_the_head_of_a_paused_fifo_resumes_its_successor(tmp_pa
         head = await _submit(authority, 'blocked')
         await _submit(authority, 'follower')
         # The drain pauses on the head's preclaim refusal and its task ends.
-        await asyncio.wait_for(authority.sessions['s'].task, 5)
+        paused = authority.sessions['s'].task
+        await asyncio.wait_for(paused, 5)
         assert executed == []
 
         await authority.cancel_queued(ACTOR, REF, head.admission_id)
+        # cancel_queued awaits its off-loop media release after rescheduling, so the new drain
+        # may already have finished: assert it is a NEW task, not that it is still running.
         task = authority.sessions['s'].task
-        assert task is not None and not task.done(), 'cancelling the blocking head must reschedule the drain'
+        assert task is not None and task is not paused, 'cancelling the blocking head must reschedule the drain'
         await asyncio.wait_for(task, 5)
         assert executed == ['follower']
         statuses = {r['request_id']: (r['status'], r['outcome'])
@@ -121,11 +124,69 @@ async def test_hosted_head_cancelled_during_preclaim_does_not_let_successor_skip
     monkeypatch.setattr(session_finite, 'execute_finite_admission', execute)
 
     with db:
+        # Both rows are queued before the drain starts (admission commits off-loop, so the
+        # first submit's drain would otherwise take the session lock before B is admitted).
+        schedule, authority._schedule = authority._schedule, lambda ref: None
         head = await _submit(authority, 'hosted:A')
         await _submit(authority, 'hosted:B')
+        authority._schedule = schedule
+        schedule(REF)
         await asyncio.get_running_loop().run_in_executor(None, head_checking.wait, 5)
         await authority.cancel_queued(ACTOR, REF, head.admission_id)
         release_head.set()
+        await asyncio.wait_for(authority.sessions['s'].task, 5)
+
+    assert executed == [], 'the successor reached execution without its own hosted validation'
+    assert validated == ['hosted:A', 'hosted:B']
+    statuses = {r['request_id']: r['status'] for r in list_session_admissions(db, session_id='s', pending_only=False)}
+    assert statuses == {'hosted:A': 'terminal', 'hosted:B': 'queued'}
+
+
+@pytest.mark.asyncio
+async def test_head_cancelled_after_its_last_preclaim_check_does_not_hand_the_claim_to_its_successor(
+        tmp_path, monkeypatch):
+    """Cancellation commits from a worker thread, so it can land after the head passed every preclaim
+    check (and was re-read as queued) while the off-loop claim waits for the writer: the claim takes
+    the validated head or nothing, never the successor."""
+    import threading
+    from gateway import session_authority, session_finite, session_hosted_transport, session_local_recovery
+    from gateway.config import Platform
+
+    db, authority = _authority(tmp_path, monkeypatch, platform=Platform.LOCAL)
+    monkeypatch.setattr(session_local_recovery, 'restore_local_session', lambda authority, sid: None)
+    monkeypatch.setattr(session_local_recovery, 'reopen_local_session', lambda authority, ref: None)
+    validated, executed = [], []
+    claim_waiting, head_cancelled = threading.Event(), threading.Event()
+
+    def check_remote_hosted_admission(authority, ref, row):
+        validated.append(row['request_id'])
+        if row['request_id'] == 'hosted:B':
+            raise RuntimeStoreError('permission_denied')  # B's own source binding is revoked
+        return True
+    monkeypatch.setattr(session_hosted_transport, 'check_remote_hosted_admission', check_remote_hosted_admission)
+    claim = session_authority.claim_session_input
+
+    def claim_behind_the_cancellation(*args, **kwargs):
+        if not head_cancelled.is_set():
+            claim_waiting.set()
+            head_cancelled.wait(5)
+        return claim(*args, **kwargs)
+    monkeypatch.setattr(session_authority, 'claim_session_input', claim_behind_the_cancellation)
+
+    async def execute(authority, ref, row):
+        executed.append(row['request_id'])
+        return 'done'
+    monkeypatch.setattr(session_finite, 'execute_finite_admission', execute)
+
+    with db:
+        schedule, authority._schedule = authority._schedule, lambda ref: None
+        head = await _submit(authority, 'hosted:A')
+        await _submit(authority, 'hosted:B')
+        authority._schedule = schedule
+        schedule(REF)
+        assert await asyncio.get_running_loop().run_in_executor(None, claim_waiting.wait, 5)
+        await authority.cancel_queued(ACTOR, REF, head.admission_id)
+        head_cancelled.set()
         await asyncio.wait_for(authority.sessions['s'].task, 5)
 
     assert executed == [], 'the successor reached execution without its own hosted validation'

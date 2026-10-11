@@ -38,12 +38,12 @@ logger = logging.getLogger("hermes_cli.plugins")
 
 _NS_PARENT = "hermes_plugins"
 _MODULE_NAMESPACE_LOCK = threading.RLock()
-_BARE_MODULE_SCOPE: Dict[str, str] = {}
+_BARE_MODULE_SCOPE: dict[str, str] = {}
 
 _LOAD_TIMEOUT_SECS = 10.0
 _MAX_LOAD_TIMEOUT_SECS = 600.0
 _MAX_ABANDONED_LOADERS = 8
-_ABANDONED_LOADERS: List[threading.Thread] = []
+_ABANDONED_LOADERS: list[threading.Thread] = []
 _ABANDONED_LOADERS_LOCK = threading.Lock()
 _LOADER_THREAD_PREFIX = "plugin-load:"
 _IN_PLUGIN_LOAD: contextvars.ContextVar[list[PluginLoadContext] | None] = contextvars.ContextVar("plugin_load_scope", default=None)
@@ -55,10 +55,10 @@ class LoadedPlugin:
 
     manifest: PluginManifest
     module: Optional[types.ModuleType] = None
-    tools_registered: List[str] = field(default_factory=list)
-    hooks_registered: List[str] = field(default_factory=list)
-    middleware_registered: List[str] = field(default_factory=list)
-    commands_registered: List[str] = field(default_factory=list)
+    tools_registered: list[str] = field(default_factory=list)
+    hooks_registered: list[str] = field(default_factory=list)
+    middleware_registered: list[str] = field(default_factory=list)
+    commands_registered: list[str] = field(default_factory=list)
     enabled: bool = False
     error: Optional[str] = None
     # Bundled platform recorded as a not-yet-imported loader (see _register_deferred_platform).
@@ -141,8 +141,8 @@ def run_with_load_deadline(plugin_key: str, ctx: PluginLoadContext, fn: Callable
     if timeout <= 0:
         return fn()
     _reserve_abandoned_loader_slot()
-    outcome: List[Any] = []
-    failure: List[BaseException] = []
+    outcome: list[Any] = []
+    failure: list[BaseException] = []
     scope = [ctx]
 
     def _worker() -> None:
@@ -271,7 +271,7 @@ def _load_directory_module(
 
 def _load_entrypoint_module(
     manifest: PluginManifest,
-) -> Union[types.ModuleType, Callable[..., Any]]:
+) -> types.ModuleType | Callable[..., Any]:
     """Load a pip-installed plugin via its entry-point reference."""
     for ep in _select_entry_point_group(importlib.metadata.entry_points(), ENTRY_POINTS_GROUP):
         if ep.name == manifest.name:
@@ -299,7 +299,7 @@ class PluginLoaderMixin:
 
     def _load_entrypoint_module(
         self, manifest: PluginManifest,
-    ) -> Union[types.ModuleType, Callable[..., Any]]:
+    ) -> types.ModuleType | Callable[..., Any]:
         return _load_entrypoint_module(manifest)
 
     @staticmethod
@@ -375,6 +375,12 @@ class PluginLoaderMixin:
 
             previous = platform_registry.snapshot_registration(platform_name, scope=scope)
             platform_registry.register_deferred(platform_name, _loader, scope=scope)
+            # Make an env-only platform discoverable without eagerly importing its adapter.
+            platform_registry.note_activation_env(
+                platform_name,
+                [entry.get('name') if isinstance(entry, dict) else entry
+                 for entry in manifest.requires_env or ()],
+            )
             current = platform_registry.snapshot_registration(platform_name, scope=scope)
             if current[0] is None and current[1] is _loader:
                 self._plugin_platform_names.add(platform_name)
@@ -430,7 +436,7 @@ class PluginLoaderMixin:
             return
         before = set(self._plugin_tool_names)  # lets the failure path credit partial registrations
 
-        def _credit() -> List[str]:
+        def _credit() -> list[str]:
             """Attribute every tool registered since ``before`` to this plugin."""
             registered = [t for t in self._plugin_tool_names if t not in before]
             if registered:
@@ -690,7 +696,7 @@ class PluginLoaderMixin:
             if r.plugin_key == plugin_key and r.active
         ]
 
-        def _keys(kind: str) -> List[str]:
+        def _keys(kind: str) -> list[str]:
             return [r.key for r in registrations if r.kind == kind]
 
         predeclared = [

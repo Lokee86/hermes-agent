@@ -18,7 +18,7 @@ import threading
 import time
 import uuid
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timezone, UTC
 
 # fcntl is Unix-only; Windows uses msvcrt
 try:
@@ -566,7 +566,7 @@ _parallel_pools: dict[str, concurrent.futures.ThreadPoolExecutor] = {}
 _parallel_pool_max_workers: dict[str, Optional[int]] = {}
 
 
-def _inflight_key(job_id: str, home: Optional[Union[Path, str]] = None) -> tuple:
+def _inflight_key(job_id: str, home: Optional[Path | str] = None) -> tuple:
     """``(home key, job id)`` — the identity of one in-flight cron run.
 
     ONE gateway process ticks every profile, so a job id alone is not unique: two profiles
@@ -660,7 +660,7 @@ class _CombinedCancelEvent:
     ``lost_ownership`` + per-transport events). Workers only call is_set()/set(), so no pump thread.
     """
 
-    def __init__(self, *events: Optional["_CancelEventLike"]) -> None:
+    def __init__(self, *events: Optional[_CancelEventLike]) -> None:
         self._events = [event for event in events if event is not None]
 
     def is_set(self) -> bool:
@@ -671,7 +671,7 @@ class _CombinedCancelEvent:
             event.set()
 
 
-def get_running_job_ids() -> "frozenset[str]":
+def get_running_job_ids() -> frozenset[str]:
     """Thread-safe snapshot of executing job IDs (dispatch until ``_process_job`` returns). Read by
     the gateway shutdown drain, otherwise blind to cron work (runs outside ``_running_agents``).
 
@@ -698,7 +698,7 @@ def get_running_job_details() -> list[dict]:
         ]
 
 
-def get_wedged_job_ids() -> "frozenset[str]":
+def get_wedged_job_ids() -> frozenset[str]:
     """In-flight job IDs older than their stale-inflight allowance (``max(2 * interval,
     cron.inflight_max_minutes)``) — the scheduler's own definition of a claim that can no longer be
     making progress. ``sweep_stale_inflight`` cannot release these while the worker thread is still
@@ -708,7 +708,7 @@ def get_wedged_job_ids() -> "frozenset[str]":
     return frozenset(key[1] for key in _wedged_inflight_keys())
 
 
-def _wedged_inflight_keys() -> "frozenset[tuple]":
+def _wedged_inflight_keys() -> frozenset[tuple]:
     """In-flight keys behind :func:`get_wedged_job_ids`, before the projection to bare job IDs."""
     now = time.time()
     with _running_lock:
@@ -772,7 +772,7 @@ def get_restart_wait_cron_counts() -> dict:
     }
 
 
-def is_job_running(job_id: str, home: Optional[Union[Path, str]] = None) -> bool:
+def is_job_running(job_id: str, home: Optional[Path | str] = None) -> bool:
     """True when THIS process has an in-flight run of ``job_id`` FOR ``home`` (default: the active
     cron scope's home).
 
@@ -835,7 +835,7 @@ def try_register_running_job(job_id: str, *, owner=None, future=_FUTURE_PENDING)
 
 
 def release_running_job(
-    job_id: str, home: Optional[Union[Path, str]] = None, *, owner=None,
+    job_id: str, home: Optional[Path | str] = None, *, owner=None,
 ) -> None:
     """Remove the registration unless an explicit ``owner`` has been replaced.
 
@@ -1258,7 +1258,7 @@ def _usage_audit_path() -> Path:
 
 def _utcnow_iso_ms() -> str:
     """RFC3339 UTC timestamp with millisecond precision and 'Z' suffix."""
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     return now.strftime("%Y-%m-%dT%H:%M:%S.") + f"{now.microsecond // 1000:03d}Z"
 
 
@@ -1537,7 +1537,7 @@ def _run_no_agent_job(
     script_path = job.get("script")
     # Legacy/hand-edited no_agent job without a script: pause it, or it re-fires every tick.
     if not str(script_path or "").strip():
-        from cron.jobs import NO_AGENT_WITHOUT_SCRIPT_ERROR
+        from cron.jobs_invariants import NO_AGENT_WITHOUT_SCRIPT_ERROR
 
         return _block_and_pause_job(job_id, job_name, NO_AGENT_WITHOUT_SCRIPT_ERROR)
 
@@ -3165,81 +3165,6 @@ def _save_compose_deliver(
         logger.error("Delivery failed for job %s: %s", job["id"], de)
 
 
-def _finish_completed_run(d: _RunDelivery, fire_owner: Optional[str], execution_id: str, *, recovered=False) -> bool:
-    """mark_job_run (owner-fenced) + execution ledger row for a run that reached delivery."""
-    job = d.job
-    if not d.should_deliver and job.get("last_delivery_queued"):
-        from cron.jobs import update_job
-        update_job(job["id"], {"last_delivery_queued": None})
-        job["last_delivery_queued"] = None
-    mark_kwargs: dict = {"delivery_error": d.delivery_error}
-    from cron.scheduler_authority import journal_path
-    journal = journal_path(job['id'], execution_id)
-    if not job.get('no_agent'):
-        mark_kwargs['execution_id'] = execution_id
-    if not d.success and job.pop("_model_unreachable", False):
-        # Never-reached-the-model failure: schedule the Cowork-style bounded re-run
-        # (cron/unreachable_retry.py) inside the same fenced store write.
-        mark_kwargs["model_unreachable"] = True
-    from cron.unreachable_retry import is_retry_run
-    if is_retry_run(job):
-        # A re-run of an occurrence that already counted: must not spend another repeat slot.
-        mark_kwargs["ladder_rung"] = True
-    _hold_s = job.pop("_quota_hold_seconds", None)
-    if not d.success and _hold_s:
-        # Provider window closed for a known duration: park past it (cron/quota_hold.py, #89376).
-        mark_kwargs["quota_hold_seconds"] = _hold_s
-        mark_kwargs["recover_consumed_fire"] = bool(job.get("_scheduled_instant"))
-    if d.success and not d.delivery_error and d.should_deliver and job.get("last_delivery_queued"):
-        mark_kwargs["status"] = "delivery_queued"
-    if fire_owner is not None:
-        mark_kwargs["expected_fire_owner"] = fire_owner
-    if d.blocked_config:
-        mark_kwargs["status"] = "blocked_config"
-    # A run that removed its own record has nothing left to mark; the delivery above is its result.
-    marked = self_removal_delivery_allowed(job["id"]) or mark_job_run(
-        job["id"], d.success, d.error, **mark_kwargs)
-    if fire_owner is not None and not marked:
-        finish_execution(
-            execution_id, success=False,
-            error="Fire claim ownership lost before terminal completion.")
-        return True
-    delivery_outcome = _classify_delivery_outcome(
-        delivery_error=d.delivery_error,
-        delivery_queued=job.get("last_delivery_queued"),
-        notification_suppressed=bool(job.get("_notification_all_targets_suppressed")),
-        should_deliver=d.should_deliver,
-        unresolved_origin=d.unresolved_origin,
-        # Read the lane the notice was actually routed through (failure_deliver on failure).
-        normalized_deliver=_normalize_deliver_value(_delivery_lane_value(job, for_failure=not d.success)),
-        incident_acked=d.incident_acked,
-        success=d.success,
-    )
-    from cron.delivery_outcome import settle_quietly, settled_outcome
-    if delivery_outcome == "queued":
-        # A drain that already finished this send (cron/delivery_outcome.py) is the real outcome.
-        delivery_outcome = settled_outcome(execution_id) or "queued"
-    if delivery_outcome in ("delivered", "not_configured") and not d.success:
-        # Failure ping left the process (or had a configured target): mark the incident alerted.
-        _mark_incident_alerted(d.failure_incident_id)
-    from functools import partial
-    from cron.executions import get_execution, recover_receipted_execution
-    finish = partial(recover_receipted_execution, job_id=job['id']) if recovered else finish_execution
-    finished = finish(
-        execution_id, success=d.success, error=d.error, delivery_outcome=delivery_outcome)
-    if recovered and finished is None:
-        current = get_execution(execution_id)
-        # A live foreign firer still owns this row. Keep its only recovery link until settlement.
-        # Legacy direct calls may have no execution row; an already-finished row is also safe.
-        if current is not None and current['status'] not in {'completed', 'failed'}:
-            return False
-    if job.get("last_delivery_queued"):
-        # A drain that settled before this run's own bookkeeping landed found nothing to fence on.
-        settle_quietly(job["id"], execution_id)
-    journal.unlink(missing_ok=True)
-    return True
-
-
 def _deliver_crash_failure(
     job: dict, err_text: str, *, adapters, loop,
 ) -> tuple[Optional[str], str]:
@@ -3279,7 +3204,7 @@ def _deliver_crash_failure(
 
 
 
-def _install_fire_secret_scope() -> "tuple[contextvars.Token, Optional[contextvars.Token]]":
+def _install_fire_secret_scope() -> tuple[contextvars.Token, Optional[contextvars.Token]]:
     """Install the firing profile's secret scope for the span ``_run_one_job_body`` runs, delivery
     included, and return the tokens ``_reset_fire_secret_scope`` needs.
 
@@ -3306,7 +3231,7 @@ def _install_fire_secret_scope() -> "tuple[contextvars.Token, Optional[contextva
     return scope_token, context_token
 
 
-def _reset_fire_secret_scope(tokens: "tuple[contextvars.Token, Optional[contextvars.Token]]") -> None:
+def _reset_fire_secret_scope(tokens: tuple[contextvars.Token, Optional[contextvars.Token]]) -> None:
     """Undo ``_install_fire_secret_scope`` — the context first, so multiplex semantics never
     outlive the scope they depend on."""
     from agent.secret_scope import reset_multiplex_context, reset_secret_scope
@@ -3327,7 +3252,7 @@ def _fire_secret_scope():
         _reset_fire_secret_scope(tokens)
 
 
-def _start_owned_run(job: dict, execution_id: str) -> "Optional[contextvars.Token]":
+def _start_owned_run(job: dict, execution_id: str) -> Optional[contextvars.Token]:
     """Win the run's ``claimed`` → ``running`` CAS and bind its cron identity; ``None`` when the run
     lost ownership first. A restart-safe worker already won it by adopting the row."""
     if os.environ.get("_HERMES_CRON_EXTERNAL_WORKER") == execution_id:
@@ -3468,7 +3393,7 @@ def _run_one_job_body(
         if _fire_claim_ownership_lost():
             # #105861: the claim check is one sample; a miss AFTER a completed delivery must not
             # overwrite the delivered run's terminal status — ok, or a failure whose notice already
-            # left with its real error — so fall through to _finish_completed_run, whose owner-fenced
+            # left with its real error — so fall through to finish_completed_run, whose owner-fenced
             # mark_job_run is authoritative either way. An explicit transport cancel stays fail-closed.
             transport_cancelled = fence.transport_cancelled()
             if d.delivery_attempted and not d.delivery_error and not transport_cancelled:
@@ -3490,13 +3415,16 @@ def _run_one_job_body(
             finish_interrupted_run(job, execution_id, delivery_error)
             return True
 
-        return _finish_completed_run(d, fire_owner, execution_id)
+        from cron.scheduler_bookkeeping import finish_completed_run
+        return finish_completed_run(d, fire_owner, execution_id)
 
     except BaseException as e:
         from cron.scheduler_authority import CronExecutionUnknown
         if isinstance(e, CronExecutionUnknown):
+            from cron.executions import give_up_execution
             from cron.jobs import pause_job
             pause_job(job["id"], reason=str(e))
+            give_up_execution(execution_id, reason=str(e))
             logger.error("Cron %s paused with unverified admission: %s", job["id"], e)
             return False
         # BaseException, not Exception: CancelledError/KeyboardInterrupt/SystemExit propagate here.
@@ -4120,7 +4048,7 @@ def _worktree_maintenance_repos() -> list[str]:
                 probe = subprocess.run(
                     ["git", "rev-parse", "--show-toplevel"],
                     capture_output=True, text=True, encoding="utf-8",
-                    errors="replace", timeout=5, cwd=workdir)
+                    errors="replace", timeout=5, cwd=workdir, check=False)
                 if probe.returncode == 0 and probe.stdout.strip():
                     repos.add(probe.stdout.strip())
             except Exception:
