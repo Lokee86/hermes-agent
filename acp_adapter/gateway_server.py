@@ -71,6 +71,7 @@ class GatewayACPAgent(acp.Agent):
         self._connect_lock = asyncio.Lock()
         self._home = get_hermes_home().resolve()
         self._snapshots = {}
+        self._aliases = {}
         self._event_task = None
         self._terminals = {}
         self._streamed = {}
@@ -126,6 +127,7 @@ class GatewayACPAgent(acp.Agent):
                 self._event_task = None
                 self._failure = None
                 self._snapshots.clear()
+                self._aliases.clear()
                 self._terminals.clear()
                 self._streamed.clear()
                 for task in self._permissions.values():
@@ -162,7 +164,9 @@ class GatewayACPAgent(acp.Agent):
 
     async def _resume(self, cwd, session_id, mcp_servers):
         client = await self._client(reconnect=True)
-        info = await client.rpc("session.info", session_id=session_id)
+        from acp_adapter.catalog import logical_session_id
+        logical = await asyncio.to_thread(logical_session_id, self._home / 'state.db', session_id)
+        info = await client.rpc("session.info", session_id=logical)
         if "cwd" in info and _normalize_cwd_for_compare(info["cwd"]) != _normalize_cwd_for_compare(_translate_acp_cwd(cwd)):
             raise GatewayClientError("cwd_policy_conflict")
         if "cwd" not in info and self._conn:
@@ -174,14 +178,15 @@ class GatewayACPAgent(acp.Agent):
             if "acp-session-mcp-v1" not in descriptor.get("capabilities", []):
                 raise GatewayClientError("acp_mcp_policy_unavailable")
             resume_params['editor'] = {'mcp_servers': [s.model_dump(by_alias=True) for s in mcp_servers]}
-        snapshot = await client.rpc("session.resume", session_id=session_id, **resume_params)
-        self._snapshots[session_id] = snapshot
+        snapshot = await client.rpc("session.resume", session_id=logical, **resume_params)
+        self._aliases[session_id] = logical
+        self._snapshots[logical] = snapshot
         from acp_adapter.server import _history_replay_updates
         if self._conn:
             for update in _history_replay_updates(snapshot["messages"]):
                 await self._conn.session_update(session_id=session_id, update=update)
         for pending in snapshot.get("prompts", []):
-            self._permission(session_id, pending)
+            self._permission(logical, pending)
         unknown = next((p for p in snapshot.get('pending', []) if p.get('status') == 'unknown'), None)
         if unknown is not None and self._conn:
             await self._conn.session_update(session_id=session_id,
@@ -196,6 +201,10 @@ class GatewayACPAgent(acp.Agent):
     async def resume_session(self, cwd, session_id, mcp_servers=None, **kwargs):
         await self._resume(cwd, session_id, mcp_servers)
         return ResumeSessionResponse()
+
+    def _editor_id(self, logical_id):
+        return next((editor for editor, logical in reversed(tuple(self._aliases.items()))
+                     if logical == logical_id), logical_id)
 
     async def _cancel_admission(self, session_id, admission_id):
         client = await self._client()
@@ -224,16 +233,7 @@ class GatewayACPAgent(acp.Agent):
                     raise
 
     async def cancel(self, session_id, **kwargs):
-        if session_id not in self._snapshots:
-            raise GatewayClientError("not_found")
-        admission_id = self._admissions.get(session_id)
-        if admission_id is None:
-            if session_id in self._submitting:
-                self._pending_cancels.add(session_id)
-            return
-        await self._cancel_admission(session_id, admission_id)
-
-    async def cancel(self, session_id, **kwargs):
+        session_id = self._aliases.get(session_id, session_id)
         if session_id not in self._snapshots:
             raise GatewayClientError("not_found")
         admission_id = self._admissions.get(session_id)
@@ -245,6 +245,7 @@ class GatewayACPAgent(acp.Agent):
 
     async def fork_session(self, cwd, session_id, mcp_servers=None, **kwargs):
         from acp.schema import ForkSessionResponse
+        session_id = self._aliases.get(session_id, session_id)
         client = await self._client()
         info = await client.rpc('session.info', session_id=session_id)
         if (mcp_servers or _normalize_cwd_for_compare(info.get('cwd', '')) !=
@@ -258,6 +259,7 @@ class GatewayACPAgent(acp.Agent):
 
     async def set_session_model(self, model_id, session_id, **kwargs):
         from acp.schema import SetSessionModelResponse
+        session_id = self._aliases.get(session_id, session_id)
         client = await self._client()
         payload = {'model': model_id}
         await self._mutations.apply(client, session_id, 'model', payload)
@@ -288,6 +290,7 @@ class GatewayACPAgent(acp.Agent):
                 + ('nothing was submitted' if unsent else 'inspect the existing admission'))
 
     async def prompt(self, prompt, session_id, **kwargs):
+        session_id = self._aliases.get(session_id, session_id)
         if session_id not in self._snapshots:
             raise GatewayClientError("not_found")
         unknown = next((p for p in self._snapshots[session_id].get('pending', [])
@@ -307,7 +310,7 @@ class GatewayACPAgent(acp.Agent):
             result = await self._mutations.apply(client, session_id, operation, payload)
             if result.get('status') == 'preview':
                 # Read-only report: nothing changed, so the editor's snapshot is still current.
-                await self._conn.session_update(session_id=session_id,
+                await self._conn.session_update(session_id=self._editor_id(session_id),
                     update=acp.update_agent_message_text('\n'.join(result['lines']) + '\n'))
             else:
                 self._snapshots[session_id] = await client.rpc('session.resume', session_id=session_id)
@@ -422,7 +425,7 @@ class GatewayACPAgent(acp.Agent):
             args = coerce_tool_args(payload.get("args"))
             self._tool_args[(sid, payload["tool_call_id"])] = (tool_name, args)
             if self._conn:
-                await self._conn.session_update(session_id=sid,
+                await self._conn.session_update(session_id=self._editor_id(sid),
                     update=build_tool_start(payload["tool_call_id"], tool_name, args))
             return
         if kind == "tool.complete":
@@ -430,7 +433,7 @@ class GatewayACPAgent(acp.Agent):
             name, args = self._tool_args.pop((sid, payload["tool_call_id"]), (tool_name, {}))
             result = payload.get("result")
             if self._conn:
-                await self._conn.session_update(session_id=sid, update=build_tool_complete(
+                await self._conn.session_update(session_id=self._editor_id(sid), update=build_tool_complete(
                     payload["tool_call_id"], name, result=result if isinstance(result, str) else None,
                     function_args=args))
             return
@@ -438,7 +441,7 @@ class GatewayACPAgent(acp.Agent):
             text = payload.get("text", "")
             self._streamed[aid] = self._streamed.get(aid, "") + text
             if text and self._conn:
-                await self._conn.session_update(session_id=sid, update=acp.update_agent_message_text(text))
+                await self._conn.session_update(session_id=self._editor_id(sid), update=acp.update_agent_message_text(text))
         elif kind == "message.complete":
             from agent.conversation_loop import INTERRUPT_WAITING_FOR_MODEL_PREFIX
 
@@ -449,7 +452,7 @@ class GatewayACPAgent(acp.Agent):
             prefix = self._streamed.pop(aid, "")
             remainder = text[len(prefix):] if text.startswith(prefix) else text
             if remainder and self._conn:
-                await self._conn.session_update(session_id=sid, update=acp.update_agent_message_text(remainder))
+                await self._conn.session_update(session_id=self._editor_id(sid), update=acp.update_agent_message_text(remainder))
             async with self._changed:
                 self._terminals[aid] = payload
                 if len(self._terminals) > 256:
@@ -470,13 +473,13 @@ class GatewayACPAgent(acp.Agent):
             answer = None
             if self._form_elicitation:
                 result = await self._conn.send_request(
-                    ELICITATION_METHOD, build_clarify_elicitation(session_id, prompt))
+                    ELICITATION_METHOD, build_clarify_elicitation(self._editor_id(session_id), prompt))
                 answer = elicited_answer(result)
             else:
                 from acp.schema import AllowedOutcome
                 card, options, answers = build_clarify_permission(prompt)
                 response = await self._conn.request_permission(
-                    session_id=session_id, tool_call=card, options=options)
+                    session_id=self._editor_id(session_id), tool_call=card, options=options)
                 if isinstance(response.outcome, AllowedOutcome):
                     answer = answers.get(response.outcome.option_id)
                 elif getattr(response.outcome, 'outcome', None) == 'cancelled':
@@ -506,7 +509,7 @@ class GatewayACPAgent(acp.Agent):
                 tool_call = build_acp_edit_tool_call(EditProposal(**prompt['edit']))
             else:
                 tool_call = _build_permission_tool_call(prompt.get('command', ''), prompt.get('description', ''))
-            response = await self._conn.request_permission(session_id=session_id,
+            response = await self._conn.request_permission(session_id=self._editor_id(session_id),
                 tool_call=tool_call, options=options)
             # Transport loss/cancel is not a denial: the canonical waiter belongs
             # to the execution and may still be answered by another viewer.
