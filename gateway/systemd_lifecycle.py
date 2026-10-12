@@ -62,13 +62,13 @@ def install(
     if path.exists() and not force:
         if not systemd_unit_state.unit_is_current(system):
             systemd_unit_state.refresh_if_needed(system)
-            if enable_on_startup:
-                systemd_runtime.run_systemctl(
-                    ["enable", service_identity.service_name()],
-                    system=system,
-                    check=True,
-                    timeout=30,
-                )
+        if enable_on_startup:
+            systemd_runtime.run_systemctl(
+                ["enable", service_identity.service_name()],
+                system=system,
+                check=True,
+                timeout=30,
+            )
         configured = systemd_identity.read_unit_user(path) if system else None
         if configured:
             systemd_linger.ensure_system_service_linger(configured)
