@@ -183,9 +183,13 @@ class GatewayProfileReconcileMixin:
         sigs = self._served_profile_signatures or {}
         if not (added or removed or changed):
             return {**result, "served_profiles": self.served_profile_names()}
+        refused_removals = set()
         for name in removed:
-            await self._unserve_profile(name, known[name])
-            result["removed"].append(name)
+            if await self._unserve_profile(name, known[name]):
+                result["removed"].append(name)
+            else:
+                current[name] = known[name]
+                refused_removals.add(name)
         for name in list(added):
             reason_ = await self._serve_profile_runtime(name, live[name])
             if reason_ is not None:
@@ -235,9 +239,11 @@ class GatewayProfileReconcileMixin:
         # A profile deleted while an adapter above was still connecting must not be recorded back
         # (the deleter's signal timed out against this lock and rmtree already ran).
         live_now = {str(name) for name, _home in profiles_to_serve(multiplex=True)}
-        for name in [n for n in current if n not in live_now and n != active]:
-            await self._unserve_profile(name, current.pop(name))
-            result["removed"].append(name)
+        for name in [n for n in current if n not in live_now and n != active
+                     and n not in refused_removals]:
+            if await self._unserve_profile(name, current[name]):
+                current.pop(name)
+                result["removed"].append(name)
             added = [n for n in added if n != name]
         self._record_served_profiles(active, list(current.items()))
         # ``_note_served_profiles`` fills a missing signature with the current one; that refill
@@ -313,7 +319,7 @@ class GatewayProfileReconcileMixin:
             except Exception:
                 logger.warning("MCP tool discovery failed for profile '%s'", profile_name, exc_info=True)
 
-    async def _unserve_profile(self, name: str, home: "Path") -> None:
+    async def _unserve_profile(self, name: str, home: "Path") -> bool:
         """Stop and unroute one profile: cancel its reconnects, tear down its adapters, drop its
         bookkeeping and release this process's handles into its home so the deleter's rmtree succeeds.
         The releasing process is not always the deleter (#130244): under multiplexing THIS gateway
@@ -328,6 +334,13 @@ class GatewayProfileReconcileMixin:
         profile's). Secrets are not re-hydrated: teardown must not block the loop on a source fetch.
         """
         from gateway.run import _profile_runtime_scope, _write_runtime_status_quiet
+        from gateway.run_runtime import unserve_profile_runtime
+        # Retire the authority before touching routing or reservations. A live turn
+        # can reject retirement; in that case the profile remains fully served.
+        if getattr(self, "session_authorities", None) is not None:
+            if not await unserve_profile_runtime(self, home):
+                logger.warning("[MULTIPLEX] Profile '%s' remains served: active session work", name)
+                return False
         pending = (getattr(self, "_profile_failed_platforms", None) or {}).pop(name, None) or {}
         tasks = [t for t in pending.values() if isinstance(t, asyncio.Task) and not t.done()]
         for task in tasks:
@@ -357,10 +370,7 @@ class GatewayProfileReconcileMixin:
                     self._evict_cached_agent(key)
             # Its session authority and reservation go before the store handles: the authority owns the
             # state.db writer, and the next restart must not try to reserve a home that no longer exists.
-            from gateway.run_runtime import release_profile_home, unserve_profile_runtime
-            if getattr(self, "session_authorities", None) is not None:
-                with _log_suppressed(logging.WARNING, "session authority retirement failed for %s", name, exc_info=True):
-                    await unserve_profile_runtime(self, home)
+            from gateway.run_runtime import release_profile_home
             release_profile_home(self, home)
             with _log_suppressed(logging.DEBUG, "profile handle release failed", exc_info=True):
                 from hermes_state_registry import close_all_under
@@ -386,6 +396,7 @@ class GatewayProfileReconcileMixin:
                 from hermes_logging import release_profile_log_handlers
                 await asyncio.to_thread(release_profile_log_handlers, home)
             logger.info("[MULTIPLEX] Profile '%s' unserved — %d adapter(s) stopped and unrouted", name, len(adapters))
+        return True
 
 
 def _profile_lifecycle_verb(runner, *, serve: bool):
@@ -404,7 +415,10 @@ def _profile_lifecycle_verb(runner, *, serve: bool):
             if not serve:
                 if name not in known:
                     return {"error": f"profile '{name}' is not served"}
-                await runner._unserve_profile(name, known.pop(name))
+                if not await runner._unserve_profile(name, known[name]):
+                    return {"error": f"profile '{name}' has active session work",
+                            "served_profiles": runner.served_profile_names()}
+                known.pop(name)
                 runner._record_served_profiles(active, list(known.items()))
                 return {"unserved": name, "served_profiles": runner.served_profile_names()}
             installed = dict(profiles_to_serve(True, include_parked=True))
