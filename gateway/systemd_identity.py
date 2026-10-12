@@ -17,7 +17,13 @@ class SystemScopeRequiresRootError(RuntimeError):
 
 def user_unit_dir() -> Path:
     config_home = os.environ.get("XDG_CONFIG_HOME", "").strip()
-    base = Path(config_home) if config_home else Path.home() / ".config"
+    if config_home and Path(config_home).is_absolute():
+        base = Path(config_home)
+    else:
+        # Profile-pinned HOME must not redirect systemd user units into a
+        # tenant directory. The OS account database owns this location.
+        import pwd
+        base = Path(pwd.getpwuid(os.getuid()).pw_dir) / ".config"
     return base / "systemd" / "user"
 
 
