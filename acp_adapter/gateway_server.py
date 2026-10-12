@@ -102,8 +102,26 @@ class GatewayACPAgent(acp.Agent):
         from acp_adapter.server import HermesACPAgent
         return await HermesACPAgent.authenticate(self, method_id, **kwargs)
 
-    async def _client(self):
+    async def _client(self, *, reconnect=False):
         async with self._connect_lock:
+            if self._failure is not None and not reconnect:
+                raise self._failure
+            if self._failure is not None:
+                # A transport failure is terminal for existing prompt waiters, but a later
+                # ACP load/resume may establish a fresh viewer. Never replay submissions.
+                if self._connection is not None:
+                    await self._connection.__aexit__(None, None, None)
+                self._gateway = self._connection = None
+                self._event_task = None
+                self._failure = None
+                self._snapshots.clear()
+                self._terminals.clear()
+                self._streamed.clear()
+                for task in self._permissions.values():
+                    task.cancel()
+                self._permissions.clear()
+                self._admissions.clear()
+                self._pending_cancels.clear()
             if self._gateway is None:
                 connection = connect_gateway()
                 gateway = await connection.__aenter__()
@@ -116,12 +134,10 @@ class GatewayACPAgent(acp.Agent):
                     raise
                 self._connection, self._gateway = connection, gateway
                 self._event_task = asyncio.create_task(self._events())
-            if self._failure:
-                raise self._failure
             return self._gateway
 
     async def new_session(self, cwd, mcp_servers=None, **kwargs):
-        client = await self._client()
+        client = await self._client(reconnect=True)
         descriptor = await client.rpc("runtime.describe")
         if ("acp" not in descriptor.get("session_create", {}).get("sources", [])
                 or "acp-editor-policy-v1" not in descriptor.get("capabilities", [])):
@@ -134,7 +150,7 @@ class GatewayACPAgent(acp.Agent):
         return NewSessionResponse(session_id=snapshot["session_id"])
 
     async def _resume(self, cwd, session_id, mcp_servers):
-        client = await self._client()
+        client = await self._client(reconnect=True)
         info = await client.rpc("session.info", session_id=session_id)
         if "cwd" in info and _normalize_cwd_for_compare(info["cwd"]) != _normalize_cwd_for_compare(_translate_acp_cwd(cwd)):
             raise GatewayClientError("cwd_policy_conflict")
@@ -271,7 +287,13 @@ class GatewayACPAgent(acp.Agent):
                 self._snapshots[session_id] = await client.rpc('session.resume', session_id=session_id)
             self._mutations.acknowledge(session_id, operation, payload)
             return PromptResponse(stop_reason='end_turn')
-        client = await self._client()
+        if self._failure is not None:
+            # Reconnect only for a NEW prompt. An ambiguous previous submission is
+            # never replayed: it remains unknown to the editor until explicitly checked.
+            client = await self._client(reconnect=True)
+            self._snapshots[session_id] = await client.rpc('session.resume', session_id=session_id)
+        else:
+            client = await self._client()
         submit = {'text': text}
         if attachments:
             submit['attachments'] = attachments
