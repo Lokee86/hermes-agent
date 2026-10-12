@@ -688,6 +688,8 @@ async def start_gateway(config: Optional[GatewayConfig] = None, replace: bool = 
         return False
 
     from gateway.status import remove_pid_file, release_gateway_runtime_lock
+    from gateway.runtime_ownership import process_ownership, OwnershipConflict
+    from hermes_constants import get_hermes_home
     try:
         process_ownership.reserve([get_hermes_home(), *(home for _, home in profile_homes)])
     except OwnershipConflict as exc:
