@@ -1493,28 +1493,57 @@ def _poll_until_ready(targets: list, deadline: float, taken: set) -> dict:
 
 
 def _verify_relaunched_gateways_alive(token: dict, profiles: dict, unmapped: list) -> None:
-    """Retire each relaunched runtime on ITS OWN readiness: a profile on a stable gateway in its
-    profile home, an unmapped entry on a stable gateway running its argv. A watcher only proves a
-    relaunch was scheduled, and another target's readiness proves nothing about this one.
+    """Verify each paused runtime independently, retaining unresolved restart debts."""
+    from gateway import windows_service as gateway_windows
+    from gateway.status import _pid_exists
+    from profiles.paths import get_profile_dir
 
-    A parent Job Object denying CREATE_BREAKAWAY_FROM_JOB can kill the gateway on updater teardown.
-    Vouched PIDs are persisted so a death AFTER updater exit is reported by the next CLI invocation."""
-    with _abort_on_error("Could not load Windows gateway liveness helpers"):
-        from gateway.status import _pid_exists
-        from gateway import windows_service as gateway_windows
-        timeout_s = _relaunch_verify_timeout_s(profiles, unmapped, _pid_exists)
-        ready_pids = gateway_windows._wait_for_gateway_ready(
-            timeout_s=timeout_s, all_profiles=True, pid_filter=_owned_gateway_pids
-        )
-    if not ready_pids:
-        token["profiles"] = dict(profiles)
-        token["unmapped"] = list(unmapped)
-        print(
-            "\n  ⚠ Windows gateway restart could not be verified for: " + ", ".join(unready) + "\n"
-            "    (The respawned gateway may have been killed by a parent Job Object during updater teardown, #48820.)\n"
-            "    Recover with: hermes gateway restart"
-        )
-        raise RuntimeError("Windows gateway relaunch after update was not verified alive: " + ", ".join(unready))
+    timeout_s = _relaunch_verify_timeout_s(profiles, unmapped, _pid_exists)
+    deadline = _time.monotonic() + timeout_s
+    taken: set[int] = set()
+    targets = []
+    profile_homes = {}
+
+    for name, old_pid in sorted(profiles.items()):
+        home = Path(get_profile_dir(name))
+        profile_homes[name] = home
+
+        def probe(scan, home=home, old_pid=old_pid):
+            return [pid for pid in gateway_windows._live_gateway_pids(home=home)
+                    if pid != old_pid and pid not in taken]
+
+        targets.append((("profile", name), probe, True))
+
+    for index, entry in enumerate(unmapped):
+        targets.append((("unmapped", index),
+                        lambda scan, entry=entry: _unmapped_ready_filter(entry, taken)(scan()), False))
+
+    ready = _poll_until_ready(targets, deadline, taken)
+    unresolved_profiles = {name: pid for name, pid in profiles.items()
+                           if ("profile", name) not in ready}
+    unresolved_unmapped = [entry for index, entry in enumerate(unmapped)
+                           if ("unmapped", index) not in ready]
+    token["profiles"] = unresolved_profiles
+    token["unmapped"] = unresolved_unmapped
+    token["relaunched_profiles"] = sorted(name for name in profiles
+                                         if ("profile", name) in ready)
+
+    for name in token["relaunched_profiles"]:
+        gateway_windows._write_start_attestation(
+            ready[("profile", name)], f"relaunch after update (profile {name})",
+            home=profile_homes[name])
+    for index, entry in enumerate(unmapped):
+        if ("unmapped", index) in ready:
+            gateway_windows._write_start_attestation(
+                ready[("unmapped", index)], "relaunch after update",
+                home=Path(entry["home"]) if entry.get("home") else None)
+
+    unready = sorted(unresolved_profiles) + [
+        f"pid {entry.get('pid')}" for entry in unresolved_unmapped]
+    if unready:
+        raise RuntimeError("Windows gateway relaunch after update was not verified alive: "
+                           + ", ".join(unready))
+
 
 
 def _resume_windows_gateways_after_update(token: dict | None) -> None:
