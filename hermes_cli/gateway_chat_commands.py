@@ -51,6 +51,7 @@ def _rewind_to(turns_back):
     def payload(snapshot):
         turns = _user_turns(snapshot)
         return {"target_message_id": turns[-turns_back]["row_id"]} if len(turns) >= turns_back else None
+    payload._prepared_key = ("rewind", turns_back)
     return payload
 
 
