@@ -59,7 +59,7 @@ def owner_request(home, verb, params, *, timeout=30):
         from gateway.runtime_bootstrap_windows import query_runtime_control
         raw = query_runtime_control(home, request, timeout)
     else:
-        from gateway.runtime_discovery import _socket_path
+        from gateway.runtime_discovery import connect_private
         from gateway.control_socket import _read_response_line
         with connect_private(home, timeout) as peer:
             peer.sendall(request)
