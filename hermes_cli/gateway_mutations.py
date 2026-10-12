@@ -8,7 +8,7 @@ class PreparedMutations:
     def __init__(self):
         self.pending = {}
 
-    async def apply(self, client, session_id, operation, payload):
+    async def apply(self, client, session_id, operation, payload, *, confirm=None):
         encoded = json.dumps(payload, sort_keys=True)
         key = (session_id, operation, encoded)
         if key not in self.pending:
@@ -29,10 +29,51 @@ class PreparedMutations:
                                 'unsupported_compress_options'}:
                     self.pending.pop(key)
                 raise
-        return entry['result']
+        result = entry['result']
+        if result.get('status') == 'confirmation_required':
+            if confirm is None:
+                raise GatewayClientError(result.get('confirm_message') or 'confirmation_required')
+            if not await confirm(result):
+                self.pending.pop(key, None)
+                return {'status': 'cancelled'}
+            # The owner's confirmation token is scoped to the retained snapshot and
+            # original request identity; do not refresh revision/generation here.
+            params = dict(entry['params'])
+            params['payload'] = {**params['payload'], 'confirm': result['confirm']}
+            try:
+                confirmed = await client.rpc('session.mutate', **params)
+            except GatewayClientError as exc:
+                if str(exc) in {'invalid_params', 'revision_conflict', 'stale_generation',
+                                'session_busy', 'unknown_execution', 'permission_denied',
+                                'model_resolution_failed', 'nothing_to_compress',
+                                'unsupported_compress_options'}:
+                    self.pending.pop(key, None)
+                raise
+            entry['result'] = confirmed
+            return confirmed
+        return result
 
     def acknowledge(self, session_id, operation, payload):
         self.pending.pop((session_id, operation, json.dumps(payload, sort_keys=True)), None)
+
+
+def confirmation_title(refusal):
+    """Human-readable label for the owner\'s guarded model-switch refusal."""
+    warnings = refusal.get("warnings") or []
+    return " / ".join(str(w.get("title")) for w in warnings if w.get("title")) or "Confirm model switch"
+
+
+def confirm_choice(raw, choices):
+    """Resolve an explicit menu choice; ambiguous input always cancels."""
+    answer = str(raw or "").strip().lower()
+    if answer in {"y", "yes"}:
+        return choices[0][0]
+    if answer in {"n", "no"}:
+        return "cancel"
+    for index, (key, label, *_rest) in enumerate(choices, 1):
+        if answer in {str(index), str(key).lower(), str(label).strip().lower()}:
+            return key
+    return "cancel"
 
 
 def compress_payload(arg):
