@@ -77,6 +77,7 @@ class GatewayACPAgent(acp.Agent):
         self._changed = asyncio.Condition()
         self._failure = None
         self._permissions = {}
+        self._form_elicitation = False
         self._admissions = {}
         self._submitting = set()
         self._pending_cancels = set()
@@ -86,8 +87,18 @@ class GatewayACPAgent(acp.Agent):
 
     def on_connect(self, conn):
         self._conn = conn
+        from acp_adapter.elicitation import client_supports_form_elicitation
+        def observe(event):
+            message = event.message
+            if (getattr(event.direction, 'value', None) == 'incoming'
+                    and message.get('method') == 'initialize'):
+                self._form_elicitation = client_supports_form_elicitation(message.get('params'))
+        if hasattr(conn, 'add_observer'):
+            conn.add_observer(observe)
 
     async def initialize(self, **kwargs):
+        from acp_adapter.elicitation import client_supports_form_elicitation
+        self._form_elicitation = self._form_elicitation or client_supports_form_elicitation(kwargs)
         from hermes_cli import __version__
         from acp_adapter.auth import build_auth_methods
         return InitializeResponse(protocol_version=acp.PROTOCOL_VERSION,
@@ -396,10 +407,10 @@ class GatewayACPAgent(acp.Agent):
                     async with self._changed:
                         self._changed.notify_all()
             return
-        if kind == "approval.request":
+        if kind in {"approval.request", "clarify.request"}:
             self._permission(sid, payload)
             return
-        if kind == "approval.settled":
+        if kind in {"approval.settled", "clarify.settled"}:
             task = self._permissions.pop((sid, payload["prompt_id"], payload["execution_generation"]), None)
             if task:
                 task.cancel()
@@ -446,17 +457,45 @@ class GatewayACPAgent(acp.Agent):
                 self._changed.notify_all()
 
     def _permission(self, session_id, prompt):
-        if prompt.get("kind") != "approval" or self._conn is None:
+        if prompt.get("kind") not in {"approval", "clarify"} or self._conn is None:
             return
         key = (session_id, prompt["prompt_id"], prompt["execution_generation"])
         if key not in self._permissions:
             self._permissions[key] = asyncio.create_task(self._answer_permission(session_id, prompt))
+
+    async def _answer_clarification(self, session_id, prompt):
+        from acp_adapter.elicitation import (ELICITATION_METHOD, build_clarify_elicitation,
+                                             build_clarify_permission, elicited_answer)
+        try:
+            answer = None
+            if self._form_elicitation:
+                result = await self._conn.send_request(
+                    ELICITATION_METHOD, build_clarify_elicitation(session_id, prompt))
+                answer = elicited_answer(result)
+            else:
+                from acp.schema import AllowedOutcome
+                card, options, answers = build_clarify_permission(prompt)
+                response = await self._conn.request_permission(
+                    session_id=session_id, tool_call=card, options=options)
+                if isinstance(response.outcome, AllowedOutcome):
+                    answer = answers.get(response.outcome.option_id)
+                elif getattr(response.outcome, 'outcome', None) == 'cancelled':
+                    answer = ''
+            if answer is not None:
+                await self._gateway.rpc('clarify.respond', session_id=session_id,
+                    prompt_id=prompt['prompt_id'], execution_generation=prompt['execution_generation'],
+                    answer=answer)
+        except Exception:
+            logger.info('ACP clarification viewer detached or control expired', exc_info=True)
 
     async def _answer_permission(self, session_id, prompt):
         from acp.schema import AllowedOutcome
         from acp_adapter.permissions import (
             _build_permission_options, _build_permission_tool_call, _OPTION_ID_TO_HERMES,
         )
+        if prompt.get('kind') == 'clarify':
+            await self._answer_clarification(session_id, prompt)
+            return
         choices = prompt["choices"]
         options = [option for option in _build_permission_options(
             allow_permanent="always" in choices, allow_session="session" in choices)
