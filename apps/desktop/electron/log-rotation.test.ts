@@ -63,7 +63,7 @@ test('an under-cap or absent active log is left alone', () => {
   assert.deepEqual(touched, [])
 })
 
-test('truncation really frees the file, and an append-mode writer restarts at 0', () => {
+test.skipIf(process.platform === 'win32')('truncation really frees the file, and an append-mode writer restarts at 0', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hermes-log-bound-'))
   const file = path.join(dir, 'desktop-chromium.log')
 

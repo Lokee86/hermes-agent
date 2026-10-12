@@ -1,11 +1,10 @@
 import assert from 'node:assert/strict'
-import { exec as execCallback, spawn } from 'node:child_process'
+import { spawn } from 'node:child_process'
 import crypto from 'node:crypto'
 import fs from 'node:fs'
 import { mkdtemp, readFile, rm } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
-import { promisify } from 'node:util'
 
 import { test } from 'vitest'
 
@@ -76,7 +75,20 @@ test.runIf(process.platform === 'win32')(
   async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), 'hermes-win-marker-'))
     const marker = path.join(root, '.hermes-update-in-progress')
-    const run = (command: string) => promisify(execCallback)(command, { timeout: 30_000 })
+    const run = (command: string, options: { stdinData?: string } = {}) =>
+      new Promise<{ stdout: string; stderr: string }>((resolve, reject) => {
+        const args = command.slice('powershell.exe '.length).match(/(?:[^\s]+|"[^"]*")+/g) || []
+        const child = spawn('powershell.exe', args, { windowsHide: true })
+        let stdout = ''
+        let stderr = ''
+        child.stdout.on('data', data => { stdout += data.toString() })
+        child.stderr.on('data', data => { stderr += data.toString() })
+        child.once('error', reject)
+        child.once('close', code => code === 0
+          ? resolve({ stdout, stderr })
+          : reject(Object.assign(new Error(`PowerShell exited ${code}`), { stdout, stderr })))
+        child.stdin.end(options.stdinData || '')
+      })
     const command = atomicWindowsSpawnCommand({ hermesHome: root, python: path.join(root, 'missing-python.exe') })
 
     // An updater: hold <marker>.lock sharing nothing (marker.ps1 Open-MarkerLock),
@@ -113,7 +125,7 @@ test.runIf(process.platform === 'win32')(
       updater.kill()
       await new Promise(resolve => updater.once('exit', resolve))
       await assertWindowsRemoteInstallUpdateClear(
-        sshWith(async (probe: string) => (await run(probe)).stdout),
+        sshWith(async (probe: string, options: { stdinData?: string }) => (await run(probe, options)).stdout),
         root
       )
       // The dead claim is deleted inside the hold; the missing python then fails the spawn itself.
@@ -121,7 +133,7 @@ test.runIf(process.platform === 'win32')(
       await assert.rejects(readFile(marker), { code: 'ENOENT' })
     } finally {
       updater.kill()
-      await rm(root, { recursive: true, force: true })
+      await rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 })
     }
   },
   60_000

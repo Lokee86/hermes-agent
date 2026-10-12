@@ -36,7 +36,12 @@ function fixture() {
   }
   delete env.PYTHONHOME
   delete env.PYTHONPATH
-  // The digest hook only needs the manifest to mark the payload as present.
+  // afterPack also checks that the packaged readiness matcher recognizes both backend tokens.
+  const asar = path.join(directory, 'resources', 'app.asar')
+  fs.writeFileSync(asar, 'fixture asar; readiness source is in the unpacked module')
+  const main = path.join(`${asar}.unpacked`, 'dist', 'electron-main.mjs')
+  fs.mkdirSync(path.dirname(main), { recursive: true })
+  fs.writeFileSync(main, 'const ready = /HERMES_(?:BACKEND|DASHBOARD)_READY/;')
   fs.writeFileSync(path.join(payload, 'manifest.json'), '{}')
   execFileSync(python, ['-c',
     'from pathlib import Path; import sys; from scripts.bundles.payload import record_tools; from pm.store import current_target; root=Path(sys.argv[1]); record_tools(root,Path("pm/lock.json"),current_target(),{"uv":"uv"})',

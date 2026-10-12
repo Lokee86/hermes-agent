@@ -7,6 +7,8 @@ vi.mock('dbus-native', () => ({ createClient }))
 
 import { watchLinuxTrayHost } from './tray-host'
 
+vi.stubEnv('XDG_RUNTIME_DIR', '/run/user/test')
+
 function bus(hostRegistered: boolean) {
   const connection = Object.assign(new EventEmitter(), { stream: { destroy: vi.fn() } })
   const invoke = vi.fn(async (): Promise<unknown> => ({ signature: 'b', value: hostRegistered }))

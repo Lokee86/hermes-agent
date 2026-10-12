@@ -98,7 +98,7 @@ test('controlSocketPath is stable, short, and host-distinct', () => {
   assert.match(path.basename(a), /^[0-9a-f]{16}\.sock$/)
 })
 
-test('controlSocketPath default base stays under sun_path even with the temp-listener suffix', () => {
+test.skipIf(process.platform === 'win32')('controlSocketPath default base stays under sun_path even with the temp-listener suffix', () => {
   // OpenSSH binds a temporary listener at `<ControlPath>.<16 random chars>` (a
   // 17-byte suffix) while opening the master. The macOS regression was the
   // default base under os.tmpdir() (/var/folders/.../T/) pushing it over 104.
@@ -556,7 +556,7 @@ test('forward() issues -O forward with a loopback-bound -L spec', async () => {
   await conn.cancelForward(5000, 6000)
 })
 
-test('mux forward keeps the ControlPersist master alive until the final forward is cancelled', async () => {
+test.skipIf(process.platform === 'win32')('mux forward keeps the ControlPersist master alive until the final forward is cancelled', async () => {
   vi.useFakeTimers()
 
   try {
@@ -730,7 +730,7 @@ test('exec() does not classify a signal death with empty stderr as unreachable',
 
 test('forward() does not classify a signal death with empty stderr as unreachable', async () => {
   const spawnFn = scriptedSpawn([{ signal: 'SIGPIPE', stderr: '' }])
-  const conn = new SshConnection({ host: 'box', user: 'me' }, { spawnFn, controlDir: '/tmp/d' })
+  const conn = new SshConnection({ host: 'box', user: 'me' }, { spawnFn, mux: true, controlDir: '/tmp/d' })
 
   await assert.rejects(
     () => conn.forward(5000, 6000),
@@ -757,6 +757,7 @@ test('close() does not report a signal-killed -O exit with empty stderr as unrea
     { host: 'box', user: 'me' },
     {
       spawnFn,
+      mux: true,
       controlDir: '/tmp/d',
       controlMasterHolders: createControlMasterHolders(),
       rememberLog: line => logs.push(line)
