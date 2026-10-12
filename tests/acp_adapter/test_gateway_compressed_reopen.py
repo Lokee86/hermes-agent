@@ -63,7 +63,7 @@ async def test_compressed_acp_chat_lists_and_reopens_under_its_logical_id(tmp_pa
         db.release_compression_lock(ref.session_id, 'fixture')
 
         agent = GatewayACPAgent()
-        agent._home = tmp_path
+        agent._home = db.db_path.parent
         agent._gateway, agent._conn = _Bridge(connection), _Editor()
         listed = [row.session_id for row in (await agent.list_sessions(cwd=str(tmp_path))).sessions]
         assert listed == [ref.session_id], 'the picker must offer the logical id, not the physical tip'
@@ -73,7 +73,7 @@ async def test_compressed_acp_chat_lists_and_reopens_under_its_logical_id(tmp_pa
         # An editor that saved the tip id before this fix still reopens the same conversation,
         # and every update it sees stays addressed to the id it holds.
         held = GatewayACPAgent()
-        held._home = tmp_path
+        held._home = db.db_path.parent
         held._gateway, held._conn = _Bridge(connection), _Editor()
         await held.load_session(cwd=str(tmp_path), session_id='compressed-tip', mcp_servers=[])
         assert list(held._snapshots) == [ref.session_id]
