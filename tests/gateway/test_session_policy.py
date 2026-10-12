@@ -88,7 +88,8 @@ async def test_launch_options_reach_the_owner_frozen_and_hooks_consented(tmp_pat
         return restore_policy(local_receipt(authority.db, session_id)['policy'])
     policy = frozen(sid)
     assert 'LAUNCH_SKILL_BODY' in policy.skills_prompt and policy.pass_session_id and policy.checkpoints_enabled
-    assert str(hook) in (home / shell_hooks.ALLOWLIST_FILENAME).read_text()
+    assert any(item['command'] == str(hook) for item in json.loads(
+        (home / shell_hooks.ALLOWLIST_FILENAME).read_text())['approvals'])
     assert len(get_plugin_manager()._hooks['pre_tool_call']) == 1
     # Retrying the request id resumes the frozen route; nothing re-renders or re-registers.
     assert await create('launch', **launch) == sid
