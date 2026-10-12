@@ -3,7 +3,9 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 
-import { test } from 'vitest'
+import { test, vi } from 'vitest'
+
+vi.mock('electron', () => ({ nativeImage: { createFromPath: () => ({ isEmpty: () => true }) } }))
 
 import { appIconCandidates, decodingFileProbe, resolveAppIcon, shouldOverrideDockIcon } from './app-icon'
 

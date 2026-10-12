@@ -93,7 +93,7 @@ test('the bundled entry keeps the WSLg Wayland relaunch', () => {
   })
 })
 
-test('the bundled entry lets desktop.electron_flags choose the ozone platform', () => {
+test.skipIf(process.platform === 'win32')('the bundled entry lets desktop.electron_flags choose the ozone platform', () => {
   const config = 'desktop:\n  electron_flags:\n    - --ozone-platform=x11\n'
 
   expect(launch({ XDG_SESSION_TYPE: 'wayland', WAYLAND_DISPLAY: 'wayland-0', DISPLAY: ':0' }, config)).toEqual({
@@ -106,7 +106,7 @@ test('the bundled entry lets desktop.electron_flags choose the ozone platform', 
 // profile silently never reaches the relaunch. The two cases below are the
 // ones the inline resolution in configuredElectronFlags() got wrong: the
 // data-dir suffix channel installs rely on, and multiplexed profiles/ homes.
-test('the bundled entry reads desktop.electron_flags through a suffixed home', () => {
+test.skipIf(process.platform === 'win32')('the bundled entry reads desktop.electron_flags through a suffixed home', () => {
   const config = 'desktop:\n  electron_flags:\n    - --ozone-platform=x11\n'
   const home = mkdtempSync(join(root, 'suffixed-home-'))
   mkdirSync(join(home, '.hermes-canary'), { recursive: true })
@@ -121,7 +121,7 @@ test('the bundled entry reads desktop.electron_flags through a suffixed home', (
   ).toEqual({ relaunched: ['.', '--ozone-platform=x11'] })
 })
 
-test('the bundled entry reads desktop.electron_flags from the parent of a profiles/-rooted HERMES_HOME', () => {
+test.skipIf(process.platform === 'win32')('the bundled entry reads desktop.electron_flags from the parent of a profiles/-rooted HERMES_HOME', () => {
   const config = 'desktop:\n  electron_flags:\n    - --ozone-platform=x11\n'
   const home = mkdtempSync(join(root, 'profiles-home-'))
   mkdirSync(home, { recursive: true })

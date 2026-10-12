@@ -415,6 +415,9 @@ test('actual MSIX manifest writer consumes the channel quad across rollover inst
       path.join(app, 'build/agent-payload/manifest.json'),
       JSON.stringify({ launchers: ['hermes-no-registry-needed', 'hermes-no-registry-needed-acp'] })
     )
+    // The manifest fixture has no unpacked Windows executable; provide the
+    // version sidecar that the release recorder accepts for packaged builds.
+    fs.writeFileSync(path.join(root, 'version-info-x64.json'), JSON.stringify({ productVersion: '1.2.3' }))
     const facts: ManifestFacts[] = []
 
     for (const sequence of [65535, 65536, 65537, 0xffffffff]) {
