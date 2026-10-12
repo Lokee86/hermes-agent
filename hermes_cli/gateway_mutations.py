@@ -8,11 +8,22 @@ class PreparedMutations:
     def __init__(self):
         self.pending = {}
 
+    @staticmethod
+    def _key(session_id, operation, payload):
+        if callable(payload):
+            # Builders can be recreated by a slash-command invocation. A
+            # declared key identifies the *intent*, never a new snapshot.
+            return (session_id, operation, "builder", getattr(payload, "_prepared_key", id(payload)))
+        return (session_id, operation, "payload", json.dumps(payload, sort_keys=True))
+
     async def apply(self, client, session_id, operation, payload, *, confirm=None):
-        encoded = json.dumps(payload, sort_keys=True)
-        key = (session_id, operation, encoded)
+        key = self._key(session_id, operation, payload)
         if key not in self.pending:
             snapshot = await client.rpc('session.resume', session_id=session_id)
+            resolved = payload(snapshot) if callable(payload) else payload
+            if resolved is None:
+                return {'status': 'nothing'}
+            encoded = json.dumps(resolved, sort_keys=True)
             self.pending[key] = {'params': dict(session_id=session_id, operation=operation,
                 payload=json.loads(encoded), request_id=uuid.uuid4().hex,
                 expected_revision=snapshot['revision'], expected_generation=snapshot['execution_generation'])}
@@ -21,8 +32,7 @@ class PreparedMutations:
             try:
                 entry['result'] = await client.rpc('session.mutate', **entry['params'])
             except GatewayClientError as exc:
-                # A disconnect is not a definitive authority refusal. Preserve
-                # the tuple; never refresh its preconditions behind the user.
+                # Ambiguous delivery retains this exact request and CAS snapshot.
                 if str(exc) in {'invalid_params', 'revision_conflict', 'stale_generation',
                                 'session_busy', 'unknown_execution', 'permission_denied',
                                 'model_resolution_failed', 'nothing_to_compress',
@@ -36,8 +46,6 @@ class PreparedMutations:
             if not await confirm(result):
                 self.pending.pop(key, None)
                 return {'status': 'cancelled'}
-            # The owner's confirmation token is scoped to the retained snapshot and
-            # original request identity; do not refresh revision/generation here.
             params = dict(entry['params'])
             params['payload'] = {**params['payload'], 'confirm': result['confirm']}
             try:
@@ -54,7 +62,7 @@ class PreparedMutations:
         return result
 
     def acknowledge(self, session_id, operation, payload):
-        self.pending.pop((session_id, operation, json.dumps(payload, sort_keys=True)), None)
+        self.pending.pop(self._key(session_id, operation, payload), None)
 
 
 def confirmation_title(refusal):
