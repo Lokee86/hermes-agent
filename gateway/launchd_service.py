@@ -676,11 +676,28 @@ def _spawn_deferred_launchd_reload(
     return True
 
 
+def _launchd_plist_owned_by_current_home(plist_path: Path) -> bool:
+    """Fail closed when a LaunchAgent's pinned installation home differs or is unreadable."""
+    import plistlib
+
+    try:
+        data = plistlib.loads(plist_path.read_bytes())
+        pinned = data["EnvironmentVariables"]["HERMES_HOME"]
+        if not isinstance(pinned, str) or not pinned:
+            return False
+        return Path(pinned).expanduser().resolve() == get_hermes_home().resolve()
+    except (OSError, ValueError, TypeError, KeyError, AttributeError, plistlib.InvalidFileException):
+        return False
+
+
 def refresh_launchd_plist_if_needed() -> bool:
     """Rewrite the installed plist when the generated one differs, then bootout/bootstrap so launchd
     re-reads it immediately."""
     plist_path = get_launchd_plist_path()
     if not plist_path.exists() or launchd_plist_is_current():
+        return False
+    if not _launchd_plist_owned_by_current_home(plist_path):
+        print_error(f"Refusing to replace launchd service owned by another Hermes home: {plist_path}")
         return False
 
     new_plist = generate_launchd_plist()
@@ -750,6 +767,9 @@ def launchd_install(force: bool = False, *, start_now: bool = True):
     load = start_now or _launchctl_label_supervising_process(label)
 
     if plist_path.exists() and not force:
+        if not _launchd_plist_owned_by_current_home(plist_path):
+            print_error(f"Refusing to replace launchd service owned by another Hermes home: {plist_path}; use --force to override")
+            return
         if launchd_plist_is_current():
             print(f"Service already installed at: {plist_path}")
             print("Use --force to reinstall")

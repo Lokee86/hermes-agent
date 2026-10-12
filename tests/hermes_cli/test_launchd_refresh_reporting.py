@@ -1,12 +1,14 @@
 """launchd plist refresh must not report success when launchd never registered the service (#12866)."""
 from gateway import launchd_service
 import subprocess
+import plistlib
 from unittest.mock import MagicMock
 
 
 def _stale_plist(tmp_path, monkeypatch, *, registered: bool):
     plist_path = tmp_path / "com.hermes.plist"
-    plist_path.write_text("<old/>", encoding="utf-8")
+    plist_path.write_bytes(plistlib.dumps({"EnvironmentVariables": {"HERMES_HOME": str(tmp_path)}}))
+    monkeypatch.setattr(launchd_service, "get_hermes_home", lambda: tmp_path)
     monkeypatch.setattr(launchd_service, "get_launchd_plist_path", lambda: plist_path)
     monkeypatch.setattr(launchd_service, "launchd_plist_is_current", lambda: False)
     monkeypatch.setattr(launchd_service, "generate_launchd_plist", lambda: "<new/>")

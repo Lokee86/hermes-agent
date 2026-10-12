@@ -39,6 +39,7 @@ def launchd(tmp_path, monkeypatch):
     monkeypatch.setattr(gateway_cli, "is_termux", lambda: False)
     monkeypatch.setattr(gateway_cli, "_guard_named_profile_under_multiplexer", lambda **k: None)
     monkeypatch.setattr(launchd_service, "get_launchd_plist_path", lambda: state.plist)
+    monkeypatch.setattr(launchd_service, "get_hermes_home", lambda: tmp_path)
     monkeypatch.setattr(launchd_service, "get_launchd_label", lambda: LABEL)
     monkeypatch.setattr(launchd_service, "_launchd_domain", lambda: DOMAIN)
     monkeypatch.setattr(launchd_service, "refuse_temp_home_write", lambda *a: False)
@@ -72,7 +73,7 @@ def test_cli_no_start_now_loads_only_a_gateway_launchd_already_runs(
     launchd already runs is reloaded as before, not stopped."""
     if stale_plist:
         launchd.plist.parent.mkdir(parents=True)
-        launchd.plist.write_text("<plist>old</plist>", encoding="utf-8")
+        launchd.plist.write_bytes(plistlib.dumps({"EnvironmentVariables": {"HERMES_HOME": str(launchd.plist.parent.parent)}}))
     launchd.supervised_pid = supervised_pid
 
     gateway_cli.gateway_command(_parse("install", "--no-start-now"))
