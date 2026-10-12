@@ -171,6 +171,11 @@ class GatewayACPAgent(acp.Agent):
                 await self._conn.session_update(session_id=session_id, update=update)
         for pending in snapshot.get("prompts", []):
             self._permission(session_id, pending)
+        unknown = next((p for p in snapshot.get('pending', []) if p.get('status') == 'unknown'), None)
+        if unknown is not None and self._conn:
+            await self._conn.session_update(session_id=session_id,
+                update=acp.update_agent_message_text(self._unknown_recovery(
+                    session_id, unknown['admission_id'], unsent=True)))
         return snapshot
 
     async def load_session(self, cwd, session_id, mcp_servers=None, **kwargs):
@@ -266,9 +271,19 @@ class GatewayACPAgent(acp.Agent):
                             updated_at=row.get("updated_at")) for row in rows[:50]]
         return ListSessionsResponse(sessions=page, next_cursor=page[-1].session_id if len(rows) > 50 else None)
 
+    def _unknown_recovery(self, session_id, admission_id, *, unsent=False):
+        return (f'unknown_execution: do not resend accepted input; '
+                f'chat --cli --resume {session_id} then /discard {admission_id}; '
+                + ('nothing was submitted' if unsent else 'inspect the existing admission'))
+
     async def prompt(self, prompt, session_id, **kwargs):
         if session_id not in self._snapshots:
             raise GatewayClientError("not_found")
+        unknown = next((p for p in self._snapshots[session_id].get('pending', [])
+                        if p.get('status') == 'unknown'), None)
+        if unknown is not None:
+            raise GatewayClientError(self._unknown_recovery(
+                session_id, unknown['admission_id'], unsent=True))
         from acp_adapter.content import _content_blocks_to_openai_user_content
         text, attachments = _stage_user_content(_content_blocks_to_openai_user_content(prompt))
         if text.lstrip().startswith('/') and not attachments:
@@ -309,21 +324,24 @@ class GatewayACPAgent(acp.Agent):
         admission_id = receipt["admission_id"]
         self._admissions[session_id] = admission_id
         if receipt.get("status") == "terminal":
-            await self._settled_receipt(client, held_id, session_id, receipt)
+            self._admissions.pop(session_id, None)
+            return PromptResponse(stop_reason='end_turn')
         elif receipt.get("status") == "unknown":
             self._admissions.pop(session_id, None)
             raise GatewayClientError(self._unknown_recovery(session_id, admission_id))
-        if session_id in self._pending_cancels:
-            self._pending_cancels.discard(session_id)
-            await self._cancel_admission(session_id, admission_id)
         try:
             if session_id in self._pending_cancels:
                 self._pending_cancels.discard(session_id)
                 await self._cancel_admission(session_id, admission_id)
             async with self._changed:
-                await self._changed.wait_for(lambda: admission_id in self._terminals or self._failure is not None)
+                await self._changed.wait_for(lambda: admission_id in self._terminals or self._failure is not None
+                    or any(p.get('status') == 'unknown' for p in self._snapshots[session_id].get('pending', [])))
                 if self._failure:
                     raise self._failure
+                unknown = next((p for p in self._snapshots[session_id].get('pending', [])
+                                if p.get('status') == 'unknown'), None)
+                if unknown is not None:
+                    raise GatewayClientError(self._unknown_recovery(session_id, unknown['admission_id']))
                 terminal = self._terminals.pop(admission_id)
         finally:
             # Do not let one prompt tear down a newer mapping if the session has
@@ -331,6 +349,8 @@ class GatewayACPAgent(acp.Agent):
             if self._admissions.get(session_id) == admission_id:
                 self._admissions.pop(session_id, None)
         outcome = terminal.get("outcome")
+        if outcome == 'unknown':
+            raise GatewayClientError(self._unknown_recovery(session_id, admission_id))
         if outcome == "failed":
             raise GatewayClientError("admitted_turn_failed")
         return PromptResponse(stop_reason="cancelled" if outcome == "cancelled" else "end_turn")
@@ -367,6 +387,15 @@ class GatewayACPAgent(acp.Agent):
         aid = event.get("admission_id")
         if kind == "session.replay_gap":
             raise GatewayClientError("session_replay_gap")
+        if kind == 'session.info':
+            pending = payload.get('pending', [])
+            if isinstance(pending, list):
+                self._snapshots[sid]['pending'] = pending
+                unknown = next((p for p in pending if p.get('status') == 'unknown'), None)
+                if unknown is not None:
+                    async with self._changed:
+                        self._changed.notify_all()
+            return
         if kind == "approval.request":
             self._permission(sid, payload)
             return
