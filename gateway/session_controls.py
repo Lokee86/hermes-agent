@@ -253,7 +253,23 @@ class AuthorityConnection:
             raise RuntimeStoreError('invalid_params')
         ref = title and resolve_titled_session(self.authority, self.actor, title, missing_ok=True)
         if not ref:
-            ref = create_local_session(self.authority, self.actor, params)
+            from gateway.session_local_recovery import local_identity
+            from gateway.session_policy import launch_skills, render_launch_skills
+            import asyncio
+            request_id = params.setdefault('request_id', uuid.uuid4().hex)
+            skills_prompt = None
+            if launch_skills(params):
+                # A retry must use its durable frozen policy, not re-read skill files.
+                existing = (isinstance(request_id, str) and request_id
+                            and self.authority.db.get_session(local_identity(
+                                self.authority.profile_id, self.actor.subject, request_id)))
+                if not existing:
+                    # Rendering reads the skill tree and must not block the owner loop.
+                    session_id = local_identity(self.authority.profile_id, self.actor.subject,
+                                                request_id or '')
+                    skills_prompt = await asyncio.to_thread(render_launch_skills, params, session_id)
+            ref = create_local_session(self.authority, self.actor, params,
+                                       skills_prompt=skills_prompt)
             if title:
                 title_new_session(self.authority, ref, title)
             if hidden:
