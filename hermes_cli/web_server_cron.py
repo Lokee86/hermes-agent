@@ -94,6 +94,7 @@ def _cron_profile_dicts() -> list[dict[str, Any]]:
             for name, home in profile_serving.profiles_to_serve(multiplex=True, include_standalone=True, include_parked=True)]
     except Exception:
         _log.exception("Failed to list profiles for cron dashboard; falling back to directory scan")
+        from hermes_cli import profiles as profiles_mod
         return _fallback_profile_dicts(profiles_mod)
 
 
