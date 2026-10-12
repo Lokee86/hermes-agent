@@ -238,7 +238,9 @@ def find_gateway_pids(exclude_pids: set | None = None, all_profiles: bool = Fals
 
 
 def _gateway_run_args_for_profile(profile: str) -> list[str]:
-    args = [_service_process.python_path(), "-m", "hermes_cli.main"]
+    from hermes_cli._launchers import runtime_command
+
+    args = []
     if profile != "default":
         args.extend(["--profile", profile])
     args.extend(["gateway", "run", "--replace"])
