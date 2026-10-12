@@ -75,6 +75,7 @@ class GatewayACPAgent(acp.Agent):
         self._event_task = None
         self._terminals = {}
         self._streamed = {}
+        self._delivered = {}
         self._changed = asyncio.Condition()
         self._failure = None
         self._permissions = {}
@@ -130,6 +131,7 @@ class GatewayACPAgent(acp.Agent):
                 self._aliases.clear()
                 self._terminals.clear()
                 self._streamed.clear()
+                self._delivered.clear()
                 for task in self._permissions.values():
                     task.cancel()
                 self._permissions.clear()
@@ -421,6 +423,9 @@ class GatewayACPAgent(acp.Agent):
         # In-process turns publish ``tool_name``; managed workers publish ``name``.
         tool_name = payload.get("tool_name") or payload.get("name") or "tool"
         if kind == "tool.start":
+            # A tool closes the preceding assistant-text segment. Completion text
+            # must only be compared with the segment after this tool.
+            self._streamed.pop(aid, None)
             from acp_adapter.tools import build_tool_start, coerce_tool_args
             args = coerce_tool_args(payload.get("args"))
             self._tool_args[(sid, payload["tool_call_id"])] = (tool_name, args)
@@ -437,9 +442,19 @@ class GatewayACPAgent(acp.Agent):
                     payload["tool_call_id"], name, result=result if isinstance(result, str) else None,
                     function_args=args))
             return
+        if kind == 'message.interim':
+            text = payload.get('text') or ''
+            if text and not payload.get('already_streamed'):
+                self._delivered.setdefault(aid, set()).add(text)
+                if self._conn:
+                    await self._conn.session_update(session_id=self._editor_id(sid),
+                        update=acp.update_agent_message_text(text))
+            return
         if kind == "message.delta":
-            text = payload.get("text", "")
+            text = payload.get("text") or ""
             self._streamed[aid] = self._streamed.get(aid, "") + text
+            if text:
+                self._delivered.setdefault(aid, set()).add(self._streamed[aid])
             if text and self._conn:
                 await self._conn.session_update(session_id=self._editor_id(sid), update=acp.update_agent_message_text(text))
         elif kind == "message.complete":
@@ -447,10 +462,16 @@ class GatewayACPAgent(acp.Agent):
 
             text = payload.get("text", "")
             # Local interrupt status is metadata; ACP carries it in stop_reason.
-            if payload.get("outcome") == "cancelled" and text.startswith(INTERRUPT_WAITING_FOR_MODEL_PREFIX):
+            if payload.get("outcome") == "cancelled" and isinstance(text, str) and text.startswith(INTERRUPT_WAITING_FOR_MODEL_PREFIX):
                 text = ""
             prefix = self._streamed.pop(aid, "")
-            remainder = text[len(prefix):] if text.startswith(prefix) else text
+            seen = self._delivered.pop(aid, set())
+            if not isinstance(text, str):
+                text = ''
+            remainder = '' if (payload.get('response_reused') and text in seen) else (
+                text[len(prefix):] if text.startswith(prefix) else text)
+            if text in seen and not prefix:
+                remainder = ''
             if remainder and self._conn:
                 await self._conn.session_update(session_id=self._editor_id(sid), update=acp.update_agent_message_text(remainder))
             async with self._changed:
