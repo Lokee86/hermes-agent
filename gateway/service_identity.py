@@ -54,10 +54,15 @@ def _native_service_homes() -> set[Path]:
 
 
 def _bare_unit_pinned_home() -> Path | None:
-    """Home pinned by the bare system unit when root on Linux."""
-    if not sys.platform.startswith("linux") or os.geteuid() != 0:
+    """Home pinned by the bare unit in the current Linux service scope."""
+    if not sys.platform.startswith("linux"):
         return None
-    pinned = hermes_home_pinned_by_unit(SYSTEM_UNIT_DIR / f"{SERVICE_BASE}.service")
+    if os.geteuid() == 0:
+        path = SYSTEM_UNIT_DIR / f"{SERVICE_BASE}.service"
+    else:
+        from gateway.systemd_identity import user_unit_dir
+        path = user_unit_dir() / f"{SERVICE_BASE}.service"
+    pinned = hermes_home_pinned_by_unit(path)
     if not pinned:
         return None
     try:
