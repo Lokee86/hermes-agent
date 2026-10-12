@@ -41,7 +41,17 @@ def run_canonical_job(job, *, extra_prompt=None, cancel_event=None, execution_id
         nonlocal attempted
         attempted = True
         save()
-        receipt = await call('submit', params)
+        try:
+            receipt = await call('submit', params)
+        except Exception as exc:
+            from gateway.client import GatewayRPCError
+            if not isinstance(exc, GatewayRPCError):
+                raise
+            # An explicit owner RPC refusal to submit is definitive: no fire
+            # was admitted. Transport loss and status failures remain unknown.
+            journal.unlink(missing_ok=True)
+            error = f'{type(exc).__name__}: {exc}'
+            return False, f'# Cron Job: {job["id"]} (FAILED)\n\n{error}\n', '', error
         record['receipt'] = receipt
         save()
         while True:
