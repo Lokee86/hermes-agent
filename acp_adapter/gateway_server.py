@@ -266,7 +266,23 @@ class GatewayACPAgent(acp.Agent):
         session_id = self._aliases.get(session_id, session_id)
         client = await self._client()
         payload = {'model': model_id}
-        await self._mutations.apply(client, session_id, 'model', payload)
+        async def confirm(refusal):
+            from acp.schema import AllowedOutcome, PermissionOption
+            from acp_adapter.permissions import _build_permission_tool_call
+
+            options = [PermissionOption(option_id='allow_once', kind='allow_once', name='Switch once'),
+                       PermissionOption(option_id='deny', kind='reject_once', name='Cancel')]
+            card = _build_permission_tool_call('model switch', refusal.get('confirm_message', 'Confirm model switch'))
+            try:
+                response = await self._conn.request_permission(
+                    session_id=self._editor_id(session_id), tool_call=card, options=options)
+            except (asyncio.TimeoutError, TimeoutError):
+                return False
+            return isinstance(response.outcome, AllowedOutcome) and response.outcome.option_id == 'allow_once'
+
+        result = await self._mutations.apply(client, session_id, 'model', payload, confirm=confirm)
+        if result.get('status') == 'cancelled':
+            raise GatewayClientError('model_switch_cancelled')
         self._snapshots[session_id] = await client.rpc('session.resume', session_id=session_id)
         self._mutations.acknowledge(session_id, 'model', payload)
         return SetSessionModelResponse()

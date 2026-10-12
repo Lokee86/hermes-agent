@@ -1,4 +1,5 @@
 """Prepared native controls retain their identity across ambiguous RPC replies."""
+import asyncio
 import json
 import uuid
 from gateway.client import GatewayClientError
@@ -29,8 +30,9 @@ class PreparedMutations:
                 expected_revision=snapshot['revision'], expected_generation=snapshot['execution_generation'])}
         entry = self.pending[key]
         if 'result' not in entry:
+            params = entry.get('confirmation_params') or entry['params']
             try:
-                entry['result'] = await client.rpc('session.mutate', **entry['params'])
+                entry['result'] = await client.rpc('session.mutate', **params)
             except GatewayClientError as exc:
                 # Ambiguous delivery retains this exact request and CAS snapshot.
                 if str(exc) in {'invalid_params', 'revision_conflict', 'stale_generation',
@@ -43,11 +45,19 @@ class PreparedMutations:
         if result.get('status') == 'confirmation_required':
             if confirm is None:
                 raise GatewayClientError(result.get('confirm_message') or 'confirmation_required')
-            if not await confirm(result):
+            try:
+                approved = await confirm(result)
+            except (asyncio.TimeoutError, TimeoutError):
+                approved = False
+            if not approved:
                 self.pending.pop(key, None)
                 return {'status': 'cancelled'}
+            if not isinstance(result.get('confirm'), str) or not result['confirm']:
+                raise GatewayClientError('confirmation_required_missing_token')
             params = dict(entry['params'])
             params['payload'] = {**params['payload'], 'confirm': result['confirm']}
+            entry['confirmation_params'] = params
+            entry.pop('result', None)
             try:
                 confirmed = await client.rpc('session.mutate', **params)
             except GatewayClientError as exc:
@@ -58,6 +68,9 @@ class PreparedMutations:
                     self.pending.pop(key, None)
                 raise
             entry['result'] = confirmed
+            entry.pop('confirmation_params', None)
+            if confirmed.get('status') == 'confirmation_required':
+                raise GatewayClientError(confirmed.get('confirm_message') or 'confirmation_required')
             return confirmed
         return result
 
