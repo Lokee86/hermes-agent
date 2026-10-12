@@ -99,6 +99,8 @@ def reconcile_pending(*, allow_connect=True):
     from cron.jobs import pause_job, mark_job_run, save_job_output
     from cron.scheduler import _compose_run_delivery, _is_cron_silence_response
     from cron.delivery_queue import enqueue
+    from cron.executions import (recover_receipted_execution, execution_owner_live,
+                                 settle_delivery_outcome)
     import logging
 
     root = get_hermes_home() / 'cron' / 'admissions'
@@ -108,6 +110,9 @@ def reconcile_pending(*, allow_connect=True):
             params = record['params']
             if journal != journal_path(params['job_id'], params['request_id']):
                 raise ValueError('cron journal identity conflict')
+            # A still-live firing process owns its journal and terminal tail.
+            if execution_owner_live(params['request_id'], params['job_id']):
+                continue
             owner = owner_for_home(get_hermes_home())
             if owner is None and not allow_connect:
                 continue
@@ -127,6 +132,14 @@ def reconcile_pending(*, allow_connect=True):
             success, output, answer, error = state['result']
             job = state['job']
             job['execution_id'] = params['request_id']
+            # A live firer owns its own settlement; never duplicate its delivery.
+            if execution_owner_live(params['request_id'], job['id']):
+                continue
+            # Commit the canonical result before any delivery side effects or
+            # removal of the only durable recovery journal.
+            recover_receipted_execution(params['request_id'], job['id'],
+                                        success=success, error=error,
+                                        delivery_outcome='queued')
             output_file = save_job_output(job['id'], output)
             content, _, silent, _, _ = _compose_run_delivery(
                 job, success=success, error=error, final_response=answer, output_file=output_file)
@@ -138,6 +151,8 @@ def reconcile_pending(*, allow_connect=True):
             if deliver:
                 from cron.delivery_outcome import settle_quietly
                 settle_quietly(job['id'], params['request_id'])
+            else:
+                settle_delivery_outcome(params['request_id'], 'suppressed')
             journal.unlink(missing_ok=True)
         except Exception:
             logging.getLogger(__name__).warning('Cron receipt recovery deferred: %s', journal, exc_info=True)
