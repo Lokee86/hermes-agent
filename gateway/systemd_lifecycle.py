@@ -53,12 +53,15 @@ def install(
 ) -> None:
     if system:
         systemd_identity.require_root("install")
+    path = systemd_identity.unit_path(system)
+    if path.exists() and not force:
+        pinned = service_identity.hermes_home_pinned_by_unit(path)
+        if pinned is None or Path(pinned).expanduser().resolve() != get_hermes_home().resolve():
+            print(f"✗ Refusing to replace systemd unit without matching Hermes home: {path}; use --force to override")
+            return
+        systemd_runtime.sync_home_from_unit(system)
     if remove_legacy:
         systemd_legacy.remove_units()
-
-    path = systemd_identity.unit_path(system)
-    if path.exists():
-        systemd_runtime.sync_home_from_unit(system)
     if path.exists() and not force:
         if not systemd_unit_state.unit_is_current(system):
             systemd_unit_state.refresh_if_needed(system)
