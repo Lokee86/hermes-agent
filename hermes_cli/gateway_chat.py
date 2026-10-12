@@ -53,8 +53,6 @@ def continue_title(args):
 
 def validate_options(args):
     unsupported = [name for name in _UNSUPPORTED if getattr(args, name, None)]
-    if getattr(args, "resume", None) == "latest":
-        unsupported.append("resume latest")
     if getattr(args, "continue_last", None) is True:
         unsupported.append("continue")
     if getattr(args, "create_if_missing", False) and not continue_title(args):
@@ -94,10 +92,16 @@ async def run_gateway_chat(args, emitter=None):
             name = getattr(args, "resume", None) or title
             try:
                 # Exact id first, then title (latest lineage continuation), as the classic CLI did.
-                snapshot = await client.rpc("session.resume", session_id=name)
+                if name == 'latest':
+                    snapshot = await client.rpc('session.resume', latest=True,
+                                                cwd=await asyncio.to_thread(_caller_cwd, args))
+                else:
+                    snapshot = await client.rpc("session.resume", session_id=name)
             except GatewayClientError as exc:
                 if str(exc) != "not_found":
                     raise
+                if name == 'latest':
+                    raise GatewayClientError("No resumable session found in this workspace.") from exc
                 try:
                     snapshot = await client.rpc("session.resume", title=name)
                 except GatewayClientError as exc:

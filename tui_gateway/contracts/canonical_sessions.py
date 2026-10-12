@@ -43,6 +43,8 @@ class CanonicalResumeParams(ProfileParams):
     session_id: str = ''
     title: str | None = None
     source: str | None = None
+    latest: bool = False
+    cwd: str | None = None
     editor: dict[str, JsonValue] | None = None
     defer_history: bool = False
     omit_messages: bool = False

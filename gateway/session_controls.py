@@ -346,6 +346,26 @@ class AuthorityConnection:
 
     async def resume(self, ref, params):
         from gateway.session_local import local_session_info
+        if params.get('latest') is True:
+            # Most-recent selection belongs to the profile authority, never the client DB.
+            from gateway.session_local_migration import resolve_local_target
+            cwd = params.get('cwd')
+            if cwd is not None and (not isinstance(cwd, str) or not cwd):
+                raise RuntimeStoreError('invalid_params')
+            candidates = self.authority.db.list_sessions_rich(
+                sources=['cli', 'tui', 'gui', 'oneshot'], cwd_prefix=cwd,
+                order_by_last_active=True, limit=100)
+            for candidate in candidates:
+                if cwd is not None and candidate.get('cwd') != cwd:
+                    continue
+                try:
+                    ref = resolve_local_target(self.authority, self.actor, candidate['id'])
+                    break
+                except RuntimeStoreError as exc:
+                    if exc.reason not in {'not_found', 'permission_denied'}:
+                        raise
+            else:
+                raise RuntimeStoreError('not_found')
         if 'title' in params:
             from gateway.session_local_title import resolve_titled_session
             ref = resolve_titled_session(self.authority, self.actor, params['title'])
