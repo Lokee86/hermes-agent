@@ -986,6 +986,16 @@ def apply_migration_result(
     expected = plan.expected_served_names
     served = _wait_for_served(plan.default_home, expected, served_wait)
     if served is not None and expected <= set(served):
+        # A resumed migration may inherit a current but disabled survivor unit. Prove
+        # boot enablement again before deleting the recovery manifest; an earlier
+        # invocation's preflight is not evidence of today's service state.
+        if plan.manifest is not None and plan.default.service is not None and plan.default.service[0] == "systemd":
+            try:
+                kind, system = plan.default.service
+                _service_op(kind, system, "enable", plan.default_home)
+            except Exception as exc:
+                lines.append(f"  ✗ default gateway could not be enabled at boot ({exc}); migration manifest retained")
+                return MigrationResult(False, tuple(lines))
         _manifest_path(plan.default_home).unlink(missing_ok=True)
         lines.extend([
             "",
