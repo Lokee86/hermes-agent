@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import contextlib
 import json
+import os
+import sys
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -59,6 +61,23 @@ def wait_then_force_kill(
     return False
 
 
+def _pid_home_matches(pid: int, home: Path) -> bool:
+    """Verify live Linux process environment, not executable name or argv substrings."""
+    from gateway.status import _same_hermes_home
+
+    if sys.platform != "linux":
+        # No portable live-process environment API; PID-file evidence is not
+        # sufficient to establish ownership for an unsupervised destructive stop.
+        return False
+    try:
+        raw = Path(f"/proc/{pid}/environ").read_bytes()
+        homes = [part[len(b"HERMES_HOME="):] for part in raw.split(b"\x00")
+                 if part.startswith(b"HERMES_HOME=")]
+        return len(homes) == 1 and _same_hermes_home(os.fsdecode(homes[0]), home)
+    except (OSError, ValueError, UnicodeError):
+        return False
+
+
 def stop_gateway_process(profile_dir: Path) -> GatewayProcessStopResult:
     """Stop the gateway recorded by profile_dir/gateway.pid without printing.
 
@@ -81,7 +100,16 @@ def stop_gateway_process(profile_dir: Path) -> GatewayProcessStopResult:
             terminate_pid,
         )
 
-        if recorded_gateway_home_conflicts(data, expected_home=profile_dir):
+        from gateway.status import _same_hermes_home
+        stamped_home = data.get("hermes_home")
+        # A command-line match is never evidence of installation ownership. A
+        # legacy PID-only file (or a malformed stamp) cannot authorize a kill.
+        if (not isinstance(stamped_home, str) or not stamped_home.strip()
+                or recorded_gateway_home_conflicts(data, expected_home=profile_dir)
+                or not _same_hermes_home(stamped_home, profile_dir)):
+            return GatewayProcessStopResult("refused", profile_dir, pid)
+
+        if not _pid_home_matches(pid, profile_dir):
             return GatewayProcessStopResult("refused", profile_dir, pid)
 
         expected_start_time = data.get("start_time")
