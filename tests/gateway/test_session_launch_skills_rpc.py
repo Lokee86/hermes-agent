@@ -28,6 +28,10 @@ async def test_launch_skill_render_is_frozen_across_retry(monkeypatch):
 
     monkeypatch.setattr(session_policy, "render_launch_skills", render)
     monkeypatch.setattr(session_local, "create_local_session", create)
+    import hermes_state_local
+    monkeypatch.setattr(hermes_state_local, "local_receipt", lambda *_: {"policy": "fixture"})
+    monkeypatch.setattr(session_policy, "restore_policy", lambda _: object())
+    monkeypatch.setattr(session_policy, "accept_launch_hooks", lambda _: None)
     connection = object.__new__(AuthorityConnection)
     connection.authority = SimpleNamespace(
         profile_id="profile",

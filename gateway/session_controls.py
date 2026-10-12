@@ -270,6 +270,10 @@ class AuthorityConnection:
                     skills_prompt = await asyncio.to_thread(render_launch_skills, params, session_id)
             ref = create_local_session(self.authority, self.actor, params,
                                        skills_prompt=skills_prompt)
+            from gateway.session_policy import accept_launch_hooks, restore_policy
+            from hermes_state_local import local_receipt
+            launch_policy = restore_policy(local_receipt(self.authority.db, ref.session_id)['policy'])
+            await asyncio.to_thread(accept_launch_hooks, launch_policy)
             if title:
                 title_new_session(self.authority, ref, title)
             if hidden:
