@@ -43,24 +43,22 @@ from pathlib import Path
 root, temp = map(Path, sys.argv[1:])
 sys.path.insert(0, str(root))
 from pm.environments import install_state_dir, runtime_facts_path, site_packages
-seed = temp / 'seed'
-venv.EnvBuilder(with_pip=False).create(seed)
 dependencies = temp / 'dependencies'
 manifest = tomllib.loads((root / 'pyproject.toml').read_text(encoding='utf-8'))
 specs = [spec for spec in manifest['project']['dependencies']
          if re.split(r'[<>=;\\[]', spec, maxsplit=1)[0].lower() in ('ruamel.yaml', 'python-dotenv')]
 assert len(specs) == 2, specs
-subprocess.run([shutil.which('uv'), 'pip', 'install', '--python', sys.executable,
+subprocess.run([shutil.which('uv'), 'pip', 'install',
                 '--target', str(dependencies), '--no-deps', *specs],
                check=True, stdout=sys.stderr, timeout=60)
 selected = install_state_dir(root) / 'environments' / 'selected' / 'venv'
+venv.EnvBuilder(with_pip=False).create(selected)
 site = site_packages(selected)
-site.mkdir(parents=True)
-(selected / 'pyvenv.cfg').write_text('home = fixture\\n', encoding='utf-8')
+site.mkdir(parents=True, exist_ok=True)
 (site / 'selected-dependencies.pth').write_text(str(dependencies) + '\\n', encoding='utf-8')
 from pm.lock import Facts
 Facts(runtime_facts_path(root)).record_state('venv', 'fixture', [], environment=selected)
-python = seed / ('Scripts/python.exe' if os.name == 'nt' else 'bin/python')
+python = selected / ('Scripts/python.exe' if os.name == 'nt' else 'bin/python')
 print(json.dumps({'python': str(python), 'site': str(site), 'dependencies': str(dependencies)}))
 `
 
