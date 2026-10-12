@@ -203,6 +203,9 @@ def _probe_host_gateway(wait_for_channel: float) -> Optional[HostGateway]:
     if not hr.liveness_is_proven(record):
         return None
     home = record_home(record)
+    from hermes_constants import get_hermes_home
+    if launched_by_other_tenant(home, get_hermes_home()):
+        return None
     deadline = time.monotonic() + max(0.0, wait_for_channel)
     while True:
         identity = _identify(home)
@@ -233,7 +236,12 @@ def host_gateway(*, wait_for_channel: float = 0.0) -> Optional[HostGateway]:
 def host_gateway_serving(profile: str, *, wait_for_channel: float = 0.0) -> Optional[HostGateway]:
     """The host gateway when it is live AND serves ``profile`` — true for ``default`` too."""
     gateway = host_gateway(wait_for_channel=wait_for_channel)
-    return gateway if gateway is not None and gateway.serves(profile) else None
+    if gateway is None:
+        return None
+    from hermes_constants import get_hermes_home
+    if launched_by_other_tenant(gateway.home, get_hermes_home()):
+        return None
+    return gateway if gateway.serves(profile) else None
 
 
 def request_serve_profile(profile: str, *, timeout: float = 8.0,
