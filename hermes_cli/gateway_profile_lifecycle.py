@@ -40,6 +40,13 @@ def profile_lifecycle(command: str, args) -> bool:
     if not name or name == "default" or getattr(args, "all", False) or getattr(args, "force", False):
         return False
     home = get_hermes_home()
+    # The host may itself have launched from a named profile. Its restart is
+    # a process lifecycle operation, not a satellite unserve/serve.
+    from gateway.host_topology import host_multiplexer_serving
+    from gateway.status import _same_hermes_home
+    owner = host_multiplexer_serving(name)
+    if owner is not None and _same_hermes_home(owner.home, home):
+        return False
     if profile_is_standalone(home):
         # gateway.standalone wins: the host never serves (or parks) an opted-out profile, so its
         # verbs keep addressing its own gateway process even while a stale host record lists it.
