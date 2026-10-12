@@ -1541,8 +1541,12 @@ def _verify_relaunched_gateways_alive(token: dict, profiles: dict, unmapped: lis
     unready = sorted(unresolved_profiles) + [
         f"pid {entry.get('pid')}" for entry in unresolved_unmapped]
     if unready:
-        raise RuntimeError("Windows gateway relaunch after update was not verified alive: "
-                           + ", ".join(unready))
+        detail = ", ".join(unready)
+        print(
+            "\n  Warning: Windows gateway restart could not be verified for: " + detail
+            + "\n    Recover with: hermes gateway restart"
+        )
+        raise RuntimeError("Windows gateway relaunch after update was not verified alive: " + detail)
 
 
 
