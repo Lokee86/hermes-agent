@@ -258,7 +258,7 @@ def test_receipt_wait_polls_the_local_receipt_and_outlives_an_unreachable_owner(
     monkeypatch.setattr(mailbox, "_POLL_SECONDS", 0.01)
     key = "f" * 32
     admitted = dict(delivery_id=key, profile_home=str(tmp_path.resolve()), session_id="bot", principal_id="owner",
-                    message="hello", admission_id="adm-1", status="canonical")
+                    message="hello", admission_id="adm-1", status="queued")
     with mailbox._locked(tmp_path) as root:
         mailbox._write(root / f"{key}.json", admitted)
     pending = mailbox.await_delivery(tmp_path, key, 0.05)
