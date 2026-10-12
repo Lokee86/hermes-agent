@@ -44,7 +44,7 @@ def remove_windows_task() -> bool:
     """Delete the profile's Scheduled Task and Startup-folder login item. Direct ``schtasks
     /Delete`` rather than ``gateway_windows.uninstall()``: that verb may open a UAC prompt,
     which a dashboard DELETE or a scripted rename must never block on."""
-    from hermes_cli import gateway_windows as gw
+    from gateway import windows_service as gw
     task_name = gw.get_task_name()
     removed = False
     if gw.is_task_registered():

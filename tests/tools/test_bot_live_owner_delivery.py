@@ -88,7 +88,7 @@ def test_live_dm_bom_readers_preserve_pinned_intent(tmp_path, monkeypatch, inten
     """Main 61dc26cd7d9 on the canonical door: a BOM-prefixed DM payload and a BOM-prefixed pinned
     intent read back intact, a pinned intent is never replaced by a rewritten payload, and a
     damaged intent retains its evidence instead of retrying a transport."""
-    import hermes_cli.gateway_runtime as runtime
+    import gateway.runtime as runtime
     from hermes_state import SessionDB
     from tools import bot_mode_dm
 

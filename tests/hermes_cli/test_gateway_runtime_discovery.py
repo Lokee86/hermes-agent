@@ -105,7 +105,7 @@ def test_upgraded_same_owner_0644_lock_is_narrowed_not_inaccessible(tmp_path):
     import os
     import stat
     from gateway.runtime_ownership import ProfileOwnership
-    from hermes_cli.gateway_runtime_discovery import missing_owner_state
+    from gateway.runtime_discovery import missing_owner_state
     home = tmp_path / 'profile'
     home.mkdir(mode=0o700)
     lock = home / 'gateway.lock'

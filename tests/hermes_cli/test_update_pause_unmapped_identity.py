@@ -65,7 +65,7 @@ def test_an_equal_argv_gateway_of_another_home_never_retires_the_unmapped_debt(s
 
 @pytest.mark.platforms("windows")  # the spec overlays the environment only on Windows
 def test_an_unmapped_replay_runs_on_the_home_its_runtime_ran_on(tmp_path):
-    from hermes_cli.gateway_windows import windowless_gateway_restart_spec
+    from gateway.windows_service import windowless_gateway_restart_spec
 
     paused_home = tmp_path / "profiles" / "a"
     paused_home.mkdir(parents=True)

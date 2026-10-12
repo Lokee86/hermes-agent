@@ -62,11 +62,10 @@ def test_cleanup_deletes_the_windows_scheduled_task(victim, tmp_path, monkeypatc
         get_startup_entry_path=lambda: startup,
         _legacy_startup_entry_path=lambda: tmp_path / "Startup" / "legacy.vbs",
     )
-    monkeypatch.setitem(sys.modules, "hermes_cli.gateway_windows", fake)
-    # `from hermes_cli import gateway_windows` reads the package attribute first when an earlier
-    # test already imported the real module, so the fake must be bound there too.
-    import hermes_cli
-    monkeypatch.setattr(hermes_cli, "gateway_windows", fake, raising=False)
+    from gateway import windows_service
+    for name in ("get_task_name", "is_task_registered", "_exec_schtasks",
+                 "get_startup_entry_path", "_legacy_startup_entry_path"):
+        monkeypatch.setattr(windows_service, name, getattr(fake, name))
     import platform
     monkeypatch.setattr(platform, "system", lambda: "Windows")
 

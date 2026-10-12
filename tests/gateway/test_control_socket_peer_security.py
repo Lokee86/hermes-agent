@@ -24,7 +24,7 @@ def test_symlinked_home_still_authenticates_same_uid_peers(tmp_path):
 def test_restart_heals_a_world_readable_pointer_left_by_an_older_gateway(tmp_path):
     import asyncio
     from gateway.control_socket import GatewayControlServer
-    from hermes_cli.gateway_runtime_discovery import _socket_path
+    from gateway.runtime_discovery import _socket_path
     home = tmp_path / ("p" * 90) / ".hermes"
     home.mkdir(parents=True, mode=0o700)
     pointer = home / "gateway.sock.path"
@@ -47,7 +47,7 @@ def test_group_bits_that_are_an_acl_mask_never_count_as_a_private_group(tmp_path
     import grp
     import pwd
     from gateway.control_socket import GatewayControlServer
-    from hermes_cli.gateway_runtime_discovery import DiscoveryError, _socket_path
+    from gateway.runtime_discovery import DiscoveryError, _socket_path
     home = tmp_path / "home"
     home.mkdir()
     home.chmod(0o770)
@@ -104,7 +104,7 @@ def test_long_home_survives_a_squatted_shared_fallback_directory(tmp_path, monke
     # gateway from publishing its control socket (the bootstrap treats that as fatal).
     import asyncio
     from gateway.control_socket import GatewayControlServer, resolve_server_socket_path
-    from hermes_cli.gateway_runtime_discovery import _socket_path
+    from gateway.runtime_discovery import _socket_path
     monkeypatch.delenv("XDG_RUNTIME_DIR", raising=False)
     home = tmp_path / ("p" * 90) / ".hermes"
     home.mkdir(parents=True, mode=0o700)
