@@ -64,6 +64,38 @@ class AuthorityConnection:
                 return connection
         raise RuntimeStoreError('profile_mismatch')
 
+    def handlers(self):
+        """Canonical handler catalog, shared by dispatch and wire-contract checks."""
+        from gateway.session_busy_controls import handlers as busy_handlers
+        from gateway.session_config import handlers as config_handlers
+        from gateway.session_ancillary import handlers as ancillary_handlers
+        from gateway.session_images import attach_bytes
+        from functools import partial
+        handlers = {'session.create': self.create, 'ping': self.ping, 'runtime.describe': self.describe,
+                    'commands.catalog': self.command_catalog, 'complete.slash': self.slash_completions,
+                    'slash.exec': self.slash_exec, 'command.dispatch': self.command_dispatch,
+                    'session.list': self.list_sessions, 'session.info': self.info,
+                    'session.mutate': self.mutate, 'bot_relay.deliver': self.bot_deliver,
+                    'bot_relay.roster.sync': self.bot_roster, 'bot_relay.outbox.drain': self.bot_outbox,
+                    'bot_relay.reply': self.bot_reply, 'a2a.forward': self.a2a_forward,
+                    'kanban.run': self.kanban_run,
+                    'cron.submit': self.cron_submit, 'cron.status': self.cron_status,
+                    'cron.cancel': self.cron_cancel, 'cron.recover': self.cron_recover,
+                    'worker.register': self.worker_register, 'worker.adopt': self.worker_adopt,
+                    'worker.persist': self.worker_persist,
+                    'setup.status': self.setup_status, 'setup.runtime_check': self.setup_runtime_check,
+                    'session.resume': self.resume, 'session.detach': self.detach,
+                    'prompt.submit': self.submit,
+                    'prompt.receipt': self.receipt, 'prompt.cancel': self.cancel,
+                    'prompt.resolve_unknown': self.resolve_unknown,
+                    'session.interrupt': self.interrupt, 'session.events.since': self.events_since,
+                    'approval.respond': self.respond, 'clarify.respond': self.respond_clarify}
+        handlers.update(busy_handlers(self))
+        handlers.update(config_handlers(self))
+        handlers.update(ancillary_handlers(self))
+        handlers['image.attach_bytes'] = partial(attach_bytes, self)
+        return handlers
+
     async def dispatch(self, request):
         rid = request.get('id')
         method = request.get('method')
@@ -86,34 +118,18 @@ class AuthorityConnection:
             if method in _PROFILE_IMPLICIT:
                 params = {key: value for key, value in params.items() if key != 'profile'}
         ref = SessionRef(self.actor.profile_id, params.get('session_id', ''))
-        handlers = {'session.create': self.create, 'ping': self.ping, 'runtime.describe': self.describe,
-                    'commands.catalog': self.command_catalog, 'complete.slash': self.slash_completions,
-                    'slash.exec': self.slash_exec, 'command.dispatch': self.command_dispatch,
-                    'session.list': self.list_sessions, 'session.info': self.info,
-                    'session.mutate': self.mutate, 'bot_relay.deliver': self.bot_deliver,
-                    'bot_relay.roster.sync': self.bot_roster, 'bot_relay.outbox.drain': self.bot_outbox,
-                    'bot_relay.reply': self.bot_reply, 'a2a.forward': self.a2a_forward,
-                    'kanban.run': self.kanban_run,
-                    'cron.submit': self.cron_submit, 'cron.status': self.cron_status,
-                    'cron.cancel': self.cron_cancel, 'cron.recover': self.cron_recover,
-                    'worker.register': self.worker_register, 'worker.adopt': self.worker_adopt,
-                    'worker.persist': self.worker_persist,
-                    'setup.status': self.setup_status, 'setup.runtime_check': self.setup_runtime_check,
-                    'session.resume': self.resume, 'session.detach': self.detach,
-                    'prompt.submit': self.submit,
-                    'prompt.receipt': self.receipt, 'prompt.cancel': self.cancel,
-                    'prompt.resolve_unknown': self.resolve_unknown,
-                    'session.interrupt': self.interrupt, 'session.events.since': self.events_since,
-                    'approval.respond': self.respond, 'clarify.respond': self.respond_clarify}
-        from gateway.session_busy_controls import handlers as busy_handlers
-        handlers.update(busy_handlers(self))
-        from gateway.session_config import handlers as config_handlers
-        handlers.update(config_handlers(self))
-        from gateway.session_ancillary import handlers as ancillary_handlers
-        handlers.update(ancillary_handlers(self))
-        from gateway.session_images import attach_bytes
-        from functools import partial
-        handlers['image.attach_bytes'] = partial(attach_bytes, self)
+        handlers = self.handlers()
+        from tui_gateway.contracts.registry import (
+            CANONICAL_METHODS, METHODS, canonical_param_problems,
+            check_params_accepted, check_result,
+        )
+        contract = CANONICAL_METHODS.get(method) or METHODS.get(method)
+        if contract is not None:
+            problems = canonical_param_problems(contract, params)
+            if problems:
+                return {'jsonrpc': '2.0', 'id': rid, 'error': {
+                    'code': 4001, 'message': 'invalid_params',
+                    'data': {'reason': 'invalid_params', 'fields': problems}}}
         try:
             from gateway.session_group_controls import GROUP_METHODS, dispatch_group_control
             # Every handler reads config/jobs/policy for the OWNING profile: enter its home so
@@ -124,6 +140,9 @@ class AuthorityConnection:
             with owner_scope(self.authority):
                 if method in GROUP_METHODS or method == 'profiles.list':
                     result = await dispatch_group_control(self, method, params)
+                    if contract is not None:
+                        check_params_accepted(contract, params)
+                        check_result(contract, result)
                     return {'jsonrpc': '2.0', 'id': rid, 'result': result}
                 if method not in handlers:
                     # JSON-RPC's own verdict: clients key compat fallbacks on -32601, and a
@@ -132,6 +151,9 @@ class AuthorityConnection:
                         'code': -32601, 'message': f'unknown method: {method}',
                         'data': {'reason': 'unknown_method'}}}
                 result = await handlers[method](ref, params)
+                if contract is not None:
+                    check_params_accepted(contract, params)
+                    check_result(contract, result)
             return {'jsonrpc': '2.0', 'id': rid, 'result': result}
         except RuntimeStoreError as exc:
             return {'jsonrpc': '2.0', 'id': rid, 'error': {
