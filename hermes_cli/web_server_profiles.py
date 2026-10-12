@@ -299,13 +299,19 @@ def _config_profile_scope(profile: Optional[str]):
     from agent.secret_scope import build_profile_secret_scope, reset_secret_scope, set_secret_scope
     from hermes_cli.env_loader import hydrate_profile_secret_sources
     from tui_gateway.launch_profile_policy import activate_multi_profile_hosting, launch_secret_scope
+    from hermes_constants import get_hermes_home
 
     process_home = get_process_hermes_home()
+    # Native control tickets bind the request's effective home before this scope.
+    # An implicit selector must honor that binding rather than the launch home.
+    effective_home = get_hermes_home()
     if _is_current_profile(profile):
-        profile_dir, scoped = None, None  # the dashboard's own profile: no home override
+        profile_dir = None
+        selected_home = effective_home
     else:
         profile_dir = _resolve_profile_dir(profile.strip())
-        scoped = None if profile_dir.resolve() == process_home.resolve() else profile_dir
+        selected_home = profile_dir
+    scoped = None if selected_home.resolve() == process_home.resolve() else selected_home
     if scoped is not None:
         activate_multi_profile_hosting()
         hydrate_profile_secret_sources(scoped)  # first call may block on the source's fetch
@@ -318,7 +324,7 @@ def _config_profile_scope(profile: Optional[str]):
         # and an unscoped launch request would then raise ``UnscopedSecretError`` on its next read.
         secrets = launch_secret_scope(process_home)
     with (_hermes_home_scope(profile_dir) if profile_dir is not None else nullcontext()):
-        token = set_secret_scope(secrets, profile_home=str(profile_dir or process_home))
+        token = set_secret_scope(secrets, profile_home=str(selected_home))
         try:
             yield scoped
         finally:
