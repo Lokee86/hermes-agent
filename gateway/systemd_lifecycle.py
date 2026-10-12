@@ -145,11 +145,24 @@ def stop(system: bool = False) -> None:
         return
 
 
+def enable(system: bool = False) -> None:
+    """Enable an installed gateway unit without starting or rewriting it."""
+    system = prepare_action("enable", system)
+    systemd_runtime.run_systemctl(
+        ["enable", service_identity.service_name()],
+        system=system,
+        check=True,
+        timeout=30,
+    )
+
+
 def service_call(verb: str, system: bool = False) -> None:
     if verb == "start":
         start(system)
     elif verb == "stop":
         stop(system)
+    elif verb == "enable":
+        enable(system)
     elif verb == "restart":
         from gateway.systemd_restart import systemd_restart
         systemd_restart(system)
