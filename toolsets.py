@@ -144,7 +144,7 @@ TOOLSETS = {
          "annotate_preview", "read_window_below", "focus_pane", "react_to_message",
          "gui_tour", "show_tip"],
     ),
-    "setup": _ts("Onboarding-only surface for the setup profile: question and picker cards", ["setup_choose"],
+    "setup": _ts("Onboarding-only surface for the setup profile: question and picker cards", ["setup_choose"], role="setup",
                  platforms=frozenset({"desktop"})),
     "start_chat": _ts("Start a new visible desktop chat that runs a task in a chosen profile", ["start_chat"],
                       platforms=frozenset({"desktop"})),

@@ -236,24 +236,15 @@ def _profiles(authority, actor, home, params):
         raise RuntimeStoreError('invalid_params')
     from gateway.session_authorities import served_profile_name
     name = served_profile_name(home)
-    config_path = home / 'config.yaml'
-    model = provider = None
-    if config_path.is_file():
-        try:
-            config = yaml.safe_load(config_path.read_text(encoding='utf-8')) or {}
-            model_cfg = config.get('model', {}) if isinstance(config, dict) else {}
-            if isinstance(model_cfg, str):
-                model = model_cfg
-            elif isinstance(model_cfg, dict):
-                model = model_cfg.get('default') or model_cfg.get('model')
-                provider = model_cfg.get('provider')
-        except (OSError, yaml.YAMLError):
-            pass
+    from profiles.reads import read_config_model
+    from profiles.skills import cached_skill_count
+    from profiles.metadata import _cached_profile_read, _load_yaml_dict
+    model, provider = read_config_model(home)
     row = {'name': name, 'path': str(home), 'is_default': name == 'default',
            'model': model, 'provider': provider, 'description': '', 'display_name': '',
-           'skill_count': 0}
+           'skill_count': cached_skill_count(home)}
     path = home / 'profile.yaml'
-    meta = yaml.safe_load(path.read_text(encoding='utf-8-sig')) if path.is_file() else {}
+    meta = _cached_profile_read(path, 'discovery-meta', lambda: _load_yaml_dict(path) or {})
     meta = meta if isinstance(meta, dict) else {}
     row['description'] = str(meta.get('description') or '')
     row['display_name'] = str(meta.get('display_name') or '')

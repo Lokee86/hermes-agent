@@ -29,7 +29,7 @@ import json
 import os
 from pathlib import Path
 from hermes_constants import get_hermes_home, get_process_hermes_home, get_default_hermes_root
-from hermes_cli.profiles import _get_profiles_root, _get_active_profile_path, resolve_profile_env
+from profiles.paths import _get_profiles_root, _get_active_profile_path, resolve_profile_env
 root = get_default_hermes_root()
 profile = root / 'profiles' / 'coder'
 profile.mkdir(parents=True)

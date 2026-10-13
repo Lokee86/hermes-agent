@@ -77,7 +77,7 @@ def read_profile_meta(profile_dir: Path) -> dict:
             "display_name": str(data.get("display_name") or "").strip(),
             "bot_title": bot_title,
             "previous_names": _clean_previous_names(data.get("previous_names")),
-            "role": data.get("role") if data.get("role") in PROFILE_ROLES else None,
+            "role": data.get("role") if isinstance(data.get("role"), str) and data.get("role") in PROFILE_ROLES else None,
         }
 
     meta = dict(_cached_profile_read(profile_dir / "profile.yaml", "profile-meta", _read))

@@ -193,3 +193,13 @@ operations are HOME-anchored (`_get_profiles_root()` returns
 `hermes -p coder profile list` sees all profiles regardless of which one is active — intentional.
 Profile-safe coding rules are in the root `AGENTS.md`; multiplex secret-scope rules in
 `gateway/AGENTS.md`.
+
+## Profile listing ownership
+
+profiles.reads owns cached model/provider and distribution reads, using the
+file-signature cache in profiles.metadata. CLI and canonical gateway discovery
+share these values; raw write-back config reads remain uncached.
+profiles.skills owns synchronous counts and background polling refreshes.
+Polling returns the last known count without walking the skill tree in the request.
+The setup toolset is reserved for the backend-assigned setup profile role and
+remains limited to desktop sessions.

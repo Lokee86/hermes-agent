@@ -23,6 +23,8 @@ from hermes_constants import (
     LOCAL_RUNTIME_ROOT_DIRS, PROFILE_ID_RE, clear_named_profile_deleted, mark_named_profile_deleted,
     named_profile_has_identity, named_profile_is_deleted, named_profile_is_live,
 )
+from profiles.reads import read_config_model, read_distribution_meta
+from profiles.skills import cached_skill_count, count_skills
 from profiles.current import (
     current_profile_name as _profile_current_name,
     get_active_profile as _profile_get_active,
@@ -613,76 +615,6 @@ class ProfileInfo:
 
 
 
-# (path, kind) -> (file signature, the small derived value). `list_profiles` re-reads three YAML
-# files PER PROFILE, and it is the shared body of `GET /api/profiles` and `profiles.list`, which the
-# Bots roster polls every 5s per connection — so an installer-seeded config.yaml (the annotated
-# template, ~119KB) was re-parsed for every bot every five seconds to yield the same two strings.
-# Only DERIVED values are cached, never a document a caller could write back: the raw readers
-# (`read_user_config_raw`, `_load_yaml_dict`) keep their uncached contract. See #117378.
-_PROFILE_FILE_CACHE: Dict[tuple, tuple] = {}
-_PROFILE_FILE_CACHE_MAX = 512
-
-
-def _profile_file_signature(path: Path) -> Optional[tuple]:
-    """``(mtime_ns, size, inode)``, or None when the file is absent. The atomic writers rename a
-    temp file into place, so a rewrite always lands a new inode even within one mtime tick."""
-    try:
-        stat = path.stat()
-    except OSError:
-        return None
-    return (stat.st_mtime_ns, stat.st_size, stat.st_ino)
-
-
-def _cached_profile_read(path: Path, kind: str, compute):
-    """``compute()``'s value, reused while *path* has not changed. A missing file is never cached:
-    reading it costs nothing, and one created later must be picked up."""
-    signature = _profile_file_signature(path)
-    if signature is None:
-        return compute()
-    key = (str(path), kind)
-    cached = _PROFILE_FILE_CACHE.get(key)
-    if cached is not None and cached[0] == signature:
-        return cached[1]
-    value = compute()
-    if len(_PROFILE_FILE_CACHE) >= _PROFILE_FILE_CACHE_MAX:
-        _PROFILE_FILE_CACHE.clear()
-    _PROFILE_FILE_CACHE[key] = (signature, value)
-    return value
-
-
-def _read_distribution_meta(profile_dir: Path) -> tuple:
-    """``(name, version, source)`` from ``distribution.yaml``; ``(None, None, None)`` if absent."""
-    def _read() -> tuple:
-        data = _profile_load_yaml(profile_dir / "distribution.yaml")
-        if data is None:
-            return None, None, None
-        return data.get("name"), data.get("version"), data.get("source")
-
-    return _cached_profile_read(profile_dir / "distribution.yaml", "distribution", _read)
-
-
-def _read_config_model(profile_dir: Path) -> tuple:
-    """Read model/provider from a profile's config.yaml. Returns (model, provider)."""
-    config_path = profile_dir / "config.yaml"
-    if not config_path.exists():
-        return None, None
-
-    def _read() -> tuple:
-        try:
-            # load_config() targets the ACTIVE profile's home; read THIS profile's file raw.
-            from hermes_cli.config import read_user_config_raw
-            model_cfg = read_user_config_raw(config_path).get("model", {})
-            if isinstance(model_cfg, str):
-                return model_cfg, None
-            if isinstance(model_cfg, dict):
-                return model_cfg.get("default") or model_cfg.get("model"), model_cfg.get("provider")
-        except Exception:
-            pass
-        return None, None
-
-    return _cached_profile_read(config_path, "config-model", _read)
-
-
 def launch_model_seed(source_cfg: dict) -> dict:
     """The config a fresh profile needs to run the launch profile's model: its ``model`` block plus,
     when that block points at a custom ``providers:`` gateway (self-hosted / local endpoint), that
@@ -741,96 +673,6 @@ def _served_by_running_multiplexer(profile_name: str) -> bool:
         return False
 
 
-# In-process skill-count cache. Counting walks every skill's sub-tree (~4 fs calls per
-# skill); ``list_profiles`` counts EVERY profile, and its two remaining Desktop callers
-# (``GET /api/profiles``, ``profiles.list``) are POLLED every few seconds. Keyed by skills
-# dir; a walk is repeated only when the tree signature changes (skill add/remove) or after
-# the TTL (deep edits). Polled callers never walk: ``lazy_skill_count`` serves the last known
-# value and refreshes stale entries on a background thread, at most once per recheck window
-# per profile — the TTL is decoupled from the poll rate (#114041).
-_SKILL_COUNT_CACHE: dict[str, tuple[float, float, int]] = {}
-_SKILL_COUNT_TTL_SECONDS = 600.0
-_SKILL_COUNT_RECHECK_SECONDS = 60.0
-_SKILL_COUNT_NEXT_CHECK: dict[str, float] = {}
-_SKILL_COUNT_LOCK = threading.Lock()
-# One scan lock per skills dir so concurrent cold scans of the SAME profile share one walk
-# while different profiles' scans still run in parallel.
-_SKILL_COUNT_SCAN_LOCKS: dict[str, threading.Lock] = {}
-
-
-def _skills_dir_signature(skills_dir: Path) -> float:
-    """Max mtime of ``skills_dir`` and its immediate children (adding/removing a category
-    bumps the root, a skill bumps its category). One scandir: O(#categories), not O(#files)."""
-    try:
-        sig = skills_dir.stat().st_mtime
-    except OSError:
-        return 0.0
-    try:
-        with os.scandir(skills_dir) as it:
-            for entry in it:
-                try:
-                    if entry.is_dir(follow_symlinks=False):
-                        sig = max(sig, entry.stat(follow_symlinks=False).st_mtime)
-                except OSError:
-                    continue
-    except OSError:
-        pass
-    return sig
-
-
-def _walk_skill_count(skills_dir: Path) -> int:
-    """One ``os.walk`` over the skills tree (prunes ``.git``/``node_modules``/support dirs
-    instead of statting them). Best-effort: a subtree that vanishes mid-walk (a concurrent
-    skill install/update) is skipped, never raised — ``os.walk`` (``onerror=None``) swallows
-    scandir errors itself, so one profile's churn cannot abort the whole enumeration."""
-    from agent.skill_utils import iter_skill_index_files
-    return sum(1 for _ in iter_skill_index_files(skills_dir, "SKILL.md"))
-
-
-def _count_skills(profile_dir: Path) -> int:
-    """Count installed skills in a profile (cached by skills-dir signature + TTL). Walks
-    synchronously when stale — detail surfaces (``hermes profile info``, ``profiles.describe``)
-    want the fresh number; polled lists go through :func:`_cached_skill_count`."""
-    skills_dir = profile_dir / "skills"
-    if not skills_dir.is_dir():
-        return 0
-    key = str(skills_dir)
-    signature = _skills_dir_signature(skills_dir)
-    cached = _SKILL_COUNT_CACHE.get(key)
-    if cached is not None and cached[0] == signature and (time.time() - cached[1]) < _SKILL_COUNT_TTL_SECONDS:
-        return cached[2]
-    with _SKILL_COUNT_LOCK:
-        scan_lock = _SKILL_COUNT_SCAN_LOCKS.setdefault(key, threading.Lock())
-    with scan_lock:
-        # Re-check under the lock: a concurrent caller may have just finished this walk.
-        signature = _skills_dir_signature(skills_dir)
-        cached = _SKILL_COUNT_CACHE.get(key)
-        if cached is not None and cached[0] == signature and (time.time() - cached[1]) < _SKILL_COUNT_TTL_SECONDS:
-            return cached[2]
-        count = _walk_skill_count(skills_dir)
-        # Stamp AFTER the walk: a scan longer than the TTL must not publish an already-expired entry.
-        _SKILL_COUNT_CACHE[key] = (signature, time.time(), count)
-        return count
-
-
-def _cached_skill_count(profile_dir: Path) -> int:
-    """Last known skill count with ZERO skill-tree I/O on the calling thread. A never-counted
-    or aged entry schedules one background :func:`_count_skills` per profile per recheck
-    window (which itself re-walks only on signature change / TTL); the next poll picks the
-    result up. ``0`` until the first refresh lands."""
-    key = str(profile_dir / "skills")
-    now = time.time()
-    with _SKILL_COUNT_LOCK:
-        due = _SKILL_COUNT_NEXT_CHECK.get(key, 0.0) <= now
-        if due:
-            _SKILL_COUNT_NEXT_CHECK[key] = now + _SKILL_COUNT_RECHECK_SECONDS
-    if due:
-        threading.Thread(target=_count_skills, args=(profile_dir,),
-                         name="hermes-skill-count", daemon=True).start()
-    cached = _SKILL_COUNT_CACHE.get(key)
-    return cached[2] if cached is not None else 0
-
-
 # profile.yaml — per-profile metadata (description, etc.)
 # Deliberately tiny and separate from ``config.yaml`` (user-facing Hermes config, ~5000
 # lines of defaults): this is metadata ABOUT the profile. Missing file -> empty defaults,
@@ -863,8 +705,8 @@ def set_profile_display_name(profile_name: str, display_name: str) -> str:
 def _profile_info(name: str, path: Path, *, is_default: bool, alias_name: Optional[str] = None,
                   lazy_skill_count: bool = False) -> ProfileInfo:
     """Build one :class:`ProfileInfo` from a profile directory."""
-    model, provider = _read_config_model(path)
-    dist_name, dist_version, dist_source = _read_distribution_meta(path)
+    model, provider = read_config_model(path)
+    dist_name, dist_version, dist_source = read_distribution_meta(path)
     meta = _profile_read_meta(path)
     alias_path = _wrapper_path(alias_name) if alias_name else None
     if alias_path is not None and not alias_path.exists():
@@ -872,7 +714,7 @@ def _profile_info(name: str, path: Path, *, is_default: bool, alias_name: Option
     gateway_running = _check_gateway_running(path)
     if not is_default:
         gateway_running = gateway_running or _served_by_running_multiplexer(name)
-    skill_count = _cached_skill_count(path) if lazy_skill_count else _count_skills(path)
+    skill_count = cached_skill_count(path) if lazy_skill_count else count_skills(path)
     return ProfileInfo(
         name=name, path=path, is_default=is_default, gateway_running=gateway_running, model=model,
         provider=provider, has_env=(path / ".env").exists(), skill_count=skill_count,
@@ -1548,9 +1390,9 @@ def _rmtree_with_retry(profile_dir: Path, onexc_handler) -> None:
 
 def _print_delete_summary(canon: str, profile_dir: Path, gw_running: bool, wrapper_path: Optional[Path]) -> None:
     """Show what ``delete_profile`` is about to remove."""
-    model, provider = _read_config_model(profile_dir)
-    skill_count = _count_skills(profile_dir)
-    dist_name, dist_version, dist_source = _read_distribution_meta(profile_dir)
+    model, provider = read_config_model(profile_dir)
+    skill_count = count_skills(profile_dir)
+    dist_name, dist_version, dist_source = read_distribution_meta(profile_dir)
     print(f"\nProfile: {canon}")
     print(f"Path:    {profile_dir}")
     if model:

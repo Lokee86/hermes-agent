@@ -382,15 +382,15 @@ def _profile_show(args):
     from profiles.paths import get_profile_dir
     from profiles.registry import profile_exists
     from hermes_cli.profiles import (
-        _read_config_model, _check_gateway_running, _served_by_running_multiplexer,
-        _count_skills, _read_distribution_meta, _wrapper_path, find_alias_for_profile,
+        read_config_model, _check_gateway_running, _served_by_running_multiplexer,
+        count_skills, read_distribution_meta, _wrapper_path, find_alias_for_profile,
     )
     if not profile_exists(name):
         _die(f"Error: Profile '{name}' does not exist.")
     profile_dir = get_profile_dir(name)
-    model, provider = _read_config_model(profile_dir)
+    model, provider = read_config_model(profile_dir)
     gw = _check_gateway_running(profile_dir) or _served_by_running_multiplexer(name)
-    dist_name, dist_version, dist_source = _read_distribution_meta(profile_dir)
+    dist_name, dist_version, dist_source = read_distribution_meta(profile_dir)
     alias_name = find_alias_for_profile(name)
     display = read_profile_meta(profile_dir).get("display_name", "")
     print(f"\nProfile: {format_profile_label(name, display)}")
@@ -398,7 +398,7 @@ def _profile_show(args):
     if model:
         print(f"Model:   {model}" + (f" ({provider})" if provider else ""))
     print(f"Gateway: {'running' if gw else 'stopped'}")
-    print(f"Skills:  {_count_skills(profile_dir)}")
+    print(f"Skills:  {count_skills(profile_dir)}")
     print(f".env:    {'exists' if (profile_dir / '.env').exists() else 'not configured'}")
     print(f"SOUL.md: {'exists' if (profile_dir / 'SOUL.md').exists() else 'not configured'}")
     if dist_name:

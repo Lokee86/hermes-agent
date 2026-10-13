@@ -20,6 +20,7 @@ import hermes_yaml as yaml
 import pytest
 
 from hermes_cli import profiles
+import profiles.skills as skill_counts
 from gateway import profile_serving
 from gateway.profile_serving import profiles_to_serve
 from profiles.current import get_active_profile, get_active_profile_name, set_active_profile
@@ -866,17 +867,17 @@ class TestListProfiles:
         for i in range(3):
             (skills / f"s{i}").mkdir(parents=True)
             (skills / f"s{i}" / "SKILL.md").write_text("# s\n", encoding="utf-8")
-        profiles._SKILL_COUNT_CACHE.clear()
-        profiles._SKILL_COUNT_NEXT_CHECK.clear()
+        skill_counts._SKILL_COUNT_CACHE.clear()
+        skill_counts._SKILL_COUNT_NEXT_CHECK.clear()
 
         walks: list[str] = []
-        real_walk = profiles._walk_skill_count
+        real_walk = skill_counts._walk_skill_count
 
         def spy(skills_dir):
             walks.append(threading.current_thread().name)
             return real_walk(skills_dir)
 
-        monkeypatch.setattr(profiles, "_walk_skill_count", spy)
+        monkeypatch.setattr(skill_counts, "_walk_skill_count", spy)
 
         def _rpc():
             return srv._methods["profiles.list"](1, {"include_sessions": False})["result"]["profiles"]
@@ -901,7 +902,7 @@ class TestListProfiles:
         app = FastAPI()
         app.include_router(profiles_router.router)
         # Cold cache: a synchronous list_profiles() in either caller would walk on the request thread.
-        profiles._SKILL_COUNT_CACHE.clear()
+        skill_counts._SKILL_COUNT_CACHE.clear()
         resp = TestClient(app).get("/api/profiles")
         assert resp.status_code == 200
         assert resp.json()["profiles"][0]["name"] == "default"
@@ -910,7 +911,7 @@ class TestListProfiles:
         assert walks == ["hermes-skill-count"]
 
         # Control: the detail/CLI path counts synchronously on the caller's thread.
-        profiles._SKILL_COUNT_CACHE.clear()
+        skill_counts._SKILL_COUNT_CACHE.clear()
         assert list_profiles()[0].skill_count == 3
         assert walks[-1] == threading.current_thread().name
 
@@ -921,7 +922,7 @@ class TestListProfiles:
         for i in range(4):
             (skills / f"s{i}" / "references").mkdir(parents=True)
             (skills / f"s{i}" / "SKILL.md").write_text("# s\n", encoding="utf-8")
-        profiles._SKILL_COUNT_CACHE.clear()
+        skill_counts._SKILL_COUNT_CACHE.clear()
         real_scandir = os.scandir
 
         class _Listing:
@@ -953,7 +954,7 @@ class TestListProfiles:
             return _Listing(entries)
 
         monkeypatch.setattr(os, "scandir", vanishing_scandir)
-        assert profiles._count_skills(profile_env / ".hermes") == 3
+        assert skill_counts.count_skills(profile_env / ".hermes") == 3
         assert [p.name for p in list_profiles()] == ["default"]
 
 
@@ -1049,7 +1050,7 @@ class TestAliasCollision:
 class TestWrapperScript:
     """Tests for create_wrapper_script() and remove_wrapper_script()."""
 
-    @pytest.mark.skipif(sys.platform == "win32", reason="POSIX wrapper format")
+    @pytest.mark.platforms("posix")
     def test_creates_sh_on_posix(self, profile_env, monkeypatch):
         monkeypatch.setattr("hermes_cli.profiles.shutil.which", lambda name: "/opt/hermes/bin/hermes")
         from hermes_cli.profiles import create_wrapper_script
@@ -1364,9 +1365,10 @@ class TestRenameProfile:
 
         # The history write is best-effort: it must never fail the rename.
         with patch("hermes_cli.profiles.check_alias_collision", return_value="skip"), \
-             patch("profiles.metadata.write_profile_meta", side_effect=OSError("disk full")):
+             patch("hermes_cli.profiles._profile_write_meta", side_effect=OSError("disk full")) as writer:
             new_dir = rename_profile("oldname", "newname")
 
+        writer.assert_called_once()
         assert new_dir.is_dir()
 
 
@@ -1960,7 +1962,7 @@ class TestCloneAllExcludesRuntimeTrees:
 def test_count_skills_publishes_timestamp_after_the_walk(tmp_path, monkeypatch):
     """A scan longer than the TTL must not publish an already-expired cache entry (#107151):
     the cached timestamp is taken after _walk_skill_count returns, not before it starts."""
-    from hermes_cli import profiles as mod
+    from profiles import skills as mod
 
     skills_dir = tmp_path / "skills"
     skills_dir.mkdir()
@@ -1974,10 +1976,10 @@ def test_count_skills_publishes_timestamp_after_the_walk(tmp_path, monkeypatch):
         return 3
 
     monkeypatch.setattr(mod, "_walk_skill_count", slow_walk)
-    assert mod._count_skills(tmp_path) == 3
+    assert mod.count_skills(tmp_path) == 3
     _sig, stamped, count = mod._SKILL_COUNT_CACHE[str(skills_dir)]
     assert count == 3
     assert stamped >= clock["now"], "published timestamp must be >= scan end"
     # Entry is fresh: a second call within the TTL must not walk again.
     monkeypatch.setattr(mod, "_walk_skill_count", lambda _d: pytest.fail("re-walked a fresh entry"))
-    assert mod._count_skills(tmp_path) == 3
+    assert mod.count_skills(tmp_path) == 3
