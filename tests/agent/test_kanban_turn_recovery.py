@@ -587,7 +587,8 @@ def test_worker_client_reports_the_owner_exit_and_reply(owner_worker, monkeypatc
     exit trailer the dead-worker sweep reads — so an exhausted wall still releases as 75."""
     from contextlib import asynccontextmanager
 
-    from hermes_cli import gateway_client, kanban_worker_client
+    from gateway import client as gateway_client
+    from hermes_cli import kanban_worker_client
     from hermes_cli.quiet_single_query import KANBAN_WORKER_EXIT_TRAILER
 
     run, _entered, context = owner_worker(_failed, recovery=1)

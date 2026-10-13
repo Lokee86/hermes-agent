@@ -70,9 +70,8 @@ def test_clients_refuse_a_control_listener_run_by_another_uid(tmp_path, monkeypa
     # client must authenticate the listening process itself (SO_PEERCRED / getpeereid).
     import asyncio
     import inspect
-    from gateway import control_socket, session_hosted_transport
-    from hermes_cli import gateway_client
-    from hermes_cli import gateway_runtime_discovery as discovery
+    from gateway import client as gateway_client
+    from gateway import control_socket, runtime_discovery as discovery, session_hosted_transport
     home = tmp_path / "home"
     home.mkdir(mode=0o700)
     real_uid = os.getuid()

@@ -14,6 +14,14 @@ class GatewayClientError(ValueError):
     pass
 
 
+class GatewayUnavailableError(GatewayClientError):
+    """No ready owner to dial; nothing was submitted."""
+
+    def __init__(self, message, state):
+        super().__init__(message)
+        self.state = state
+
+
 class GatewayRPCError(GatewayClientError):
     """A bounded owner refusal preserving its machine-readable code and scalar data."""
 
@@ -163,7 +171,10 @@ async def connect_gateway():
         result = await asyncio.to_thread(ensure_gateway_runtime, home)
         if result.state != "ready" or result.endpoint is None:
             detail = f" ({result.detail})" if getattr(result, "detail", None) else ""
-            raise GatewayClientError(f"Gateway {result.state}: {result.reason_code or 'not_ready'}{detail}")
+            raise GatewayUnavailableError(
+                f"Gateway {result.state}: {result.reason_code or 'not_ready'}{detail}",
+                result.state,
+            )
         endpoint = result.endpoint
         ticket = await asyncio.to_thread(_session_ticket, home, endpoint)
         url, protocols = gateway_ws_target(endpoint, ticket)

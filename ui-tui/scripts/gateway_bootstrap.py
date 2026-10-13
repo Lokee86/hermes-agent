@@ -21,7 +21,7 @@ _LIVE_CLAIMS = frozenset({"running", "starting", "draining", "degraded"})
 def owner_crashed(home: Path) -> bool:
     """After discovery answered ``absent``: did the owner serving *home* die without a clean stop?"""
     from gateway.status import read_runtime_status
-    from hermes_cli.gateway_runtime_multiplex import implied_host_root, multiplexer_serves_home
+    from gateway.runtime_multiplex import implied_host_root, multiplexer_serves_home
     owner = multiplexer_serves_home(home) or implied_host_root(home) or home
     record = read_runtime_status(owner / "gateway_state.json")
     return (isinstance(record, dict) and record.get("desired_state") != "stopped"

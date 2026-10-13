@@ -48,7 +48,7 @@ class TestCallSiteWiring:
         monkeypatch.setattr(update_cmd, "_surviving_pre_update_serve_runtimes", lambda plan: [])
         # Reconciliation is a separate guard; it must not supply this test's failure.
         monkeypatch.setattr("hermes_cli.update_inventory.report_unaccounted_runtimes", lambda rows: False)
-        monkeypatch.setattr("hermes_cli.gateway_migrate.maybe_auto_migrate_after_update", lambda: None)
+        monkeypatch.setattr("nous_cli.gateway_migrate.maybe_auto_migrate_after_update", lambda: None)
         events = []
         now = [0.0]
 

@@ -155,7 +155,7 @@ def completion(tmp_path, monkeypatch):
                     from hermes_cli import update_cmd_maint as maint
                     from hermes_cli import update_cmd_fleet as fleet
                     from hermes_cli import update_cmd_fleet_verify as fleet_verify
-                    from hermes_cli import gateway_migrate
+                    from nous_cli import gateway_migrate
                     from hermes_cli import macos_tcc_anchor
                     from hermes_cli import source_build
                     from hermes_cli.update_inventory import UpdatePlan, RuntimeRecord

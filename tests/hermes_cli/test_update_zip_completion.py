@@ -94,7 +94,7 @@ def zip_update(tmp_path, monkeypatch, isolated_source_completion):
     monkeypatch.setattr(maint, "_refresh_dashboard_after_update", lambda **kwargs: None)
     monkeypatch.setattr(update_cmd, "_surviving_pre_update_serve_runtimes", lambda plan: [])
     monkeypatch.setattr(fleet_verify, "_collect_fleet_snapshot", lambda *args: [])
-    monkeypatch.setattr("hermes_cli.gateway_migrate.maybe_auto_migrate_after_update", lambda: None)
+    monkeypatch.setattr("nous_cli.gateway_migrate.maybe_auto_migrate_after_update", lambda: None)
 
     def resume(received):
         assert received is token

@@ -75,8 +75,8 @@ def test_fleet_restart_budget_preserves_user_scope_and_verifies_health(monkeypat
     monkeypatch.setattr(fleet, "_systemctl", systemctl)
     monkeypatch.setattr(fleet, "_SYSTEMD_SCOPES", (("user", scope),))
     monkeypatch.setattr(fleet, "_wait_for_service_active", check_health)
-    monkeypatch.setattr("hermes_cli.gateway.supports_systemd_services", lambda: True)
-    monkeypatch.setattr("hermes_cli.gateway._ensure_user_systemd_env", lambda: None)
+    monkeypatch.setattr("gateway.systemd_runtime.supports_services", lambda: True)
+    monkeypatch.setattr("gateway.systemd_runtime.ensure_user_env", lambda: None)
     restarted, failed, scoped = [], [], set()
     fleet._restart_systemd_gateway_units(restarted, failed, scoped, drain_budget=45)
 

@@ -9,7 +9,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from hermes_cli import gateway_runtime
+from gateway import runtime as gateway_runtime
 import hermes_constants
 
 
