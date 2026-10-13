@@ -5,7 +5,7 @@ from pathlib import Path
 
 from hermes_constants import get_hermes_home
 
-from gateway import service_process, systemd_identity, systemd_runtime, systemd_unit_render
+from gateway import service_owner, service_process, systemd_identity, systemd_runtime, systemd_unit_render
 from gateway.service_definition import (
     normalize_service_definition,
     refuse_temp_home_write,
@@ -65,6 +65,8 @@ def retire_replace_dropin(system: bool = False) -> bool:
 def refresh_if_needed(system: bool = False) -> bool:
     path = systemd_identity.unit_path(system)
     if not path.exists():
+        return False
+    if not service_owner.systemd_unit_belongs_to_caller(path, system, "rewrite"):
         return False
 
     current = unit_is_current(system)

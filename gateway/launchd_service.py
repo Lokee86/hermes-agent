@@ -759,17 +759,24 @@ def refresh_launchd_plist_if_needed() -> bool:
     return True
 
 
-def launchd_install(force: bool = False, *, start_now: bool = True):
+def launchd_install(
+    force: bool = False, *, start_now: bool = True, force_unit_path: bool = False
+):
     plist_path = get_launchd_plist_path()
     label = get_launchd_label()
     # Loading the plist starts the gateway (RunAtLoad), so a no-start install writes it without
     # loading it. A gateway that launchd already runs is still reloaded; this install did not start it.
     load = start_now or _launchctl_label_supervising_process(label)
 
-    if plist_path.exists() and not force:
+    if plist_path.exists() and not force_unit_path:
         if not _launchd_plist_owned_by_current_home(plist_path):
-            print_error(f"Refusing to replace launchd service owned by another Hermes home: {plist_path}; use --force to override")
+            print_error(
+                f"Refusing to replace launchd service owned by another Hermes home: {plist_path}; "
+                "use --force-unit-path to repoint it"
+            )
             return
+
+    if plist_path.exists() and not (force or force_unit_path):
         if launchd_plist_is_current():
             print(f"Service already installed at: {plist_path}")
             print("Use --force to reinstall")

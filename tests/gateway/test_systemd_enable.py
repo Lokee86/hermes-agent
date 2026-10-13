@@ -43,7 +43,7 @@ def test_install_existing_unit_enable_independent_of_refresh(
     monkeypatch.setattr(systemd_identity, "read_unit_user", lambda path: None)
     monkeypatch.setattr(systemd_runtime, "sync_home_from_unit", lambda system: None)
     monkeypatch.setattr(systemd_lifecycle.service_identity, "service_name", lambda: "hermes-gateway.service")
-    monkeypatch.setattr(systemd_lifecycle, "get_hermes_home", lambda: tmp_path)
+    monkeypatch.setenv("HERMES_HOME", str(tmp_path))
     monkeypatch.setattr(systemd_lifecycle.service_identity, "hermes_home_pinned_by_unit", lambda path: str(tmp_path))
     monkeypatch.setattr(systemd_unit_state, "unit_is_current", lambda system: current)
     monkeypatch.setattr(systemd_unit_state, "refresh_if_needed", lambda system: calls.append("refresh"))

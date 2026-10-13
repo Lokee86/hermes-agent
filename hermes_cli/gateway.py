@@ -1398,14 +1398,23 @@ def install_linux_gateway_from_setup(force: bool = False, enable_on_startup: boo
                 print_error("  Enter a username.")
 
         _remove_legacy_systemd_units_before_install(non_interactive=False)
-        _systemd_lifecycle.install(force=force, system=True, run_as_user=run_as_user, enable_on_startup=enable_on_startup)
-        return scope, True
+        installed = _systemd_lifecycle.install(
+            force=force,
+            system=True,
+            run_as_user=run_as_user,
+            enable_on_startup=enable_on_startup,
+        )
+        return scope, installed
 
     if refuses_container_user_scope_install(system=False):
         return scope, False
     _remove_legacy_systemd_units_before_install(non_interactive=False)
-    _systemd_lifecycle.install(force=force, system=False, enable_on_startup=enable_on_startup)
-    return scope, True
+    installed = _systemd_lifecycle.install(
+        force=force,
+        system=False,
+        enable_on_startup=enable_on_startup,
+    )
+    return scope, installed
 
 
 
@@ -2660,11 +2669,12 @@ def _install_systemd_from_cli(args, *, force: bool, system: bool, run_as_user) -
     start_now = _flag("start_now", "Start the gateway now after installing the service?")
     start_on_login = _flag("start_on_login", "Start the gateway automatically on login/boot with systemd?")
     _remove_legacy_systemd_units_before_install(non_interactive=non_interactive)
-    _systemd_lifecycle.install(
+    installed = _systemd_lifecycle.install(
         force=force, system=system, run_as_user=run_as_user,
         enable_on_startup=start_on_login,
+        force_unit_path=getattr(args, "force_unit_path", False),
     )
-    if start_now:
+    if start_now and installed:
         _systemd_lifecycle.start(system=system)
 
 
@@ -2688,7 +2698,11 @@ def _cmd_install(args):
             sys.exit(1)
         _install_systemd_from_cli(args, force=force, system=system, run_as_user=run_as_user)
     elif backend == "launchd":
-        launchd_install(force, start_now=getattr(args, "start_now", None) is not False)
+        launchd_install(
+            force,
+            start_now=getattr(args, "start_now", None) is not False,
+            force_unit_path=getattr(args, "force_unit_path", False),
+        )
     elif backend == "windows":
         _gw_windows().install(
             force=force,

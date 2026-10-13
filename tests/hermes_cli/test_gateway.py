@@ -1168,8 +1168,14 @@ def test_install_if_missing_only_installs_when_no_service_exists(monkeypatch, in
     monkeypatch.setattr(gateway, "_guard_named_profile_under_multiplexer", lambda force: None)
     monkeypatch.setattr(gateway, "_service_mgmt_blocked", lambda: False)
     monkeypatch.setattr(gateway, "_service_backend", lambda: "launchd")
-    monkeypatch.setattr(gateway, "launchd_install", lambda force, start_now: installs.append(force))
+    monkeypatch.setattr(
+        gateway,
+        "launchd_install",
+        lambda force, start_now, force_unit_path: installs.append(
+            (force, start_now, force_unit_path)
+        ),
+    )
 
     gateway._cmd_install(SimpleNamespace(if_missing=True, force=False, system=False, run_as_user=None))
 
-    assert installs == ([] if installed else [False])
+    assert installs == ([] if installed else [(False, True, False)])

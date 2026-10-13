@@ -6,6 +6,7 @@ from pathlib import Path
 
 from gateway import (
     service_identity,
+    service_owner,
     signal_restart,
     systemd_identity,
     systemd_legacy,
@@ -50,19 +51,20 @@ def install(
     run_as_user: str | None = None,
     enable_on_startup: bool = True,
     remove_legacy: bool = False,
-) -> None:
+    force_unit_path: bool = False,
+) -> bool:
     if system:
         systemd_identity.require_root("install")
     path = systemd_identity.unit_path(system)
-    if path.exists() and not force:
-        pinned = service_identity.hermes_home_pinned_by_unit(path)
-        if pinned is None or Path(pinned).expanduser().resolve() != get_hermes_home().resolve():
-            print(f"✗ Refusing to replace systemd unit without matching Hermes home: {path}; use --force to override")
-            return
+    if path.exists() and not force_unit_path:
+        if not service_owner.systemd_unit_belongs_to_caller(
+            path, system, "overwrite", run_as_user=run_as_user
+        ):
+            return False
         systemd_runtime.sync_home_from_unit(system)
     if remove_legacy:
         systemd_legacy.remove_units()
-    if path.exists() and not force:
+    if path.exists() and not (force or force_unit_path):
         if not systemd_unit_state.unit_is_current(system):
             systemd_unit_state.refresh_if_needed(system)
         if enable_on_startup:
@@ -77,12 +79,12 @@ def install(
             systemd_linger.ensure_system_service_linger(configured)
         elif not system:
             systemd_linger.ensure_linger_enabled()
-        return
+        return True
 
     path.parent.mkdir(parents=True, exist_ok=True)
     definition = systemd_unit_render.generate_systemd_unit(system=system, run_as_user=run_as_user)
     if systemd_unit_state.refuse_temp_home_write(definition, "systemd unit"):
-        return
+        return False
     systemd_unit_state.prepare_installation_launcher(system, run_as_user)
     path.write_text(definition, encoding="utf-8")
     systemd_runtime.run_systemctl(["daemon-reload"], system=system, check=True, timeout=30)
@@ -98,6 +100,7 @@ def install(
         systemd_linger.ensure_system_service_linger(configured)
     elif not system:
         systemd_linger.ensure_linger_enabled()
+    return True
 
 
 def uninstall(system: bool = False) -> None:

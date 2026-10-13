@@ -1,77 +1,118 @@
-"""Gateway service-definition writes belong to the home the definition pins.
+"""Compatibility coverage for the retired CLI service-owner facade."""
 
-Every gateway boot refreshes "its" unit, and a scratch/E2E process whose service name resolves to the
-real install's unit (a fake HERMES_HOME under ~/.hermes/cache/scratch takes the bare name, and
-``<root>/profiles/x`` collides with ``~/.hermes/profiles/x``) rewrote that unit to point at the scratch
-home. The real gateway then crash-looped on its next restart.
-"""
-
-from types import SimpleNamespace
-
-import pytest
-
-import hermes_cli.gateway as gw
+from gateway import service_definition, service_owner
 from hermes_cli import gateway_service_owner
 
-UNIT = (
-    "[Service]\n"
-    "ExecStart=/home/ace/.hermes/hermes-agent/.hermes/bin/hermes gateway run\n"
-    "WorkingDirectory={home}\n"
-    'Environment="HERMES_HOME={home}"\n'
-)
+
+def test_service_owner_facade_routes_to_gateway_owner():
+    assert (
+        gateway_service_owner.definition_belongs_to_home
+        is service_owner.definition_belongs_to_home
+    )
+    assert gateway_service_owner.pinned_home is service_owner.pinned_home
+    assert (
+        gateway_service_owner.unit_belongs_to_caller
+        is service_owner.systemd_unit_belongs_to_caller
+    )
 
 
-@pytest.fixture
-def unit(tmp_path, monkeypatch):
-    real = tmp_path / "account" / ".hermes"
-    scratch = tmp_path / "scratch" / "fakehome" / ".hermes"
-    real.mkdir(parents=True)
-    scratch.mkdir(parents=True)
-    path = tmp_path / "systemd" / "hermes-gateway.service"
-    path.parent.mkdir()
-    path.write_text(UNIT.format(home=real), encoding="utf-8")
+def test_temp_home_guard_facade_routes_to_gateway_definition(monkeypatch, tmp_path):
+    import tempfile
+
+    monkeypatch.setattr(tempfile, "gettempdir", lambda: str(tmp_path))
+    definition = (
+        "[Service]\n"
+        f'Environment="HERMES_HOME={tmp_path / "hermes-home"}"\n'
+    )
+
+    assert (
+        gateway_service_owner.temp_home_in_service_definition(definition)
+        == str(tmp_path / "hermes-home")
+    )
+    assert (
+        gateway_service_owner.temp_home_in_service_definition
+        is service_definition.temp_home_in_definition
+    )
+
+def test_systemd_install_cli_forwards_force_unit_path(monkeypatch):
+    from types import SimpleNamespace
+
+    import hermes_cli.gateway as gateway
+
     calls = []
-    # The temp-root guard only sees homes under a temp dir; scratch homes elsewhere are what slipped past.
-    monkeypatch.setattr(gateway_service_owner, "refuse_temp_home_service_write", lambda definition, kind: False)
-    monkeypatch.setattr(gw, "get_systemd_unit_path", lambda system=False: path)
-    monkeypatch.setattr(gw, "systemd_unit_is_current", lambda system=False: False)
-    monkeypatch.setattr(gw, "_retire_hermes_replace_dropin", lambda system=False: False)
-    monkeypatch.setattr(gw, "_prepare_service_launcher", lambda system=False, run_as_user=None: None)
-    monkeypatch.setattr(gw, "generate_systemd_unit", lambda system=False, run_as_user=None: "ExecStart=new\n")
-    monkeypatch.setattr(gw, "_run_systemctl", lambda args, **kw: calls.append(tuple(args)) or
-                        SimpleNamespace(returncode=0, stdout="", stderr=""))
-    return SimpleNamespace(path=path, real=real, scratch=scratch, calls=calls,
-                           original=path.read_text(encoding="utf-8"))
+    starts = []
+    monkeypatch.setattr(gateway, "is_wsl", lambda: False)
+    monkeypatch.setattr(
+        gateway, "_remove_legacy_systemd_units_before_install", lambda **kwargs: None
+    )
+    monkeypatch.setattr(
+        gateway._systemd_lifecycle,
+        "install",
+        lambda **kwargs: calls.append(kwargs) or False,
+    )
+    monkeypatch.setattr(
+        gateway._systemd_lifecycle,
+        "start",
+        lambda **kwargs: starts.append(kwargs),
+    )
+    args = SimpleNamespace(
+        start_now=True,
+        start_on_login=False,
+        force_unit_path=True,
+    )
+
+    gateway._install_systemd_from_cli(
+        args,
+        force=False,
+        system=False,
+        run_as_user=None,
+    )
+
+    assert calls == [
+        {
+            "force": False,
+            "system": False,
+            "run_as_user": None,
+            "enable_on_startup": False,
+            "force_unit_path": True,
+        }
+    ]
+    assert starts == []
 
 
-def test_refresh_from_another_home_leaves_the_unit_untouched(unit, monkeypatch, capsys):
-    monkeypatch.setenv("HERMES_HOME", str(unit.scratch))
-    assert gw.refresh_systemd_unit_if_needed(system=False) is False
-    assert unit.path.read_text(encoding="utf-8") == unit.original
-    assert ("daemon-reload",) not in unit.calls
-    assert "Refusing to rewrite" in capsys.readouterr().out
+def test_launchd_install_cli_forwards_force_unit_path(monkeypatch):
+    from types import SimpleNamespace
 
+    import hermes_cli.gateway as gateway
 
-def test_refresh_from_the_pinned_home_still_rewrites_a_stale_unit(unit, monkeypatch):
-    monkeypatch.setenv("HERMES_HOME", str(unit.real))
-    assert gw.refresh_systemd_unit_if_needed(system=False) is True
-    assert unit.path.read_text(encoding="utf-8") == "ExecStart=new\n"
-    assert ("daemon-reload",) in unit.calls
+    calls = []
+    monkeypatch.setattr(gateway, "is_managed", lambda: False)
+    monkeypatch.setattr(gateway, "_guard_named_profile_under_multiplexer", lambda **kwargs: None)
+    monkeypatch.setattr(gateway, "_service_mgmt_blocked", lambda: False)
+    monkeypatch.setattr(gateway, "_service_backend", lambda: "launchd")
+    monkeypatch.setattr(gateway, "_is_service_installed", lambda: False)
+    monkeypatch.setattr(
+        gateway,
+        "launchd_install",
+        lambda force, **kwargs: calls.append((force, kwargs)),
+    )
+    args = SimpleNamespace(
+        if_missing=False,
+        force=False,
+        force_unit_path=True,
+        system=False,
+        run_as_user=None,
+        start_now=False,
+    )
 
+    gateway._cmd_install(args)
 
-class TestTempHomeServiceDefinitionGuard:
-    """temp_home_in_service_definition() — structural temp-dir detection."""
-
-    def test_detects_tmp_home_in_systemd_unit(self):
-        unit = '[Service]\nEnvironment="HERMES_HOME=/tmp/hermes-e2e-41264"\n'
-        assert (
-            gateway_service_owner.temp_home_in_service_definition(unit)
-            == "/tmp/hermes-e2e-41264"
+    assert calls == [
+        (
+            False,
+            {
+                "start_now": False,
+                "force_unit_path": True,
+            },
         )
-
-    def test_detects_tempdir_env_home(self, monkeypatch, tmp_path):
-        import tempfile as _tempfile
-
-        monkeypatch.setattr(_tempfile, "gettempdir", lambda: str(tmp_path))
-        unit = f'[Service]\nEnvironment="HERMES_HOME={tmp_path}/hermes-home"\n'
-        assert gateway_service_owner.temp_home_in_service_definition(unit) is not None
+    ]
