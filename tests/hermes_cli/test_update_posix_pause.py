@@ -128,6 +128,7 @@ def test_a_killed_updates_record_owes_only_what_it_stopped(tmp_path, kind, asked
 
 @pytest.mark.platforms("posix")
 @pytest.mark.skipif(hasattr(os, "geteuid") and os.geteuid() == 0, reason="root writes through a read-only dir")
+@pytest.mark.live_system_guard_bypass  # The test terminates only its own child process.
 @pytest.mark.parametrize("prior", [{}, {"pause_id": "adopted-1", "resume_needed": True}], ids=["fresh", "adopted"])
 def test_a_record_that_cannot_be_written_leaves_the_update_unpaused_and_ungated(tmp_path, monkeypatch, prior):
     """No durable record, no stop. This attempt must leave nothing that arms the checkout's tree
