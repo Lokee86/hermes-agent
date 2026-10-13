@@ -9,7 +9,7 @@ import uuid
 import acp
 from acp.schema import (
     AgentCapabilities, Implementation, InitializeResponse, LoadSessionResponse,
-    NewSessionResponse, PromptCapabilities, PromptResponse, ResumeSessionResponse,
+    NewSessionResponse, PromptCapabilities, ResumeSessionResponse,
     SessionCapabilities, SessionForkCapabilities, SessionListCapabilities, SessionResumeCapabilities,
 )
 
@@ -81,6 +81,7 @@ class GatewayACPAgent(acp.Agent):
         self._permissions = {}
         self._form_elicitation = False
         self._admissions = {}
+        self._inputs = {}
         self._submitting = set()
         self._pending_cancels = set()
         self._tool_args = {}
@@ -117,21 +118,25 @@ class GatewayACPAgent(acp.Agent):
 
     async def _client(self, *, reconnect=False):
         async with self._connect_lock:
+            from hermes_cli.gateway_client import GatewayClient
+            if (isinstance(self._gateway, GatewayClient) and self._gateway.reader is not None
+                    and self._gateway.reader.done() and self._failure is None):
+                self._failure = GatewayClientError("Gateway disconnected; turn outcome is unknown.")
             if self._failure is not None and not reconnect:
                 raise self._failure
             if self._failure is not None:
                 # A transport failure is terminal for existing prompt waiters, but a later
                 # ACP load/resume may establish a fresh viewer. Never replay submissions.
+                if self._event_task is not None:
+                    self._event_task.cancel()
+                    with suppress(asyncio.CancelledError):
+                        await self._event_task
                 if self._connection is not None:
                     await self._connection.__aexit__(None, None, None)
                 self._gateway = self._connection = None
                 self._event_task = None
                 self._failure = None
                 self._snapshots.clear()
-                self._aliases.clear()
-                self._terminals.clear()
-                self._streamed.clear()
-                self._delivered.clear()
                 for task in self._permissions.values():
                     task.cancel()
                 self._permissions.clear()
@@ -264,7 +269,12 @@ class GatewayACPAgent(acp.Agent):
         session_id = self._aliases.get(session_id, session_id)
         client = await self._client()
         payload = {'model': model_id}
-        await self._mutations.apply(client, session_id, 'model', payload)
+        from functools import partial
+        from acp_adapter.gateway_model_confirmation import confirm_model
+        result = await self._mutations.apply(client, session_id, 'model', payload,
+            confirm=partial(confirm_model, self, session_id))
+        if result.get('status') == 'cancelled':
+            return SetSessionModelResponse()
         self._snapshots[session_id] = await client.rpc('session.resume', session_id=session_id)
         self._mutations.acknowledge(session_id, 'model', payload)
         return SetSessionModelResponse()
@@ -292,84 +302,8 @@ class GatewayACPAgent(acp.Agent):
                 + ('nothing was submitted' if unsent else 'inspect the existing admission'))
 
     async def prompt(self, prompt, session_id, **kwargs):
-        session_id = self._aliases.get(session_id, session_id)
-        if session_id not in self._snapshots:
-            raise GatewayClientError("not_found")
-        unknown = next((p for p in self._snapshots[session_id].get('pending', [])
-                        if p.get('status') == 'unknown'), None)
-        if unknown is not None:
-            raise GatewayClientError(self._unknown_recovery(
-                session_id, unknown['admission_id'], unsent=True))
-        from acp_adapter.content import _content_blocks_to_openai_user_content
-        text, attachments = _stage_user_content(_content_blocks_to_openai_user_content(prompt))
-        if text.lstrip().startswith('/') and not attachments:
-            from hermes_cli.gateway_mutations import slash_mutation
-            parts = text.strip().split(None, 1)
-            operation, payload = slash_mutation(parts[0], parts[1] if len(parts) > 1 else '')
-            if operation == 'branch':
-                raise GatewayClientError('use_acp_fork_session')
-            client = await self._client()
-            result = await self._mutations.apply(client, session_id, operation, payload)
-            if result.get('status') == 'preview':
-                # Read-only report: nothing changed, so the editor's snapshot is still current.
-                await self._conn.session_update(session_id=self._editor_id(session_id),
-                    update=acp.update_agent_message_text('\n'.join(result['lines']) + '\n'))
-            else:
-                self._snapshots[session_id] = await client.rpc('session.resume', session_id=session_id)
-            self._mutations.acknowledge(session_id, operation, payload)
-            return PromptResponse(stop_reason='end_turn')
-        if self._failure is not None:
-            # Reconnect only for a NEW prompt. An ambiguous previous submission is
-            # never replayed: it remains unknown to the editor until explicitly checked.
-            client = await self._client(reconnect=True)
-            self._snapshots[session_id] = await client.rpc('session.resume', session_id=session_id)
-        else:
-            client = await self._client()
-        submit = {'text': text}
-        if attachments:
-            submit['attachments'] = attachments
-        self._submitting.add(session_id)
-        try:
-            receipt = await client.rpc("prompt.submit", session_id=session_id,
-                                       input_id=uuid.uuid4().hex, **submit)
-        except BaseException:
-            self._pending_cancels.discard(session_id)
-            raise
-        finally:
-            self._submitting.discard(session_id)
-        admission_id = receipt["admission_id"]
-        self._admissions[session_id] = admission_id
-        if receipt.get("status") == "terminal":
-            self._admissions.pop(session_id, None)
-            return PromptResponse(stop_reason='end_turn')
-        elif receipt.get("status") == "unknown":
-            self._admissions.pop(session_id, None)
-            raise GatewayClientError(self._unknown_recovery(session_id, admission_id))
-        try:
-            if session_id in self._pending_cancels:
-                self._pending_cancels.discard(session_id)
-                await self._cancel_admission(session_id, admission_id)
-            async with self._changed:
-                await self._changed.wait_for(lambda: admission_id in self._terminals or self._failure is not None
-                    or any(p.get('status') == 'unknown' for p in self._snapshots[session_id].get('pending', [])))
-                if self._failure:
-                    raise self._failure
-                unknown = next((p for p in self._snapshots[session_id].get('pending', [])
-                                if p.get('status') == 'unknown'), None)
-                if unknown is not None:
-                    raise GatewayClientError(self._unknown_recovery(session_id, unknown['admission_id']))
-                terminal = self._terminals.pop(admission_id)
-        finally:
-            # Do not let one prompt tear down a newer mapping if the session has
-            # already advanced while this coroutine unwinds.
-            if self._admissions.get(session_id) == admission_id:
-                self._admissions.pop(session_id, None)
-        outcome = terminal.get("outcome")
-        if outcome == 'unknown':
-            raise GatewayClientError(self._unknown_recovery(session_id, admission_id))
-        if outcome == "failed":
-            raise GatewayClientError("admitted_turn_failed")
-        return PromptResponse(stop_reason="cancelled" if outcome == "cancelled" else "end_turn")
+        from acp_adapter.gateway_prompt import prompt as gateway_prompt
+        return await gateway_prompt(self, prompt, session_id, **kwargs)
 
     async def _events(self):
         try:

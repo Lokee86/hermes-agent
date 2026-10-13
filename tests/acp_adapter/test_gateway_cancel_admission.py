@@ -123,6 +123,9 @@ async def test_deferred_cancel_failure_cleans_mapping_before_next_submit():
             second_started.set()
             await second_release.wait()
             return {'admission_id': 'second'}
+        if method == 'prompt.receipt':
+            return {'admission_id': 'first', 'status': 'terminal', 'outcome': 'cancelled',
+                    'result': {'final_response': ''}}
         if method == 'prompt.cancel':
             if params['admission_id'] == 'first':
                 raise GatewayClientError('cancel_failed')
@@ -139,6 +142,12 @@ async def test_deferred_cancel_failure_cleans_mapping_before_next_submit():
     with pytest.raises(GatewayClientError, match='cancel_failed'):
         await asyncio.wait_for(first, 2)
     assert 's' not in agent._admissions
+    # A failed cancellation doesn't prove the earlier submission settled.
+    with pytest.raises(GatewayClientError, match='unacknowledged_input_pending'):
+        await agent.prompt([TextContentBlock(type='text', text='second')], 's')
+    recovered = await agent.prompt([TextContentBlock(type='text', text='first')], 's')
+    assert recovered.stop_reason == 'cancelled'
+    assert submits == 1
 
     second = asyncio.create_task(
         agent.prompt([TextContentBlock(type='text', text='second')], 's'))

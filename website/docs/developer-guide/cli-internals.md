@@ -203,3 +203,14 @@ profiles.skills owns synchronous counts and background polling refreshes.
 Polling returns the last known count without walking the skill tree in the request.
 The setup toolset is reserved for the backend-assigned setup profile role and
 remains limited to desktop sessions.
+
+## ACP gateway prompt ownership
+
+ACP prompt admission and slash adaptation live in acp_adapter.gateway_prompt;
+the gateway remains the execution owner. A submit whose reply is lost retains
+its input identity and staged attachments. Explicit retries reuse that identity;
+once the admission is acknowledged, retries check its receipt instead of
+submitting again. Replacement text is refused until the outstanding attempt
+is resolved. Registered slash aliases use the canonical command resolver;
+unknown slash text and paths remain prompts. Guarded model changes use ACP
+permission cards owned by acp_adapter.gateway_model_confirmation.
