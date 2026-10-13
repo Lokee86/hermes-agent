@@ -54,6 +54,7 @@ def test_definite_refusal_is_booked_and_journal_retired(tmp_path, monkeypatch):
         peer(monkeypatch, call)
         result = scheduler_authority.run_canonical_job(job, execution_id=execution['id'])
         assert result[0] is False and 'invalid_workdir' in result[3]
+        assert scheduler_authority.journal_path(job['id'], execution['id']).exists()
         # Recovery must also finish a refusal if the scheduler exited before its normal tail.
         with executions._transaction() as conn:
             conn.execute('UPDATE executions SET process_id=?,pid=? WHERE id=?', ('old-owner', 999999, execution['id']))

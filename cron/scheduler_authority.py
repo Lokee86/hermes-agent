@@ -21,8 +21,11 @@ def run_canonical_job(job, *, extra_prompt=None, cancel_event=None, execution_id
     from hermes_constants import get_hermes_home
     from utils import atomic_json_write
 
-    params = {'job_id': job['id'], 'request_id': execution_id or job.get('execution_id') or uuid.uuid4().hex,
-              'extra_prompt': extra_prompt}
+    request_id = execution_id or job.get('execution_id')
+    if not request_id:
+        request_id = uuid.uuid4().hex
+        job['execution_id'] = request_id
+    params = {'job_id': job['id'], 'request_id': request_id, 'extra_prompt': extra_prompt}
     root = get_hermes_home() / 'cron' / 'admissions'
     journal = journal_path(params['job_id'], params['request_id'])
     record = {'params': params, 'receipt': None}
@@ -30,6 +33,9 @@ def run_canonical_job(job, *, extra_prompt=None, cancel_event=None, execution_id
         record = json.loads(journal.read_text(encoding='utf-8-sig'))
         if record['params'] != params:
             raise CronExecutionUnknown('cron admission identity conflict')
+        stored_result = record.get('result')
+        if isinstance(stored_result, list) and len(stored_result) == 4:
+            return tuple(stored_result)
     attempted = journal.exists()
     owner = owner_for_home(get_hermes_home())
 
@@ -48,10 +54,21 @@ def run_canonical_job(job, *, extra_prompt=None, cancel_event=None, execution_id
             if not isinstance(exc, GatewayRPCError):
                 raise
             # An explicit owner RPC refusal to submit is definitive: no fire
-            # was admitted. Transport loss and status failures remain unknown.
-            journal.unlink(missing_ok=True)
+            # was admitted. Retain its terminal result only while a durable execution row
+            # still needs recovery; transport loss and status failures remain unknown.
             error = f'{type(exc).__name__}: {exc}'
-            return False, f'# Cron Job: {job["id"]} (FAILED)\n\n{error}\n', '', error
+            result = (False, f'# Cron Job: {job["id"]} (FAILED)\n\n{error}\n', '', error)
+            record['result'] = list(result)
+            try:
+                from cron.executions import get_execution
+                execution = get_execution(params['request_id'])
+            except Exception:
+                execution = {'status': 'unknown'}
+            if execution is None or execution.get('status') in {'completed', 'failed'}:
+                journal.unlink(missing_ok=True)
+            else:
+                save()
+            return result
         record['receipt'] = receipt
         save()
         while True:
@@ -96,7 +113,7 @@ def reconcile_pending(*, allow_connect=True):
     from gateway.session_cron import owner_for_home, operation
     from hermes_constants import get_hermes_home
     from gateway.client import connect_gateway
-    from cron.jobs import pause_job, save_job_output
+    from cron.jobs import get_job, pause_job, save_job_output
     from cron.scheduler import (
         _RunDelivery,
         _apply_agent_failure_marker,
@@ -124,18 +141,39 @@ def reconcile_pending(*, allow_connect=True):
             owner = owner_for_home(get_hermes_home())
             if owner is None and not allow_connect:
                 continue
-            async def observe():
-                if owner is not None:
-                    return await operation(owner[0], 'recover', params)
-                async with connect_gateway() as client:
-                    return await client.rpc('cron.recover', **params)
-            if owner is not None:
-                state = asyncio.run_coroutine_threadsafe(observe(), owner[1]).result(timeout=20)
+            stored_result = record.get('result')
+            if isinstance(stored_result, list) and len(stored_result) == 4:
+                recovered_job = get_job(params['job_id'])
+                if recovered_job is None:
+                    from cron.executions import get_execution, recover_receipted_execution
+                    success, _output, _answer, error = stored_result
+                    settled = recover_receipted_execution(
+                        params['request_id'], params['job_id'], success=bool(success), error=error,
+                        delivery_outcome='suppressed')
+                    current = get_execution(params['request_id'])
+                    if settled is not None or current is None or current.get('status') in {'completed', 'failed'}:
+                        journal.unlink(missing_ok=True)
+                    continue
+                state = {'status': 'terminal', 'result': stored_result, 'job': recovered_job}
             else:
-                state = asyncio.run(observe())
+                async def observe():
+                    if owner is not None:
+                        return await operation(owner[0], 'recover', params)
+                    async with connect_gateway() as client:
+                        return await client.rpc('cron.recover', **params)
+                if owner is not None:
+                    state = asyncio.run_coroutine_threadsafe(observe(), owner[1]).result(timeout=20)
+                else:
+                    state = asyncio.run(observe())
             if state['status'] != 'terminal':
-                if state['status'] in {'unknown', 'missing'}:
-                    pause_job(params['job_id'], reason='Canonical cron ' + state['status'] + '; no automatic re-execution')
+                if state['status'] in {'unknown', 'missing'} and record.get('paused_for_status') != state['status']:
+                    paused = pause_job(
+                        params['job_id'],
+                        reason='Canonical cron ' + state['status'] + '; no automatic re-execution')
+                    if paused is not None:
+                        from utils import atomic_json_write
+                        record['paused_for_status'] = state['status']
+                        atomic_json_write(journal, record, mode=0o600)
                 continue
             success, output, answer, error = state['result']
             job = state['job']
