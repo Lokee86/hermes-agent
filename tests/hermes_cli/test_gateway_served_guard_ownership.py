@@ -22,7 +22,7 @@ from pathlib import Path
 import pytest
 
 import hermes_constants
-from gateway import host_attach
+from gateway import host_attach, host_topology
 from gateway.host_attach import HostGateway
 
 
@@ -65,9 +65,9 @@ def test_foreign_tenants_host_gateway_never_serves_this_home(tmp_path, monkeypat
     _use_home(monkeypatch, fake_home, root_b)
     _publish_host(monkeypatch, root_a, ("default", "coder"))
 
-    assert gw.host_multiplexer_serving("default") is None
-    assert gw._served_by_another_host_gateway() is None
-    assert gw.named_profile_served_by_running_multiplexer("coder") is False
+    assert host_topology.host_multiplexer_serving("default") is None
+    assert host_topology.served_by_another_host_gateway() is None
+    assert host_topology.named_profile_served_by_running_multiplexer("coder") is False
     refused, out = _refusal(gw)
     assert (refused, out) == (False, "")
 
@@ -79,8 +79,8 @@ def test_own_standalone_gateway_is_not_a_multiplexer_refusing_its_restart(tmp_pa
     _use_home(monkeypatch, fake_home, own_home)
     _publish_host(monkeypatch, own_home, ("argus",))
 
-    assert gw._served_by_another_host_gateway() is None
-    assert gw.named_profile_served_by_running_multiplexer() is False
+    assert host_topology.served_by_another_host_gateway() is None
+    assert host_topology.named_profile_served_by_running_multiplexer() is False
     refused, out = _refusal(gw)
     assert (refused, out) == (False, "")
     gw._guard_named_profile_under_multiplexer()  # must not sys.exit(78)
@@ -93,7 +93,7 @@ def test_satellite_served_by_same_tenants_multiplexer_is_still_refused(tmp_path,
     _use_home(monkeypatch, fake_home, root / "profiles" / "coder")
     _publish_host(monkeypatch, root, ("default", "coder"))
 
-    assert gw.named_profile_served_by_running_multiplexer() is True
+    assert host_topology.named_profile_served_by_running_multiplexer() is True
     refused, out = _refusal(gw)
     assert refused is True
     assert "hermes -p default gateway restart" in out

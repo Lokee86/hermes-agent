@@ -120,12 +120,21 @@ def _current_profile_name() -> str | None:
 
 
 def host_multiplexer_serving(profile_name: str | None = None):
-    """The live host owner when it serves ``profile_name`` using the control-channel roster."""
+    """The live same-tenant host owner when it serves ``profile_name``."""
     try:
-        from gateway.host_attach import host_gateway_serving as live_host_gateway_serving
+        from gateway.host_attach import (
+            host_gateway_serving as live_host_gateway_serving,
+            launched_by_other_tenant,
+        )
+        from hermes_constants import get_hermes_home
 
         name = profile_name if profile_name is not None else _current_profile_name()
-        return live_host_gateway_serving(name) if name else None
+        gateway = live_host_gateway_serving(name or "default")
+        if gateway is None:
+            return None
+        if launched_by_other_tenant(gateway.home, get_hermes_home()):
+            return None
+        return gateway
     except Exception:
         logger.debug("Host multiplexer probe failed", exc_info=True)
         return None
@@ -155,7 +164,10 @@ def named_profile_served_by_running_multiplexer(profile_name: str | None = None)
     if not suffix or suffix == "default":
         return False
 
-    if host_multiplexer_serving(suffix) is not None:
+    # This predicate means SATELLITE: a profile served by another same-tenant host
+    # gateway. The profile that launched the host gateway owns that process and must keep
+    # lifecycle verbs such as restart/stop; counting its own gateway here locks the owner out.
+    if served_by_another_host_gateway(suffix) is not None:
         return True
 
     try:
