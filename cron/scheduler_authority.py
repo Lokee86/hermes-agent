@@ -96,11 +96,19 @@ def reconcile_pending(*, allow_connect=True):
     from gateway.session_cron import owner_for_home, operation
     from hermes_constants import get_hermes_home
     from gateway.client import connect_gateway
-    from cron.jobs import pause_job, mark_job_run, save_job_output
-    from cron.scheduler import _compose_run_delivery, _is_cron_silence_response
+    from cron.jobs import pause_job, save_job_output
+    from cron.scheduler import (
+        _RunDelivery,
+        _apply_agent_failure_marker,
+        _compose_run_delivery,
+        _delivery_lane_value,
+        _finish_completed_run,
+        _is_cron_silence_response,
+        _normalize_deliver_value,
+        _resolve_delivery_targets,
+    )
     from cron.delivery_queue import enqueue
-    from cron.executions import (recover_receipted_execution, execution_owner_live,
-                                 settle_delivery_outcome)
+    from cron.executions import execution_owner_live
     import logging
 
     root = get_hermes_home() / 'cron' / 'admissions'
@@ -135,24 +143,72 @@ def reconcile_pending(*, allow_connect=True):
             # A live firer owns its own settlement; never duplicate its delivery.
             if execution_owner_live(params['request_id'], job['id']):
                 continue
-            # Commit the canonical result before any delivery side effects or
-            # removal of the only durable recovery journal.
-            recover_receipted_execution(params['request_id'], job['id'],
-                                        success=success, error=error,
-                                        delivery_outcome='queued')
+            # Reuse the scheduler's canonical terminal tail. Recovery may save/queue
+            # the result again, but jobs.json, the execution ledger, delivery outcome,
+            # incidents, and journal removal must settle through one path. If any of
+            # that bookkeeping raises, the outer handler leaves this journal in place
+            # for the next reconciliation attempt.
+            success, error, agent_declared = _apply_agent_failure_marker(
+                job, success, error, answer
+            )
+            d = _RunDelivery(
+                job=job,
+                success=success,
+                error=error,
+                agent_declared=agent_declared,
+            )
             output_file = save_job_output(job['id'], output)
-            content, _, silent, _, _ = _compose_run_delivery(
-                job, success=success, error=error, final_response=answer, output_file=output_file)
-            deliver = bool(content.strip()) and not silent and not (success and _is_cron_silence_response(content))
-            if deliver:
-                enqueue(params['request_id'], job, content, for_failure=not success)
-            mark_job_run(job['id'], success, error, status='delivery_queued' if deliver else None,
-                         execution_id=params['request_id'])
-            if deliver:
-                from cron.delivery_outcome import settle_quietly
-                settle_quietly(job['id'], params['request_id'])
-            else:
-                settle_delivery_outcome(params['request_id'], 'suppressed')
-            journal.unlink(missing_ok=True)
+            (
+                content,
+                d.blocked_config,
+                silent,
+                d.incident_acked,
+                d.failure_incident_id,
+            ) = _compose_run_delivery(
+                job,
+                success=success,
+                error=error,
+                final_response=answer,
+                output_file=output_file,
+            )
+            d.should_deliver = (
+                bool(content.strip())
+                and not silent
+                and not (success and _is_cron_silence_response(content))
+            )
+            if d.should_deliver:
+                d.unresolved_origin = (
+                    _normalize_deliver_value(
+                        _delivery_lane_value(job, for_failure=not d.success)
+                    )
+                    == 'origin'
+                    and not _resolve_delivery_targets(
+                        job, for_failure=not d.success
+                    )
+                )
+                if (
+                    not d.unresolved_origin
+                    and _normalize_deliver_value(
+                        _delivery_lane_value(job, for_failure=not d.success)
+                    )
+                    != 'local'
+                ):
+                    queued = enqueue(
+                        params['request_id'],
+                        job,
+                        content,
+                        for_failure=not d.success,
+                    )
+                    d.delivery_attempted = True
+                    job['last_delivery_queued'] = {
+                        'canonical': {
+                            'status': queued['status'],
+                            'execution_id': params['request_id'],
+                        }
+                    }
+            from cron.scheduler_bookkeeping import fail_empty_response
+
+            fail_empty_response(d, answer)
+            _finish_completed_run(d, None, params['request_id'], recovered=True)
         except Exception:
             logging.getLogger(__name__).warning('Cron receipt recovery deferred: %s', journal, exc_info=True)
