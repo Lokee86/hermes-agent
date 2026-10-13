@@ -5,7 +5,7 @@ Handles: hermes gateway [run|start|stop|restart|status|install|uninstall|setup]
 
 import asyncio
 import contextlib
-from hermes_cli.cli_output import line_input  # noqa: F401 — resolved lazily by siblings through the facade
+from hermes_cli.cli_output import line_input
 import json
 import logging
 import os
@@ -19,7 +19,7 @@ import textwrap
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from hermes_cli import setup_platforms  # noqa: F401 — resolved lazily by siblings through the facade
+from hermes_cli import setup_platforms
 
 # UV's bundled Python ships a minimal PATH; ensure launchctl/systemctl are discoverable.
 if os.name == "posix":
@@ -31,7 +31,7 @@ if os.name == "posix":
 
 PROJECT_ROOT = Path(__file__).parent.parent.resolve()
 
-from gateway.config import coerce_systemd_watchdog_seconds, load_gateway_config  # noqa: F401 — resolved lazily by siblings through the facade
+from gateway.config import coerce_systemd_watchdog_seconds, load_gateway_config
 from gateway.status import terminate_pid
 from gateway import host_topology as _host_topology
 from gateway import restart as _gateway_restart
@@ -43,7 +43,7 @@ named_profile_served_by_running_multiplexer = (
 
 from gateway import process_liveness as _process_liveness
 from gateway import process_discovery as _process_discovery
-from gateway.process_discovery import (  # noqa: F401 - compatibility re-exports
+from gateway.process_discovery import (
     ProfileGatewayProcess,
     WindowsGatewayService,
     _get_service_pids,
@@ -77,7 +77,7 @@ SystemScopeRequiresRootError = _systemd_identity.SystemScopeRequiresRootError
 _select_systemd_scope = _systemd_runtime.select_scope
 
 from profiles.paths import profile_name_from_home
-from gateway.restart import (  # noqa: F401 — resolved lazily by siblings through the facade
+from gateway.restart import (
     _get_parent_pid,
     _is_pid_ancestor_of_current_process,
     _request_gateway_self_restart,
@@ -95,7 +95,7 @@ from gateway.restart import (  # noqa: F401 — resolved lazily by siblings thro
     resolve_restart_exit_wait_budget,
     resolve_systemd_timeout_stop_sec,
 )
-from hermes_cli.config import (  # noqa: F401 — resolved lazily by siblings through the facade
+from hermes_cli.config import (
     get_env_value,
     get_hermes_home,
     is_managed,
@@ -106,7 +106,7 @@ from hermes_cli.config import (  # noqa: F401 — resolved lazily by siblings th
 )
 
 # display_hermes_home is imported lazily: hermes_constants may be a cached pre-update version.
-from hermes_cli.setup import (  # noqa: F401 — resolved lazily by siblings through the facade
+from hermes_cli.setup import (
     print_header,
     print_info,
     print_success,
@@ -116,7 +116,7 @@ from hermes_cli.setup import (  # noqa: F401 — resolved lazily by siblings thr
     prompt_choice,
     prompt_yes_no,
 )
-from hermes_cli.colors import Colors, color  # noqa: F401 — resolved lazily by siblings through the facade
+from hermes_cli.colors import Colors, color
 
 logger = logging.getLogger(__name__)
 
@@ -1102,6 +1102,7 @@ def _windows_scheduled_task_state(task_name: str) -> str | None:
             [powershell, "-NoProfile", "-NonInteractive", "-Command", ps_cmd],
             capture_output=True, text=True, encoding="utf-8", errors="ignore", timeout=10,
             creationflags=windows_hide_flags(),
+            check=False,
         )
         if result.returncode != 0:
             return None
@@ -1571,7 +1572,7 @@ def systemd_status(deep: bool = False, system: bool = False, full: bool = False)
         log_cmd = ["journalctl"] + ([] if system else ["--user"]) + ["-u", svc, "-n", "20", "--no-pager"]
         if full:
             log_cmd.append("-l")
-        subprocess.run(log_cmd, timeout=10)
+        subprocess.run(log_cmd, timeout=10, check=False)
 
 
 # =============================================================================
@@ -1579,7 +1580,7 @@ def systemd_status(deep: bool = False, system: bool = False, full: bool = False)
 # =============================================================================
 
 
-from gateway.launchd_service import (  # noqa: E402,F401 - compatibility re-exports
+from gateway.launchd_service import (
     get_launchd_label,
     get_launchd_plist_path,
     launchd_gateway_labels_for_install,
@@ -1631,6 +1632,7 @@ from gateway.launchd_service import (  # noqa: E402,F401 - compatibility re-expo
     wait_for_launchd_gateway_supervision,
     launchd_status,
 )
+from datetime import UTC
 
 
 
@@ -1985,7 +1987,7 @@ def _make_exit_diag():
             log_dir = _ghh() / "logs"
             log_dir.mkdir(parents=True, exist_ok=True)
             line = {
-                "ts": _dt.now(_tz.utc).isoformat(), "tag": tag, "pid": os.getpid(),
+                "ts": _dt.now(UTC).isoformat(), "tag": tag, "pid": os.getpid(),
                 "python": sys.version.split()[0], "platform": sys.platform, **extra,
             }
             with open(log_dir / "gateway-exit-diag.log", "a", encoding="utf-8") as f:
@@ -2136,7 +2138,7 @@ def run_gateway(verbose: int = 0, quiet: bool = False, replace: bool = False, fo
 # Gateway Setup (Interactive Messaging Platform Configuration)
 # =============================================================================
 
-from hermes_cli.gateway_setup_wizard import (  # noqa: E402,F401 — facade re-exports; tests patch here
+from hermes_cli.gateway_setup_wizard import (
     _PLATFORMS,
     _all_platforms,
     _platform_status,
@@ -2361,7 +2363,7 @@ def _dispatch_all_via_service_manager_if_s6(action: str) -> bool:
     for profile in profiles:
         try:
             fn(f"gateway-{profile}")
-        except Exception as exc:  # noqa: BLE001 — report and continue
+        except Exception as exc:
             errors.append((profile, exc))
     succeeded = len(profiles) - len(errors)
     verb = "stopped" if action == "stop" else "restarted"

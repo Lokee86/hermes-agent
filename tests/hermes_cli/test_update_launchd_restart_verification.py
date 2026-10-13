@@ -25,7 +25,7 @@ import subprocess
 import pytest
 
 from gateway import launchd_service
-import hermes_cli.update_cmd as update_cmd
+from hermes_cli import update_cmd
 
 LABEL = "ai.hermes.gateway"
 

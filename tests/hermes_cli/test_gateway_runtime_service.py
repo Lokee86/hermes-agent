@@ -1,5 +1,4 @@
 """Installed identity proofs at inert native supervisor executable boundaries."""
-from gateway import service_identity, systemd_runtime
 import json
 import os
 from pathlib import Path
@@ -23,6 +22,7 @@ import pytest
 ])
 def test_ensure_checks_effective_service_binding_before_start(tmp_path, monkeypatch, case, reason):
     from gateway import runtime
+    from gateway.service_identity import service_suffix_for_home
 
     monkeypatch.setattr(Path, "home", lambda: tmp_path)
     home = tmp_path / (".hermes" if case == "default" else "custom root")
@@ -30,7 +30,7 @@ def test_ensure_checks_effective_service_binding_before_start(tmp_path, monkeypa
         home = home / "profiles" / "worker"
     home.mkdir(mode=0o700, parents=True)
     monkeypatch.setenv("HERMES_HOME", str(home))
-    suffix = service_identity.service_suffix_for_home(home)
+    suffix = service_suffix_for_home(home)
     unit = tmp_path / ".config/systemd/user" / f"hermes-gateway{'-' + suffix if suffix else ''}.service"
     unit.parent.mkdir(parents=True)
     unit.write_text(f'[Service]\nExecStart={sys.executable} -m hermes_cli.main gateway run\nEnvironment="HERMES_HOME={home}"\n', encoding="utf-8")
@@ -99,7 +99,7 @@ def test_ensure_checks_effective_service_binding_before_start(tmp_path, monkeypa
     executable.chmod(0o700)
     monkeypatch.setenv('PATH', str(tmp_path) + os.pathsep + os.environ['PATH'])
     from hermes_cli import gateway as gw
-    monkeypatch.setattr(systemd_runtime, "systemctl_cmd", lambda system=False: [str(executable)] + ([] if system else ["--user"]))
+    monkeypatch.setattr(gw, "_systemctl_cmd", lambda system=False: [str(executable)] + ([] if system else ["--user"]))
     result = runtime.ensure_gateway_runtime(home, timeout=3.0)
     assert result.reason_code == reason
     commands = [json.loads(line) for line in calls.read_text().splitlines()]
@@ -149,7 +149,7 @@ def test_task_xml_binds_actual_action_and_principal(case, reason, tmp_path):
     home.mkdir()
     script = home / 'gateway.vbs'
     configured = str(home if case != 'wrong_home' else tmp_path / 'other')
-    # The pre-PM persisted launcher grammar; compatibility only, no script is executed.
+    # The current installed launcher grammar; no script is executed.
     script.write_text("\n".join([
         "' Hermes Agent Gateway", "Option Explicit", "Dim sh, env, existing_pp",
         'Set sh = CreateObject("WScript.Shell")', 'Set env = sh.Environment("PROCESS")',
@@ -192,11 +192,12 @@ def test_native_launchd_checks_loaded_job_before_disk(case, reason, tmp_path, mo
     import pwd
     from types import SimpleNamespace
     from gateway import runtime_service as service
+    from gateway.service_identity import service_suffix_for_home
     home = tmp_path / 'profile'
     home.mkdir(mode=0o700)
     monkeypatch.setenv('HERMES_HOME', str(home))
     monkeypatch.setattr(pwd, 'getpwuid', lambda uid: SimpleNamespace(pw_dir=str(tmp_path), pw_name="owner"))
-    label = 'ai.hermes.gateway' + ('-' + service_identity.service_suffix_for_home(home) if service_identity.service_suffix_for_home(home) else '')
+    label = 'ai.hermes.gateway' + ('-' + service_suffix_for_home(home) if service_suffix_for_home(home) else '')
     plist = tmp_path / 'Library/LaunchAgents' / (label + '.plist')
     plist.parent.mkdir(parents=True)
     argv = [sys.executable, '-m', 'hermes_cli.main', 'gateway', 'run']
@@ -232,6 +233,7 @@ def test_native_launchd_checks_loaded_job_before_disk(case, reason, tmp_path, mo
 @pytest.mark.parametrize("wrong", [False, True])
 def test_native_task_query_uses_installed_xml_and_vendor_launcher(wrong, tmp_path, monkeypatch):
     from gateway import runtime_service as service
+    from gateway.service_identity import service_suffix_for_home
     from gateway.windows_service import _build_gateway_vbs_script, _build_scheduled_task_xml
     home = tmp_path / 'profile'
     home.mkdir()
@@ -242,11 +244,11 @@ def test_native_task_query_uses_installed_xml_and_vendor_launcher(wrong, tmp_pat
     script.write_text(_build_gateway_vbs_script(sys.executable, str(home), str(home), ''), encoding='utf-8', newline='')
     original = script.read_bytes()
     # whoami is read-only native account evidence; no task-manager mutation.
-    identity = subprocess.run(['whoami.exe', '/USER', '/FO', 'CSV', '/NH'], stdin=subprocess.DEVNULL, capture_output=True, timeout=5)
+    identity = subprocess.run(['whoami.exe', '/USER', '/FO', 'CSV', '/NH'], stdin=subprocess.DEVNULL, capture_output=True, timeout=5, check=False)
     from gateway.windows_service import _schtasks_encoding
     import csv
-    account, sid = next(csv.reader(identity.stdout.decode(_schtasks_encoding()).splitlines()))
-    suffix = service_identity.service_suffix_for_home(home)
+    _account, sid = next(csv.reader(identity.stdout.decode(_schtasks_encoding()).splitlines()))
+    suffix = service_suffix_for_home(home)
     name = 'Hermes_Gateway' + ('_' + suffix if suffix else '')
     xml = _build_scheduled_task_xml(name, script, 'S-1-5-18' if wrong else sid)
     peer = tmp_path / 'supervisor.py'
@@ -315,17 +317,20 @@ def test_android_python_reaches_the_unmanaged_start(tmp_path, monkeypatch):
     assert spawned == [home.resolve()]
 
 
-def test_windows_startup_folder_entry_requires_login_instead_of_second_owner(tmp_path, monkeypatch):
-    """A Startup-folder installation cannot be bypassed by a competing unmanaged owner."""
+def test_windows_startup_folder_entry_still_restarts_a_stopped_owner(tmp_path, monkeypatch):
+    """The Startup-folder fallback is login persistence only (no start verb, no identity): with it
+    present and no Scheduled Task registered, ensure takes the same detached direct spawn manual
+    `hermes gateway start` uses instead of refusing until the next login."""
     from types import SimpleNamespace
     from gateway import runtime, runtime_service as service, runtime_start as start
     from gateway import windows_service as gateway_windows
+    from gateway.service_identity import service_suffix_for_home
 
     home = tmp_path / "profile"
     home.mkdir(mode=0o700)
     startup = tmp_path / "Startup"
     startup.mkdir()
-    (startup / f"Hermes_Gateway_{service.service_suffix_for_home(home)}.vbs").write_text("' fallback\r\n")
+    (startup / f"Hermes_Gateway_{service_suffix_for_home(home)}.vbs").write_text("' fallback\r\n")
     monkeypatch.setattr(gateway_windows, "_startup_dir", lambda: startup)
     queries, spawned = [], []
     monkeypatch.setattr(service, "_run", lambda argv, *a, **k: queries.append(argv) or SimpleNamespace(returncode=0, stdout=""))
@@ -333,6 +338,6 @@ def test_windows_startup_folder_entry_requires_login_instead_of_second_owner(tmp
     monkeypatch.setattr(runtime, "discover_gateway_endpoint", lambda *a, **k: runtime.GatewayDiscovery("absent"))
     monkeypatch.setattr(start, "spawn_unmanaged_gateway", lambda target, **k: spawned.append(Path(target)))
     result = runtime.ensure_gateway_runtime(home, timeout=0.3)
-    assert result.reason_code == "startup_service_requires_login"
-    assert spawned == []
+    assert result.reason_code != "startup_service_requires_login"
+    assert spawned == [home.resolve()]
     assert all(argv[:2] == ["schtasks.exe", "/Query"] for argv in queries)  # nothing installed or run

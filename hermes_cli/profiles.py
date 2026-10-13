@@ -210,7 +210,7 @@ def _clone_all_copytree_ignore(source_dir: Path):
     if source_resolved == _profile_default_home().resolve():
         root_exclude |= _CLONE_ALL_DEFAULT_EXCLUDE_ROOT
 
-    def _ignore(directory: str, names: List[str]) -> set:
+    def _ignore(directory: str, names: list[str]) -> set:
         try:
             at_root = Path(directory).resolve() == source_resolved
         except (OSError, ValueError):
@@ -273,11 +273,11 @@ _STORE_COPY_RE = re.compile(
 )
 
 
-def _fold(parts: Tuple[str, ...]) -> Tuple[str, ...]:
+def _fold(parts: tuple[str, ...]) -> tuple[str, ...]:
     return tuple(part.casefold() for part in parts)
 
 
-def profile_path_is_private(parts: Tuple[str, ...]) -> bool:
+def profile_path_is_private(parts: tuple[str, ...]) -> bool:
     """True for a PROFILE_CREDENTIAL_PATHS store, anything below one, or a root copy of one.
     Case-folded: on a case-insensitive filesystem ``Platforms/Pairing`` IS the pairing store."""
     folded = _fold(parts)
@@ -286,7 +286,7 @@ def profile_path_is_private(parts: Tuple[str, ...]) -> bool:
     return any(folded[:len(store)] == store for store in _CREDENTIAL_PATH_PARTS)
 
 
-def profile_path_contains_private_store(parts: Tuple[str, ...]) -> bool:
+def profile_path_contains_private_store(parts: tuple[str, ...]) -> bool:
     """True for a strict ancestor of a store (``platforms`` holds ``platforms/pairing``)."""
     folded = _fold(parts)
     return any(len(store) > len(folded) and store[:len(folded)] == folded for store in _CREDENTIAL_PATH_PARTS)
@@ -433,6 +433,7 @@ def check_alias_collision(name: str) -> Optional[str]:
         result = subprocess.run(
             ["where" if sys.platform == "win32" else "which", canon],
             capture_output=True, text=True, encoding='utf-8', errors='replace', timeout=5,
+            check=False,
         )
         if result.returncode == 0:
             existing_path = result.stdout.strip().splitlines()[0]
@@ -606,7 +607,7 @@ class ProfileInfo:
     # Canonical ids this profile was previously known by (``hermes profile rename``
     # appends here). Lets Bot Mode group chats re-link persisted member
     # descriptors to the renamed live profile (#110200).
-    previous_names: List[str] = field(default_factory=list)
+    previous_names: list[str] = field(default_factory=list)
     # Backend-assigned role (``SETUP_ROLE`` or None). Only ``hermes_cli.setup_profile`` writes it.
     role: Optional[str] = None
 
@@ -619,7 +620,7 @@ class ProfileInfo:
 # template, ~119KB) was re-parsed for every bot every five seconds to yield the same two strings.
 # Only DERIVED values are cached, never a document a caller could write back: the raw readers
 # (`read_user_config_raw`, `_load_yaml_dict`) keep their uncached contract. See #117378.
-_PROFILE_FILE_CACHE: Dict[tuple, tuple] = {}
+_PROFILE_FILE_CACHE: dict[tuple, tuple] = {}
 _PROFILE_FILE_CACHE_MAX = 512
 
 
@@ -850,7 +851,7 @@ def _cached_skill_count(profile_dir: Path) -> int:
 def set_profile_display_name(profile_name: str, display_name: str) -> str:
     """Set (or clear, with ``""``) a presentation-only display name. Returns the stored value;
     raises ``ValueError`` over 64 chars."""
-    canon, profile_dir = _profile_existing_dir(profile_name)
+    _canon, profile_dir = _profile_existing_dir(profile_name)
     cleaned = (display_name or "").strip()
     if len(cleaned) > 64:
         raise ValueError(f"Display name too long ({len(cleaned)} chars, max 64).")
@@ -882,7 +883,7 @@ def _profile_info(name: str, path: Path, *, is_default: bool, alias_name: Option
     )
 
 
-def list_profiles(*, lazy_skill_count: bool = False) -> List[ProfileInfo]:
+def list_profiles(*, lazy_skill_count: bool = False) -> list[ProfileInfo]:
     """Return info for all profiles, including the default.
 
     ``lazy_skill_count=True`` is for POLLED callers (``GET /api/profiles``, ``profiles.list``):
@@ -964,10 +965,10 @@ def _clone_file(source_dir: Path, profile_dir: Path, relpath: str) -> None:
 _CLONE_MATERIALIZE = (".env", "config.yaml", "auth.json", "SOUL.md")
 
 
-def _materialize_symlinked_files(profile_dir: Path) -> List[str]:
+def _materialize_symlinked_files(profile_dir: Path) -> list[str]:
     """Replace symlinked root files the clone will edit with private copies of their targets (a
     dangling link is dropped). Returns the relative names materialized."""
-    done: List[str] = []
+    done: list[str] = []
     for name in _CLONE_MATERIALIZE:
         path = profile_dir / name
         if not path.is_symlink():
@@ -994,7 +995,7 @@ def _junction_target(path: str) -> Optional[str]:
     # readlink hands back the substitute name; CreateJunction rejects the ``\\?\`` spelling.
     if target.startswith("\\\\?\\UNC\\"):
         return "\\" + target[7:]
-    return target[4:] if target.startswith("\\\\?\\") else target
+    return target.removeprefix("\\\\?\\")
 
 
 def _copytree_keep_junctions(src: Path, dst: Path, ignore, dirs_exist_ok: bool = False) -> None:
@@ -1002,9 +1003,9 @@ def _copytree_keep_junctions(src: Path, dst: Path, ignore, dirs_exist_ok: bool =
     traversing them. A ``skills/foo`` junction into a ``skills.external_dirs`` root copied as a
     physical tree is a second same-named candidate and ``_locate_skill`` refuses to guess (#113471).
     A junction whose target is gone is skipped with a warning, never a crash."""
-    junctions: Dict[str, str] = {}
+    junctions: dict[str, str] = {}
 
-    def _ignore(directory: str, names: List[str]) -> set:
+    def _ignore(directory: str, names: list[str]) -> set:
         ignored = set(ignore(directory, names))
         for name in names:
             target = _junction_target(os.path.join(directory, name))
@@ -1074,7 +1075,7 @@ def _clone_plugins_ignore(plugins_root: Path):
     the installer's in-flight ``.install-*`` / ``.update-*`` staging dirs at the root."""
     root = str(plugins_root)
 
-    def _ignore(directory: str, names: List[str]) -> set:
+    def _ignore(directory: str, names: list[str]) -> set:
         ignored = _non_exportable_entries(directory, names)
         if directory == root:
             # Directories only: ``.install-metadata.json`` shares the prefix and must travel.
@@ -1099,7 +1100,7 @@ def _clone_plugins(source_dir: Path, profile_dir: Path) -> None:
                                  _clone_plugins_ignore(source_plugins), dirs_exist_ok=True)
 
 
-def cloned_plugin_names(profile_dir: Path) -> List[str]:
+def cloned_plugin_names(profile_dir: Path) -> list[str]:
     """Plugins a clone now carries in ``plugins/``, for the CLI notice."""
     try:
         return sorted(p.name for p in (profile_dir / "plugins").iterdir()
@@ -1311,6 +1312,7 @@ def seed_profile_skills(profile_dir: Path, quiet: bool = False) -> Optional[dict
             env={**os.environ, "HERMES_HOME": str(profile_dir)},
             cwd=str(project_root),
             capture_output=True, text=True, encoding='utf-8', errors='replace', timeout=60,
+            check=False,
         )
         if result.returncode == 0 and result.stdout.strip():
             return json.loads(result.stdout.strip())
@@ -1329,7 +1331,7 @@ def seed_profile_skills(profile_dir: Path, quiet: bool = False) -> Optional[dict
         return None
 
 
-def backfill_profile_envs(quiet: bool = False) -> List[str]:
+def backfill_profile_envs(quiet: bool = False) -> list[str]:
     """Give every named profile predating per-profile ``.env`` one (copy of the default's, or
     the placeholder header). Never overwrites an existing profile ``.env``.
 
@@ -1340,7 +1342,7 @@ def backfill_profile_envs(quiet: bool = False) -> List[str]:
     those profiles were already running with (they previously read the root ``.env`` via the process
     environment). Users can then diverge per profile from there.
     """
-    backfilled: List[str] = []
+    backfilled: list[str] = []
     default_env = _profile_default_home() / ".env"
     for entry in _profile_named_dirs():
         env_path = entry / ".env"
@@ -1966,7 +1968,7 @@ def _scrub_export_secrets(staged: Path) -> None:
         path.write_text(redacted, encoding="utf-8")
 
 
-def export_profile(name: str, output_path: str, extra_files: Optional[Dict[str, str]] = None) -> Path:
+def export_profile(name: str, output_path: str, extra_files: Optional[dict[str, str]] = None) -> Path:
     """Export a profile to a tar.gz archive; credential files are excluded and staged text is
     force-redacted first. Returns the output file path."""
     import tempfile

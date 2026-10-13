@@ -409,7 +409,7 @@ def test_runtime_inventory_dedupes_same_pid_across_homes(tmp_path: Path, monkeyp
         "gateway.process_discovery._get_service_pids", lambda all_profiles=False: set()
     )
     monkeypatch.setattr(
-        "gateway.process_discovery.find_profile_gateway_processes", lambda: []
+        "gateway.process_discovery.find_profile_gateway_processes", list
     )
     monkeypatch.setattr(
         "gateway.control_socket.identify_gateway",
@@ -438,7 +438,7 @@ def test_runtime_inventory_prefers_socket_supervisor(tmp_path: Path, monkeypatch
         "gateway.process_discovery._get_service_pids", lambda all_profiles=False: set()
     )
     monkeypatch.setattr(
-        "gateway.process_discovery.find_profile_gateway_processes", lambda: []
+        "gateway.process_discovery.find_profile_gateway_processes", list
     )
     monkeypatch.setattr(
         "gateway.control_socket.identify_gateway",

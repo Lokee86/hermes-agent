@@ -14,7 +14,7 @@ from pathlib import Path
 
 import pytest
 
-import hermes_cli.profiles as profiles
+from hermes_cli import profiles
 import profiles.metadata as profile_metadata
 
 

@@ -12,7 +12,7 @@ from profiles.registry import _iter_named_profile_dirs
 
 logger = logging.getLogger(__name__)
 
-_STANDALONE_MEMO: Dict[str, Tuple[Optional[tuple], Optional[bool]]] = {}
+_STANDALONE_MEMO: dict[str, tuple[Optional[tuple], Optional[bool]]] = {}
 _STANDALONE_WARNED = False
 _STANDALONE_DEFAULT_WARNING = (
     "gateway.standalone is ignored on the default profile: it is the host gateway"
@@ -99,7 +99,7 @@ def profiles_to_serve(
     *,
     include_standalone: bool = False,
     include_parked: bool = False,
-) -> List[Tuple[str, Path]]:
+) -> list[tuple[str, Path]]:
     active = get_active_profile_name() or "default"
     default = _get_default_hermes_home()
     if profile_is_parked(default) and default not in _parked_default_warned:
@@ -109,7 +109,7 @@ def profiles_to_serve(
         _parked_default_warned.add(default)
     if not multiplex:
         return [(active, get_profile_dir(active))]
-    serve: List[Tuple[str, Path]] = [("default", default)]
+    serve: list[tuple[str, Path]] = [("default", default)]
     serve.extend(
         (entry.name, entry)
         for entry in _iter_named_profile_dirs()

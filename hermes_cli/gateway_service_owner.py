@@ -14,8 +14,8 @@ from gateway.service_definition import (
 __all__ = [
     "definition_belongs_to_home",
     "pinned_home",
-    "service_home_for_unit",
-    "unit_belongs_to_caller",
     "refuse_temp_home_service_write",
+    "service_home_for_unit",
     "temp_home_in_service_definition",
+    "unit_belongs_to_caller",
 ]

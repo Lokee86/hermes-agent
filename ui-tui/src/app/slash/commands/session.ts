@@ -20,7 +20,7 @@ import { applyConfiguredTuiTheme } from '../../createGatewayEventHandler.js'
 import { DEFAULT_INDICATOR_STYLE, INDICATOR_STYLES, type IndicatorStyle } from '../../interfaces.js'
 import { patchOverlayState } from '../../overlayStore.js'
 import { getUiState, patchUiState } from '../../uiStore.js'
-import { canonicalUsage } from '../canonicalSessionCommands.js'
+import { canonicalReasoning, canonicalUsage } from '../canonicalSessionCommands.js'
 import { runCanonicalSessionControl } from '../canonicalSessionControls.js'
 import type { SlashCommand, SlashRunCtx } from '../types.js'
 
@@ -268,6 +268,12 @@ export const sessionCommands: SlashCommand[] = [
         return
       }
 
+      // The shared owner serves this setting's read, not its write (a config.yaml / per-session
+      // setting it has no frozen-policy verb for yet): say so instead of a bare invalid_params.
+      if (ctx.gateway.gw?.isCanonical) {
+        return ctx.transcript.sys(t('canonical.controls.notAvailable', 'personality'))
+      }
+
       ctx.gateway.rpc<ConfigSetResponse>('config.set', { key: 'personality', session_id: ctx.sid, value: arg }).then(
         ctx.guarded<ConfigSetResponse>(r => {
           if (r.history_reset) {
@@ -392,6 +398,12 @@ export const sessionCommands: SlashCommand[] = [
         normalized === 'on' || normalized === 'off' || normalized === 'tts' || normalized === 'status'
           ? normalized
           : 'status'
+
+      // Read-aloud ran in the sidecar's own turn; a shared-gateway turn runs on the owner, which
+      // never speaks a TUI reply, so the toggle would say "on" and stay silent.
+      if (action === 'tts' && ctx.gateway.gw?.isCanonical) {
+        return ctx.transcript.sys(t('canonical.controls.notAvailable', 'voice tts'))
+      }
 
       ctx.gateway.rpc<VoiceToggleResponse>('voice.toggle', { action }).then(
         ctx.guarded<VoiceToggleResponse>(r => {
@@ -524,6 +536,12 @@ export const sessionCommands: SlashCommand[] = [
         return ctx.transcript.sys(t('slashCmd.session.theme.usage'))
       }
 
+      // The shared owner serves this setting's read, not its write (a config.yaml / per-session
+      // setting it has no frozen-policy verb for yet): say so instead of a bare invalid_params.
+      if (ctx.gateway.gw?.isCanonical) {
+        return ctx.transcript.sys(t('canonical.controls.notAvailable', 'theme'))
+      }
+
       // Apply only after the write is confirmed (mirrors /indicator): a
       // failed config.set must not leave the session showing a theme that
       // reverts on restart. A few ms later than an optimistic flip, but the
@@ -558,6 +576,12 @@ export const sessionCommands: SlashCommand[] = [
           )
       }
 
+      // The shared owner serves this setting's read, not its write (a config.yaml / per-session
+      // setting it has no frozen-policy verb for yet): say so instead of a bare invalid_params.
+      if (ctx.gateway.gw?.isCanonical) {
+        return ctx.transcript.sys(t('canonical.controls.notAvailable', 'skin'))
+      }
+
       ctx.gateway
         .rpc<ConfigSetResponse>('config.set', { key: 'skin', value: arg })
         .then(
@@ -587,6 +611,12 @@ export const sessionCommands: SlashCommand[] = [
 
       if (!(INDICATOR_STYLES as readonly string[]).includes(value)) {
         return ctx.transcript.sys(t('slashCmd.session.indicator.usage', INDICATOR_STYLES.join('|')))
+      }
+
+      // The shared owner serves this setting's read, not its write (a config.yaml / per-session
+      // setting it has no frozen-policy verb for yet): say so instead of a bare invalid_params.
+      if (ctx.gateway.gw?.isCanonical) {
+        return ctx.transcript.sys(t('canonical.controls.notAvailable', 'indicator'))
       }
 
       ctx.gateway.rpc<ConfigSetResponse>('config.set', { key: 'indicator', value }).then(
@@ -635,7 +665,15 @@ export const sessionCommands: SlashCommand[] = [
           )
       }
 
-      ctx.gateway.rpc<ConfigSetResponse>('config.set', reasoningConfigPayload(arg, ctx.sid ?? '')).then(
+      const payload = reasoningConfigPayload(arg, ctx.sid ?? '')
+
+      // The shared owner sets a session level through its frozen-policy mutation; it has no verb for
+      // the config.yaml writes (`--global`, the display words): say so instead of a bare invalid_params.
+      if (ctx.gateway.gw?.isCanonical) {
+        return canonicalReasoning(payload, ctx) || ctx.transcript.sys(t('canonical.controls.notAvailable', 'reasoning'))
+      }
+
+      ctx.gateway.rpc<ConfigSetResponse>('config.set', payload).then(
         ctx.guarded<ConfigSetResponse>(r => {
           if (!r.value) {
             return
@@ -681,6 +719,12 @@ export const sessionCommands: SlashCommand[] = [
             )
           )
           .catch(ctx.guardedErr)
+      }
+
+      // The shared owner serves this setting's read, not its write (a config.yaml / per-session
+      // setting it has no frozen-policy verb for yet): say so instead of a bare invalid_params.
+      if (ctx.gateway.gw?.isCanonical) {
+        return ctx.transcript.sys(t('canonical.controls.notAvailable', 'fast'))
       }
 
       ctx.gateway

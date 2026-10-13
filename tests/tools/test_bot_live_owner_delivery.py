@@ -88,7 +88,7 @@ def test_live_dm_bom_readers_preserve_pinned_intent(tmp_path, monkeypatch, inten
     """Main 61dc26cd7d9 on the canonical door: a BOM-prefixed DM payload and a BOM-prefixed pinned
     intent read back intact, a pinned intent is never replaced by a rewritten payload, and a
     damaged intent retains its evidence instead of retrying a transport."""
-    import gateway.runtime as runtime
+    from gateway import runtime
     from hermes_state import SessionDB
     from tools import bot_mode_dm
 
@@ -183,7 +183,7 @@ def _ready(instance_id):
 
 def test_canonical_owner_is_the_authority_and_follows_compression(tmp_path, monkeypatch):
     from hermes_state import SessionDB
-    import gateway.runtime as runtime
+    from gateway import runtime
 
     from types import SimpleNamespace
 

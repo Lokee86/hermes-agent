@@ -387,6 +387,7 @@ export function useSessionLifecycle(opts: UseSessionLifecycleOptions) {
 
         writeActiveSessionFile(storedSid)
         patchUiState({
+          gatewayConnected: true,
           info,
           sid: r.session_id,
           status: gw.isCanonical || info?.version ? 'ready' : t('session.status.startingAgent'),
@@ -481,6 +482,7 @@ export function useSessionLifecycle(opts: UseSessionLifecycleOptions) {
       clearConnectionOperation()
 
       const pendingDetach = canonicalDetachFlights.current.get(id)
+      const hold = gw.holdAttach?.(id) ?? null
 
       const request = pendingDetach
         ? pendingDetach.then(() =>
@@ -520,6 +522,7 @@ export function useSessionLifecycle(opts: UseSessionLifecycleOptions) {
           writeActiveSessionFile(storedSid)
           patchUiState({
             busy: running,
+            gatewayConnected: true,
             info,
             sid: r.session_id,
             status: statusFromLiveSession(r.status, running),
@@ -530,6 +533,7 @@ export function useSessionLifecycle(opts: UseSessionLifecycleOptions) {
           // still-pending approval/clarify prompts are the only way they come back.
           gw.hydrateSharedPrompts?.(r)
           hydrateLiveSessionInflight(r.inflight)
+          gw.settleAttach?.(hold, r)
 
           if (r.pending_connection) {
             applyConnectionRequest(r.pending_connection)
@@ -547,7 +551,11 @@ export function useSessionLifecycle(opts: UseSessionLifecycleOptions) {
           sys(`error: ${e.message}`)
           patchUiState({ status: 'ready' })
         })
-        .finally(() => finishAttachment(flight))
+        .finally(() => {
+          // A failed or superseded attach releases what it held (no-op after a settled snapshot).
+          gw.settleAttach?.(hold)
+          finishAttachment(flight)
+        })
     },
     [
       adoptAttachment,
@@ -590,6 +598,7 @@ export function useSessionLifecycle(opts: UseSessionLifecycleOptions) {
           }
 
           const pendingDetach = canonicalDetachFlights.current.get(id)
+          const hold = gw.holdAttach?.(id) ?? null
 
           const request = pendingDetach
             ? pendingDetach.then(() =>
@@ -641,6 +650,7 @@ export function useSessionLifecycle(opts: UseSessionLifecycleOptions) {
               })
               gw.hydrateSharedPrompts?.(r)
               hydrateLiveSessionInflight(r.inflight)
+              gw.settleAttach?.(hold, r)
 
               if (r.pending_connection) {
                 applyConnectionRequest(r.pending_connection)
@@ -665,6 +675,7 @@ export function useSessionLifecycle(opts: UseSessionLifecycleOptions) {
               sys(`error: ${e.message}`)
               patchUiState({ status: 'ready' })
             })
+            .finally(() => gw.settleAttach?.(hold))
         })
         .finally(() => finishAttachment(flight))
     },

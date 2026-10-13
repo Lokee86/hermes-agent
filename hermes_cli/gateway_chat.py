@@ -34,9 +34,24 @@ _RELOCATED = {
 _SAFE_MODE_EXAMPLE = 'hermes chat --safe-mode --provider openrouter --model anthropic/claude-sonnet-4 -q "hello"'
 
 
+# The documented environment equivalents of creation flags (the set Ink's localCreationOptions
+# maps). The auto-started owner no longer inherits them (R14 scrub), so they only take effect
+# by riding THIS session's session.create; a resume keeps the frozen route.
+_ENV_LAUNCH_FLAGS = (("yolo", "HERMES_YOLO_MODE"), ("ignore_rules", "HERMES_IGNORE_RULES"),
+                     ("safe_mode", "HERMES_SAFE_MODE"), ("ignore_user_config", "HERMES_IGNORE_USER_CONFIG"),
+                     ("accept_hooks", "HERMES_ACCEPT_HOOKS"))
+
+
+def env_launch_flags() -> dict:
+    from utils import is_truthy_value
+    return {field: True for field, name in _ENV_LAUNCH_FLAGS if is_truthy_value(os.environ.get(name))}
+
+
 def bypass_launch(args) -> bool:
-    """--safe-mode / --ignore-user-config: the owner freezes code defaults, the client reads no profile."""
-    return bool(getattr(args, "safe_mode", False) or getattr(args, "ignore_user_config", False))
+    """--safe-mode / --ignore-user-config (or their env opt-ins): the owner freezes code defaults,
+    the client reads no profile."""
+    env = env_launch_flags()
+    return any(getattr(args, name, False) or env.get(name) for name in ("safe_mode", "ignore_user_config"))
 
 
 def continue_title(args):
@@ -59,14 +74,19 @@ def validate_options(args):
     if getattr(args, "create_if_missing", False) and not continue_title(args):
         unsupported.append("create-if-missing without -c <name>")
     if unsupported:
-        flags = ", ".join("--" + name.replace("_", "-") for name in unsupported)
-        where = "".join(f"\n  --{name.replace('_', '-')}: use {_RELOCATED[name]}" for name in unsupported)
+        # A one-letter alias (``cli.main(w=True)``) is spelled ``-w``, never the nonexistent ``--w``.
+        spell = {name: ("-" if len(name) == 1 else "--") + name.replace("_", "-") for name in unsupported}
+        flags = ", ".join(spell[name] for name in unsupported)
+        where = "".join(f"\n  {spell[name]}: use {_RELOCATED[name]}" for name in unsupported)
         raise GatewayClientError(
             f"Unsupported gateway CLI options: {flags}. No local fallback or policy changes were made.{where}")
     # Creation flags repeated on resume are checked against the frozen route once the snapshot is
     # back (`check_resume_policy`): the same flags again are fine, a different value is refused.
-    if bypass_launch(args) and not getattr(args, "model", None):
-        raise GatewayClientError("--safe-mode / --ignore-user-config read no profile default: pass --model explicitly."
+    # A resume reuses the frozen route and reads no default (the TUI launcher's rule too).
+    resuming = getattr(args, "resume", None) or getattr(args, "continue_last", None)
+    if bypass_launch(args) and not getattr(args, "model", None) and not resuming:
+        raise GatewayClientError("--safe-mode / --ignore-user-config (or HERMES_SAFE_MODE / HERMES_IGNORE_USER_CONFIG) "
+                                 "read no profile default: pass --model explicitly."
                                  f"\n  Example: {_SAFE_MODE_EXAMPLE}")
 
 
@@ -86,6 +106,20 @@ def _workspace_key(cwd):
         os.chdir(previous)
 
 
+async def _resume(client, args, **params):
+    """``session.resume``; ``--api-key`` re-supplies a launch-only key an owner restart revoked.
+    The owner binds it only to a session launched with that same key (never durable); anything
+    else is a route override and refused like every other creation flag on resume."""
+    key = getattr(args, "api_key", None)
+    try:
+        return await client.rpc("session.resume", **params, **({"api_key": key} if key else {}))
+    except GatewayClientError as exc:
+        if key and str(exc) == "admission_conflict":
+            raise GatewayClientError("--api-key on resume must be the key this session was launched with "
+                                     "(a session launched without --api-key keeps its profile credentials).") from None
+        raise
+
+
 async def _resume_latest(client, args):
     """Bare ``-c``: this terminal's breadcrumb session when the owner still has it, else (and for
     ``--resume latest``) the owner's most recent CLI session, this workspace first."""
@@ -93,13 +127,13 @@ async def _resume_latest(client, args):
     crumb = (read_breadcrumb() or {}).get("session_id") if getattr(args, "continue_last", None) is True else None
     if isinstance(crumb, str) and crumb:
         try:
-            return await client.rpc("session.resume", session_id=crumb)
+            return await _resume(client, args, session_id=crumb)
         except GatewayClientError as exc:
             if str(exc) not in {"not_found", "permission_denied"}:
                 raise
     workspace = await asyncio.to_thread(_workspace_key, _caller_cwd(args))
     try:
-        return await client.rpc("session.resume", latest="cli", **({"workspace": workspace} if workspace else {}))
+        return await _resume(client, args, latest="cli", **({"workspace": workspace} if workspace else {}))
     except GatewayClientError as exc:
         if str(exc) != "not_found":
             raise
@@ -129,12 +163,12 @@ async def run_gateway_chat(args, emitter=None):
             name = getattr(args, "resume", None) or title
             try:
                 # Exact id first, then title (latest lineage continuation), as the classic CLI did.
-                snapshot = await client.rpc("session.resume", session_id=name)
+                snapshot = await _resume(client, args, session_id=name)
             except GatewayClientError as exc:
                 if str(exc) != "not_found":
                     raise
                 try:
-                    snapshot = await client.rpc("session.resume", title=name)
+                    snapshot = await _resume(client, args, title=name)
                 except GatewayClientError as exc:
                     if str(exc) != "not_found":
                         raise
@@ -155,10 +189,7 @@ async def run_gateway_chat(args, emitter=None):
             policy.pop("source", None)
             if create_if_missing:
                 policy["title"] = title
-            # The documented `HERMES_ACCEPT_HOOKS=1` opt-in, as the in-process CLI read it; a
-            # creation flag of THIS session only (a resume keeps the frozen route's consent).
-            if os.environ.get("HERMES_ACCEPT_HOOKS", "").strip().lower() in {"1", "true", "yes", "on"}:
-                policy["accept_hooks"] = True
+            policy.update(env_launch_flags())
             cwd = await asyncio.to_thread(_caller_cwd, args)
             if "cwd" in parameters:
                 policy["cwd"] = cwd
@@ -178,6 +209,7 @@ async def run_gateway_chat(args, emitter=None):
             emitter.bind_session(snapshot["stored_session_id"])
         view = GatewayChatView(client, snapshot, quiet=quiet, emitter=emitter,
                                usage_file=getattr(args, "usage_file", None))
+        view.launch_api_key = getattr(args, "api_key", None)  # /new keeps this launch's key
         view.unattended = isinstance(oneshot_prompt, str)
         view.resume_footer = oneshot and not quiet
         if (getattr(args, "resume", None) or title or latest) and not quiet:
@@ -224,6 +256,15 @@ def check_resume_policy(args, snapshot):
     frozen = dict((info or {}).get("launch_request") or {})
     if info and "cwd" in info:
         frozen["cwd"] = info["cwd"]
+    if "model" in requested and requested["model"] == frozen.get("model_requested"):
+        requested["model"] = frozen.get("model")  # the alias the owner resolved at creation
+    elif "model" in requested and requested["model"] != frozen.get("model") and "model_requested" not in frozen:
+        # The owner froze the resolved id of a `-m <alias>`; the same alias again is the same route.
+        from gateway.session_local_route import resolve_launch_route
+        from hermes_cli.config_effective import load_user_config_effective
+        from hermes_constants import get_hermes_home
+        flags = {key: requested[key] for key in ("model", "provider", "base_url", "api_key") if key in requested}
+        requested["model"] = resolve_launch_route(flags, load_user_config_effective(get_hermes_home() / "config.yaml"))["model"]
     for key, value in requested.items():
         if key == "api_key":
             continue  # never durable; a repeated key is not a policy change
@@ -281,9 +322,18 @@ def launch_from_args(args) -> int:
                 return failed("credentials or agent init failed", 1)
         query_file = getattr(args, "query_file", None)
         if query_file:
-            args.query = sys.stdin.read() if query_file == "-" else Path(query_file).read_text(encoding="utf-8-sig")
+            # Main's --query-file contract (the Bot Mode DM transport): undecodable bytes are
+            # replaced, and an unreadable or empty file is exit 2 with the file named.
+            try:
+                if query_file == "-":
+                    args.query = sys.stdin.read()
+                else:
+                    with open(query_file, encoding="utf-8-sig", errors="replace") as handle:
+                        args.query = handle.read()
+            except OSError as exc:
+                return failed(f"cannot read --query-file {query_file}: {exc}", 2)
             if not args.query.strip():
-                raise GatewayClientError("--query-file is empty")
+                return failed(f"--query-file {query_file} is empty", 2)
         if not (getattr(args, "query", None) or getattr(args, "q", None) or getattr(args, "oneshot", None) or sys.stdin.isatty()):
             raise GatewayClientError("Noninteractive chat requires --query or --oneshot")
         return asyncio.run(run_gateway_chat(args, emitter=emitter))

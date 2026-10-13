@@ -282,7 +282,7 @@ class TestUninstallRefusesForeignUnit:
 class TestGetCronDrainTimeout:
     def test_missing_config_falls_back_to_default(self, monkeypatch):
         monkeypatch.delenv("HERMES_CRON_DRAIN_TIMEOUT", raising=False)
-        monkeypatch.setattr(gateway_cli, "read_raw_config", lambda: {})
+        monkeypatch.setattr(gateway_cli, "read_raw_config", dict)
         assert (
             restart.get_cron_drain_timeout() == DEFAULT_GATEWAY_CRON_DRAIN_TIMEOUT
         )
@@ -422,7 +422,7 @@ class TestGeneratedSystemdUnits:
         """The generated plist must carry SoftResourceLimits/NumberOfFiles so a
         plist rewrite by `hermes gateway start` cannot strip the FD floor and
         reintroduce EMFILE crashes (launchd default soft limit is 256)."""
-        import hermes_cli.resource_limits as resource_limits
+        from hermes_cli import resource_limits
 
         monkeypatch.setattr(
             resource_limits, "configured_nofile_soft_limit", lambda config=None: 65536
@@ -437,7 +437,7 @@ class TestGeneratedSystemdUnits:
     def test_launchd_plist_omits_nofile_block_when_disabled(self, monkeypatch):
         """runtime.nofile_soft_limit: 0/false/null disables the adjustment; the
         plist must then not contain a SoftResourceLimits block at all."""
-        import hermes_cli.resource_limits as resource_limits
+        from hermes_cli import resource_limits
 
         monkeypatch.setattr(
             resource_limits, "configured_nofile_soft_limit", lambda config=None: None
@@ -816,7 +816,6 @@ class TestLaunchdServiceRecovery:
         # _launchd_domain() must return user/<uid>.
         launchd_service._resolved_launchd_domain = None
         monkeypatch.setattr(os, "getuid", lambda: 501)
-        label = gateway_cli.get_launchd_label()
 
         def fake_run(cmd, check=False, **kwargs):
             if "print" in cmd and "gui/" in " ".join(cmd):
@@ -1500,7 +1499,7 @@ class TestSystemUnitHermesHome:
             lambda run_as_user=None: ("alice", "alice", str(target_home), 1001),
         )
         monkeypatch.setattr(gateway_cli, "get_hermes_home", lambda: root_hermes)
-        monkeypatch.setattr(service_process, "service_path_dirs", lambda: [])
+        monkeypatch.setattr(service_process, "service_path_dirs", list)
 
         monkeypatch.setattr(service_process.shutil, "which", lambda name: "/root/bin/node")
         root_unit = systemd_unit_render.generate_systemd_unit(system=True, run_as_user="alice")
@@ -1534,7 +1533,7 @@ class TestSystemUnitHermesHome:
             systemd_identity, "system_service_identity",
             lambda run_as_user=None: ("alice", "alice", str(tmp_path), 1001),
         )
-        monkeypatch.setattr(service_process, "service_path_dirs", lambda: [])
+        monkeypatch.setattr(service_process, "service_path_dirs", list)
 
         system_unit = systemd_unit_render.generate_systemd_unit(system=True, run_as_user="alice")
         user_unit = systemd_unit_render.generate_systemd_unit(system=False)
@@ -1567,7 +1566,7 @@ class TestSystemUnitHermesHome:
             systemd_identity, "system_service_identity",
             lambda run_as_user=None: ("alice", "alice", "/home/alice", 1001),
         )
-        monkeypatch.setattr(service_process, "service_path_dirs", lambda: [])
+        monkeypatch.setattr(service_process, "service_path_dirs", list)
         monkeypatch.setenv("LD_LIBRARY_PATH", "/root/cuda/lib:/opt/cuda/lib64")
 
         unit = systemd_unit_render.generate_systemd_unit(system=True, run_as_user="alice")
@@ -1695,9 +1694,8 @@ class TestSystemServiceIdentityRootHandling:
         """When root is explicitly passed via --run-as-user root, allow it."""
 
         root_info = pwd.getpwnam("root")
-        root_group = grp.getgrgid(root_info.pw_gid).gr_name
 
-        username, group, home, _uid = systemd_identity.system_service_identity(run_as_user="root")
+        username, _group, home, _uid = systemd_identity.system_service_identity(run_as_user="root")
         assert username == "root"
         assert home == root_info.pw_dir
 
@@ -2215,8 +2213,7 @@ class TestLegacyHermesUnitDetection:
             "ExecStart=/usr/local/bin/hermes gateway run --replace",
             "ExecStart=/venv/bin/python /opt/hermes/gateway/run.py",
         ]
-        for i, execstart in enumerate(variants):
-            name = "hermes.service" if i == 0 else "hermes.service"  # same name
+        for execstart in variants:
             # Test each variant fresh
             (user_dir / "hermes.service").write_text(
                 f"[Unit]\nDescription=Old Hermes\n[Service]\n{execstart}\n",

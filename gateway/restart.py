@@ -129,7 +129,7 @@ def read_launchd_exit_timeout_s(
     *,
     environ: Mapping[str, str] | None = None,
     uid: int | None = None,
-    run: Callable[..., "subprocess.CompletedProcess[str]"] = subprocess.run,
+    run: Callable[..., subprocess.CompletedProcess[str]] = subprocess.run,
     platform: str = sys.platform,
 ) -> float | None:
     """Live ``ExitTimeOut`` (seconds) launchd enforces for this gateway's job.
@@ -445,6 +445,7 @@ def _get_parent_pid(pid: int) -> int | None:
         result = subprocess.run(
             ["ps", "-o", "ppid=", "-p", str(pid)],
             timeout=5,
+            check=False,
             **_CAPTURE_TEXT,
         )
     except (FileNotFoundError, subprocess.TimeoutExpired):

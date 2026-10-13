@@ -18,7 +18,7 @@ from types import ModuleType, SimpleNamespace
 
 import pytest
 
-import hermes_cli.gateway as gateway
+from hermes_cli import gateway
 
 
 _BREAKAWAY_MARKER = "_HERMES_GATEWAY_BREAKAWAY"
@@ -101,8 +101,7 @@ def _run_native_windows_gateway_start_diag(
     completed = subprocess.run(
         [sys.executable, "-c", script],
         stdin=subprocess.DEVNULL,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
+        capture_output=True,
         creationflags=windows_detach_flags_without_breakaway(),
         text=True,
         encoding="utf-8",
@@ -214,8 +213,7 @@ def test_gateway_run_subprocess_preserves_daemon_exit_codes(
         completed = subprocess.run(
             [sys.executable, "-c", script],
             stdin=stdin,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
+            capture_output=True,
             text=True,
             env=env,
             timeout=30,
@@ -643,7 +641,7 @@ class TestStopProfileGateway:
         a PID recycled during the wait shows a different start time, so ``terminate_pid``'s mismatch
         refusal fires instead of killing an unrelated process. Reading it at kill time is a vacuous
         self-comparison."""
-        import gateway.status as status
+        from gateway import status
         import gateway.windows_service as gateway_windows
 
         pid = 4242
@@ -881,7 +879,6 @@ class TestReapUnsupervisedGatewayOrphansWindows:
 
         def failing_validation(*a, cleanup_stale=True, **k):
             probe_kwargs.append(cleanup_stale)
-            return None
 
         monkeypatch.setattr(
             "gateway.status.get_running_pid", failing_validation

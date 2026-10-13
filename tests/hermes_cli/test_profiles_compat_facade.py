@@ -103,9 +103,7 @@ def _retired_regex_facade_references(path: Path) -> list[int]:
         if not isinstance(node, ast.Attribute) or node.attr != "_PROFILE_ID_RE":
             continue
         value = node.value
-        if isinstance(value, ast.Name) and value.id in aliases:
-            offenders.append(node.lineno)
-        elif (
+        if isinstance(value, ast.Name) and value.id in aliases or (
             isinstance(value, ast.Attribute)
             and value.attr == "profiles"
             and isinstance(value.value, ast.Name)

@@ -96,12 +96,32 @@ class CLIInfoMixin:
     """Informational views and reload flows for the interactive CLI: banner, help, tools, usage,
     insights, MCP/skills reload, bang shell."""
 
+    def _show_gateway_banner(self, build_welcome_banner, inventory, banner_kw, cwd, ctx_len):
+        """Main's banner from the gateway session's snapshot (the TUI banner's data): the CLI
+        enumerates nothing. The canonical id shows as main's 8-character label (display only)."""
+        from hermes_cli.gateway_session_store import session_label
+        self._defer_tool_warnings = True
+        build_welcome_banner(
+            tools=inventory["tools"], get_toolset_for_tool=inventory["get_toolset_for_tool"],
+            availability=inventory["availability"], skills_by_category=inventory["skills_by_category"],
+            **{**banner_kw, "cwd": inventory["cwd"] or cwd, "context_length": inventory["context_length"] or ctx_len,
+               "session_id": session_label(self.session_id)})
+
+    def _print_gateway_tool_warnings(self, lines):
+        """Main's ``_show_tool_availability_warnings`` lines, computed by the gateway that resolved
+        this session's tools."""
+        if lines:
+            self._console_print()
+            for line in lines:
+                self._console_print(line)
+
     def show_banner(self):
         """Display the welcome banner in Claude Code style."""
         from cli import _build_compact_banner, get_tool_definitions, logger
         from hermes_cli.banner import build_welcome_banner
         self.console.clear()
         ctx_len = None
+        gateway_inventory = getattr(getattr(self, "_session_db", None), "banner_inventory", lambda: None)()
         if hasattr(self, 'agent') and self.agent and hasattr(self.agent, 'context_compressor'):
             ctx_len = self.agent.context_compressor.context_length
         from agent.context_pin import is_context_pinned
@@ -128,7 +148,9 @@ class CLIInfoMixin:
                 enabled_toolsets=self.enabled_toolsets, session_id=self.session_id,
                 context_length=ctx_len, provider=self.provider, context_pinned=ctx_pinned)
 
-            if snapshot is not None:
+            if gateway_inventory is not None:
+                self._show_gateway_banner(build_welcome_banner, gateway_inventory, banner_kw, cwd, ctx_len)
+            elif snapshot is not None:
                 self._defer_tool_warnings = True
                 toolset_map = snapshot["toolset_map"]
                 build_welcome_banner(
@@ -169,7 +191,9 @@ class CLIInfoMixin:
         # Tool discovery is deferred on the Termux bare prompt path (warnings show once tools
         # init). On the snapshot fast path the check walks every check_fn (~180ms) — run it in
         # the background and let its output land above the prompt (patch_stdout-safe).
-        if os.environ.get("HERMES_DEFER_AGENT_STARTUP") != "1":
+        if isinstance((gateway_inventory or {}).get("tool_availability_warnings"), list):
+            self._print_gateway_tool_warnings(gateway_inventory["tool_availability_warnings"])
+        elif os.environ.get("HERMES_DEFER_AGENT_STARTUP") != "1":
             if getattr(self, "_defer_tool_warnings", False):
                 threading.Thread(
                     target=self._show_tool_availability_warnings,

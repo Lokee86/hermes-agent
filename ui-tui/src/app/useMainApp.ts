@@ -60,6 +60,7 @@ import { planGatewayRecovery } from './gatewayRecovery.js'
 import { applyGoalSnapshot } from './goalStatus.js'
 import { getInputSelection } from './inputSelectionStore.js'
 import { type GatewayRpc, type SlashHandler, type StateSetter, type TranscriptRow, type UiState } from './interfaces.js'
+import { requestLiveSessions } from './liveSessions.js'
 import { $overlayState, capturePromptResponseGuard, hasSensitivePrompt, patchOverlayState } from './overlayStore.js'
 import { $goodVibesTick } from './petFlashStore.js'
 import { applyProcessSnapshot, type ProcessEntry } from './processRoster.js'
@@ -666,6 +667,10 @@ export function useMainApp(gw: GatewayClient) {
       return
     }
 
+    // Offline (sid kept across a socket close): each poll would re-dial through
+    // ensureAttachedWebSocket and collapse GatewayClient's backoff (B2-20).
+    if (ui.gatewayConnected === false) { return }
+
     let stopped = false
     applyAgentSnapshot(ui.sid)
     applyProcessSnapshot(ui.sid)
@@ -703,7 +708,7 @@ export function useMainApp(gw: GatewayClient) {
           }
         })
         .catch(() => {})
-      gw.request<SessionActiveListResponse>('session.active_list', { current_session_id: getUiState().sid })
+      requestLiveSessions(gw, getUiState().sid)
         .then(raw => {
           const result = asRpcResult<SessionActiveListResponse>(raw)
 
@@ -738,7 +743,7 @@ export function useMainApp(gw: GatewayClient) {
       stopped = true
       clearInterval(timer)
     }
-  }, [gw, ui.sid])
+  }, [gw, ui.sid, ui.gatewayConnected])
 
   // Tab title: `⚠` waiting on approval/sudo/secret/clarify, `⏳` busy, `✓` idle.
   // Format: `<marker> <session name> · <model> · <cwd>` — name/cwd omitted when absent.
@@ -1113,7 +1118,8 @@ export function useMainApp(gw: GatewayClient) {
           status: t('session.status.reconnecting')
         })
 
-        if (state.sid) {
+        // Once per outage: each failed redial emits another exit (main printed it once).
+        if (state.sid && state.gatewayConnected !== false) {
           turnController.pushActivity(connectionLostActivity(), 'warn')
           sys(connectionLost())
         }

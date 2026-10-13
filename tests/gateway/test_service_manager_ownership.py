@@ -6,8 +6,8 @@ from pathlib import Path
 
 import pytest
 
-import gateway.s6_manager as s6_manager
-import gateway.service_manager as service_manager
+from gateway import s6_manager
+from gateway import service_manager
 
 
 @pytest.mark.parametrize("module", [service_manager, s6_manager])

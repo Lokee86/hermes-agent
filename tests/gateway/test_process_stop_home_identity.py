@@ -7,7 +7,6 @@ def test_pid_home_probe_checks_exact_live_environ(monkeypatch, tmp_path):
     import pathlib
     from gateway import status  # import before simulating Linux on Windows
     home = tmp_path / "ours"
-    original = pathlib.Path.read_bytes
     monkeypatch.setattr(lifecycle.sys, "platform", "linux")
     monkeypatch.setattr(pathlib.Path, "read_bytes",
                         lambda path: b"PATH=/bin\x00HERMES_HOME=" + str(home).encode() + b"\x00")

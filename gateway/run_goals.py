@@ -56,7 +56,7 @@ class GatewayGoalsMixin:
         except Exception as exc:
             logger.warning("%s: session DB warm-up failed: %s", label, exc)
 
-    async def _session_entry_for_manager(self, event: "MessageEvent", label: str):
+    async def _session_entry_for_manager(self, event: MessageEvent, label: str):
         """Session entry for a /goal or /heartbeat manager, or None when lookup fails. Warms the
         SessionDB cache first (a cold cache drops the first write while the reply claims it was
         set). Internal events never touch activity (idle/daily reset clock)."""
@@ -70,7 +70,7 @@ class GatewayGoalsMixin:
             return None
         return session_entry if getattr(session_entry, "session_id", None) else None
 
-    async def _manager_for_event(self, event: "MessageEvent", kind: str, load):
+    async def _manager_for_event(self, event: MessageEvent, kind: str, load):
         """``(manager, session_entry)`` for *kind* ("goal"/"heartbeat"), or ``(None, None)``.
         ``load()`` imports the manager class and returns a ``session_id -> manager`` factory."""
         try:
@@ -83,7 +83,7 @@ class GatewayGoalsMixin:
             return None, None
         return factory(session_entry.session_id), session_entry
 
-    async def _get_goal_manager_for_event(self, event: "MessageEvent"):
+    async def _get_goal_manager_for_event(self, event: MessageEvent):
         """Return ``(GoalManager, session_entry)`` for this event, or ``(None, None)``."""
         def _load():
             from hermes_cli.goals import GoalManager
@@ -91,7 +91,7 @@ class GatewayGoalsMixin:
             return lambda sid: GoalManager(session_id=sid, default_max_turns=max_turns)
         return await self._manager_for_event(event, "goal", _load)
 
-    async def _get_heartbeat_manager_for_event(self, event: "MessageEvent"):
+    async def _get_heartbeat_manager_for_event(self, event: MessageEvent):
         """Return ``(HeartbeatManager, session_entry)`` for this event, or ``(None, None)``."""
         def _load():
             from hermes_cli.heartbeat import HeartbeatManager
@@ -454,7 +454,11 @@ class GatewayGoalsMixin:
                 mgr.state.ticks_fired if mgr.state else "?",
                 platform_name, source.chat_id, source.thread_id,
             )
-            await adapter.handle_message(self._synthetic_prompt_event(source, wakeup, internal=True))
+            from gateway.session_automation import admit_route_wake
+            # Under a session authority the tick commits to the FIFO (never a classic turn beside an
+            # admitted one); a slash-command loop is a command and keeps the command path.
+            if wakeup.lstrip().startswith("/") or not await admit_route_wake(self, adapter, source, wakeup, "loop-tick"):
+                await adapter.handle_message(self._synthetic_prompt_event(source, wakeup, internal=True))
             # Slash-command loops dispatch through the command path and never hit the post-turn
             # completion hook — complete the tick immediately (caps + scheduling).
             if wakeup.lstrip().startswith("/"):

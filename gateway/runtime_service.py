@@ -46,7 +46,7 @@ class ExistingService:
 def _run(argv: list[str] | tuple[str, ...], deadline: float, *, encoding: str | None = "utf-8"):
     return subprocess.run(argv, stdin=subprocess.DEVNULL, capture_output=True,
                           text=encoding is not None, encoding=encoding, errors="strict" if encoding else None,
-                          creationflags=windows_hide_flags(), timeout=remaining(deadline))
+                          creationflags=windows_hide_flags(), timeout=remaining(deadline), check=False)
 
 
 def _verify_binding(verify, *args, **kwargs):
@@ -163,7 +163,7 @@ def _launchd(home: Path, deadline: float) -> ExistingService | None:
 
 
 def _windows(home: Path, deadline: float) -> ExistingService | None:
-    from gateway.windows_service import _startup_dir, _schtasks_encoding
+    from gateway.windows_service import _schtasks_encoding
     suffix = service_suffix_for_home(home)
     name = f"Hermes_Gateway{'_' + suffix if suffix else ''}"
     result = _run(["schtasks.exe", "/Query", "/FO", "CSV", "/NH"], deadline, encoding=_schtasks_encoding())
@@ -183,10 +183,9 @@ def _windows(home: Path, deadline: float) -> ExistingService | None:
             raise RuntimeStartError("service_identity_unverified")
         _verify_binding(verify_windows_task, definition.stdout, home, *accounts[0])
         return ExistingService("windows", ("schtasks.exe", "/Run", "/TN", name))
-    # Startup-folder entries are installed persistence too, but have no independent
-    # start supervisor. Do not bypass them with a job-bound unmanaged child.
-    if any(_exists(_startup_dir() / f"{name}.{ext}") for ext in ("cmd", "vbs")):
-        raise RuntimeStartError("startup_service_requires_login")
+    # A Startup-folder entry is login persistence only, with no independent
+    # start verb or identity to verify. A stopped owner is restarted through
+    # the ordinary unmanaged path, which still pins this explicit home.
     return None
 
 

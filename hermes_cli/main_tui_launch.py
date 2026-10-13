@@ -20,6 +20,14 @@ from agent.i18n import t
 logger = logging.getLogger("hermes_cli.main")
 
 
+def _bypass_chat_launch(args) -> bool:
+    """--safe-mode / --ignore-user-config chat: the gateway owner freezes code defaults and runs
+    the turn out of process, so the profile's display.interface must not pick a surface and the
+    client performs no discovery. Explicit --tui forwards the flags in its session.create policy."""
+    return bool(getattr(args, "safe_mode", False) or getattr(args, "ignore_user_config", False)) \
+        and not getattr(args, "tui", False)
+
+
 def _read_tui_active_session_file(path: Optional[str]) -> Optional[str]:
     if not path:
         return None
@@ -340,7 +348,10 @@ def _setup_tui_worktree() -> dict:
 
             _threading.Thread(
                 target=_maintain_pack_health, args=(repo,), name="pack-maintenance", daemon=True).start()
-        wt_info = _setup_worktree()
+        from hermes_cli.config import get_hermes_home
+        # The session's frozen cwd keeps this checkout; name the store from creation so a
+        # launcher killed with its terminal still leaves the tree to its sessions.
+        wt_info = _setup_worktree(retain_db=get_hermes_home() / "state.db")
     except Exception as exc:
         print(f"✗ Failed to create TUI worktree: {exc}", file=sys.stderr)
     if not wt_info:
@@ -360,6 +371,22 @@ def _require_bypass_model(env: dict, model: Optional[str], resume_session_id: Op
               "  Example: hermes --tui --safe-mode --provider openrouter --model anthropic/claude-sonnet-4",
               file=sys.stderr)
         raise SystemExit(1)
+
+
+# Launch flags the Ink client cannot carry into session.create yet. Refused (exit 2, as classic
+# chat refuses unsupported flags), never dropped: a dropped --api-key/--base-url would silently
+# run the session on the profile's own endpoint and credentials.
+_TUI_UNFORWARDED = {"api_key": "--api-key", "base_url": "--base-url", "reasoning": "--reasoning"}
+
+
+def _refuse_unforwarded_tui_flags(args) -> None:
+    flags = [flag for name, flag in _TUI_UNFORWARDED.items() if getattr(args, name, None)]
+    if flags:
+        print(f"Error: Unsupported --tui options: {', '.join(flags)}. No session was started.\n"
+              f"  Use classic chat for this launch: hermes chat --cli {' '.join(flags)} ...\n"
+              "  Or set model.base_url / agent.reasoning_effort in config.yaml (/reasoning in the TUI).",
+              file=sys.stderr)
+        raise SystemExit(2)
 
 
 def _launch_tui(

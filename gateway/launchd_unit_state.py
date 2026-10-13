@@ -8,5 +8,5 @@ def _normalize_launchd_plist_for_comparison(text: str) -> str:
     import re
     return re.sub(
         r"(<key>PATH</key>\s*<string>)(.*?)(</string>)", r"\1__HERMES_PATH__\3",
-        normalize_service_definition(text), flags=re.S,
+        normalize_service_definition(text), flags=re.DOTALL,
     )

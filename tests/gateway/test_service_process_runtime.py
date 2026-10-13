@@ -80,7 +80,7 @@ def test_systemd_unit_does_not_persist_virtual_env(tmp_path, monkeypatch):
 
     monkeypatch.setattr(service_process, "python_path", lambda: "/store/python/bin/python3")
     monkeypatch.setattr(service_process, "stable_working_dir", lambda: str(tmp_path))
-    monkeypatch.setattr(service_process, "service_path_dirs", lambda: [])
+    monkeypatch.setattr(service_process, "service_path_dirs", list)
     monkeypatch.setattr(service_process, "append_node_dir", lambda entries, hermes_root=None: None)
     monkeypatch.setattr(service_process, "build_user_local_paths", lambda home, entries: [])
     monkeypatch.setattr(service_process, "build_wsl_interop_paths", lambda entries: [])
@@ -109,7 +109,7 @@ def test_systemd_uses_stable_installation_commands(tmp_path, monkeypatch):
     monkeypatch.setattr(service_process, "PROJECT_ROOT", tmp_path / "repo")
     monkeypatch.setattr(service_process, "python_path", lambda: "/store/python/bin/python3")
     monkeypatch.setattr(service_process, "stable_working_dir", lambda: str(tmp_path))
-    monkeypatch.setattr(service_process, "service_path_dirs", lambda: [])
+    monkeypatch.setattr(service_process, "service_path_dirs", list)
     monkeypatch.setattr(service_process, "append_node_dir", lambda entries, hermes_root=None: None)
     monkeypatch.setattr(service_process, "build_user_local_paths", lambda home, entries: [])
     monkeypatch.setattr(service_process, "build_wsl_interop_paths", lambda entries: [])

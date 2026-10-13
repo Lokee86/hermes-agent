@@ -15,7 +15,7 @@ from pathlib import Path
 
 
 def _w():
-    import gateway.windows_service as windows_service
+    from gateway import windows_service
 
     return windows_service
 

@@ -112,20 +112,44 @@ def ink_cell(cmd, gateway, ink, served):
     if entry is None:
         return "slash.exec" if gateway != "refused" else "slash.exec: refused"
     _, block = entry
+    methods = set(re.findall(r"(?:rpc|request)(?:<[^>]*>)?\(\s*'([a-z_]+\.[a-z_.]+)'", block))
+    refused = re.findall(r"notAvailable', '([\w-]+) ([\w-]+)'\)", block)
+    if refused and "canonical.controls.notAvailable" not in re.sub(r"notAvailable', '[\w-]+ [\w-]+'\)", "", block):
+        # Only named subcommands are refused (``/voice tts``); the rest of the command keeps its route.
+        cell = _rpc_cell(methods, served) if methods else "local"
+        return cell + "; " + ", ".join(f"`{sub}` refused" for _, sub in refused)
+    if "canonical.controls.notAvailable" in block:
+        # The shared gateway refuses it in the client (no owner verb yet), whatever it calls on a
+        # standalone backend; never reported as a working route. A bare form that still reads the
+        # current value through a served ``.get`` is named.
+        reads = sorted(m for m in methods & served if m.endswith(".get"))
+        return (", ".join(reads) + "; change refused: not available yet") if reads else "refused: not available yet"
     if "isCanonical" in block:
         return "canonical route"
-    methods = set(re.findall(r"(?:rpc|request)(?:<[^>]*>)?\(\s*'([a-z_]+\.[a-z_.]+)'", block))
-    return _rpc_cell(methods, served) if methods else "local"
+    cell = _rpc_cell(methods, served) if methods else "local"
+    # A client display preference: applied to the view, reported as not saved on the owner.
+    return cell + " (preference not saved)" if "saveDisplayPref(" in block else cell
+
+
+def _sidecar_live_session_methods():
+    """Sidecar RPCs that resolve their ``session_id`` in the sidecar's own session map
+    (``@_rpc(..., live_session=True)``), which never holds a shared-gateway session."""
+    text = "".join(p.read_text(encoding="utf-8-sig") for p in sorted((ROOT / "tui_gateway").glob("*.py")))
+    return set(re.findall(r'_rpc\(\s*"([\w.]+)"[^)]*\blive_session=True', text))
 
 
 def _rpc_cell(methods, served):
     """An RPC the authority does not serve: session-namespace verbs answer -32601 (the client's
-    "out of sync" error); any other method reaches the legacy sidecar (``tui_gateway/ws.py``)."""
+    "out of sync" error); any other method reaches the legacy sidecar (``tui_gateway/ws.py``),
+    where a live-session handler answers 4001 for every shared-gateway session."""
     from tui_gateway.ws_legacy_fallback import _SESSION_FALLBACK_ALLOWED, _SESSION_NAMESPACES
     broken = sorted(m for m in methods - served
                     if m.startswith(_SESSION_NAMESPACES) and m not in _SESSION_FALLBACK_ALLOWED)
     if broken:
         return "**broken**: " + ", ".join(broken) + " (-32601)"
+    unbound = sorted((methods - served) & _sidecar_live_session_methods())
+    if unbound:
+        return "**broken**: " + ", ".join(unbound) + " (4001 session not found)"
     legacy = sorted(methods - served)
     return ", ".join(sorted(methods & served)) + ("; " if methods & served and legacy else "") + (
         "sidecar: " + ", ".join(legacy) if legacy else "")

@@ -82,7 +82,11 @@ def run_systemctl(
     **kwargs,
 ) -> subprocess.CompletedProcess:
     try:
-        return subprocess.run(systemctl_cmd(system) + args, **kwargs)
+        return subprocess.run(
+            systemctl_cmd(system) + args,
+            check=kwargs.pop("check", False),
+            **kwargs,
+        )
     except FileNotFoundError:
         raise SystemctlUnavailableError() from None
 

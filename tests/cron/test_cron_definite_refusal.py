@@ -1,14 +1,18 @@
 """Explicit cron submit rejections fail; delivery ambiguity is never a definite refusal."""
 from contextlib import asynccontextmanager
+import json
+
 import pytest
 
 from cron import scheduler_authority
 from gateway import client as gateway_client
 
 
-def _peer(monkeypatch, rejection):
+def _peer(monkeypatch, rejection, *, recover=None):
     class Peer:
         async def rpc(self, method, **params):
+            if method == "cron.recover" and recover is not None:
+                return recover
             assert method == "cron.submit"
             raise rejection
     @asynccontextmanager
@@ -17,13 +21,20 @@ def _peer(monkeypatch, rejection):
     monkeypatch.setattr(gateway_client, "connect_gateway", connected)
 
 
-def test_explicit_owner_rejection_is_failed_and_has_no_unknown_journal(monkeypatch, tmp_path):
-    from hermes_constants import get_hermes_home
+def test_explicit_owner_rejection_is_failed_and_retained_for_settlement(monkeypatch, tmp_path):
     monkeypatch.setenv("HERMES_HOME", str(tmp_path))
-    _peer(monkeypatch, gateway_client.GatewayRPCError("invalid_workdir"))
+    _peer(
+        monkeypatch,
+        gateway_client.GatewayRPCError("invalid_workdir"),
+        recover={"status": "missing"},
+    )
     result = scheduler_authority.run_canonical_job({"id": "denied"}, execution_id="rejected")
     assert result[0] is False and "invalid_workdir" in result[3]
-    assert not scheduler_authority.journal_path("denied", "rejected").exists()
+    journal = scheduler_authority.journal_path("denied", "rejected")
+    assert journal.exists()
+    record = json.loads(journal.read_text(encoding="utf-8-sig"))
+    assert record["refusal"] == list(result)
+    assert record["job"] == {"id": "denied"}
 
 
 def test_disconnect_retains_journal_and_unknown(monkeypatch, tmp_path):

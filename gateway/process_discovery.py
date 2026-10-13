@@ -87,6 +87,7 @@ def _get_service_pids(all_profiles: bool = False) -> set:
                     scope_args
                     + ["list-units", pattern, "--plain", "--no-legend", "--no-pager"],
                     timeout=5,
+                    check=False,
                     **_CAPTURE_TEXT,
                 )
                 for line in result.stdout.strip().splitlines():
@@ -98,6 +99,7 @@ def _get_service_pids(all_profiles: bool = False) -> set:
                         show = subprocess.run(
                             scope_args + ["show", svc, "--property=MainPID", "--value"],
                             timeout=5,
+                            check=False,
                             **_CAPTURE_TEXT,
                         )
                         pid = int(show.stdout.strip())
@@ -129,7 +131,7 @@ def _get_service_pids(all_profiles: bool = False) -> set:
             # Prefix scan also catches ai.hermes.gateway* agents the label derivation can't map
             # (renamed profiles, other installs). Over-inclusion is safe: PIDs are only protected.
             try:
-                result = subprocess.run(["launchctl", "list"], timeout=5, **_CAPTURE_TEXT)
+                result = subprocess.run(["launchctl", "list"], timeout=5, check=False, **_CAPTURE_TEXT)
                 if result.returncode == 0:
                     for line in result.stdout.strip().splitlines():
                         parts = line.split()
@@ -339,7 +341,7 @@ def _scan_gateway_pids(
 
             if not _found_via_proc:
                 # ``-Aww`` not ``-A eww``: BSD/macOS ps rejects ``e``; ``-ww`` = unlimited width.
-                result = subprocess.run(["ps", "-Aww", "-o", "pid=,command="], timeout=10, **_CAPTURE_TEXT)
+                result = subprocess.run(["ps", "-Aww", "-o", "pid=,command="], timeout=10, check=False, **_CAPTURE_TEXT)
                 if result.returncode != 0:
                     return []
                 for line in result.stdout.split("\n"):
@@ -519,7 +521,7 @@ def find_windows_gateway_services(
         return []
     try:
         if psutil_module is None:
-            import psutil as psutil_module  # type: ignore[no-redef]  # noqa: PLC0415
+            import psutil as psutil_module  # type: ignore[no-redef]
         if profile_processes is None:
             profile_processes = find_profile_gateway_processes(strict=True)
         from gateway.windows_service import hermes_owns_windows_service, hermes_service_roots

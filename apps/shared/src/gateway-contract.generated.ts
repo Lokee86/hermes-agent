@@ -1043,6 +1043,7 @@ export interface ConnectionOperationTarget {
   discovery_error?: string | null
   connect_url?: string | null
   connection_id?: string | null
+  alias?: string | null
   attempt?: string | null
   required_env?: ConnectionTargetEnvField[] | null
   tools?: string[] | null
@@ -1149,6 +1150,8 @@ export interface ConnectorsConnectParams {
   owner: SessionOwner | AccountOwner
   connectors: string[]
   reconnect?: boolean
+  alias?: string | null
+  connection_id?: string | null
 }
 /** ``methods_connectors._reissue`` / ``managed._off_desktop_result``: the operation the connect opened; ``status``/``note`` ride along from the tool result. */
 export interface ConnectorsConnectResult {
@@ -1213,6 +1216,7 @@ export interface ConnectorAccountRow {
   label: string
   alias?: string | null
   active: boolean
+  disabled?: boolean
   created_at: string
   updated_at: string
 }
@@ -1225,6 +1229,11 @@ export interface ConnectorAccountsRemoveResult {
   connection_id: string
   connector: string
   status: 'removed'
+}
+export interface ConnectorAccountsRenameParams {
+  profile?: string | null
+  connection_id: string
+  alias: string
 }
 export interface ConnectorPolicyGetResult {
   layers: ConnectorPolicyLayer[]
@@ -2691,6 +2700,7 @@ export interface PromptSubmitParams {
   truncate_before_message_id?: string | null
   confirm_truncate?: boolean | null
   confirm_empty_truncate?: boolean | null
+  confirm_deep_truncate?: boolean | null
   rebind_survivor_row_ids?: number[] | null
 }
 /** ``status`` is absent only on the typed-stop-phrase reply (``voice_stopped``). After a truncation the survivor row ids let the client rebind its cached ``rowId``s (``None`` map entries: drop the cached id). ``turn_isolation`` marks a compute-host dispatch. */
@@ -3145,6 +3155,11 @@ export interface ConnectionRequestPayload {
   timeout_seconds: number
   targets: ConnectionOperationTarget[]
   tool_call_id?: string | null
+  display?: ConnectionDisplay | null
+}
+/** ``manage_connections`` action ``display``: the directory card, with these slugs pinned as Suggested. */
+export interface ConnectionDisplay {
+  suggested: string[]
 }
 /** ``tool_progress._normalize_todo_state``: the authoritative todo snapshot. */
 export interface TodoState {
@@ -4426,6 +4441,11 @@ export interface OnboardingCatalogPlugin {
   app_state: CatalogAppState
   sentence: string
 }
+export interface CanonicalShellExecParams {
+  session_id: string
+  command: string
+  profile?: string | null
+}
 export interface PromptReceiptParams {
   session_id: string
   admission_id: string
@@ -4466,7 +4486,7 @@ export interface PromptResolveUnknownParams {
   admission_id: string
   execution_generation: number
 }
-/** ``operation`` + ``payload`` are validated by ``hermes_state_mutations.validate_action``; ``expected_generation`` is required for delete/rewind/reset/branch/model/compress. */
+/** ``operation`` + ``payload`` are validated by ``hermes_state_mutations.validate_action``; ``expected_generation`` is required for delete/rewind/reset/branch/model/compress/reasoning/workspace. ``reasoning`` (``{effort}``) and ``workspace`` (``{cwd}``, refused ``session_busy`` mid-turn) rewrite the session's frozen policy: session-scope ``/reasoning`` and Desktop's Move to project. */
 export interface SessionMutateParams {
   session_id: string
   request_id: string
@@ -4482,11 +4502,37 @@ export interface SessionMutateResult {
   revision?: number | null
   [key: string]: unknown
 }
+/** Exactly one of ``filters`` (``SessionDB.prune_sessions`` keyword filters, as ``hermes sessions prune`` builds them) or ``never_active_days`` (``--never-active``). */
+export interface SessionPruneParams {
+  filters?: Record<string, unknown> | null
+  never_active_days?: number | null
+}
+export interface SessionPruneResult {
+  deleted: number
+  routing_deleted?: number | null
+  skipped?: number | null
+}
 export interface CanonicalSessionInfoParams {
   session_id: string
 }
-/** ``gateway/session_local.py::local_session_info``. */
+/** ``gateway/session_local_inventory.py::snapshot_info``: ``local_session_info`` + the inventory. */
 export interface CanonicalSessionInfo {
+  provider?: string | null
+  tools?: Record<string, string[]> | null
+  skills?: Record<string, string[]> | null
+  mcp_servers?: McpServerStatus[] | null
+  version?: string | null
+  release_date?: string | null
+  update_behind?: unknown | null
+  update_command?: string | null
+  branch?: string | null
+  project?: ProjectRef | null
+  system_prompt?: string | null
+  context_length?: number | null
+  enabled_toolsets?: string[] | null
+  tool_availability?: Record<string, unknown> | null
+  tool_availability_warnings?: string[] | null
+  browser_backend_notice?: string | null
   source: string
   model?: string | null
   lazy: boolean
@@ -4495,7 +4541,47 @@ export interface CanonicalSessionInfo {
   profile_name: string
   cwd?: string | null
   launch_request?: Record<string, unknown> | null
+  reasoning_effort?: string | null
+  reasoning_effort_wire?: string | null
+  service_tier?: string | null
+  fast?: boolean | null
+  title?: string | null
+  started_at?: number | null
+  last_active_at?: number | null
+  yolo?: boolean | null
+  api_mode?: string | null
+  tool_count?: number | null
+  credential_hint?: string | null
   [key: string]: unknown
+}
+export interface SessionStatsParams {
+  session_id: string
+}
+/** ``gateway/session_usage.py::usage_stats``: session-cumulative counters (the agent's ``session_*``), context / compressor figures, rolling latency and throughput, rate-limit state, live subagents. */
+export interface SessionStats {
+  input_tokens: number
+  output_tokens: number
+  cache_read_tokens: number
+  cache_write_tokens: number
+  prompt_tokens: number
+  completion_tokens: number
+  total_tokens: number
+  reasoning_tokens: number
+  api_calls: number
+  last_prompt_tokens: number
+  context_tokens: number
+  context_length?: number | null
+  config_context_length?: number | null
+  context_source?: string | null
+  compression_count: number
+  avg_latency_s?: number | null
+  tokens_per_s?: number | null
+  last_turn_tokens: number
+  rate_limit?: Record<string, unknown> | null
+  active_subagents: number
+  model: string
+  provider: string
+  fallback_model?: string | null
 }
 export interface SessionDetachParams {
   session_id: string
@@ -4705,6 +4791,8 @@ export interface CanonicalCreateParams {
   title?: string | null
   hidden?: boolean
   follow_profile_config?: boolean | null
+  service_tier?: string | null
+  cwd_explicit?: boolean | null
 }
 export interface CanonicalSnapshot {
   session_id: string
@@ -4743,8 +4831,25 @@ export interface CanonicalPendingPrompt {
   edit?: Record<string, unknown> | null
   question?: string | null
   multi_select?: boolean | null
+  timeout_s?: number | null
 }
 export interface CanonicalSnapshotInfo {
+  provider?: string | null
+  tools?: Record<string, string[]> | null
+  skills?: Record<string, string[]> | null
+  mcp_servers?: McpServerStatus[] | null
+  version?: string | null
+  release_date?: string | null
+  update_behind?: unknown | null
+  update_command?: string | null
+  branch?: string | null
+  project?: ProjectRef | null
+  system_prompt?: string | null
+  context_length?: number | null
+  enabled_toolsets?: string[] | null
+  tool_availability?: Record<string, unknown> | null
+  tool_availability_warnings?: string[] | null
+  browser_backend_notice?: string | null
   desktop_protocol: 'hermes-gateway-v1'
   source?: string | null
   model?: string | null
@@ -4753,6 +4858,17 @@ export interface CanonicalSnapshotInfo {
   profile_name?: string | null
   cwd?: string | null
   launch_request?: Record<string, unknown> | null
+  reasoning_effort?: string | null
+  reasoning_effort_wire?: string | null
+  service_tier?: string | null
+  fast?: boolean | null
+  title?: string | null
+  started_at?: number | null
+  last_active_at?: number | null
+  yolo?: boolean | null
+  api_mode?: string | null
+  tool_count?: number | null
+  credential_hint?: string | null
 }
 export interface CanonicalResumeParams {
   profile?: string | null
@@ -4762,12 +4878,14 @@ export interface CanonicalResumeParams {
   workspace?: string | null
   source?: string | null
   editor?: Record<string, unknown> | null
+  api_key?: string | null
   defer_history?: boolean
   omit_messages?: boolean
   cols?: number | null
 }
 export interface CanonicalListParams {
   profile?: string | null
+  scope?: 'live' | 'stored'
   limit?: number
   title?: string | null
   include_hidden?: boolean
@@ -4853,10 +4971,25 @@ export interface CanonicalSubmitParams {
   voice_context?: string | null
   interrupted?: boolean
   voice_turn?: boolean
+  display_kind?: 'hidden' | null
+  title_preview?: string | null
+  turn_author?: CanonicalTurnAuthor | null
+  api_text?: string | null
+  model_override?: CanonicalModelOverride | null
 }
 export interface CanonicalAttachment {
   path: string
   mime: string
+}
+export interface CanonicalTurnAuthor {
+  id?: string | null
+  name?: string | null
+  is_bot?: boolean
+  origin?: string | null
+}
+export interface CanonicalModelOverride {
+  model: string
+  provider?: string | null
 }
 export interface CanonicalApprovalParams {
   profile?: string | null
@@ -4886,7 +5019,7 @@ export interface CanonicalConfigGetResult {
 export interface CanonicalConfigSetParams {
   profile?: string | null
   session_id: string
-  key: 'busy' | 'verbose' | 'yolo' | 'model'
+  key: 'busy' | 'verbose' | 'yolo' | 'show_reasoning' | 'model'
   value?: unknown
   confirm_expensive_model?: boolean | null
 }
@@ -5205,6 +5338,12 @@ export interface ErrorPayload {
 export interface NoticePayload {
   message: string
 }
+/** ``message.delta``. A session-authority local-viewer turn also publishes ``text: null``: the reply segment boundary (the agent's ``stream_delta_callback(None)``, before tool lines) that closes the classic CLI's reply box. Every other viewer ignores an empty chunk. */
+export interface MessageDeltaPayload {
+  text: string | null
+  rendered?: string | null
+  verbose?: boolean | null
+}
 /** ``prompt_turn._invoke_agent._stream`` (message.delta: ``text`` + optional ``rendered``), ``agent_callbacks._agent_cbs`` (reasoning.delta / thinking.delta), ``tool_progress._progress_reasoning`` (reasoning.available). ``verbose`` rides only when the session's verbose reasoning mode is on. */
 export interface StreamDeltaPayload {
   text: string
@@ -5271,9 +5410,32 @@ export interface StatusUpdatePayload {
   kind: string
   text: string
 }
-/** ``server._start_usage_ticker``. */
+/** ``server._start_usage_ticker`` (``usage``), or a canonical local viewer's session-cumulative counters (``gateway/session_usage.py::usage_stats``, the ``session.stats`` dict) at the top level: published after every API call and at turn end, what main's classic CLI read off its agent. */
 export interface SessionUsagePayload {
-  usage: Usage
+  usage?: Usage | null
+  input_tokens?: number | null
+  output_tokens?: number | null
+  cache_read_tokens?: number | null
+  cache_write_tokens?: number | null
+  prompt_tokens?: number | null
+  completion_tokens?: number | null
+  total_tokens?: number | null
+  reasoning_tokens?: number | null
+  api_calls?: number | null
+  last_prompt_tokens?: number | null
+  context_tokens?: number | null
+  context_length?: number | null
+  config_context_length?: number | null
+  context_source?: string | null
+  compression_count?: number | null
+  avg_latency_s?: number | null
+  tokens_per_s?: number | null
+  last_turn_tokens?: number | null
+  rate_limit?: Record<string, unknown> | null
+  active_subagents?: number | null
+  model?: string | null
+  provider?: string | null
+  fallback_model?: string | null
 }
 /** ``prompt_turn._invoke_agent`` ``_on_session_title`` hook. */
 export interface SessionTitlePayload {
@@ -5286,6 +5448,10 @@ export interface ReactionPayload {
 }
 /** ``server`` background_review_callback. */
 export interface ReviewSummaryPayload {
+  text: string
+}
+/** A session-authority local-viewer turn: one line the agent printed through ``_print_fn`` (subagent completion, compaction, errors, budget notices), which main's classic CLI rendered through ``_agent_status_print``. */
+export interface AgentPrintPayload {
   text: string
 }
 /** ``tool_progress._on_tool_start`` (+ ``agent_callbacks._mirror_subagent_to_child`` rows with ``preview`` and empty ``args``). ``todos``/``revision`` are NOT set by the emitter; kept optional because tool.start rows may pass through connector redaction unchanged. */
@@ -5545,7 +5711,7 @@ export interface PetHatchProgressPayload {
 }
 /** ``change_watcher._CHANGE_WATCHES`` payload fn — ``{}`` for every watch except pet.changed. */
 export type ChangeSignalPayload = Record<string, unknown>
-export type ConnectorErrorReason = 'INVALID_PARAMS' | 'NOT_OWNER' | 'UNSUPPORTED_RUNTIME' | 'CONNECTOR_REQUEST_FAILED' | 'INVALID_CONNECTOR_RESPONSE' | 'UNKNOWN_TARGET' | 'LINK_STILL_VALID' | 'REISSUE_REFUSED' | 'UNKNOWN_OPERATION' | 'INVALID_ANSWER' | 'NEEDS_NOUS_AUTH' | 'CONNECTOR_NOT_FOUND' | 'TOOLS_UNAVAILABLE' | 'CONNECTORS_UNAVAILABLE' | 'CATALOG_UNAVAILABLE' | 'ACCOUNTS_UNAVAILABLE' | 'CONNECTION_NOT_FOUND' | 'POLICY_UNAVAILABLE' | 'POLICY_CONFLICT' | 'FORBIDDEN_SCOPE' | 'ORG_REQUIRED' | 'ORG_ACCESS_DENIED' | 'INVALID_POLICY'
+export type ConnectorErrorReason = 'INVALID_PARAMS' | 'NOT_OWNER' | 'UNSUPPORTED_RUNTIME' | 'CONNECTOR_REQUEST_FAILED' | 'INVALID_CONNECTOR_RESPONSE' | 'UNKNOWN_TARGET' | 'LINK_STILL_VALID' | 'REISSUE_REFUSED' | 'UNKNOWN_OPERATION' | 'INVALID_ANSWER' | 'NEEDS_NOUS_AUTH' | 'CONNECTOR_NOT_FOUND' | 'TOOLS_UNAVAILABLE' | 'CONNECTORS_UNAVAILABLE' | 'CATALOG_UNAVAILABLE' | 'ACCOUNTS_UNAVAILABLE' | 'CONNECTION_NOT_FOUND' | 'POLICY_UNAVAILABLE' | 'POLICY_CONFLICT' | 'FORBIDDEN_SCOPE' | 'ORG_REQUIRED' | 'ORG_ACCESS_DENIED' | 'INVALID_POLICY' | 'ALIAS_TAKEN'
 
 // ── Client→server methods ──
 export interface RpcMethods {
@@ -5615,6 +5781,8 @@ export interface RpcMethods {
   'connectors.accounts': { params: ConnectorAccountsParams; result: ConnectorAccountsResult }
   /** Remove one hosted connector account owned by the scoped member. */
   'connectors.accounts.remove': { params: ConnectorAccountsRemoveParams; result: ConnectorAccountsRemoveResult }
+  /** Name or rename one hosted connector account owned by the scoped member. */
+  'connectors.accounts.rename': { params: ConnectorAccountsRenameParams; result: ConnectorAccountRow }
   /** The hosted connector catalog available to the scoped member. */
   'connectors.catalog': { params: ProfileParams; result: ConnectorsCatalogResult }
   /** Start or re-initiate authorization for named connectors on a session or account operation. */
@@ -5823,7 +5991,7 @@ export interface RpcMethods {
   'process.kill': { params: ProcessKillParams; result: ProcessKillResult }
   /** Background processes owned by the caller's session (desktop status stack poll). */
   'process.list': { params: ProcessListParams; result: ProcessListResult }
-  /** Kill every background process in the registry (``/stop``), answering the count killed. */
+  /** ``/stop``: on the shared owner, kill the background processes ``session_id`` owns (required); a standalone sidecar kills every process it holds. Answers the count killed. */
   'process.stop': { params: ProcessStopParams; result: ProcessStopResult }
   /** Editor Save: apply any subset of a profile's sections and report each one. */
   'profiles.configure': { params: ProfilesConfigureParams; result: ProfilesConfigureResult }
@@ -6095,6 +6263,7 @@ export const RPC_METHODS = [
   'connection.respond',
   'connectors.accounts',
   'connectors.accounts.remove',
+  'connectors.accounts.rename',
   'connectors.catalog',
   'connectors.connect',
   'connectors.list',
@@ -6369,11 +6538,17 @@ export interface CanonicalRpcMethods {
   'session.info': { params: CanonicalSessionInfoParams; result: CanonicalSessionInfo }
   'session.interrupt': { params: CanonicalControlParams; result: CanonicalSessionHandle }
   'session.list': { params: CanonicalListParams; result: CanonicalListResult }
-  /** Revision-fenced, retry-idempotent session edit (rename, archive, sidebar, branch, delete, rewind, reset, model, compress, import). */
+  /** Revision-fenced, retry-idempotent session edit (rename, archive, sidebar, branch, delete, rewind, reset, model, reasoning, workspace, compress, import). */
   'session.mutate': { params: SessionMutateParams; result: SessionMutateResult }
+  /** Local operator only: the owner deletes the ended sessions `hermes sessions prune` selected, skipping busy sessions and retained reset owners. */
+  'session.prune': { params: SessionPruneParams; result: SessionPruneResult }
   'session.redirect': { params: CanonicalCorrectionParams; result: CanonicalCorrectionResult }
   'session.resume': { params: CanonicalResumeParams; result: CanonicalSnapshot }
+  /** The session.usage dict on demand: what main's classic CLI read off its agent. */
+  'session.stats': { params: SessionStatsParams; result: SessionStats }
   'session.steer': { params: CanonicalCorrectionParams; result: CanonicalCorrectionResult }
+  /** Ink ``!cmd`` / ``{!cmd}`` on the shared owner: one safe command for a local session, in its frozen launch cwd (``gateway/session_shell.py``). */
+  'shell.exec': { params: CanonicalShellExecParams; result: ShellExecResult }
   /** Adopt a registered execution after verifying the live producer claim. */
   'worker.adopt': { params: WorkerScopeParams; result: WorkerExecution }
   /** Sequence-fenced typed persistence write from an adopted worker. */
@@ -6414,9 +6589,12 @@ export const CANONICAL_RPC_METHODS = [
   'session.interrupt',
   'session.list',
   'session.mutate',
+  'session.prune',
   'session.redirect',
   'session.resume',
+  'session.stats',
   'session.steer',
+  'shell.exec',
   'worker.adopt',
   'worker.persist',
   'worker.register'
@@ -6472,6 +6650,8 @@ export const SERVER_REQUEST_METHODS = [
 
 // ── Notifications (`event` frames) ──
 export interface BackendGatewayEventMap {
+  /** A status line the agent printed during a local viewer's turn. */
+  'agent.print': AgentPrintPayload
   /** Output chunk from an agent-owned background process. */
   'agent.terminal.output': TerminalOutputPayload
   /** Pending gateway approvals were dropped by interrupt/reap/teardown; the wait resolved as deny (not a user refusal). */
@@ -6514,8 +6694,8 @@ export interface BackendGatewayEventMap {
   'layout.apply': LayoutApplyPayload
   /** The turn ended: final text, usage and outcome. */
   'message.complete': MessageCompletePayload
-  /** One streamed chunk of the assistant reply. */
-  'message.delta': StreamDeltaPayload
+  /** One streamed chunk of the assistant reply (null text: segment boundary). */
+  'message.delta': MessageDeltaPayload
   /** Interim assistant commentary (text beside tool calls) sealed as its own segment. */
   'message.interim': MessageInterimPayload
   /** The agent reacted to a message; paint it live. */
@@ -6629,6 +6809,7 @@ export interface BackendGatewayEventMap {
 }
 export type BackendGatewayEventName = keyof BackendGatewayEventMap
 export const GATEWAY_EVENT_TYPES = [
+  'agent.print',
   'agent.terminal.output',
   'approval.cancelled',
   'background.complete',

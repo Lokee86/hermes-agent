@@ -45,7 +45,7 @@ def format_plan(plan: gm.MigrationPlan, *, dry_run: bool) -> list[str]:
         "  profile      gateway pid   service",
     ]
     for p in plan.profiles:
-        lines.append(f"  {p.name:<12} {str(p.pid or '-'):<13} {p.service_label()}")
+        lines.append(f"  {p.name:<12} {p.pid or '-'!s:<13} {p.service_label()}")
     if plan.standalone_by_config:
         lines.append(
             "  Standalone by config (gateway.standalone: true), left alone: "

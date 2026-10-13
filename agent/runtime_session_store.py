@@ -9,7 +9,6 @@ import asyncio
 import json
 import os
 from pathlib import Path
-import tempfile
 import threading
 
 
@@ -49,9 +48,10 @@ class WorkerRPC:
     def __init__(self, home):
         self.home = Path(home).resolve()
         self.lock = threading.Lock()
+        self.endpoint = None
 
     def __call__(self, method, **params):
-        from gateway.client import _session_ticket
+        from gateway.client import _session_ticket, gateway_ws_target
         from gateway.runtime_discovery import query_identify
         from websockets.sync.client import connect
         try:
@@ -64,19 +64,20 @@ class WorkerRPC:
             # A served secondary has no socket; its multiplexer's descriptor names it.
             from gateway.runtime import discover_gateway_endpoint
             discovery = discover_gateway_endpoint(self.home, timeout=5)
-            if discovery.state != 'ready' or discovery.endpoint is None:
+            if discovery.state == 'ready' and discovery.endpoint is not None:
+                self.endpoint = discovery.endpoint
+            elif discovery.state != 'draining' or self.endpoint is None:
                 raise WorkerPersistenceError('owner_unavailable')
             from gateway.runtime import control_home_for
-            descriptor = query_identify(control_home_for(self.home, discovery.endpoint), timeout=5)
+            endpoint = self.endpoint
+            descriptor = query_identify(control_home_for(self.home, endpoint), timeout=5)
             if descriptor.get('pid') == os.getpid():
                 raise WorkerPersistenceError('synchronous_self_rpc')
-            endpoint = discovery.endpoint
-            ticket = _session_ticket(self.home, endpoint,
-                purpose='interactive' if method == 'worker.register' else 'worker-adoption')
-            url = endpoint.api_origin.replace('https:', 'wss:').replace('http:', 'ws:') + '/api/ws'
-            with connect(url, subprotocols=['hermes-gateway-v1', 'hermes-gateway-ticket.' + ticket],
-                         open_timeout=5, close_timeout=1, max_size=8 * 1024 * 1024,
-                         proxy=None) as ws:
+            ticket = _session_ticket(self.home, endpoint, purpose='worker-adoption')
+            url, protocols = gateway_ws_target(endpoint, ticket)
+            # The owner is loopback, like connect_gateway's peer: an inherited HTTPS_PROXY must not carry it.
+            with connect(url, subprotocols=protocols,
+                         open_timeout=5, close_timeout=1, max_size=8 * 1024 * 1024, proxy=None) as ws:
                 ws.send(json.dumps({'jsonrpc': '2.0', 'id': 1, 'method': method, 'params': params}))
                 import time
                 deadline = time.monotonic() + 20
@@ -108,7 +109,7 @@ class RuntimeSessionStore(RuntimeSessionCompressionMixin, RuntimeSessionLifecycl
     adoption. Local queue acceptance is never returned as canonical commit.
     Pending journals live outside age-pruned cache trees.
     """
-    def __init__(self, rpc, scope, outbox_dir, *, max_bytes=4 * 1024 * 1024):
+    def __init__(self, rpc, scope, outbox_dir, adopted=None, *, max_bytes=4 * 1024 * 1024):
         self.rpc = rpc
         self.scope = dict(scope)
         self.max_bytes = max_bytes
@@ -133,17 +134,54 @@ class RuntimeSessionStore(RuntimeSessionCompressionMixin, RuntimeSessionLifecycl
                 if self.path.stat().st_size > max_bytes:
                     raise WorkerPersistenceError('outbox_full')
                 self.journal = json.loads(self.path.read_text(encoding="utf-8-sig"))
-                if self.journal['scope'] != self.scope:
-                    raise WorkerPersistenceError('outbox_scope_mismatch')
+                reconciled = self.journal['scope'] != self.scope
+                if reconciled:
+                    self._reconcile_adopted(adopted)
             else:
+                reconciled = False
                 self.journal = {'scope': self.scope, 'next_sequence': 1, 'pending': []}
                 self._save(self.journal)
+            if self.journal['pending']:
+                self.retry_pending()
+            if reconciled and self.scope != dict(scope):
+                # Replay must land the journal exactly on the adopted assignment (a pending
+                # publication moves it to the child); anything else is not this successor's outbox.
+                raise WorkerPersistenceError('outbox_scope_mismatch')
             if is_worker_process():
                 from tools.async_delegation_worker import bind_worker_delegation_store
                 bind_worker_delegation_store(self)
         except Exception:
             self._outbox_owner.close()
             raise
+
+    def _reconcile_adopted(self, adopted):
+        """Carry a retained outbox across verified owner replacement.
+
+        ``adopted`` is the separately authenticated ``worker.adopt`` result for the requested
+        scope; never self-adopt. Only the owner epoch (forward) and the physical target may
+        differ from the journal (a same-epoch restart can still find the target rotated).
+        Pending entries replay under the journal's own target with the adopted epoch, so an
+        exact lost-ACK retry resolves its original receipt instead of creating a second one;
+        the constructor then requires the replayed scope to equal the adopted one.
+        """
+        old, new = self.journal['scope'], self.scope
+        fixed = set(new) - {'epoch', 'session_id'}
+        if (not isinstance(adopted, dict) or set(old) != set(new)
+                or any(old[key] != new[key] for key in fixed)
+                or adopted.get('execution_id') != new.get('execution_id')
+                or adopted.get('generation') != new.get('generation')
+                or adopted.get('session_id') != new.get('session_id')
+                or adopted.get('owner_epoch') != new.get('epoch') or adopted.get('status') != 'running'
+                or type(old.get('epoch')) is not int or type(new.get('epoch')) is not int
+                or old['epoch'] > new['epoch']
+                # Only a pending publication can still move the target; replay must prove it.
+                or (old['session_id'] != new['session_id'] and not any(
+                    entry['operation'] == 'compression.publish' for entry in self.journal['pending']))):
+            raise WorkerPersistenceError('outbox_scope_mismatch')
+        candidate = dict(self.journal, scope=dict(old, epoch=new['epoch']))
+        self._save(candidate)
+        self.scope = candidate['scope']
+        self.journal = candidate
 
     def _save(self, journal):
         if self._outbox_owner.closed:
@@ -152,21 +190,9 @@ class RuntimeSessionStore(RuntimeSessionCompressionMixin, RuntimeSessionLifecycl
         if len(encoded) > self.max_bytes:
             self.failure = 'outbox_full'
             raise WorkerPersistenceError(self.failure)
-        fd, temporary = tempfile.mkstemp(prefix='.pending-', dir=self.path.parent)
-        try:
-            with os.fdopen(fd, 'wb') as stream:
-                stream.write(encoded)
-                stream.flush()
-                os.fsync(stream.fileno())
-            os.replace(temporary, self.path)
-            if os.name != 'nt':
-                directory = os.open(self.path.parent, os.O_RDONLY)
-                try:
-                    os.fsync(directory)
-                finally:
-                    os.close(directory)
-        finally:
-            Path(temporary).unlink(missing_ok=True)
+        from utils import atomic_write_bytes
+        # Owner-only journal (the dir is 0700 too); the rename and its directory entry are durable.
+        atomic_write_bytes(self.path, encoded, tmp_prefix='.pending-', mode=0o600, fsync_dir=True)
 
     def _session(self, session_id):
         if session_id != self.scope['session_id']:
@@ -248,7 +274,7 @@ class RuntimeSessionStore(RuntimeSessionCompressionMixin, RuntimeSessionLifecycl
             should_abort=should_abort, acquire_patience_s=acquire_patience_s,
             on_contended=on_contended)
 
-    def refresh_session_turn_lease(self, session_id, holder, *, ttl_seconds=300.0):
+    def refresh_session_turn_lease(self, session_id, holder, *, ttl_seconds=300.0, patience_s=None):
         self._session(session_id)
         return self._apply('turn.renew', {'holder': holder, 'ttl_seconds': ttl_seconds})['value']
 
@@ -274,6 +300,16 @@ class RuntimeSessionStore(RuntimeSessionCompressionMixin, RuntimeSessionLifecycl
 
     def get_session_title(self, session_id):
         return self.get_session(session_id).get('title')
+
+    # Transcript-tail reads the agent core makes on its session_db (failed-turn boundary, in-place
+    # compaction coverage); a missing one raised AttributeError inside a best-effort guard.
+    def latest_conversation_role(self, session_id):
+        self._session(session_id)
+        return self._apply('session.tail_role', {})['value']
+
+    def get_message_role(self, session_id, row_id):
+        self._session(session_id)
+        return self._apply('session.row_role', {'row_id': int(row_id)})['value']
 
     def get_compression_failure_cooldown_row(self, session_id):
         row = self.get_session(session_id)

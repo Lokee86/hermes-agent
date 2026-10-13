@@ -3,6 +3,7 @@
 // `session.mutate` rename / rewind (`gateway/session_mutations.py`), the committed admission
 // result (`prompt.receipt include_result`) and the frozen launch policy (`session.info`).
 
+import type { SlashExecResponse } from '../../gatewayTypes.js'
 import { t } from '../../i18n/runtime.js'
 import { asRpcResult } from '../../lib/rpc.js'
 import type { PanelSection } from '../../types.js'
@@ -26,6 +27,43 @@ export function lastTurnRewind(snapshot: MutationSnapshot): null | { target_mess
   const target = (snapshot.messages ?? []).findLast(isUserTurn)
 
   return target ? { target_message_id: target.row_id as number } : null
+}
+
+const TEXT_PARTS = new Set(['input_text', 'output_text', 'text'])
+
+/** Lossless /retry text (agent/context_compressor_retry.py::retryable_user_text): '' when the turn has
+ * no text, null when it carries media, unknown or annotated parts (no replay protocol: fail closed). */
+function retryText(content: unknown): null | string {
+  let text = ''
+
+  for (const part of typeof content === 'string' ? [content] : Array.isArray(content) ? content : [null]) {
+    if (typeof part === 'string') {
+      text += part
+    } else if (
+      part?.type &&
+      TEXT_PARTS.has(part.type) &&
+      typeof part.text === 'string' &&
+      Object.keys(part).length === 2
+    ) {
+      text += part.text
+    } else {
+      return null
+    }
+  }
+
+  return text.trim() ? text : ''
+}
+
+/** /retry's rewind payload: validated on the CAS snapshot, so a refusal archives nothing. */
+export function retryTurnRewind(snapshot: MutationSnapshot): null | { target_message_id: number } {
+  const target = (snapshot.messages ?? []).findLast(isUserTurn)
+  const text = target ? retryText(target.content) : ''
+
+  if (text === null) {
+    throw new Error(t('canonical.controls.retryUnsupported'))
+  }
+
+  return target && text ? { target_message_id: target.row_id as number } : null
 }
 
 // sid → the last admission whose completion this view saw; `/usage` reads its committed result.
@@ -77,11 +115,44 @@ export async function renameCanonicalSession(
   return mutation?.result ? String(mutation.result.title ?? title).trim() : undefined
 }
 
+// The levels `hermes_constants.parse_reasoning_effort` accepts; the display words are config.yaml writes.
+const REASONING_EFFORTS = new Set([
+  'none',
+  'false',
+  'disabled',
+  'minimal',
+  'low',
+  'medium',
+  'high',
+  'xhigh',
+  'max',
+  'ultra'
+])
+
+/** Session-scope `/reasoning <level>`: the owner's revision-fenced `reasoning` mutation of the frozen
+ * policy. False when the shared gateway has no verb for it (`--global`, a display word). */
+export function canonicalReasoning(payload: { scope?: string; value: string }, ctx: SlashRunCtx): boolean {
+  const effort = payload.value.trim().toLowerCase()
+
+  if (payload.scope === 'global' || !REASONING_EFFORTS.has(effort)) {
+    return false
+  }
+
+  void mutateCanonical(ctx.gateway.gw, ctx.sid!, 'reasoning', { effort }, ctx.stale)
+    .then(
+      mutation =>
+        mutation?.result && !ctx.stale() && ctx.transcript.sys(t('slashCmd.session.reasoning.current', effort))
+    )
+    .catch(ctx.guardedErr)
+
+  return true
+}
+
 /** `/undo` and `/retry`: rewind to before the newest user turn; `/retry` then resubmits its text. */
 export function canonicalRewind(intent: 'retry' | 'undo', ctx: SlashRunCtx) {
   const sid = ctx.sid!
 
-  void mutateCanonical(ctx.gateway.gw, sid, 'rewind', lastTurnRewind, ctx.stale)
+  void mutateCanonical(ctx.gateway.gw, sid, 'rewind', intent === 'retry' ? retryTurnRewind : lastTurnRewind, ctx.stale)
     .then(mutation => {
       if (!mutation || ctx.stale()) {
         return
@@ -103,8 +174,7 @@ export function canonicalRewind(intent: 'retry' | 'undo', ctx: SlashRunCtx) {
       }
 
       // Main's /retry: the rewound user turn's own text, not whatever this view typed last.
-      const content = (result.target_message as undefined | { content?: unknown })?.content
-      const text = typeof content === 'string' && content.trim() ? content : ctx.local.getLastUserMsg()
+      const text = retryText((result.target_message as undefined | { content?: unknown })?.content)
 
       return text ? ctx.transcript.send(text) : ctx.transcript.sys(t('slashCmd.core.retry.nothing'))
     })
@@ -120,21 +190,34 @@ interface CommittedResult {
   total_tokens?: number
 }
 
-/** `/usage`: the shared gateway keeps no session-wide ledger, but every settled turn commits its
- * own usage with the admission. Show the last one this view saw, and say what is missing. */
+/** `/usage`: session totals are the owner's own `/usage` report for this session (a reviewed read,
+ * as the classic CLI shows it); every settled turn also commits its own usage with the admission,
+ * so the last one this view saw follows. */
 export function canonicalUsage(ctx: SlashRunCtx) {
   const sid = ctx.sid!
   const admissionId = lastAdmission.get(sid)
-  const unavailable = () => ctx.transcript.sys(t('canonical.controls.usageTotalsUnavailable'))
+  const unavailable = () => !ctx.stale() && ctx.transcript.sys(t('canonical.controls.usageTotalsUnavailable'))
+
+  const totals = ctx.gateway.gw
+    .request<SlashExecResponse>('slash.exec', { command: 'usage', session_id: sid })
+    .then(r => {
+      if (!r?.output) {
+        return unavailable()
+      }
+
+      if (!ctx.stale()) {
+        ctx.transcript.page(r.output, t('slashCmd.session.usage.usageTitle'))
+      }
+    }, unavailable)
 
   if (!admissionId) {
-    ctx.transcript.sys(t('canonical.controls.usageNoTurn'))
-
-    return unavailable()
+    return void totals.then(() => !ctx.stale() && ctx.transcript.sys(t('canonical.controls.usageNoTurn')))
   }
 
-  void ctx.gateway.gw
-    .request('prompt.receipt', { admission_id: admissionId, include_result: true, session_id: sid })
+  void totals
+    .then(() =>
+      ctx.gateway.gw.request('prompt.receipt', { admission_id: admissionId, include_result: true, session_id: sid })
+    )
     .then(raw => {
       if (ctx.stale()) {
         return
@@ -143,9 +226,7 @@ export function canonicalUsage(ctx: SlashRunCtx) {
       const result = asRpcResult<{ result?: CommittedResult }>(raw)?.result
 
       if (!result) {
-        ctx.transcript.sys(t('canonical.controls.usageNoTurn'))
-
-        return unavailable()
+        return ctx.transcript.sys(t('canonical.controls.usageNoTurn'))
       }
 
       const f = (value: number | undefined) => (value ?? 0).toLocaleString()
@@ -164,7 +245,6 @@ export function canonicalUsage(ctx: SlashRunCtx) {
       const sections: PanelSection[] = [{ rows }]
 
       ctx.transcript.panel(t('canonical.controls.usageLastTurnTitle'), sections)
-      unavailable()
     })
     .catch(ctx.guardedErr)
 }

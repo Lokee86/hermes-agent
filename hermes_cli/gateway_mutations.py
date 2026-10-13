@@ -1,100 +1,115 @@
 """Prepared native controls retain their identity across ambiguous RPC replies."""
-import asyncio
 import json
 import uuid
-from gateway.client import GatewayClientError
+from gateway.client import COMPRESS_RPC_TIMEOUT, GatewayClientError
 
 
 class PreparedMutations:
     def __init__(self):
         self.pending = {}
 
-    @staticmethod
-    def _key(session_id, operation, payload):
-        if callable(payload):
-            # Builders can be recreated by a slash-command invocation. A
-            # declared key identifies the *intent*, never a new snapshot.
-            return (session_id, operation, "builder", getattr(payload, "_prepared_key", id(payload)))
-        return (session_id, operation, "payload", json.dumps(payload, sort_keys=True))
-
     async def apply(self, client, session_id, operation, payload, *, confirm=None):
-        key = self._key(session_id, operation, payload)
+        """The owner's answer for this prepared mutation (retained across ambiguous replies).
+
+        A guarded model target answers ``status: confirmation_required`` and writes nothing.
+        ``confirm`` (``async (refusal) -> bool``) is the surface's prompt: yes re-sends the same
+        retained mutation once with ``payload.confirm`` = the owner's token (under the original
+        key, so an ambiguous reply to the confirmed send retries that exact request); no answers
+        ``status: cancelled``. Without a prompt (non-interactive) the refusal is an error, and a
+        confirmed send refused again (another switch or a turn landed first) is never re-asked.
+
+        ``payload`` may be a function of the snapshot the CAS tuple is read from (a rewind names
+        its target row from that same transcript); returning None means "nothing to do" and is
+        answered ``status: nothing``. A derived payload is keyed by operation alone, so a lost-reply
+        retry re-presents the original target instead of re-deriving one from an already-rewound
+        transcript. Metadata edits (``rename``) carry no generation fence, as on Ink/Desktop."""
+        key = _key(session_id, operation, payload)
+        self.retire(session_id, keep=key)
         if key not in self.pending:
             snapshot = await client.rpc('session.resume', session_id=session_id)
-            resolved = payload(snapshot) if callable(payload) else payload
-            if resolved is None:
-                return {'status': 'nothing'}
-            encoded = json.dumps(resolved, sort_keys=True)
-            self.pending[key] = {'params': dict(session_id=session_id, operation=operation,
-                payload=json.loads(encoded), request_id=uuid.uuid4().hex,
-                expected_revision=snapshot['revision'], expected_generation=snapshot['execution_generation'])}
+            body = payload(snapshot) if callable(payload) else json.loads(key[2])
+            if body is None:
+                return {'status': 'nothing', 'session_id': session_id, 'operation': operation}
+            fence = {} if operation in _METADATA else {'expected_generation': snapshot['execution_generation']}
+            self.pending[key] = {'params': dict(session_id=session_id, operation=operation, payload=body,
+                request_id=uuid.uuid4().hex, expected_revision=snapshot['revision'], **fence)}
         entry = self.pending[key]
-        if 'result' not in entry:
-            params = entry.get('confirmation_params') or entry['params']
+        while 'result' not in entry:
             try:
-                entry['result'] = await client.rpc('session.mutate', **params)
+                # A compression answers after its summary + commit; the default budget would report
+                # a timeout while the owner (which shields the mutation) still commits it.
+                budget = {'_timeout': COMPRESS_RPC_TIMEOUT} if operation == 'compress' else {}
+                entry['result'] = await client.rpc('session.mutate', **budget, **entry['params'])
             except GatewayClientError as exc:
-                # Ambiguous delivery retains this exact request and CAS snapshot.
+                # A disconnect is not a definitive authority refusal. Preserve
+                # the tuple; never refresh its preconditions behind the user.
                 if str(exc) in {'invalid_params', 'revision_conflict', 'stale_generation',
                                 'session_busy', 'unknown_execution', 'permission_denied',
                                 'model_resolution_failed', 'nothing_to_compress',
                                 'unsupported_compress_options'}:
                     self.pending.pop(key)
                 raise
-        result = entry['result']
-        if result.get('status') == 'confirmation_required':
-            if confirm is None:
-                raise GatewayClientError(result.get('confirm_message') or 'confirmation_required')
+            refusal = entry['result']
+            if refusal.get('status') != 'confirmation_required':
+                break
+            # The owner wrote nothing (no receipt): the same tuple may be re-sent with the token.
+            del entry['result']
+            if confirm is None or 'confirm' in entry['params']['payload']:
+                self.pending.pop(key)
+                raise GatewayClientError(model_refusal_text(refusal, confirmed=confirm is not None))
             try:
-                approved = await confirm(result)
-            except (asyncio.TimeoutError, TimeoutError):
-                approved = False
-            if not approved:
-                self.pending.pop(key, None)
-                return {'status': 'cancelled'}
-            if not isinstance(result.get('confirm'), str) or not result['confirm']:
-                raise GatewayClientError('confirmation_required_missing_token')
-            params = dict(entry['params'])
-            params['payload'] = {**params['payload'], 'confirm': result['confirm']}
-            entry['confirmation_params'] = params
-            entry.pop('result', None)
-            try:
-                confirmed = await client.rpc('session.mutate', **params)
-            except GatewayClientError as exc:
-                if str(exc) in {'invalid_params', 'revision_conflict', 'stale_generation',
-                                'session_busy', 'unknown_execution', 'permission_denied',
-                                'model_resolution_failed', 'nothing_to_compress',
-                                'unsupported_compress_options'}:
-                    self.pending.pop(key, None)
+                accepted = await confirm(refusal)
+            except BaseException:
+                self.pending.pop(key)
                 raise
-            entry['result'] = confirmed
-            entry.pop('confirmation_params', None)
-            if confirmed.get('status') == 'confirmation_required':
-                raise GatewayClientError(confirmed.get('confirm_message') or 'confirmation_required')
-            return confirmed
-        return result
+            if not accepted:
+                self.pending.pop(key)
+                return {'status': 'cancelled', 'session_id': session_id, 'operation': operation}
+            entry['params'] = {**entry['params'], 'request_id': uuid.uuid4().hex,
+                               'payload': {**entry['params']['payload'], 'confirm': refusal['confirm']}}
+        return entry['result']
 
     def acknowledge(self, session_id, operation, payload):
-        self.pending.pop(self._key(session_id, operation, payload), None)
+        self.pending.pop(_key(session_id, operation, payload), None)
+
+    def retire(self, session_id, *, keep=None):
+        """Only a session's very next control may be the retry of an ambiguous one: any other verb
+        on the session (a different control, a prompt) retires its retained identities, so a later
+        deliberate repeat is new work instead of replaying a stale receipt."""
+        for key in [key for key in self.pending if key[0] == session_id and key != keep]:
+            del self.pending[key]
+
+
+_METADATA = frozenset({'rename'})
+
+
+def _key(session_id, operation, payload):
+    return (session_id, operation, None if callable(payload) else json.dumps(payload, sort_keys=True))
+
+
+def model_refusal_text(refusal, *, confirmed=False):
+    """Why a guarded model target was not applied (the owner's guard text first)."""
+    reason = ('the session changed before the confirmation landed; run /model again.' if confirmed else
+              'this target needs a confirmation; run /model in an interactive session to confirm it.')
+    return f"{refusal['confirm_message']}\n\nModel not switched: {reason}"
 
 
 def confirmation_title(refusal):
-    """Human-readable label for the owner\'s guarded model-switch refusal."""
-    warnings = refusal.get("warnings") or []
-    return " / ".join(str(w.get("title")) for w in warnings if w.get("title")) or "Confirm model switch"
+    """The one prompt title for the owner's guard warnings (as ``combined_selection_warning``)."""
+    warnings = refusal.get('warnings') or []
+    return warnings[0]['title'] if len(warnings) == 1 else 'Model Selection Warning'
 
 
 def confirm_choice(raw, choices):
-    """Resolve an explicit menu choice; ambiguous input always cancels."""
-    answer = str(raw or "").strip().lower()
-    if answer in {"y", "yes"}:
-        return choices[0][0]
-    if answer in {"n", "no"}:
-        return "cancel"
-    for index, (key, label, *_rest) in enumerate(choices, 1):
-        if answer in {str(index), str(key).lower(), str(label).strip().lower()}:
-            return key
-    return "cancel"
+    """``once`` / ``cancel`` (or None) for a typed answer: the choice's number or the classic
+    CLI's confirm aliases (y/yes/once, n/no/cancel)."""
+    from hermes_cli.cli_modal_mixin import _CONFIRM_ALIASES
+    answer = (raw or '').strip().lower()
+    if answer.isdigit() and 0 < int(answer) <= len(choices):
+        return choices[int(answer) - 1][0]
+    allowed = {choice[0] for choice in choices}
+    normalized = _CONFIRM_ALIASES.get(answer, answer)
+    return normalized if normalized in allowed else None
 
 
 def compress_payload(arg):

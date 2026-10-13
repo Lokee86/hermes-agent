@@ -11,6 +11,7 @@ import subprocess
 import sys
 import time
 from xml.sax.saxutils import escape
+from datetime import UTC
 
 from gateway import service_identity, service_process
 from gateway.service_definition import refuse_temp_home_write
@@ -132,6 +133,7 @@ def _launchd_print_service_pid(domain: str, label: str) -> tuple[bool, int | Non
         result = subprocess.run(
             ["launchctl", "print", f"{domain}/{label}"],
             timeout=5,
+            check=False,
             **_CAPTURE_TEXT,
         )
     except FileNotFoundError:
@@ -146,6 +148,7 @@ def _launchd_service_registered(label: str, *, timeout: int = 5) -> bool:
     result = subprocess.run(
         ["launchctl", "list", label],
         timeout=timeout,
+        check=False,
         **_CAPTURE_TEXT,
     )
     return result.returncode == 0
@@ -187,7 +190,7 @@ def _probe_launchd_domain_for_label(label: str) -> str:
     # Not loaded anywhere: Aqua → gui/<uid>; anything else (Background, loginwindow) → user/<uid>,
     # the pre-probing default and the recommended domain on macOS 26+.
     try:
-        result = subprocess.run(["launchctl", "managername"], timeout=5, **_CAPTURE_TEXT)
+        result = subprocess.run(["launchctl", "managername"], timeout=5, **_CAPTURE_TEXT, check=False)
         if "Aqua" in (result.stdout or ""):
             return gui_domain
     except launchctl_errors:
@@ -332,7 +335,7 @@ def _write_launchd_unsupported_marker() -> None:
     """Persist that launchd cannot supervise the gateway on this host."""
     from datetime import datetime, timezone
     payload = {
-        "written_at": datetime.now(timezone.utc).isoformat(),
+        "written_at": datetime.now(UTC).isoformat(),
         "reason": "launchd domain unsupported (exit 5/125)",
     }
     with contextlib.suppress(OSError):
@@ -1067,7 +1070,7 @@ def launchd_status(deep: bool = False):
     plist_path = get_launchd_plist_path()
     label = get_launchd_label()
     try:
-        result = subprocess.run(["launchctl", "list", label], timeout=10, **_CAPTURE_TEXT)
+        result = subprocess.run(["launchctl", "list", label], timeout=10, **_CAPTURE_TEXT, check=False)
         service_listed = result.returncode == 0
         list_output = result.stdout
     except subprocess.TimeoutExpired:
@@ -1125,4 +1128,4 @@ def launchd_status(deep: bool = False):
         if log_file.exists():
             print()
             print("Recent logs:")
-            subprocess.run(["tail", "-20", str(log_file)], timeout=10)
+            subprocess.run(["tail", "-20", str(log_file)], timeout=10, check=False)

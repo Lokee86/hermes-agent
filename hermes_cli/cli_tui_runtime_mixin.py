@@ -59,10 +59,24 @@ class CLITuiRuntimeMixin:
             with suppress(Exception):
                 step()
 
+    def _tui_dock_drop_dequeued(self):
+        """Re-read the live-work dock once an input has left ``_pending_input``.
+
+        The spinner thread polls the dock once a second, so without this the prompt a turn just took
+        (a seeded ``-q`` prompt above all) stays listed as queued while the turn starts. If the reply
+        prints in that window the dock shrinks only after it, leaving blank rows under the prompt.
+        The turn's own invalidate repaints the refreshed rows.
+        """
+        monitor = getattr(self, "_subagent_monitor", None)
+        if monitor is not None:
+            with suppress(Exception):
+                monitor.refresh()
+
     def _tui_process_one_input(self, user_input):
         """Route one submitted input: file drop, /resume pick, ! shell, slash command, or a chat turn."""
         from cli import _DIM, _PASTE_REF_RE, _RST, _cprint, _detect_file_drop, _looks_like_slash_command, _strip_leaked_bracketed_paste_wrappers, _strip_leaked_terminal_responses_with_meta
         from tools.process_registry_notifications import TimelineNotification
+        self._tui_dock_drop_dequeued()
         user_input, is_voice_input, is_seeded_query = self._tui_unwrap_input(user_input)
         if not user_input:
             return
@@ -229,6 +243,18 @@ class CLITuiRuntimeMixin:
             pass
         raise KeyboardInterrupt()  # fallback for non-prompt_toolkit contexts
 
+    def _show_startup_browser_notice(self):
+        """Main's ``_show_browser_backend_notice``; on a gateway session the gateway computed the notice
+        (and its once-per-24h stamp) with the session's tools, so it is printed from the snapshot."""
+        inventory = getattr(getattr(self, "_session_db", None), "banner_inventory", lambda: None)()
+        if inventory is None or "browser_backend_notice" not in inventory:
+            self._show_browser_backend_notice()
+            return
+        notice = inventory.get("browser_backend_notice")
+        if notice:
+            from gateway.warning_notifications import render_notification
+            render_notification(lambda: self._console_print(f"[yellow]⚠ {notice}[/yellow]"), platform="cli")
+
     def _tui_print_startup(self):
         """Startup output: light-mode probe, banner, advisories, resume/welcome lines, tips."""
         from cli import _accent_hex, _detect_light_mode
@@ -240,9 +266,10 @@ class CLITuiRuntimeMixin:
             if _term_lines > 2:
                 print("\n" * (_term_lines - 1), end="", flush=True)
 
+        self._ensure_gateway_session()  # the banner shows the gateway session's id and inventory
         self.show_banner()
         self._show_security_advisories()
-        self._show_browser_backend_notice()
+        self._show_startup_browser_notice()
 
         # First-run: an unconfigured install routes into provider onboarding instead of
         # a chat that spins ~30s and fails with a provider-specific error. TTY only. A

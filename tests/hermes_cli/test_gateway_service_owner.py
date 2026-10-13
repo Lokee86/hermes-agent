@@ -37,7 +37,7 @@ def test_temp_home_guard_facade_routes_to_gateway_definition(monkeypatch, tmp_pa
 def test_systemd_install_cli_forwards_force_unit_path(monkeypatch):
     from types import SimpleNamespace
 
-    import hermes_cli.gateway as gateway
+    from hermes_cli import gateway
 
     calls = []
     starts = []
@@ -83,7 +83,7 @@ def test_systemd_install_cli_forwards_force_unit_path(monkeypatch):
 def test_launchd_install_cli_forwards_force_unit_path(monkeypatch):
     from types import SimpleNamespace
 
-    import hermes_cli.gateway as gateway
+    from hermes_cli import gateway
 
     calls = []
     monkeypatch.setattr(gateway, "is_managed", lambda: False)

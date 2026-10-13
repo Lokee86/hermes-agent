@@ -13,10 +13,12 @@ export const canonicalEn = {
       compressedStale: 'compressed transcript is stale; reopen the session',
       compressed: '✓ transcript compressed',
       notAvailable: (command: string) => `/${command} is not available on the shared gateway yet`,
+      prefNotSaved: (command: string) => `/${command} applies to this view only; not saved on the shared gateway`,
       launchToolsets: (toolsets: string) => `toolsets fixed at session launch: ${toolsets}`,
       usageLastTurnTitle: 'Usage · last turn',
       usageNoTurn: 'no completed turn in this view yet',
       usageTotalsUnavailable: 'session totals are not available on the shared gateway yet',
+      retryUnsupported: '/retry: retry does not support media or unknown content parts',
       rowCost: 'Estimated cost'
     },
     // app/submissionCore.ts — durable admission receipts.
@@ -60,12 +62,11 @@ export const canonicalEn = {
       notFound: (path: string) => `Image not found: ${path}`,
       noOwnerPath: 'Image upload did not return an owner path'
     },
-    // canonicalGateway.ts — launch-contract refusals; components/branding.tsx.
+    // canonicalGateway.ts — launch-contract refusals.
     launch: {
       noTuiPolicy: 'gateway does not support tui session policy; update/restart the gateway',
       unsupportedOptions: (options: string) => `gateway does not support TUI launch options: ${options}`,
-      invalidToolProgress: (value: string) => `invalid HERMES_TUI_TOOL_PROGRESS: ${value}`,
-      inventoryUnavailable: 'Tool and skill inventory is not exposed by this runtime.'
+      invalidToolProgress: (value: string) => `invalid HERMES_TUI_TOOL_PROGRESS: ${value}`
     }
   }
 }

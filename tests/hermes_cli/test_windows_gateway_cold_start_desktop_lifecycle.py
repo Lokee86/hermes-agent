@@ -22,7 +22,7 @@ import json
 
 import pytest
 
-import gateway.profile_serving as profile_serving
+from gateway import profile_serving
 import profiles.current as profile_current
 import profiles.paths as profile_paths
 from hermes_cli import gateway as hermes_gateway

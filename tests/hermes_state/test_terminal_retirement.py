@@ -275,8 +275,8 @@ def test_deleted_history_is_not_recoverable_from_worker_or_mutation_receipts(tmp
 
 def test_mutation_receipts_naming_a_deleted_physical_target_drop_its_text(tmp_path):
     """D7 / pastels M07: a local owner's rewind receipt is keyed by the logical id but copies the
-    rewound turn from the physical reset child. Deleting only that child (``hermes sessions delete``
-    on the dashboard row) must still strip it, and a full delete also drops the user-set title."""
+    rewound turn from the physical reset child. Deleting that child (``hermes sessions delete`` on
+    the dashboard row, which removes the whole conversation) strips it and the user-set title."""
     import json
     from tests.hermes_state.test_target_advance_fence import _local_session
 
@@ -298,14 +298,76 @@ def test_mutation_receipts_naming_a_deleted_physical_target_drop_its_text(tmp_pa
         assert 'SECRET_CHILD_TURN' in json.dumps(rt.mutate_runtime_session(db, epoch=epoch, **rewind))
         rename = args(db, sid, 'rename', 'rn', {'title': 'SECRET_TITLE'})
         rt.mutate_runtime_session(db, epoch=epoch, **rename)
-        assert db.delete_session(child) and db.get_session(sid) is not None
+        # The listed row is the reset child; deleting it deletes the whole conversation.
+        assert db.delete_session(child) and db.get_session(sid) is None
 
         def blobs():
             with db._read_ctx() as c:
                 return ''.join(v for (v,) in c.execute('SELECT value FROM state_meta'))
-        assert 'SECRET_CHILD_TURN' not in blobs()
+        assert 'SECRET_CHILD_TURN' not in blobs() and 'SECRET_TITLE' not in blobs()
         replay = rt.mutate_runtime_session(db, epoch=epoch, **rewind)
         assert replay['target_message'] is None and replay['rewound_count'] == 2
-        rt.mutate_runtime_session(db, epoch=epoch, **args(db, sid, 'delete', 'del', {}))
-        assert 'SECRET_TITLE' not in blobs()
         assert rt.mutate_runtime_session(db, epoch=epoch, **rename)['title'] is None
+
+
+def test_retirement_drops_the_turn_user_row_copy(tmp_path):
+    """The settled user row as the model saw it is a transcript copy: deletion strips it (N88)."""
+    with SessionDB(tmp_path / 'state.db') as db:
+        db.create_session('gone', source='api_server')
+        epoch = rt.begin_runtime_epoch(db, instance_id='owner')
+        rt.admit_session_input(db, epoch=epoch, principal_id='api', session_id='gone', request_id='r1',
+                               payload={'text': 'secret ask'})
+        row = rt.claim_session_input(db, epoch=epoch, session_id='gone')
+        user = {'role': 'user', 'content': 'secret ask', 'api_content': 'memory: secret ask'}
+        retain_result(db, epoch=epoch, row=row, result={'result': {
+            'final_response': 'reply', 'current_turn_user_idx': 0,
+            'messages': [user, {'role': 'assistant', 'content': 'reply'}]}})
+        assert admission_result(db, row['admission_id'])['result']['_turn_user_row'] == user
+        snap = db.get_session('gone')
+        rt.mutate_runtime_session(db, epoch=epoch, principal_id='human', session_id='gone', request_id='del',
+                                  operation='delete', payload={}, expected_revision=snap['runtime_revision'],
+                                  expected_generation=snap['runtime_generation'])
+        retired = admission_result(db, row['admission_id'])['result']
+        assert retired['final_response'] == 'reply' and '_turn_user_row' not in retired
+
+
+def test_tombstones_past_the_retry_horizon_are_reclaimed_by_the_prune_pass(tmp_path, monkeypatch):
+    """Deletion tombstones keep byte-exact retry replies for the 7-day horizon, then the maintenance
+    prune pass reclaims every row they hold (B2-06)."""
+    import time
+    import hermes_state_mutation_retirement as retirement
+    now = time.time()
+    with SessionDB(tmp_path / 'state.db') as db:
+        epoch = rt.begin_runtime_epoch(db, instance_id='owner')
+
+        def settle_and_delete(sid, at):
+            db.create_session(sid, source='api_server')
+            args = dict(principal_id='api', session_id=sid, request_id='r', payload={'text': 'ask ' + sid})
+            rt.admit_session_input(db, epoch=epoch, **args)
+            row = rt.claim_session_input(db, epoch=epoch, session_id=sid)
+            retain_result(db, epoch=epoch, row=row, result={'result': {'final_response': 'reply ' + sid, 'messages': []}})
+            snap = db.get_session(sid)
+            monkeypatch.setattr(time, 'time', lambda: at)  # the delete happened *at*
+            rt.mutate_runtime_session(db, epoch=epoch, principal_id='human', session_id=sid, request_id='del',
+                                      operation='delete', payload={}, expected_revision=snap['runtime_revision'],
+                                      expected_generation=snap['runtime_generation'])
+            monkeypatch.undo()
+            return args, row['admission_id']
+
+        old, old_id = settle_and_delete('old', now - 8 * 86400)
+        young, young_id = settle_and_delete('young', now - 6 * 86400)
+
+        def rows_naming(sid, admission_id):
+            from hermes_state_terminal import ADMISSION_PREFIX, RESULT_PREFIX, identity_key
+            keys = (ADMISSION_PREFIX + admission_id, RESULT_PREFIX + admission_id,
+                    identity_key('api', sid, 'r'), retirement.RETIRED_PREFIX + sid)
+            return [k for k in keys if db.get_meta(k) is not None]
+        assert len(rows_naming('old', old_id)) == 4
+        db.prune_sessions(older_than_days=90)
+        assert len(rows_naming('young', young_id)) == 4
+        assert rows_naming('old', old_id) == [], 'tombstones past the horizon were not reclaimed'
+        with pytest.raises(rt.RuntimeStoreError, match='not_found'):
+            rt.admit_session_input(db, epoch=epoch, **old)
+        replay = rt.admit_session_input(db, epoch=epoch, **young)
+        assert replay['admission_id'] == young_id and replay['status'] == 'terminal'
+        assert admission_result(db, young_id)['result']['final_response'] == 'reply young'

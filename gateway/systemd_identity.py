@@ -16,14 +16,11 @@ class SystemScopeRequiresRootError(RuntimeError):
 
 
 def user_unit_dir() -> Path:
+    """Return the login account's user-unit directory, never profile-pinned HOME."""
+    from hermes_constants import get_real_home
+
     config_home = os.environ.get("XDG_CONFIG_HOME", "").strip()
-    if config_home and Path(config_home).is_absolute():
-        base = Path(config_home)
-    else:
-        # Profile-pinned HOME must not redirect systemd user units into a
-        # tenant directory. The OS account database owns this location.
-        import pwd
-        base = Path(pwd.getpwuid(os.getuid()).pw_dir) / ".config"
+    base = Path(config_home) if config_home else Path(get_real_home()) / ".config"
     return base / "systemd" / "user"
 
 

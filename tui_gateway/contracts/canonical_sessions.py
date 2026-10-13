@@ -6,7 +6,7 @@ from typing import Literal
 
 from .base import JsonValue, Params, Result
 from .common import ProfileParams, TranscriptMessage
-from .canonical import AdmissionStatus, CanonicalSessionRef, PromptResponseResult
+from .canonical import AdmissionStatus, CanonicalSessionRef, PromptResponseResult, SessionInventoryFields
 from .registry import canonical_method
 
 
@@ -37,6 +37,8 @@ class CanonicalCreateParams(ProfileParams):
     title: str | None = None
     hidden: bool = False
     follow_profile_config: bool | None = None
+    service_tier: str | None = None
+    cwd_explicit: bool | None = None
 
 
 class CanonicalResumeParams(ProfileParams):
@@ -48,6 +50,8 @@ class CanonicalResumeParams(ProfileParams):
     workspace: str | None = None
     source: str | None = None
     editor: dict[str, JsonValue] | None = None
+    # Re-supplies a launch-only key a restart revoked; never durable, must match the launch's.
+    api_key: str | None = None
     defer_history: bool = False
     omit_messages: bool = False
     cols: int | None = None
@@ -77,9 +81,11 @@ class CanonicalPendingPrompt(Result):
     edit: dict[str, JsonValue] | None = None
     question: str | None = None
     multi_select: bool | None = None
+    # Local viewer turns: the seconds the gateway waits before it gives up on this prompt.
+    timeout_s: int | None = None
 
 
-class CanonicalSnapshotInfo(Result):
+class CanonicalSnapshotInfo(SessionInventoryFields):
     desktop_protocol: Literal['hermes-gateway-v1']
     source: str | None = None
     model: str | None = None
@@ -88,6 +94,17 @@ class CanonicalSnapshotInfo(Result):
     profile_name: str | None = None
     cwd: str | None = None
     launch_request: dict[str, JsonValue] | None = None
+    reasoning_effort: str | None = None
+    reasoning_effort_wire: str | None = None
+    service_tier: str | None = None
+    fast: bool | None = None
+    title: str | None = None
+    started_at: float | None = None
+    last_active_at: float | None = None
+    yolo: bool | None = None
+    api_mode: str | None = None
+    tool_count: int | None = None
+    credential_hint: str | None = None
 
 
 class CanonicalSnapshot(Result):
@@ -108,6 +125,7 @@ class CanonicalSnapshot(Result):
 
 
 class CanonicalListParams(ProfileParams):
+    scope: Literal['live', 'stored'] = 'live'
     limit: int = 200
     title: str | None = None
     include_hidden: bool = False
@@ -135,6 +153,18 @@ class CanonicalAttachment(Params):
     mime: str
 
 
+class CanonicalTurnAuthor(Params):
+    id: str | None = None
+    name: str | None = None
+    is_bot: bool = False
+    origin: str | None = None
+
+
+class CanonicalModelOverride(Params):
+    model: str
+    provider: str | None = None
+
+
 class CanonicalSubmitParams(CanonicalSessionParams):
     text: str
     submission_id: str | None = None
@@ -147,6 +177,17 @@ class CanonicalSubmitParams(CanonicalSessionParams):
     voice_context: str | None = None
     interrupted: bool = False
     voice_turn: bool = False
+    # Desktop composer presentation, committed per admission (``display_v1``): a hidden widget
+    # intent persists ``display_kind=hidden`` (never a user bubble); a large paste's preview is
+    # titler input only, never model input.
+    display_kind: Literal['hidden'] | None = None
+    title_preview: str | None = None
+    # Classic CLI per-turn inputs, committed per admission (``cli_turn_v1``): who wrote the turn
+    # (memory attribution only), the model-facing text when it differs from the persisted ``text``
+    # (voice prefix, model-switch / skills-reload notes) and a one-turn ``/model --once`` override.
+    turn_author: CanonicalTurnAuthor | None = None
+    api_text: str | None = None
+    model_override: CanonicalModelOverride | None = None
 
 
 class CanonicalControlParams(CanonicalSessionParams):

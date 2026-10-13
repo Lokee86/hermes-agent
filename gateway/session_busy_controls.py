@@ -35,6 +35,8 @@ async def busy_config(connection, ref, params, *, write=False):
     allowed = {'session_id', 'profile', 'key'} | ({'value'} if write else set())
     if params.get('key') == 'verbose' and not set(params) - allowed and ref.session_id:
         return verbose_config(connection, ref, params, write)
+    if params.get('key') == 'show_reasoning' and not set(params) - allowed and ref.session_id:
+        return show_reasoning_config(connection, ref, params, write)
     if params.get('key') == 'yolo' and not set(params) - allowed and ref.session_id:
         return await yolo_config(connection, ref, params, write)
     if (set(params) - allowed or not ref.session_id or params.get('key') != 'busy'
@@ -76,6 +78,22 @@ def verbose_config(connection, ref, params, write):
     return {'key': 'verbose', 'value': current, 'scope': 'session'}
 
 
+def show_reasoning_config(connection, ref, params, write):
+    """Session-scoped reasoning display (the classic CLI's ``/reasoning show|hide`` and verbose
+    reasoning): whether a local-viewer turn of this session streams ``reasoning.delta``. Off until
+    set, because a reasoning sink changes what the provider is asked for. Never a settings write."""
+    value = params.get('value')
+    word = str(value).strip().lower()
+    if write and word not in _YOLO_WORDS:
+        raise RuntimeStoreError('invalid_params')
+    authorize(connection, ref, params, 'session:control' if write else 'session:read')
+    live = connection.authority.sessions[ref.session_id]
+    if write:
+        live.show_reasoning = _YOLO_WORDS[word]
+    return {'key': 'show_reasoning', 'value': '1' if getattr(live, 'show_reasoning', None) is True else '0',
+            'scope': 'session'}
+
+
 _YOLO_WORDS = {'1': True, 'on': True, 'true': True, '0': False, 'off': False, 'false': False}
 
 
@@ -111,6 +129,18 @@ async def yolo_config(connection, ref, params, write):
     return {'key': 'yolo', 'value': '1' if enabled else '0', 'scope': 'session'}
 
 
+def adopts_owner_agent(authority, ref):
+    """The claimed turn runs an in-process owner agent, which adopt_agent hands latched steers to;
+    a cron job or a managed worker has no steer seam, so a latch there would be acknowledged and lost."""
+    from gateway.session_managed_worker import managed_policy
+    from gateway.session_policy import policy_for_source
+    try:
+        policy = policy_for_source(authority.runner, authority.sessions[ref.session_id].source)
+        return not (policy is not None and policy.source == 'cron') and managed_policy(authority, ref) is None
+    except RuntimeStoreError:
+        return False
+
+
 async def correct(connection, ref, params, *, verb):
     if (set(params) - {'session_id', 'profile', 'text', 'execution_generation'}
             or not isinstance(params.get('text'), str) or not params['text'].strip()
@@ -126,7 +156,12 @@ async def correct(connection, ref, params, *, verb):
         # agent. Refuse explicitly instead of acknowledging undeliverable text.
         if ref.session_id in getattr(authority, '_managed_workers', {}):
             raise RuntimeStoreError('unsupported_control')
-        agent = authority.agent(ref)
+        # Accepted for this exact claim before its turn built an agent: steer_agent latches it for
+        # the agent this generation adopts, never a later one.
+        agent, latched = authority.steer_agent(ref, generation, params['text'] if verb == 'steer' else None)
+        if latched:
+            return {'status': 'queued', 'text': params['text'], 'execution_generation': generation,
+                    'authority_epoch': authority.epoch}
         method = getattr(agent, verb, None)
         if not callable(method):
             raise RuntimeStoreError('execution_not_ready')

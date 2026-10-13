@@ -28,7 +28,18 @@ import type { StatusBarMode } from '../../interfaces.js'
 import { patchOverlayState } from '../../overlayStore.js'
 import { patchUiState } from '../../uiStore.js'
 import { canonicalRewind, canonicalTitle } from '../canonicalSessionCommands.js'
-import type { SlashCommand } from '../types.js'
+import type { SlashCommand, SlashRunCtx } from '../types.js'
+
+// Client display preferences. The shared gateway's config.set covers only session controls
+// (busy/verbose/yolo/model), so there the change applies to this view and is not saved;
+// say so after the command's own notice instead of a bare invalid_params.
+const saveDisplayPref = (ctx: SlashRunCtx, command: string, key: string, value: string) => {
+  if (ctx.gateway.gw?.isCanonical) {
+    return queueMicrotask(() => ctx.transcript.sys(t('canonical.controls.prefNotSaved', command)))
+  }
+
+  ctx.gateway.rpc<ConfigSetResponse>('config.set', { key, value }).catch(() => {})
+}
 
 const flagFromArg = (arg: string, current: boolean): boolean | null => {
   if (!arg) {
@@ -101,6 +112,7 @@ export const coreCommands: SlashCommand[] = [
       sections.push(
         {
           rows: [
+            ['/connectors', t('slashCmd.core.help.connectors')],
             ['/details [hidden|collapsed|expanded|cycle]', t('slashCmd.core.help.detailsGlobal')],
             ['/details <section> [hidden|collapsed|expanded|reset]', t('slashCmd.core.help.detailsSection')],
             ['/fortune [random|daily]', t('slashCmd.core.help.fortune')],
@@ -168,9 +180,8 @@ export const coreCommands: SlashCommand[] = [
       }
 
       patchUiState({ mouseTracking: next })
-      ctx.gateway.rpc<ConfigSetResponse>('config.set', { key: 'mouse', value: next }).catch(() => {})
-
       queueMicrotask(() => ctx.transcript.sys(t('slashCmd.core.mouse.tracking', next)))
+      saveDisplayPref(ctx, 'mouse', 'mouse', next)
     }
   },
 
@@ -310,9 +321,8 @@ export const coreCommands: SlashCommand[] = [
       }
 
       patchUiState({ compact: next })
-      ctx.gateway.rpc<ConfigSetResponse>('config.set', { key: 'density', value: next ? 'on' : 'off' }).catch(() => {})
-
       queueMicrotask(() => ctx.transcript.sys(t('slashCmd.core.density.state', next ? 'on' : 'off')))
+      saveDisplayPref(ctx, 'density', 'density', next ? 'on' : 'off')
     }
   },
 
@@ -358,10 +368,8 @@ export const coreCommands: SlashCommand[] = [
         const { [first]: _drop, ...rest } = ui.sections
 
         patchUiState({ sections: mode ? { ...rest, [first]: mode } : rest })
-        gateway
-          .rpc<ConfigSetResponse>('config.set', { key: `details_mode.${first}`, value: mode ?? '' })
-          .catch(() => {})
         transcript.sys(t('slashCmd.core.details.section', first, mode ?? t('slashCmd.core.details.reset')))
+        saveDisplayPref(ctx, 'details', `details_mode.${first}`, mode ?? '')
 
         return
       }
@@ -375,8 +383,8 @@ export const coreCommands: SlashCommand[] = [
       const sections = Object.fromEntries(SECTION_NAMES.map(section => [section, next]))
 
       patchUiState({ detailsMode: next, detailsModeCommandOverride: true, sections })
-      gateway.rpc<ConfigSetResponse>('config.set', { key: 'details_mode', value: next }).catch(() => {})
       transcript.sys(t('slashCmd.core.details.current', next, ''))
+      saveDisplayPref(ctx, 'details', 'details_mode', next)
     }
   },
 
@@ -631,11 +639,10 @@ export const coreCommands: SlashCommand[] = [
       // returns to whatever /verbose mode the user had. Optimistically patch the
       // badge so the status bar flips on the same frame.
       patchUiState({ focusView: next })
-      ctx.gateway.rpc<ConfigSetResponse>('config.set', { key: 'focus', value: next ? 'on' : 'off' }).catch(() => {})
-
       queueMicrotask(() =>
         ctx.transcript.sys(next ? t('slashCmd.core.focus.enabled') : t('slashCmd.core.focus.disabled'))
       )
+      saveDisplayPref(ctx, 'focus', 'focus', next ? 'on' : 'off')
     }
   },
 
@@ -661,9 +668,8 @@ export const coreCommands: SlashCommand[] = [
       }
 
       patchUiState({ statusBar: next })
-      ctx.gateway.rpc<ConfigSetResponse>('config.set', { key: 'statusbar', value: next }).catch(() => {})
-
       queueMicrotask(() => ctx.transcript.sys(t('slashCmd.core.statusbar.state', next)))
+      saveDisplayPref(ctx, 'statusbar', 'statusbar', next)
     }
   },
 
@@ -702,9 +708,8 @@ export const coreCommands: SlashCommand[] = [
       }
 
       patchUiState({ battery: next, ...(next ? {} : { batteryStatus: null }) })
-      ctx.gateway.rpc<ConfigSetResponse>('config.set', { key: 'battery', value: next ? 'on' : 'off' }).catch(() => {})
-
       queueMicrotask(() => ctx.transcript.sys(t('slashCmd.core.battery.state', next ? 'on' : 'off')))
+      saveDisplayPref(ctx, 'battery', 'battery', next ? 'on' : 'off')
     }
   },
 

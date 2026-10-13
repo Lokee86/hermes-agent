@@ -13,7 +13,7 @@ from pathlib import Path
 
 import pytest
 
-import hermes_cli.main_install_repair as main_install_repair
+from hermes_cli import main_install_repair
 from gateway import process_discovery
 from gateway import windows_service as gateway_windows
 from hermes_cli import main as cli_main

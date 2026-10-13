@@ -15,7 +15,7 @@ def temp_home_in_definition(definition: str) -> str | None:
     candidates += re.findall(
         r"<key>HERMES_HOME</key>\s*<string>(.*?)</string>",
         definition,
-        flags=re.S,
+        flags=re.DOTALL,
     )
     temp_roots = {
         Path(tempfile.gettempdir()).resolve(),

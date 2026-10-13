@@ -32,7 +32,7 @@ def test_unmanaged_spawn_passes_cli_switch(tmp_path, monkeypatch, idle_exit):
 
     seen = []
     monkeypatch.setattr(runtime_start, "remaining", lambda deadline: 1)
-    monkeypatch.setattr(runtime_start, "windows_detach_popen_kwargs", lambda: {})
+    monkeypatch.setattr(runtime_start, "windows_detach_popen_kwargs", dict)
     monkeypatch.setattr(runtime_start.sys, "platform", "linux")
     monkeypatch.setattr(subprocess, "Popen", lambda args, **kwargs: seen.append(args))
     runtime_start.spawn_unmanaged_gateway(tmp_path, deadline=100, idle_exit=idle_exit)
