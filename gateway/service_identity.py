@@ -71,10 +71,16 @@ def _bare_unit_pinned_home() -> Path | None:
         return None
 
 
+def home_owns_bare_service_name(home: Path) -> bool:
+    """Whether *home* is the installation that owns the bare gateway service name."""
+    resolved = home.resolve()
+    return resolved in _native_service_homes() or resolved == _bare_unit_pinned_home()
+
+
 def service_suffix() -> str:
     """Suffix for the current HERMES_HOME; empty means the bare service name."""
     home = get_hermes_home().resolve()
-    if home in _native_service_homes() or home == _bare_unit_pinned_home():
+    if home_owns_bare_service_name(home):
         return ""
     name = profile_name_from_home(home, get_default_hermes_root().resolve())
     return name or hashlib.sha256(str(home).encode()).hexdigest()[:8]

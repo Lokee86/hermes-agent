@@ -17,8 +17,7 @@ from pathlib import Path
 
 import pytest
 
-from hermes_cli import gateway
-from hermes_cli import dashboard_procs
+from gateway import process_discovery
 
 # Named ``hermes`` so ``python <dir>/hermes gateway run`` satisfies the canonical gateway matcher.
 _GATEWAY_STUB = """
@@ -51,7 +50,9 @@ def test_scan_claims_a_bare_gateway_only_for_the_home_its_environment_names(tmp_
     home_a.mkdir()
     home_b.mkdir()
     ready = tmp_path / "gateway.ready"
-    monkeypatch.setattr(gateway, "_get_service_pids", lambda all_profiles=False: set())
+    monkeypatch.setattr(
+        process_discovery, "_get_service_pids", lambda all_profiles=False: set()
+    )
     proc = subprocess.Popen(
         _gateway_argv(tmp_path),
         env={**os.environ, "HERMES_HOME": str(home_a), "STUB_READY": str(ready)},
@@ -59,17 +60,18 @@ def test_scan_claims_a_bare_gateway_only_for_the_home_its_environment_names(tmp_
     )
     # Any other gateway on the host reads as an unreadable environment, so resolving it never
     # touches the operator's real home; only the stub's own environment is replayed.
-    real_home_for_pid = dashboard_procs._hermes_home_for_pid
+    real_home_for_pid = process_discovery._pid_hermes_home
     monkeypatch.setattr(
-        dashboard_procs, "_hermes_home_for_pid",
-        lambda pid: real_home_for_pid(pid) if pid == proc.pid else None,
+        process_discovery,
+        "_pid_hermes_home",
+        lambda pid: real_home_for_pid(pid) if pid == proc.pid else (False, None),
     )
     try:
         _wait_for(ready, proc)
         monkeypatch.setenv("HERMES_HOME", str(home_b))
-        assert proc.pid not in gateway.find_gateway_pids()
+        assert proc.pid not in process_discovery.find_gateway_pids()
         monkeypatch.setenv("HERMES_HOME", str(home_a))
-        assert proc.pid in gateway.find_gateway_pids()
+        assert proc.pid in process_discovery.find_gateway_pids()
     finally:
         proc.terminate()
         proc.wait(timeout=10)

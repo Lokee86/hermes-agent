@@ -168,6 +168,76 @@ def _append_unique_pid(pids: list[int], pid: int | None, exclude_pids: set[int])
         pids.append(pid)
 
 
+def _pid_environment(pid: int) -> dict[str, str] | None:
+    """Exec-time environment for *pid*, or None when process ownership hides it."""
+    with contextlib.suppress(Exception):
+        import psutil  # type: ignore
+
+        return dict(psutil.Process(pid).environ())
+    try:
+        raw = Path(f"/proc/{pid}/environ").read_bytes()
+    except OSError:
+        return None
+    env: dict[str, str] = {}
+    for part in raw.split(b"\x00"):
+        key, sep, value = part.partition(b"=")
+        if not sep:
+            continue
+        env[key.decode("utf-8", errors="replace")] = value.decode(
+            "utf-8", errors="replace"
+        )
+    return env
+
+
+def _pid_passwd_home(pid: int) -> str | None:
+    """Login home of the account that owns *pid*, best-effort."""
+    uid: int | None = None
+    with contextlib.suppress(Exception):
+        import psutil  # type: ignore
+
+        uid = psutil.Process(pid).uids().real
+    if uid is None:
+        with contextlib.suppress(OSError):
+            uid = os.stat(f"/proc/{pid}").st_uid
+    if uid is None:
+        return None
+    with contextlib.suppress(Exception):
+        import pwd
+
+        return pwd.getpwuid(uid).pw_dir or None
+    return None
+
+
+def _pid_hermes_home(pid: int) -> tuple[bool, str | None]:
+    """Return ``(environment_readable, resolved_home_evidence)`` for *pid*.
+
+    A readable environment with no usable home evidence is intentionally
+    distinct from an unreadable environment: only the latter may take the
+    narrow native-bare-service fallback in ``_scan_gateway_pids``.
+    """
+    env = _pid_environment(pid)
+    if env is None:
+        return False, None
+
+    explicit = env.get("HERMES_HOME", "").strip()
+    if explicit:
+        return True, explicit
+
+    if is_windows():
+        local_appdata = env.get("LOCALAPPDATA", "").strip()
+        user_profile = env.get("USERPROFILE", "").strip()
+        if local_appdata:
+            return True, str(Path(local_appdata) / "hermes")
+        if user_profile:
+            return True, str(Path(user_profile) / "AppData" / "Local" / "hermes")
+        return True, None
+
+    account_home = env.get("HOME", "").strip() or _pid_passwd_home(pid)
+    if account_home:
+        return True, str(Path(account_home) / ".hermes")
+    return True, None
+
+
 def _iter_proc_cmdlines(exclude_pids: set[int]):
     """Yield ``(pid, cmdline)`` from ``/proc`` (Docker without procps); raises if /proc is unusable."""
     my_pid = os.getpid()
@@ -201,8 +271,10 @@ def _scan_gateway_pids(
         profile_flag_value,
         hermes_home_assignments,
         command_line_names_hermes_home,
+        _same_hermes_home,
     )
-    current_home = str(get_hermes_home().resolve())
+    current_home_path = get_hermes_home().resolve()
+    current_home = str(current_home_path)
     # Forward slashes on both sides of the HERMES_HOME= match (mirrors gateway.status), and no
     # trailing separator: the assignments parser strips one, so the systemd ``Environment=``
     # spelling (``HERMES_HOME=/root/.hermes/``) compares equal to the resolved home.
@@ -210,8 +282,12 @@ def _scan_gateway_pids(
     current_profile_arg = _service_identity.profile_arg(current_home)
     current_profile_name = current_profile_arg.split()[-1] if current_profile_arg else ""
     current_profile_name_lc = current_profile_name.lower()
+    current_home_owns_bare_service = (
+        not current_profile_name
+        and _service_identity.home_owns_bare_service_name(current_home_path)
+    )
 
-    def _matches_current_profile(command: str) -> bool:
+    def _matches_current_profile(pid: int, command: str) -> bool:
         command_lc = command.lower().replace("\\", "/")
         if current_profile_name:
             # Token equality, not substring: `-p ops` must not claim (or SIGTERM) an `-p ops-2` gateway.
@@ -219,20 +295,28 @@ def _scan_gateway_pids(
                 return True
             return command_line_names_hermes_home(command_lc, current_home_lc)
 
-        # Default profile: accept unless argv advertises another profile in any spelling the CLI
-        # pre-parser accepts (``--profile=ops`` slipped past a substring test, so a default-profile
-        # fallback stop could SIGTERM the named gateway). HERMES_HOME may come via env (invisible to
-        # wmic/CIM), so only a non-matching explicit HERMES_HOME= disqualifies.
-        if profile_flag_value(command_lc) is not None:
+        # Root/default home: argv without a profile flag or HERMES_HOME assignment proves
+        # nothing because service managers commonly provide HERMES_HOME only through the process
+        # environment. Check the live PID environment before claiming a destructive stop.
+        if profile_flag_value(command_lc) not in (None, "default"):
             return False
-        return (not hermes_home_assignments(command_lc)
-                or command_line_names_hermes_home(command_lc, current_home_lc))
+        if hermes_home_assignments(command_lc):
+            return command_line_names_hermes_home(command_lc, current_home_lc)
+
+        env_readable, owner_home = _pid_hermes_home(pid)
+        if owner_home is not None:
+            return _same_hermes_home(owner_home, current_home_path)
+        if env_readable:
+            return False
+        # Another user / hardened procfs may hide the environment. Preserve the legacy bare-argv
+        # fallback only for the installation that actually owns the host's bare service name.
+        return current_home_owns_bare_service
 
     def _consider(pid: int, command: str) -> None:
         matches_runtime = looks_like_gateway_command_line(command) or (
             include_restart_managers and looks_like_gateway_runtime_command_line(command)
         )
-        if matches_runtime and (all_profiles or _matches_current_profile(command)):
+        if matches_runtime and (all_profiles or _matches_current_profile(pid, command)):
             _append_unique_pid(pids, pid, exclude_pids)
 
     try:
