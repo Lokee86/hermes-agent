@@ -13,13 +13,8 @@ export const canonicalEn = {
       compressedStale: 'compressed transcript is stale; reopen the session',
       compressed: '✓ transcript compressed',
       notAvailable: (command: string) => `/${command} is not available on the shared gateway yet`,
-      prefNotSaved: (command: string) => `/${command} applies to this view only; not saved on the shared gateway`,
       launchToolsets: (toolsets: string) => `toolsets fixed at session launch: ${toolsets}`,
-      usageLastTurnTitle: 'Usage · last turn',
-      usageNoTurn: 'no completed turn in this view yet',
-      usageTotalsUnavailable: 'session totals are not available on the shared gateway yet',
-      retryUnsupported: '/retry: retry does not support media or unknown content parts',
-      rowCost: 'Estimated cost'
+      retryUnsupported: '/retry: retry does not support media or unknown content parts'
     },
     // app/submissionCore.ts — durable admission receipts.
     submit: {
@@ -44,7 +39,7 @@ export const canonicalEn = {
     // hooks/useQueue.ts, app/useSubmission.ts, app/useComposerState.ts — the local input journal.
     queue: {
       unconfirmedPrefix: '[unconfirmed · Alt+K retry] ',
-      // {0}=admission status identifier (queued/started/unknown), {1}=input text
+      // {0}=admission status identifier (unknown; queued rows render plain), {1}=input text
       serverRow: (status: string, text: string) => `[${status}] ${text}`,
       discardFailed: (message: string) => `discard failed: ${message}`,
       journalCleanupFailed: (message: string) => `input delivered; journal cleanup failed: ${message}`,

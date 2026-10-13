@@ -122,8 +122,10 @@ const redactUrl = (raw: string): string => {
 export interface LocalGatewayGrant { url: string; protocols: string[]; profile_id: string; instance_id: string }
 
 // Reconnects after the first launch are discovery-only, except that a bounded number per window
-// may re-ensure an owner that crashed (gateway_bootstrap.py --recover decides from the owner's
-// retained runtime record; an explicitly stopped gateway is never resurrected).
+// re-ensure an owner that is not ready (gateway_bootstrap.py --recover): crashed, idle-exited,
+// stopped with `hermes gateway stop` while this TUI is open, or an older Hermes's gateway. Main's
+// TUI owned its sidecar, so an open TUI comes back on its own; the budget keeps a crash-looping
+// owner from being respawned without pause.
 export const OWNER_RECOVERY_LIMIT = 3
 export const OWNER_RECOVERY_WINDOW_MS = 60_000
 
@@ -186,6 +188,7 @@ export class GatewayClient extends EventEmitter {
   private recoveryAttempts: number[] = []
   isCanonical = false
   private creationContract?: CreationContract
+  private describedSkin?: Record<string, unknown>
   private describeFlight?: Promise<void>
   private attachHold: AttachHold | null = null
   // The last session.create whose outcome is in doubt (see createCanonical).
@@ -269,7 +272,11 @@ export class GatewayClient extends EventEmitter {
   private describeThenReady(ws: WebSocket | null, payload: Record<string, unknown>) {
     this.describeFlight = undefined
     void this.describeRuntime().then(() => {
-      if (this.ws === ws) { this.publish({ type: 'gateway.ready', payload } as unknown as AnyGatewayEvent) }
+      // The owner's resolved profile skin (`runtime.describe.skin`, main's `gateway.ready.skin`)
+      // unless the listener's own ready already carried one.
+      const ready = payload.skin === undefined && this.describedSkin ? { ...payload, skin: this.describedSkin } : payload
+
+      if (this.ws === ws) { this.publish({ type: 'gateway.ready', payload: ready } as unknown as AnyGatewayEvent) }
     }).catch(error => {
       this.publish({ type: 'gateway.start_timeout', payload: {
         python: 'runtime.describe', cwd: '', stderr_tail: String(error)
@@ -586,6 +593,9 @@ export class GatewayClient extends EventEmitter {
       if (this.disposed || generation !== this.localGeneration) { return }
       this.attachUrl = grant.url
       this.isCanonical = true
+      // Main's /logs opened with the sidecar's spawn line; the shared owner's equivalent is the attach.
+      this.lifecycle(`[lifecycle] attached shared gateway ${start ? 'start' : recover ? 'recover' : 'discover'} ` +
+        `url=${redactUrl(grant.url)} profile=${grant.profile_id} instance=${grant.instance_id}`)
       this.startAttachedGateway(grant.url, grant.protocols)
     }).catch(error => {
       if (this.disposed || generation !== this.localGeneration) { return }
@@ -655,7 +665,7 @@ export class GatewayClient extends EventEmitter {
             this.connectSidecarMirror()
 
             // The canonical gateway has no ready frame (readiness is the discovery grant +
-            // runtime.describe); a client-local ready with no skin boots the default theme.
+            // runtime.describe); the client-local ready carries the skin runtime.describe resolved.
             if (this.isCanonical) { this.describeThenReady(ws, {}) }
           },
           { once: true }
@@ -871,8 +881,11 @@ export class GatewayClient extends EventEmitter {
    * session.create asks again instead of reporting an outdated gateway forever. */
   private describeRuntime(): Promise<void> {
     if (!this.describeFlight) {
-      const flight: Promise<void> = this.requestOverWebSocket<{ session_create: CreationContract }>('runtime.describe').then(
-        description => { this.creationContract = description.session_create },
+      const flight: Promise<void> = this.requestOverWebSocket<{ session_create: CreationContract; skin?: Record<string, unknown> | null }>('runtime.describe').then(
+        description => {
+          this.creationContract = description.session_create
+          this.describedSkin = description.skin && typeof description.skin === 'object' ? description.skin : undefined
+        },
         error => {
           if (this.describeFlight === flight) { this.describeFlight = undefined }
 

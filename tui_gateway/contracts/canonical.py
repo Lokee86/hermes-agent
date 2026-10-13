@@ -13,6 +13,7 @@ from typing import Literal
 
 from .base import JsonValue, Params, Result
 from .common import McpServerStatus, OpenModel, ProjectRef
+from .events import SkinPayload
 from .groups_bot_relay import RoomParams, RoomTaskReceipt
 from .registry import canonical_method
 
@@ -219,9 +220,32 @@ canonical_method("session.stats", params=SessionStatsParams, result=SessionStats
                  doc="The session.usage dict on demand: what main's classic CLI read off its agent.")
 
 
+class SessionAutomationParams(Params):
+    session_id: str
+    kind: Literal["goal", "loop", "heartbeat"]
+    call: str
+    args: list[JsonValue] | None = None
+    kwargs: dict[str, JsonValue] | None = None
+
+
+class SessionAutomationResult(Result):
+    """``gateway/session_viewer_automation.py``: the manager's persisted state after the call (its own
+    JSON, ``null`` when none) and the call's value, or the refusal main's manager raised."""
+
+    state: str | None
+    value: JsonValue | None = None
+    error: dict[str, str] | None = None
+
+
+canonical_method("session.automation", params=SessionAutomationParams, result=SessionAutomationResult,
+                 doc="The classic CLI's /goal, /subgoal, /loop, /heartbeat manager calls (state writes, the "
+                     "goal judge, quality gates), run by the owner on the session's row.")
+
+
 class SessionDetachParams(Params):
     session_id: str
     subscription_id: str
+    end_reason: str | None = None
 
 
 class SessionDetachResult(Result):
@@ -231,7 +255,9 @@ class SessionDetachResult(Result):
 
 
 canonical_method("session.detach", params=SessionDetachParams, result=SessionDetachResult,
-                 doc="Drop this connection's subscription; a stale subscription id answers detached=false.")
+                 doc="Drop this connection's subscription; a stale subscription id answers detached=false. "
+                     "end_reason (snake_case): the viewer is closing the conversation; the last viewer "
+                     "leaving an idle local session ends its row with that reason.")
 
 
 class RuntimeDescribeParams(Params):
@@ -249,6 +275,8 @@ class RuntimeDescribeResult(Result):
     authority_epoch: int
     capabilities: list[str]
     session_create: SessionCreateDescriptor
+    #: The owning profile's resolved skin (``resolve_skin()``, main's ``gateway.ready.skin``).
+    skin: SkinPayload | None = None
 
 
 canonical_method("runtime.describe", params=RuntimeDescribeParams, result=RuntimeDescribeResult,

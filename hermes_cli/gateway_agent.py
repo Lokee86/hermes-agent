@@ -10,8 +10,10 @@ Event contract: wave_a.md (frozen). Every frame is a gateway ``event`` with para
 """
 from __future__ import annotations
 
+import json
 import logging
 import queue
+import threading
 import time
 import uuid
 
@@ -88,12 +90,11 @@ class GatewayAgent:
         self.api_key = None  # never on this side of the wire
         self.max_iterations = max_iterations
         self.quiet_mode = quiet_mode
-        self.tool_progress_mode = tool_progress_mode
-        self.reasoning_config = reasoning_config
-        self.service_tier = service_tier
+        self._service_tier = None
         self.clarify_callback = clarify_callback
         self.connection_callback = connection_callback
-        self.reasoning_callback = reasoning_callback
+        self._reasoning_callback = None
+        self._show_reasoning_sent = None
         self.thinking_callback = thinking_callback
         self.tool_progress_callback = tool_progress_callback
         self.tool_start_callback = tool_start_callback
@@ -127,6 +128,8 @@ class GatewayAgent:
         self._turn_base_usage_anchor = None
         self._context_tokens = 0
         self._turn_calls_base = 0
+        self._turn_ask_index = None
+        self._turn_api_calls = None
         self._usage_stale = False
         self._current_task_id = self._current_turn_id = self._current_api_request_id = ""
         self._memory_manager = None
@@ -145,11 +148,140 @@ class GatewayAgent:
         self._interrupt_sent_at = None
         self._rate_limit_state = None
         self._config_context_length = None
+        # Session-scope settings the gateway applies (its turn renders tools in this mode, its agent asks
+        # for this effort): written once main's rebuilt agent is ready, then on every change.
+        self._tool_progress_mode = "all"
+        self.tool_progress_mode = tool_progress_mode
+        self._reasoning_config = None
+        self.reasoning_config = reasoning_config
         self._apply_info(self._state().info)
+        self.reasoning_callback = reasoning_callback
+        self.service_tier = service_tier
         state = self._state()
         state.usage_listeners.append(self.apply_session_usage)
         if state.usage:
             self.apply_session_usage(state.usage)
+
+    # -- session-scope settings ------------------------------------------------------------------
+    @property
+    def tool_progress_mode(self):
+        return self._tool_progress_mode
+
+    @tool_progress_mode.setter
+    def tool_progress_mode(self, mode):
+        """``/verbose`` / ``/focus``: ``config.set verbose`` with the explicit mode (never ``cycle``, which
+        could drift from the CLI's own cycle)."""
+        if mode == self._tool_progress_mode or mode not in {"off", "new", "all", "verbose"}:
+            self._tool_progress_mode = mode
+            return
+        self._tool_progress_mode = mode
+        try:
+            self.connection.call("config.set", session_id=self.session_id, key="verbose", value=mode)
+        except GatewayClientError as exc:
+            logger.debug("config.set verbose failed: %s", exc)
+
+    @property
+    def reasoning_config(self):
+        return self._reasoning_config
+
+    @reasoning_config.setter
+    def reasoning_config(self, config):
+        """``/reasoning <level>`` (session scope; main rebuilds its agent with the new config) and /new's
+        re-derived effort: ``session.mutate reasoning`` when it differs from the session's effort."""
+        self._reasoning_config = config
+        effort = _effort_word(config)
+        if effort is None:
+            return
+        info = self._state().info or {}
+        if info.get("reasoning_effort") == effort:
+            return
+        try:
+            snapshot = self.connection.call("session.resume", session_id=self.session_id)
+            # A policy mutation is generation-fenced: the owner refuses it without the generation.
+            self.connection.call("session.mutate", session_id=self.session_id, request_id=uuid.uuid4().hex,
+                                 expected_revision=snapshot["revision"],
+                                 expected_generation=snapshot["execution_generation"], operation="reasoning",
+                                 payload={"effort": effort})
+            info["reasoning_effort"] = effort
+        except (GatewayClientError, KeyError, TypeError) as exc:
+            logger.debug("session.mutate reasoning failed: %s", exc)
+
+    # -- session identity ----------------------------------------------------------------------
+    @property
+    def session_id(self):
+        return self._session_id
+
+    @session_id.setter
+    def session_id(self, value):
+        """Main repoints ``agent.session_id`` on /new, /resume and /branch: attach this viewer to that
+        gateway session (idempotent) and read its state from then on."""
+        previous = getattr(self, "_session_id", None)
+        self._session_id = value
+        if previous is None or value == previous or not value:
+            return
+        store = self._session_db
+        if store is not None and hasattr(store, "attach"):
+            try:
+                store.attach(value)
+            except GatewayClientError as exc:
+                logger.debug("session.resume %s failed: %s", value, exc)
+        else:
+            try:
+                self.connection.call("session.resume", session_id=value)
+            except GatewayClientError as exc:
+                logger.debug("session.resume %s failed: %s", value, exc)
+        state = self._state()
+        if self.apply_session_usage not in state.usage_listeners:
+            state.usage_listeners.append(self.apply_session_usage)
+        self._apply_info(state.info)
+        if state.usage:
+            self.apply_session_usage(state.usage)
+
+    # -- reasoning display -------------------------------------------------------------------
+    @property
+    def reasoning_callback(self):
+        return self._reasoning_callback
+
+    @reasoning_callback.setter
+    def reasoning_callback(self, callback):
+        """Main installs a reasoning sink at construction and on ``/reasoning show|hide`` / verbose; the
+        sink's presence is what makes the agent ask the provider for reasoning. The gateway agent
+        gets the same switch: the session's ``show_reasoning`` display flag, sent on each change."""
+        self._reasoning_callback = callback
+        wanted = (self.session_id, callback is not None)
+        if wanted == self._show_reasoning_sent:  # per session: a rotated id gets its own flag
+            return
+        try:
+            self.connection.call("config.set", session_id=self.session_id, key="show_reasoning",
+                                 value="1" if wanted[1] else "0", timeout=10)
+        except GatewayClientError as exc:
+            logger.debug("config.set show_reasoning failed: %s", exc)
+            return
+        self._show_reasoning_sent = wanted
+
+    @property
+    def service_tier(self):
+        return self._service_tier
+
+    @service_tier.setter
+    def service_tier(self, tier):
+        """Main rebuilds AIAgent(service_tier=...) after ``/fast``; the gateway agent gets the same tier
+        as the session's override (``config.set service_tier``), sent when it differs from the last
+        one sent for this session. The session's own default (None at first build) is left alone."""
+        self._service_tier = tier
+        # Remembered on the session's shared state: /fast rebuilds this stand-in, the session stays.
+        state = self._state()
+        wanted = tier or "normal"
+        sent = getattr(state, "service_tier_sent", None)
+        if wanted == sent or (sent is None and not tier):
+            return
+        try:
+            self.connection.call("config.set", session_id=self.session_id, key="service_tier",
+                                 value=wanted, timeout=10)
+        except GatewayClientError as exc:
+            logger.debug("config.set service_tier failed: %s", exc)
+            return
+        state.service_tier_sent = wanted
 
     # -- snapshot-backed reads ---------------------------------------------------------------
     def _state(self):
@@ -315,12 +447,26 @@ class GatewayAgent:
         return self._correct("steer", text)
 
     def redirect(self, text):
-        return self._correct("redirect", text)
+        accepted = self._correct("redirect", text)
+        if accepted:
+            # Main's turn then answers the redirect row first (the interrupted call has no usage), so
+            # its anchor is priced through that row: it, not the original ask, is the turn's ask.
+            self._turn_ask_index = None
+        return accepted
 
     # -- the turn ------------------------------------------------------------------------------
     def _submit_params(self, user_message, persist_user_message, turn_author):
+        attachments = None
+        if isinstance(user_message, list):
+            # Main's native image turn: OpenAI content parts built from local files. The gateway takes
+            # text plus staged attachments and routes the images itself (native or described).
+            user_message, attachments = self._stage_content_parts(user_message)
+            if isinstance(persist_user_message, list):
+                persist_user_message = user_message
         text = persist_user_message if isinstance(persist_user_message, str) else user_message
         params = {"session_id": self.session_id, "submission_id": uuid.uuid4().hex, "text": text}
+        if attachments:
+            params["attachments"] = attachments
         if isinstance(user_message, str) and user_message != text:
             params["api_text"] = user_message
         if turn_author:
@@ -332,21 +478,52 @@ class GatewayAgent:
             params["display_kind"] = staged["display_kind"]
         if getattr(self, "_finite", False):
             params["finite"] = True
+        if self.clarify_callback is not None:
+            # Main's batch panel answers the clarify tool's whole question set (one ``clarify`` request).
+            params["clarify_batch"] = True
         return params
+
+    def _stage_content_parts(self, parts):
+        """``[{type: text}, {type: image_url, image_url: {url: data:...}}]`` -> (text, attachments): each
+        image is staged on the owner with ``image.attach_bytes`` (bytes read here, locally, by main's
+        ``build_native_content_parts``); main's ``[Image attached at: <local path>]`` hints are dropped
+        because the gateway names its own staged copies."""
+        texts, attachments = [], []
+        for part in parts:
+            if not isinstance(part, dict):
+                continue
+            if part.get("type") == "text":
+                lines = str(part.get("text") or "").splitlines()
+                texts.append("\n".join(ln for ln in lines if not ln.startswith("[Image attached")).strip())
+            elif part.get("type") == "image_url":
+                url = (part.get("image_url") or {}).get("url") if isinstance(part.get("image_url"), dict) else None
+                if isinstance(url, str) and url.startswith("data:image/"):
+                    staged = self.connection.call("image.attach_bytes", session_id=self.session_id, content_base64=url)
+                    attachments.append({"path": staged["path"], "mime": staged["mime"]})
+        return "\n\n".join(t for t in texts if t), attachments
 
     def run_conversation(self, user_message, conversation_history=None, stream_callback=None,
                          task_id=None, persist_user_message=None, turn_author=None, **_kw):
         history = list(conversation_history or [])
+        self._turn_ask_index = len(history)  # the staged ask's row in this turn's transcript
+        self._turn_api_calls = None
         self._turn_calls_base = self.session_api_calls
         self._usage_stale = True
         self._interrupt_requested = False
         self._interrupt_sent_at = None
-        self._drain_stale()
-        try:
-            receipt = self.connection.call("prompt.submit", **self._submit_params(
-                user_message, persist_user_message, turn_author))
-        except GatewayClientError as exc:
-            return self._failed(history, user_message, str(exc))
+        from hermes_cli.gateway_tools_notify import take_admitted_turn
+        adopted = take_admitted_turn(self, persist_user_message if isinstance(persist_user_message, str)
+                                     else user_message)
+        if adopted is not None:
+            # A notification turn the gateway already admitted and is running (its frames are queued).
+            receipt = adopted
+        else:
+            self._drain_stale()
+            try:
+                receipt = self.connection.call("prompt.submit", **self._submit_params(
+                    user_message, persist_user_message, turn_author))
+            except GatewayClientError as exc:
+                return self._failed(history, user_message, str(exc))
         self._admission = (receipt or {}).get("admission_id")
         if receipt and receipt.get("execution_generation") is not None:
             self._generation = receipt["execution_generation"]
@@ -389,6 +566,9 @@ class GatewayAgent:
                 return frame
             params = frame.get("params") if isinstance(frame, dict) else None
             if not isinstance(params, dict) or params.get("session_id") != self.session_id:
+                continue
+            if frame.get("method") in _SERVER_REQUESTS and "id" in frame:
+                self._answer_request(frame)
                 continue
             kind, payload = params.get("type"), params.get("payload") or {}
             admission = params.get("admission_id") or (payload.get("admission_id") if isinstance(payload, dict) else None)
@@ -460,6 +640,8 @@ class GatewayAgent:
             self.tool_progress_callback("tool.completed", name, None, None, duration=duration,
                                         is_error=bool(payload.get("is_error")), result=result)
         self._usage_stale = True
+        from hermes_cli.gateway_tools import mark_dirty
+        mark_dirty()  # a terminal/process call may have started or stopped a background process
         if name == "todo":
             self._todo_from_result(result)
         diff = payload.get("inline_diff")
@@ -473,7 +655,6 @@ class GatewayAgent:
             self.tool_complete_callback(call_id, name, args, result)
 
     def _todo_from_result(self, result):
-        import json
         try:
             data = json.loads(result) if isinstance(result, str) else result
         except ValueError:
@@ -555,6 +736,65 @@ class GatewayAgent:
                              execution_generation=payload.get("execution_generation", self._generation),
                              prompt_id=payload.get("prompt_id"), answer=str(answer))
 
+    def _answer_request(self, frame):
+        """A gateway server→client request (``sudo``, ``secret``, ``clarify``): main's own modal
+        answers it on this (agent) thread, through the callback HermesCLI registered for the turn; the
+        answer travels only in the JSON-RPC response frame."""
+        method = frame["method"]
+        try:
+            answer = _SERVER_REQUESTS[method](self, frame.get("params") or {})
+        except Exception:  # health: allow BLE001 -- a broken modal is a skip, never a hung tool
+            logger.debug("server request %s failed", method, exc_info=True)
+            answer = {"outcome": "cancelled"} if method == "clarify" else ""
+        if method == "clarify":
+            self.connection.reply(frame["id"], answer)
+        else:
+            self.connection.reply(frame["id"], {"value": answer if isinstance(answer, str) else ""})
+
+    def _ask_clarify(self, params):
+        """Main's batch clarify panel (``clarify_callback(questions)``) for the whole question set."""
+        questions = [{"qid": q.get("qid"), "question": q.get("question") or "",
+                      "choices": list(q.get("choices") or []), "multi_select": bool(q.get("multi_select"))}
+                     for q in params.get("questions") or [] if isinstance(q, dict) and q.get("qid")]
+        if self.clarify_callback is None or not questions:
+            return {"outcome": "cancelled"}
+        reply = self.clarify_callback(questions)
+        if not isinstance(reply, dict):
+            return {"outcome": "cancelled"}
+        answers = {qid: (value if isinstance(value, str) or value is None else json.dumps(value))
+                   for qid, value in (reply.get("answers") or {}).items()}
+        out = {"answers": answers}
+        if reply.get("outcome") in ("submitted", "timed_out", "cancelled"):
+            out["outcome"] = reply["outcome"]
+        return out
+
+    def _ask_sudo(self, params):
+        from tools.terminal_tool import _get_sudo_password_callback
+        callback = _get_sudo_password_callback()
+        return (callback() or "") if callback is not None else ""
+
+    def _ask_secret(self, params):
+        """Main's masked "Skill Setup Required" panel (the CLI's registered secret-capture callback,
+        ``hermes_cli.callbacks.prompt_for_secret``) collects the value and prints main's lines; the
+        gateway, not this process, saves it in the profile ``.env``, so the panel's save is captured."""
+        from tools import skills_tool
+        callback = skills_tool._secret_capture_callback
+        if callback is None:
+            return ""
+        from hermes_cli import callbacks
+        captured = []
+
+        def capture(key, value):
+            captured.append(value)
+            return {"success": True, "stored_as": key, "validated": False}
+        with _SECRET_LOCK:
+            saver, callbacks.save_env_value_secure = callbacks.save_env_value_secure, capture
+            try:
+                callback(params.get("env_var") or "", params.get("prompt") or "", params.get("metadata"))
+            finally:
+                callbacks.save_env_value_secure = saver
+        return captured[0] if captured else ""
+
     # -- result --------------------------------------------------------------------------------
     def _user_row(self, user_message):
         staged = self._pending_cli_user_message
@@ -594,6 +834,8 @@ class GatewayAgent:
             out["messages"].append({"role": "assistant", "content": out["final_response"]})
         out["session_id"] = self.session_id
         self._session_messages = out["messages"]
+        calls = stored.get("api_calls")
+        self._turn_api_calls = calls if isinstance(calls, int) and not isinstance(calls, bool) else None
         self._apply_usage(stored, usage)
         return out
 
@@ -613,9 +855,19 @@ class GatewayAgent:
         # Main anchors on the turn's FIRST response, priced over the transcript through the turn's ask.
         # A turn with no completed call (interrupted before a response) keeps the previous anchor, so
         # its ask is estimated delta too.
-        last_user = next((i for i in range(len(messages) - 1, -1, -1) if messages[i].get("role") == "user"),
-                         len(messages) - 1)
-        base = last_user + 1 if self.session_api_calls > self._turn_calls_base else last_user
+        # The turn's own ask, never a later user-role row of the same turn (a mid-turn /steer row).
+        ask = getattr(self, "_turn_ask_index", None)
+        last_user = ask if isinstance(ask, int) and 0 <= ask < len(messages) and messages[ask].get("role") == "user" \
+            else next((i for i in range(len(messages) - 1, -1, -1) if messages[i].get("role") == "user"),
+                      len(messages) - 1)
+        # Did this turn complete an API call? The turn result's own count when the gateway sent one: a
+        # rebuilt gateway agent (/personality, /model, and /undo, /retry bumping the runtime generation)
+        # restarts its session counters, so the cumulative delta can read "no call" for a turn that
+        # answered; without that count a LOWER cumulative is a new agent that made calls, never "no call".
+        turn_calls = self._turn_api_calls
+        calls, turn_base = self.session_api_calls, self._turn_calls_base
+        made_call = turn_calls > 0 if isinstance(turn_calls, int) else (calls > turn_base or 0 < calls < turn_base)
+        base = last_user + 1 if made_call else last_user
         if base <= 0:
             self._turn_base_usage_anchor = None
             return
@@ -662,6 +914,16 @@ class GatewayAgent:
         self.apply_session_usage(usage)
 
 
+def _effort_word(config):
+    """The ``session.mutate reasoning`` effort for main's ``reasoning_config`` dict (None: no override)."""
+    if not isinstance(config, dict):
+        return None
+    if config.get("enabled") is False:
+        return "none"
+    effort = config.get("effort")
+    return effort if isinstance(effort, str) and effort else None
+
+
 def _rate_limit_state(data):
     """``get_rate_limit_state()`` rebuilt from its serialized dict (None stays None)."""
     if not isinstance(data, dict):
@@ -688,6 +950,13 @@ def _moa_handler(kind):
                                      payload.get("text") or payload.get("preview"), None, **extra)
     return handler
 
+
+_SECRET_LOCK = threading.Lock()
+_SERVER_REQUESTS = {
+    "sudo": GatewayAgent._ask_sudo,
+    "secret": GatewayAgent._ask_secret,
+    "clarify": GatewayAgent._ask_clarify,
+}
 
 _HANDLERS = {
     "message.delta": GatewayAgent._on_delta,

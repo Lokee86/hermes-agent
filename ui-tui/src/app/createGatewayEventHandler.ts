@@ -8,6 +8,7 @@ import type { MessageDeltaPayload, SubagentStatus, Usage } from '@hermes/shared/
 import { STARTUP_IMAGE, STARTUP_QUERY } from '../config/env.js'
 import { STREAM_BATCH_MS } from '../config/timing.js'
 import { buildSetupRequiredSections, setupRequiredTitle } from '../content/setup.js'
+import { usageFromTick } from '../domain/usage.js'
 import type {
   AnyGatewayEvent,
   CommandsCatalogResponse,
@@ -1088,7 +1089,7 @@ export function createGatewayEventHandler(ctx: GatewayEventHandlerContext): (ev:
         // mid-turn instead of only at message.complete. The session filter at
         // the top of this handler already dropped ticks for non-focused
         // sessions.
-        const usage = ev.payload?.usage
+        const usage = usageFromTick(ev.payload) // canonical: the owner's counters at the top level
 
         if (usage) {
           patchUiState(state => ({ ...state, usage: { ...state.usage, ...usage } }))

@@ -277,6 +277,12 @@ class GatewayChatView:
                 self.mutations.acknowledge(original, operation, payload)
                 print('\n'.join(result['lines']))
                 return True
+            if result.get('status') == 'noop':
+                # Nothing removable: main's report, nothing committed (gateway/session_mutation_compress.py).
+                self.mutations.acknowledge(original, operation, payload)
+                summary = result.get('summary') or {}
+                print('\n'.join(filter(None, (summary.get('headline'), summary.get('token_line'), summary.get('note')))))
+                return True
             target = result.get('branched_session_id', original)
             await self.adopt(await self.client.rpc('session.resume', session_id=target))
             self.mutations.acknowledge(original, operation, payload)
@@ -375,8 +381,10 @@ class GatewayChatView:
 
     def _print_exit_ids(self):
         """The finite run's durable id on stderr (automation wrappers parse it; it names the
-        physical row a compaction may have advanced) and, for `chat -q`, main's resume block."""
-        print(f"\nsession_id: {self.session_id}", file=sys.stderr, flush=True)
+        physical row a compaction may have advanced) and, for `chat -q`, main's resume block. Main's
+        `-z` (unattended) printed only the reply: no id line."""
+        if not self.unattended:
+            print(f"\nsession_id: {self.session_id}", file=sys.stderr, flush=True)
         if self.resume_footer:
             print(resume_footer(self.session_id), flush=True)
 

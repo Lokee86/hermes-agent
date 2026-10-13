@@ -40,6 +40,8 @@ class SessionState:
         # Called (loop thread) with each ``session.usage`` payload; GatewayAgent maps it onto main's
         # agent attributes, so a frame landing between turns is never dropped with the turn queue.
         self.usage_listeners: list = []
+        # A gateway-admitted notification turn the idle CLI queued a header for (gateway_tools_notify).
+        self.admitted_turn: dict | None = None
 
     def adopt_snapshot(self, snapshot):
         self.info = dict(snapshot.get("info") or {})
@@ -85,6 +87,10 @@ class GatewayConnection:
         self._stop = None
         self._start_lock = threading.Lock()
         self.closed = False
+        # /bg and /btw answers by task id (hermes_cli/gateway_side.py); created by whichever of the
+        # waiter or the frame comes first, so an answer faster than the verb's reply is kept.
+        self._side: dict[str, queue.Queue] = {}
+        self._side_lock = threading.Lock()
 
     @classmethod
     def shared(cls):
@@ -156,6 +162,8 @@ class GatewayConnection:
                 self.events.put(frame)
                 return
             params = frame.get("params") if isinstance(frame, dict) else None
+            if isinstance(params, dict) and self._take_side(params):
+                continue
             if isinstance(params, dict):
                 sid = params.get("session_id")
                 if sid in self.states:
@@ -164,6 +172,22 @@ class GatewayConnection:
                     except Exception:  # pragma: no cover - a cache update must never stop the pump
                         logger.debug("session state update failed", exc_info=True)
             self.events.put(frame)
+
+    def _take_side(self, params):
+        from hermes_cli.gateway_side import SIDE_EVENTS
+        payload = params.get("payload")
+        if params.get("type") not in SIDE_EVENTS or not isinstance(payload, dict) or not payload.get("task_id"):
+            return False
+        self.side_waiter(payload["task_id"]).put(payload)
+        return True
+
+    def side_waiter(self, task_id) -> queue.Queue:
+        with self._side_lock:
+            return self._side.setdefault(task_id, queue.Queue())
+
+    def drop_side_waiter(self, task_id):
+        with self._side_lock:
+            self._side.pop(task_id, None)
 
     def close(self):
         loop, stop = self.loop, self._stop
@@ -177,6 +201,21 @@ class GatewayConnection:
         self.closed = True
 
     # -- requests ----------------------------------------------------------------------------
+    def reply(self, request_id, result):
+        """Answer one of the gateway's server→client requests (the ``sudo`` prompt): a JSON-RPC
+        response frame with the request's own id. Never raises; a lost reply times out gateway-side."""
+        import json
+        client, loop = self.client, self.loop
+        if client is None or loop is None:
+            return False
+        frame = json.dumps({"jsonrpc": "2.0", "id": request_id, "result": result})
+        try:
+            asyncio.run_coroutine_threadsafe(client.websocket.send(frame), loop).result(10)
+        except Exception as exc:  # health: allow BLE001 -- the gateway's own wait bounds a lost answer
+            logger.debug("server request reply failed: %s", exc)
+            return False
+        return True
+
     def call(self, method, *, timeout=None, **params):
         if self._thread is not None and threading.current_thread() is self._thread:
             raise RuntimeError("GatewayConnection.call() on the gateway loop thread would deadlock")

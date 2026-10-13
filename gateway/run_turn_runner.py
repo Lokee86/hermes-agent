@@ -510,11 +510,20 @@ class TurnRunner(GatewayTurnProgressMixin, GatewaySessionAgentMixin):
             # Answer headless at once, as main's _single_query_clarify_callback did in process.
             from gateway.session_finite import finite_clarify_reply
             return finite_clarify_reply()
+        from gateway.session_cli_turn import clarify_batch_turn
+        if clarify_batch_turn(self):
+            # Main's classic CLI shows every question at once in its batch panel: one request.
+            from gateway.session_clarify_batch import ask_clarify_batch
+            return ask_clarify_batch(self, questions)
         answers: dict[str, Any] = {}
         reply: dict[str, Any] = {"answers": answers, "outcome": "submitted"}
         last = len(questions) - 1
+        # The typed-"skip" hint is for messaging adapters, where a chat reply answers the card. A local
+        # viewer (TUI / Desktop / CLI) renders main's modal with its own skip control, unhinted.
+        platform = getattr(getattr(self._ctx, "source", None), "platform", None)
+        hint = "" if platform == Platform.LOCAL else f"\n{t('gateway.clarify.skip_hint')}"
         for index, entry in enumerate(questions):
-            question = f"{entry['question']}\n{t('gateway.clarify.skip_hint')}"
+            question = f"{entry['question']}{hint}"
             raw, answered = self._ask_clarify_question(
                 question, entry["choices"], bool(entry["multi_select"]), rearm=index == last)
             if raw == CANCELLED:
@@ -1201,7 +1210,7 @@ class TurnRunner(GatewayTurnProgressMixin, GatewaySessionAgentMixin):
                 return _unresolved(f"⚠️ {exc}")
             return _unresolved(t("gateway.errors.no_credentials"))
         pr = runner._provider_routing
-        reasoning_config = (policy.current_reasoning_config(runner) if policy else
+        reasoning_config = (policy.current_reasoning_config(runner, ctx.session_key) if policy else
             runner._resolve_session_reasoning_config(source=ctx.source, session_key=ctx.session_key, model=model))
         runner._service_tier = (policy.current_service_tier(runner, ctx.session_key) if policy else
             runner._resolve_session_service_tier(source=ctx.source, session_key=ctx.session_key))
@@ -1238,14 +1247,19 @@ class TurnRunner(GatewayTurnProgressMixin, GatewaySessionAgentMixin):
             persist_msg, persist_ts = self._prepare_turn_message(agent_history)
             compressions = getattr(getattr(agent, "context_compressor", None), "compression_count", None)
             from gateway.session_cli_turn import run_classic_cli_turn
-            result = run_classic_cli_turn(self, lambda: self._run_conversation_with_approval(
-                agent, agent_history, observed_group_context, persist_msg, persist_ts))
+            from gateway.session_secret_prompt import secret_prompt_scope
+            from gateway.session_sudo_prompt import sudo_prompt_scope
+            with sudo_prompt_scope(self, agent), secret_prompt_scope(self, agent):
+                result = run_classic_cli_turn(self, lambda: self._run_conversation_with_approval(
+                    agent, agent_history, observed_group_context, persist_msg, persist_ts))
         finally:
             if local_sinks is not None:
                 from gateway import local_viewer_events
                 local_viewer_events.restore(agent, local_sinks)
                 from gateway.session_usage import publish_usage
-                publish_usage(self, agent)  # turn end: the final API call's counters
+                publish_usage(self, agent, record=True)  # turn end: the final API call's counters
+                from gateway.session_local_inventory import publish_settled_info
+                publish_settled_info(self, agent)
         persisted_turn = _persisted_turn(agent, agent_history, result, compressions)
         self._finish_stream_consumer(result, agent_history, stream_consumer)
         if _finite_viewer_turn() and getattr(agent, "_codex_session", None) is not None:

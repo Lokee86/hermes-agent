@@ -236,7 +236,7 @@ class SessionAuthority:
             if self.events.get(member.transport_id) is transport:
                 del live.subscribers[subscription]
 
-    async def detach(self, actor, subscription_id):
+    async def detach(self, actor, subscription_id, *, end_reason=None):
         for session_id, live in self.sessions.items():
             if subscription_id in live.subscribers:
                 if live.subscribers[subscription_id] != actor:
@@ -246,9 +246,13 @@ class SessionAuthority:
                 if transport is not None:
                     live.event_stream.fanout.detach(transport)
                 if not live.subscribers:
-                    from gateway.session_acp_lifecycle import end_idle_acp_session
+                    from gateway.session_acp_lifecycle import (
+                        end_idle_acp_session, end_idle_viewer_session, reopen_if_reattached)
                     from gateway.session_runtime_workers import tracked_write
-                    await tracked_write(self, partial(end_idle_acp_session, self, session_id))
+                    # A viewer that attached while the close was off the loop reopens it.
+                    close = (partial(end_idle_viewer_session, self, session_id, end_reason) if end_reason
+                             else partial(end_idle_acp_session, self, session_id))
+                    await tracked_write(self, close, then=partial(reopen_if_reattached, self, session_id))
                 return
         raise RuntimeStoreError('not_found')
 
@@ -425,7 +429,7 @@ class SessionAuthority:
         self._require_admission_open()
         if (request.intent != 'queue' or not {'text'} <= set(request.payload) <= {
                 'text', 'attachments', 'finite', 'unattended', 'surface', 'voice_context', 'interrupted',
-                'voice_turn', 'display_kind', 'title_preview', 'turn_author', 'api_text', 'model_override'}
+                'voice_turn', 'display_kind', 'title_preview', 'turn_author', 'api_text', 'model_override', 'clarify_batch'}
                 or not isinstance(request.payload['text'], str)):
             raise RuntimeStoreError('invalid_params')
         from gateway.session_ingress_media import admit_attachments
@@ -832,7 +836,9 @@ class SessionAuthority:
                     'authority_epoch': self.epoch, 'execution_generation': row['generation'],
                     'admission_id': row['admission_id']}
                 self.executing[ref.session_id] = row['generation']
-                live.event_stream.publish(ref.session_id, {}, event_type='message.start')
+                from gateway.session_automation import admission_display
+                live.event_stream.publish(ref.session_id, admission_display(row.get('payload') or {}),
+                                          event_type='message.start')
                 self._publish_pending(ref)
         return row
 

@@ -87,3 +87,60 @@ async def test_session_stats_returns_the_same_dict(tmp_path, monkeypatch):
         CANONICAL_METHODS['session.stats'].result.model_validate(reply['result'])
     finally:
         await connection.close()
+
+
+def test_completion_carries_main_tui_usage_from_the_turn_end_stats():
+    """``message.complete.usage`` on a local-viewer turn is main's TUI ``Usage`` (``_get_usage``):
+    context used/max/percent, ◷ latency, t/s, compressions — what the status bar paints."""
+    from gateway.session_settlement_recovery import completion_payload
+    from gateway.session_usage import usage_stats
+    from tui_gateway.contracts.registry import EVENTS
+    row = {'admission_id': 'a1', 'request_id': 'r1'}
+    captured = {'result': {'final_response': 'hi'}, 'session_usage': usage_stats(_agent())}
+    complete = completion_payload(row, {'outcome': 'completed'}, 'hi', captured)
+    usage = complete['usage']
+    assert usage['context_used'] == 900 and usage['context_max'] == 128000 and usage['context_percent'] == 1
+    assert usage['avg_latency_s'] == 2.0 and usage['avg_tps'] == 10.0 and usage['compressions'] == 1
+    assert (usage['input'], usage['output'], usage['total'], usage['calls']) == (100, 40, 155, 2)
+    assert usage['cache_hit_pct'] == 9 and usage['model'] == 'fake-model'
+    EVENTS['message.complete'].payload.model_validate({'text': 'hi', 'usage': usage})
+    # No turn-end stats (messaging turns, recovered results): no usage key, as before.
+    assert 'usage' not in completion_payload(row, {'outcome': 'completed'}, 'hi', {'result': {}})
+
+
+def test_local_viewer_turn_end_records_stats_for_the_completion():
+    from gateway.session_results import execution_result
+    from gateway.session_usage import publish_usage
+    published = []
+    turn = _turn(Platform.LOCAL, published, _agent())
+    captured = {}
+    token = execution_result.set(captured)
+    try:
+        publish_usage(turn, _agent(), record=True)
+    finally:
+        execution_result.reset(token)
+    assert captured['session_usage'] == published[-1][1]
+
+
+def test_turn_end_publishes_the_agents_banner_info():
+    """Main re-emitted ``session.info`` at every turn end; the first turn's carries the built agent's
+    ``system_prompt`` (the banner's ``▸ System Prompt — N chars`` row, FINDINGS row 2) and tools."""
+    from gateway.session_local_inventory import publish_settled_info
+    published = []
+    agent = _agent()
+    agent._cached_system_prompt = 'You are Hermes.' * 10
+    agent.tools = [{'function': {'name': 'terminal'}}]
+    turn = _turn(Platform.LOCAL, published, agent)
+    turn._approval_owner = (SimpleNamespace(profile_id='p'), 's', 1)
+    from gateway import session_local
+    original = session_local.local_session_info
+    session_local.local_session_info = lambda authority, ref: {'model': 'fake-model', 'lazy': False}
+    try:
+        publish_settled_info(turn, agent)
+    finally:
+        session_local.local_session_info = original
+    kind, info = published[-1]
+    assert kind == 'session.info'
+    assert info['system_prompt'] == agent._cached_system_prompt
+    assert info['tools'] == {'terminal': ['terminal']} and info['context_length'] == 128000
+    assert info['model'] == 'fake-model'

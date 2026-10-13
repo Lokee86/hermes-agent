@@ -155,9 +155,10 @@ async def _mutate_session(authority, actor, ref, params, *, commit_lock=None):
             prepare = {'model': prepare_model, 'compress': prepare_compress, **PREPARE}[operation]
             prepared = await prepare(authority, live, params['payload'], prepared)
             applied = False
-            if prepared.get('status') in {'preview', 'confirmation_required'}:
-                # ``--preview`` is a read-only report and a guarded model target awaits the user's
-                # confirmation: no receipt, no publication, no eviction.
+            if prepared.get('status') in {'preview', 'noop', 'confirmation_required'}:
+                # ``--preview`` and a compress that removes nothing are read-only reports, and a
+                # guarded model target awaits the user's confirmation: no receipt, no publication,
+                # no eviction.
                 return {'session_id': ref.session_id, 'operation': operation, **prepared}
     async with commit_lock or nullcontext():
         if prepared is not None and 'snapshot' not in prepared:
@@ -178,6 +179,12 @@ async def _mutate_session(authority, actor, ref, params, *, commit_lock=None):
         current = authority.db.get_session(ref.session_id)
         owns_projection = current is not None and (
             current['runtime_generation'] == result.get('execution_generation', params.get('expected_generation')))
+        if operation == 'compress' and applied and owns_projection and live is not None:
+            # Before the boundary evicts the agent whose compressor holds the running count.
+            from gateway.session_usage import note_compression
+            note_compression(authority, ref, live)
+        elif operation == 'reset' and applied and live is not None:
+            live.compression_count = 0  # a fresh conversation, as main's /new builds a fresh agent
         if operation not in {*_POLICY, 'reset', 'compress', 'rewind'} or owns_projection:
             _project_committed(authority, ref, operation, result)
         if live is not None:
@@ -202,6 +209,9 @@ def _project_committed(authority, ref, operation, result):
         # the old live one and paused; with both now equal, queued input must run, not wait for
         # the next submit or restart.
         authority._schedule(ref)
+    if operation == 'reasoning':
+        # The picked level is the policy's now; a typed /reasoning override must not shadow it.
+        authority.runner._set_session_reasoning_override(authority.sessions[ref.session_id].route, None)
     if operation in {'reasoning', 'workspace'}:
         # Every viewer repaints its reasoning pill / workspace from the published policy, as main's
         # _emit_session_info did after the live change.

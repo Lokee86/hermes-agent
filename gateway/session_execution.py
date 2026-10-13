@@ -158,7 +158,7 @@ class GatewaySessionAgentMixin:
         policy = policy_for_source(runner, src)
         return ctx.AIAgent(
             model=turn_route["model"], **turn_route["runtime"], **_checkpoint_agent_kwargs(ctx.user_config),
-            max_iterations=max_iterations, quiet_mode=True, verbose_logging=False,
+            max_iterations=max_iterations, quiet_mode=not bool(policy and policy.verbose), verbose_logging=False,
             enabled_toolsets=ctx.enabled_toolsets, disabled_toolsets=ctx.disabled_toolsets,
             ephemeral_system_prompt=combined_ephemeral or None,
             prefill_messages=runner._prefill_messages or None,
@@ -180,6 +180,9 @@ class GatewaySessionAgentMixin:
             load_soul_identity=not bool(policy and policy.ignore_rules),
             skip_memory=bool(policy and policy.ignore_rules),
             pass_session_id=bool(policy and policy.pass_session_id),
+            # A local session's frozen budget (`--run-budget` / its profile's agent.run_budget_seconds);
+            # None leaves the agent reading the owner's config, as before.
+            run_budget_seconds=policy.run_budget_seconds if policy else None,
         )
 
     def _resolve_turn_agent(self, turn_route, platform_key, combined_ephemeral, max_iterations, reasoning_config, pr):

@@ -3661,6 +3661,7 @@ export interface ProcessStopParams {
 }
 export interface ProcessStopResult {
   killed: number
+  delegations?: number
 }
 export interface AgentsListParams {
   profile?: string | null
@@ -3699,6 +3700,7 @@ export interface ProcessEntry {
   notify_on_complete?: boolean | null
   exit_code?: number | null
   exited_at?: number | null
+  started_epoch?: number | null
   completion_reason?: string | null
   detached?: boolean | null
   [key: string]: unknown
@@ -4013,7 +4015,11 @@ export interface ToolsConfigureResult {
   reset: boolean
   unknown: string[]
 }
-export type ReloadEnvParams = Record<string, never>
+/** The shared owner serves ``/reload`` for one session the caller controls (``session_id``). */
+export interface ReloadEnvParams {
+  session_id?: string | null
+  profile?: string | null
+}
 export interface ReloadEnvResult {
   updated: number
 }
@@ -4441,6 +4447,23 @@ export interface OnboardingCatalogPlugin {
   app_state: CatalogAppState
   sentence: string
 }
+export interface PluginCatalogLookupParams {
+  profile?: string | null
+  name: string
+}
+/** ``found`` carries ``entry``. ``unknown`` covers a name the catalog doesn't list and one it removed; ``unavailable`` means neither the live catalog nor the in-tree fallback could be read. */
+export interface PluginCatalogLookupResult {
+  status: PluginCatalogLookupStatus
+  entry?: PluginCatalogLookupEntry | null
+}
+export type PluginCatalogLookupStatus = 'found' | 'invalid_name' | 'unknown' | 'unavailable'
+/** The fields an install needs: the same ones the embedded catalog picker posts on a pick. */
+export interface PluginCatalogLookupEntry {
+  name: string
+  repo: string
+  sha: string
+  subdir: string
+}
 export interface CanonicalShellExecParams {
   session_id: string
   command: string
@@ -4583,9 +4606,23 @@ export interface SessionStats {
   provider: string
   fallback_model?: string | null
 }
+export interface SessionAutomationParams {
+  session_id: string
+  kind: 'goal' | 'loop' | 'heartbeat'
+  call: string
+  args?: unknown[] | null
+  kwargs?: Record<string, unknown> | null
+}
+/** ``gateway/session_viewer_automation.py``: the manager's persisted state after the call (its own JSON, ``null`` when none) and the call's value, or the refusal main's manager raised. */
+export interface SessionAutomationResult {
+  state: string | null
+  value?: unknown | null
+  error?: Record<string, string> | null
+}
 export interface SessionDetachParams {
   session_id: string
   subscription_id: string
+  end_reason?: string | null
 }
 export interface SessionDetachResult {
   session_id: string
@@ -4599,10 +4636,25 @@ export interface RuntimeDescribeResult {
   authority_epoch: number
   capabilities: string[]
   session_create: SessionCreateDescriptor
+  skin?: SkinPayload | null
 }
 export interface SessionCreateDescriptor {
   sources: string[]
   parameters: string[]
+}
+/** ``tui_gateway/change_watcher.py::resolve_skin`` — the resolved active skin (``HermesSkin``). ``{}`` when the skin engine failed to load. Colour maps are token → colour string. */
+export interface SkinPayload {
+  name?: string
+  description?: string
+  colors?: Record<string, string>
+  light_colors?: Record<string, string>
+  dark_colors?: Record<string, string>
+  branding?: Record<string, string>
+  banner_logo?: string
+  banner_hero?: string
+  tool_prefix?: string
+  help_header?: string
+  [key: string]: unknown
 }
 export interface ClarifyRespondParams {
   session_id: string
@@ -4772,6 +4824,7 @@ export interface CanonicalCreateParams {
   request_id?: string | null
   source?: 'cli' | 'tui' | 'gui' | 'acp' | 'tool' | 'oneshot'
   cwd?: string | null
+  row_cwd?: string | null
   model?: string | null
   provider?: string | null
   base_url?: string | null
@@ -4793,11 +4846,14 @@ export interface CanonicalCreateParams {
   follow_profile_config?: boolean | null
   service_tier?: string | null
   cwd_explicit?: boolean | null
+  run_budget?: number | null
+  verbose?: boolean
 }
 export interface CanonicalSnapshot {
   session_id: string
   stored_session_id: string
   messages: TranscriptMessage[]
+  display_messages?: TranscriptMessage[] | null
   message_count: number
   running: boolean
   authority_epoch: number
@@ -4882,6 +4938,7 @@ export interface CanonicalResumeParams {
   defer_history?: boolean
   omit_messages?: boolean
   cols?: number | null
+  display_projection?: boolean
 }
 export interface CanonicalListParams {
   profile?: string | null
@@ -4902,6 +4959,7 @@ export interface CanonicalSessionListRow {
   started_at: number | null
   message_count: number
   running: boolean
+  model?: string | null
   resolved_id?: string | null
   root_title?: string | null
 }
@@ -4976,6 +5034,7 @@ export interface CanonicalSubmitParams {
   turn_author?: CanonicalTurnAuthor | null
   api_text?: string | null
   model_override?: CanonicalModelOverride | null
+  clarify_batch?: boolean
 }
 export interface CanonicalAttachment {
   path: string
@@ -5015,13 +5074,14 @@ export interface CanonicalConfigGetResult {
   key?: string | null
   scope?: string | null
 }
-/** ``model`` is recognised only to be refused with ``use_session_mutation_model``: a model pick is the revision-fenced ``session.mutate`` operation, never a config write. */
+/** Session controls (``busy`` / ``verbose`` / ``yolo`` / ``show_reasoning`` / ``service_tier``, which need ``session_id``) and the TUI's profile preferences (``gateway/session_tui_config.py``; ``session_id`` optional). ``model`` is recognised only to be refused with ``use_session_mutation_model``: a model pick is the revision-fenced ``session.mutate`` operation, never a config write. */
 export interface CanonicalConfigSetParams {
   profile?: string | null
-  session_id: string
-  key: 'busy' | 'verbose' | 'yolo' | 'show_reasoning' | 'model'
+  session_id?: string | null
+  key: string
   value?: unknown
   confirm_expensive_model?: boolean | null
+  scope?: 'session' | 'global' | null
 }
 export interface CanonicalProfilesParams {
   profile?: string | null
@@ -5117,9 +5177,10 @@ export interface ClarifyQuestion {
   choices?: string[] | null
   multi_select?: boolean
 }
-/** ``{answers}`` for the whole set (early locks go through the ``clarify.lock`` RPC); a response without ``answers`` is cancel-all. */
+/** ``{answers}`` for the whole set (early locks go through the ``clarify.lock`` RPC); a response without ``answers`` is cancel-all. ``outcome`` (optional): how the viewer's own panel ended, as main's classic CLI reports it (``timed_out`` keeps the answers locked before its deadline). */
 export interface ClarifyResult {
   answers?: Record<string, string | null> | null
+  outcome?: 'submitted' | 'timed_out' | 'cancelled' | null
 }
 export interface SetupChooseRequestParams {
   session_id: string
@@ -5301,20 +5362,6 @@ export interface GatewayReadyPayload {
   heartbeat?: boolean | null
   session_authority?: boolean | null
 }
-/** ``tui_gateway/change_watcher.py::resolve_skin`` — the resolved active skin (``HermesSkin``). ``{}`` when the skin engine failed to load. Colour maps are token → colour string. */
-export interface SkinPayload {
-  name?: string
-  description?: string
-  colors?: Record<string, string>
-  light_colors?: Record<string, string>
-  dark_colors?: Record<string, string>
-  branding?: Record<string, string>
-  banner_logo?: string
-  banner_hero?: string
-  tool_prefix?: string
-  help_header?: string
-  [key: string]: unknown
-}
 /** ``hermes_cli/free_tier_bootstrap.py::SetupRecord.as_payload``. */
 export interface SetupReadyPayload {
   provider_configured: boolean
@@ -5337,6 +5384,13 @@ export interface ErrorPayload {
 /** ``tui_gateway/model_switch.py`` capability-refresh notice. */
 export interface NoticePayload {
   message: string
+}
+/** ``message.start``. Empty from the TUI gateway's emitters and for an ordinary admission; ``gateway/session_authority._stamp_claim`` adds an automation admission's async-result card (``session_automation.admission_display``: a background-process completion) and its model text, so a viewer that did not submit the turn paints the same header the submitter would. */
+export interface MessageStartPayload {
+  display_kind?: string | null
+  display_text?: string | null
+  notification_category?: string | null
+  text?: string | null
 }
 /** ``message.delta``. A session-authority local-viewer turn also publishes ``text: null``: the reply segment boundary (the agent's ``stream_delta_callback(None)``, before tool lines) that closes the classic CLI's reply box. Every other viewer ignores an empty chunk. */
 export interface MessageDeltaPayload {
@@ -5981,6 +6035,8 @@ export interface RpcMethods {
   'pet.thumb': { params: PetThumbParams; result: PetThumbResult }
   /** Cheapest liveness probe; answered on the WS reader thread even while every agent is mid-turn. */
   ping: { params: PingParams; result: PingResult }
+  /** One curated plugin-catalog entry by name, from the backend's live catalog (cached, with the in-tree fallback and kill list); backs hermes://plugin/install?catalog= deep links. */
+  'plugins.catalog.lookup': { params: PluginCatalogLookupParams; result: PluginCatalogLookupResult }
   /** Loaded plugin manager entries (legacy flat view); the Plugins Hub uses plugins.manage list. */
   'plugins.list': { params: PluginsListParams; result: PluginsListResult }
   /** Plugins Hub backend: list installed plugins, toggle, git-install, re-pin a catalog install, or remove a user install. */
@@ -6365,6 +6421,7 @@ export const RPC_METHODS = [
   'pet.select',
   'pet.thumb',
   'ping',
+  'plugins.catalog.lookup',
   'plugins.list',
   'plugins.manage',
   'preview.restart',
@@ -6530,8 +6587,10 @@ export interface CanonicalRpcMethods {
   'prompt.submit': { params: CanonicalSubmitParams; result: AdmissionStatus }
   /** Owner identity and the canonical capabilities a client may rely on. */
   'runtime.describe': { params: RuntimeDescribeParams; result: RuntimeDescribeResult }
+  /** The classic CLI's /goal, /subgoal, /loop, /heartbeat manager calls (state writes, the goal judge, quality gates), run by the owner on the session's row. */
+  'session.automation': { params: SessionAutomationParams; result: SessionAutomationResult }
   'session.create': { params: CanonicalCreateParams; result: CanonicalSnapshot }
-  /** Drop this connection's subscription; a stale subscription id answers detached=false. */
+  /** Drop this connection's subscription; a stale subscription id answers detached=false. end_reason (snake_case): the viewer is closing the conversation; the last viewer leaving an idle local session ends its row with that reason. */
   'session.detach': { params: SessionDetachParams; result: SessionDetachResult }
   'session.events.since': { params: CanonicalEventsParams; result: CanonicalEventsResult }
   /** Frozen launch policy projection of one local session. */
@@ -6582,6 +6641,7 @@ export const CANONICAL_RPC_METHODS = [
   'prompt.resolve_unknown',
   'prompt.submit',
   'runtime.describe',
+  'session.automation',
   'session.create',
   'session.detach',
   'session.events.since',
@@ -6700,8 +6760,8 @@ export interface BackendGatewayEventMap {
   'message.interim': MessageInterimPayload
   /** The agent reacted to a message; paint it live. */
   'message.reaction': MessageReactionPayload
-  /** A turn began streaming; no payload. */
-  'message.start': Record<string, never>
+  /** A turn began streaming; an automation turn carries its async-result card. */
+  'message.start': MessageStartPayload
   /** The MoA aggregator started. */
   'moa.aggregating': MoaAggregatingPayload
   /** MoA phase transition (currently only ``aggregator``). */

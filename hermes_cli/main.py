@@ -1313,7 +1313,9 @@ def _session_db():
     except Exception:
         pass
     try:
-        yield db  # body errors (incl. AttributeError on a None db) are swallowed
+        # Gateway rows the CLI/TUI created are labelled ``local``; source-scoped lookups read main's labels.
+        from hermes_cli.gateway_session_store import SurfaceLabelReader
+        yield SurfaceLabelReader(db) if db is not None else None  # body errors (incl. AttributeError on a None db) are swallowed
     except Exception:
         pass
     finally:
@@ -1366,6 +1368,9 @@ def _resolve_session_by_name_or_id(name_or_id: str) -> Optional[str]:
         # Exact session ID first, then title (with auto-latest for lineage).
         session = db.get_session(name_or_id)
         resolved_id = session["id"] if session else db.resolve_session_by_title(name_or_id)
+        if not resolved_id and name_or_id.startswith("local-"):
+            # The TUI epilogue prints a canonical session's unique 22-char prefix.
+            resolved_id = db.resolve_session_id(name_or_id)
         if resolved_id:
             # Project forward through compression chain so resumes land on
             # the live tip instead of a dead compressed parent.
@@ -1380,25 +1385,16 @@ def _resolve_session_by_name_or_id(name_or_id: str) -> Optional[str]:
 def _create_titled_session(title: str) -> Optional[str]:
     """Create a fresh titled session (``chat -c <title> --create-if-missing``).
 
-    Same timestamp+uuid id shape the CLI uses; the title is recorded with
-    user provenance so auto-titling never overwrites it.
+    The gateway is the single writer: it creates the session and records the title with user
+    provenance, so auto-titling never overwrites it (gateway_session_store.create_titled_session).
 
     Used by ``chat -c <title> --create-if-missing`` (#86794): programmatic callers (plugins, scripts) that
     want "send to this named thread, making it if needed" get a deterministic outcome instead of a silent
     no-op.
     """
-    db = None
     try:
-        from hermes_state_ids import new_session_id as mint_session_id
-        from hermes_state_registry import acquire
-
-        new_session_id = mint_session_id()
-        # The CLI acquires the registry handle for this same path moments later; share it
-        # instead of minting a second writer for one INSERT (close() releases the refcount).
-        db = acquire()
-        db.create_session(new_session_id, source="cli")
-        db.set_session_title(new_session_id, title)
-        return new_session_id
+        from hermes_cli.gateway_session_store import create_titled_session
+        return create_titled_session(title)
     except Exception:
         # Programmatic callers rely on --create-if-missing being deterministic;
         # swallow the failure but log the cause so it lands in errors.log
@@ -1406,12 +1402,6 @@ def _create_titled_session(title: str) -> Optional[str]:
         # See #86794.
         logger.exception("Failed to create titled session %r", title)
         return None
-    finally:
-        if db is not None:
-            try:
-                db.close()
-            except Exception:
-                pass
 
 
 def _resolve_continue_arg(args, *, use_tui: bool) -> None:
@@ -2969,12 +2959,10 @@ def _prepare_agent_startup(args) -> None:
         logger.debug("MCP server filter setup failed", exc_info=True)
 
     # TUI launches hand off to a startup path that backgrounds MCP discovery
-    # with a bounded join; acp/gateway/cron do their own on the runtime path;
-    # chat turns run in the gateway, which owns MCP for them.
-    _run_inline_mcp_discovery = not (
-        _is_tui_chat_launch(args) or _command_has_dedicated_mcp_startup(args)
-        or _chat_runs_at_gateway(args)
-    )
+    # with a bounded join; acp/gateway/cron do their own on the runtime path.
+    if _chat_runs_at_gateway(args):  # chat turns run in the gateway: it owns MCP, hooks, webhooks
+        return
+    _run_inline_mcp_discovery = not (_is_tui_chat_launch(args) or _command_has_dedicated_mcp_startup(args))
     if _run_inline_mcp_discovery and _should_background_mcp_startup(args):
         try:
             from hermes_cli.mcp_startup import start_background_mcp_discovery

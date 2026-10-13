@@ -44,7 +44,8 @@ class GatewayDiscovery:
     endpoint: GatewayEndpoint | None = None
     reason_code: str | None = None
     # Human-readable cause behind a bounded ``reason_code`` when the owner published one (the
-    # multiplexer's park reason); never raw peer data.
+    # multiplexer's park reason), or the redacted output tail of a start this call made that died
+    # (``runtime_exited``); never raw peer data.
     detail: str | None = None
 
 
@@ -67,7 +68,10 @@ def _endpoint(payload: dict, home: Path, control_home: Path | None = None) -> Ga
         return GatewayDiscovery("inaccessible", reason_code="profile_mismatch")
     state = payload.get("state")
     if state in {"starting", "draining", "conflict"}:
-        return GatewayDiscovery(state)
+        # An auto-started gateway ending through its idle exit names that, so its clients wait
+        # for it to go and start a fresh one instead of reporting a refusal.
+        idle = state == "draining" and payload.get("drain_reason") == "idle_exit"
+        return GatewayDiscovery(state, reason_code="idle_exit" if idle else None)
     if state != "ready":
         return GatewayDiscovery("inaccessible", reason_code="invalid_runtime_state")
     capabilities = payload.get("capabilities")
@@ -109,9 +113,12 @@ def control_home_for(home: Path, endpoint: GatewayEndpoint | None) -> Path:
 
 
 def _multiplexer_starting(home: Path) -> bool:
+    """The root's reservation is pending AND that root's boot policy would serve *home*. A
+    ``gateway.standalone: true`` secondary is never served by it, so a reserved (or ready) root
+    must not make its client wait out the deadline instead of starting the profile's own owner."""
     from gateway.runtime_discovery import missing_owner_state
-    from gateway.runtime_multiplex import multiplexer_root_for
-    root = multiplexer_root_for(home)
+    from gateway.runtime_multiplex import implied_host_root
+    root = implied_host_root(home)
     return root is not None and missing_owner_state(root) == "starting"
 
 
@@ -214,11 +221,45 @@ def _update_fenced(homes) -> bool:
     return False
 
 
-def ensure_gateway_runtime(profile_home: str | Path, *, timeout: float = DEFAULT_ENSURE_TIMEOUT, idle_exit: bool = False) -> GatewayDiscovery:
-    """Ensure once, never install/replace; pending remains pending at deadline.
+_REPLACE_FAILED_DETAIL = "an older Hermes gateway still owns this profile after a stop; run: hermes gateway stop"
+# ``draining`` reasons after which the owner is going away by itself: its own idle exit, or the
+# older-Hermes owner this call just stopped. Ensure waits it out and starts the current owner.
+_RETIRING = frozenset({"idle_exit", "replaced"})
+
+
+def _observe_replacing_stale(home: Path, deadline: float, replaced: set[Path]) -> GatewayDiscovery:
+    """Discovery, except that a gateway an older Hermes left on this home is stopped once (like
+    ``hermes gateway stop``) and reported as retiring; a refusal keeps ``incompatible`` + its remedy."""
+    from gateway.runtime_service import remaining
+    observed = discover_gateway_endpoint(home, timeout=remaining(deadline))
+    if observed.state != "incompatible" or observed.reason_code != "runtime_protocol":
+        return observed
+    if home in replaced:
+        return GatewayDiscovery("incompatible", reason_code="runtime_protocol", detail=_REPLACE_FAILED_DETAIL)
+    from gateway import runtime_replace as replace
+    replaced.add(home)
+    refusal = replace.replace_incompatible_owner(home, deadline=deadline)
+    if refusal is not None:
+        return GatewayDiscovery("incompatible", reason_code="runtime_protocol",
+                                detail=replace.REFUSAL_DETAIL.get(refusal, _REPLACE_FAILED_DETAIL))
+    return GatewayDiscovery("draining", reason_code="replaced")
+
+
+def ensure_gateway_runtime(profile_home: str | Path, *, timeout: float = DEFAULT_ENSURE_TIMEOUT,
+                           idle_exit: bool = False) -> GatewayDiscovery:
+    """Ensure once; pending remains pending at deadline.
+
+    Never installs anything. The one owner it replaces is a gateway an older Hermes left running on
+    this install's own home (``incompatible``/``runtime_protocol``, the upgrade case): it is stopped
+    the way ``hermes gateway stop`` stops it, once, and the current one started like any absent
+    owner. Another install's or a newer Hermes's gateway stays refused, with the reason in ``detail``
+    (``gateway.runtime_replace``).
 
     A successful service command or Popen is not session readiness. After an
     owner/start request is observed this invocation never launches another.
+    ``idle_exit``: an unmanaged daemon this call starts ends itself once idle (client entrypoints:
+    chat, TUI, cron/kanban/ACP clients). A gateway that is ending that way reports ``draining``
+    (``idle_exit``); this call waits for it to go and starts the replacement transparently.
     """
     import time
     from gateway.runtime_service import (
@@ -232,19 +273,42 @@ def ensure_gateway_runtime(profile_home: str | Path, *, timeout: float = DEFAULT
     deadline = time.monotonic() + timeout
     home = Path(_canonical_home(profile_home))
     requested = False
+    child = None
+    child_home, child_offset = home, 0
+    # A gateway ending through its own idle exit is not a refusal: wait for it to go (its lock is
+    # still held for a moment after its control socket closes, which reads as "starting"), then
+    # start the replacement this call owes the client.
+    retiring = False
+    replaced: set[Path] = set()
     delay = 0.025
     try:
         while True:
             # The install-root marker also covers profiles.
             if _update_fenced({home, get_process_hermes_home(), get_default_hermes_root()}):
                 return GatewayDiscovery("draining", reason_code="update_paused")
-            observed = discover_gateway_endpoint(home, timeout=remaining(deadline))
+            # Poll BEFORE discovering: an exit observed first, then "absent", cannot be a child that
+            # published its owner a moment later. A winning racer shows up as starting/ready instead.
+            status = child.poll() if child is not None else None
+            observed = _observe_replacing_stale(home, deadline, replaced)
             if observed.reason_code == "control_timeout":
                 return GatewayDiscovery("starting", reason_code="deadline")
+            if observed.state == "draining" and observed.reason_code in _RETIRING:
+                retiring, requested, child = True, False, None
+                time.sleep(min(0.1, remaining(deadline)))
+                continue
             if observed.state not in {"absent", "starting"}:
                 return observed
-            if observed.state == "starting":
+            if status is not None and observed.state == "absent":
+                # The one start this invocation requested died without leaving an owner: waiting
+                # out the deadline cannot change that, and this call never launches a second one.
+                # Its own (redacted) output is the answer the user needs, not a pointer to a file.
+                from gateway.runtime_start import startup_failure_report
+                return GatewayDiscovery("inaccessible", reason_code="runtime_exited",
+                                        detail=startup_failure_report(child_home, child_offset, status, child.pid))
+            if observed.state == "starting" and not retiring:
                 requested = True
+            if observed.state == "absent":
+                retiring = False
             # A default multiplexer that is still starting will serve this named profile; never
             # spawn a competing per-profile daemon while its reservation is pending.
             if observed.state == "absent" and not requested and _multiplexer_starting(home):
@@ -268,11 +332,14 @@ def ensure_gateway_runtime(profile_home: str | Path, *, timeout: float = DEFAULT
                 if service is not None:
                     start_existing_gateway_service(service, deadline=deadline)
                 else:
-                    from gateway.runtime_start import spawn_unmanaged_gateway
-                    spawn_unmanaged_gateway(target, deadline=deadline, idle_exit=idle_exit)
+                    from gateway.runtime_start import spawn_unmanaged_gateway, stdio_log_size
+                    child_home, child_offset = target, stdio_log_size(target)
+                    child = spawn_unmanaged_gateway(target, deadline=deadline, idle_exit=idle_exit)
                 requested = True
             time.sleep(min(delay, remaining(deadline)))
-            delay = min(delay * 1.5, 0.25)
+            # Capped low: each probe is a lock-file read or one local identify, and READY is noticed
+            # within ~50 ms instead of up to 250 ms later on every cold start.
+            delay = min(delay * 1.5, 0.05)
     except TimeoutError:
         return GatewayDiscovery("starting", reason_code="deadline")
     except RuntimeStartError as exc:

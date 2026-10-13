@@ -18,6 +18,9 @@ class CanonicalCreateParams(ProfileParams):
     request_id: str | None = None
     source: Literal['cli', 'tui', 'gui', 'acp', 'tool', 'oneshot'] = 'cli'
     cwd: str | None = None
+    # The sessions-row ``cwd`` when it differs from the execution ``cwd`` (the classic CLI records
+    # main's stamp: the launch dir, ``""`` = none); ``cwd`` stays where the tools run.
+    row_cwd: str | None = None
     model: str | None = None
     provider: str | None = None
     base_url: str | None = None
@@ -39,6 +42,10 @@ class CanonicalCreateParams(ProfileParams):
     follow_profile_config: bool | None = None
     service_tier: str | None = None
     cwd_explicit: bool | None = None
+    # Wall-clock budget per run in seconds (the classic CLI's `--run-budget`).
+    run_budget: float | None = None
+    # The classic CLI's `-v`: the session agent's status lines are not quieted.
+    verbose: bool = False
 
 
 class CanonicalResumeParams(ProfileParams):
@@ -55,6 +62,9 @@ class CanonicalResumeParams(ProfileParams):
     defer_history: bool = False
     omit_messages: bool = False
     cols: int | None = None
+    # A renderer (the Ink TUI) asks for main's display projection of the same rows
+    # (``tui_gateway.session_history._history_to_messages``) as ``display_messages``.
+    display_projection: bool = False
 
 
 class CanonicalSessionHandle(Result):
@@ -111,6 +121,8 @@ class CanonicalSnapshot(Result):
     session_id: str
     stored_session_id: str
     messages: list[TranscriptMessage]
+    # Present only when ``display_projection`` was asked: the rows as main's TUI rendered them.
+    display_messages: list[TranscriptMessage] | None = None
     message_count: int
     running: bool
     authority_epoch: int
@@ -139,6 +151,7 @@ class CanonicalSessionListRow(Result):
     started_at: float | None
     message_count: int
     running: bool
+    model: str | None = None
     resolved_id: str | None = None
     root_title: str | None = None
 
@@ -188,6 +201,9 @@ class CanonicalSubmitParams(CanonicalSessionParams):
     turn_author: CanonicalTurnAuthor | None = None
     api_text: str | None = None
     model_override: CanonicalModelOverride | None = None
+    # The submitter answers the clarify tool's whole batch in one ``clarify`` server request (main's
+    # batch panel); without it the turn's viewers get one ``clarify.request`` card per question.
+    clarify_batch: bool = False
 
 
 class CanonicalControlParams(CanonicalSessionParams):

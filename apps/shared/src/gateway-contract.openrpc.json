@@ -2437,6 +2437,24 @@
       }
     },
     {
+      "name": "plugins.catalog.lookup",
+      "summary": "One curated plugin-catalog entry by name, from the backend's live catalog (cached, with the in-tree fallback and kill list); backs hermes://plugin/install?catalog= deep links.",
+      "params": [
+        {
+          "name": "params",
+          "schema": {
+            "$ref": "#/components/schemas/PluginCatalogLookupParams"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/PluginCatalogLookupResult"
+        }
+      }
+    },
+    {
       "name": "plugins.list",
       "summary": "Loaded plugin manager entries (legacy flat view); the Plugins Hub uses plugins.manage list.",
       "params": [
@@ -8380,7 +8398,7 @@
       },
       "CanonicalConfigSetParams": {
         "additionalProperties": false,
-        "description": "``model`` is recognised only to be refused with ``use_session_mutation_model``: a model pick is\nthe revision-fenced ``session.mutate`` operation, never a config write.",
+        "description": "Session controls (``busy`` / ``verbose`` / ``yolo`` / ``show_reasoning`` / ``service_tier``, which\nneed ``session_id``) and the TUI's profile preferences (``gateway/session_tui_config.py``;\n``session_id`` optional). ``model`` is recognised only to be refused with\n``use_session_mutation_model``: a model pick is the revision-fenced ``session.mutate`` operation,\nnever a config write.",
         "properties": {
           "profile": {
             "anyOf": [
@@ -8395,17 +8413,18 @@
             "title": "Profile"
           },
           "session_id": {
-            "title": "Session Id",
-            "type": "string"
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Session Id"
           },
           "key": {
-            "enum": [
-              "busy",
-              "verbose",
-              "yolo",
-              "show_reasoning",
-              "model"
-            ],
             "title": "Key",
             "type": "string"
           },
@@ -8424,10 +8443,25 @@
             ],
             "default": null,
             "title": "Confirm Expensive Model"
+          },
+          "scope": {
+            "anyOf": [
+              {
+                "enum": [
+                  "session",
+                  "global"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Scope"
           }
         },
         "required": [
-          "session_id",
           "key"
         ],
         "title": "CanonicalConfigSetParams",
@@ -8585,6 +8619,18 @@
             ],
             "default": null,
             "title": "Cwd"
+          },
+          "row_cwd": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Row Cwd"
           },
           "model": {
             "anyOf": [
@@ -8791,6 +8837,23 @@
             ],
             "default": null,
             "title": "Cwd Explicit"
+          },
+          "run_budget": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Run Budget"
+          },
+          "verbose": {
+            "default": false,
+            "title": "Verbose",
+            "type": "boolean"
           }
         },
         "title": "CanonicalCreateParams",
@@ -9548,6 +9611,11 @@
             ],
             "default": null,
             "title": "Cols"
+          },
+          "display_projection": {
+            "default": false,
+            "title": "Display Projection",
+            "type": "boolean"
           }
         },
         "title": "CanonicalResumeParams",
@@ -10207,6 +10275,18 @@
             "title": "Running",
             "type": "boolean"
           },
+          "model": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Model"
+          },
           "resolved_id": {
             "anyOf": [
               {
@@ -10311,6 +10391,21 @@
             },
             "title": "Messages",
             "type": "array"
+          },
+          "display_messages": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/TranscriptMessage"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Display Messages"
           },
           "message_count": {
             "title": "Message Count",
@@ -10993,6 +11088,11 @@
               }
             ],
             "default": null
+          },
+          "clarify_batch": {
+            "default": false,
+            "title": "Clarify Batch",
+            "type": "boolean"
           }
         },
         "required": [
@@ -11362,7 +11462,7 @@
       },
       "ClarifyResult": {
         "additionalProperties": false,
-        "description": "``{answers}`` for the whole set (early locks go through the ``clarify.lock`` RPC); a response\nwithout ``answers`` is cancel-all.",
+        "description": "``{answers}`` for the whole set (early locks go through the ``clarify.lock`` RPC); a response\nwithout ``answers`` is cancel-all. ``outcome`` (optional): how the viewer's own panel ended, as\nmain's classic CLI reports it (``timed_out`` keeps the answers locked before its deadline).",
         "properties": {
           "answers": {
             "anyOf": [
@@ -11385,6 +11485,23 @@
             ],
             "default": null,
             "title": "Answers"
+          },
+          "outcome": {
+            "anyOf": [
+              {
+                "enum": [
+                  "submitted",
+                  "timed_out",
+                  "cancelled"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Outcome"
           }
         },
         "title": "ClarifyResult",
@@ -23112,6 +23229,62 @@
         "title": "MessageReactionPayload",
         "type": "object"
       },
+      "MessageStartPayload": {
+        "additionalProperties": false,
+        "description": "``message.start``. Empty from the TUI gateway's emitters and for an ordinary admission;\n``gateway/session_authority._stamp_claim`` adds an automation admission's async-result card\n(``session_automation.admission_display``: a background-process completion) and its model\ntext, so a viewer that did not submit the turn paints the same header the submitter would.",
+        "properties": {
+          "display_kind": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Display Kind"
+          },
+          "display_text": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Display Text"
+          },
+          "notification_category": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Notification Category"
+          },
+          "text": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Text"
+          }
+        },
+        "title": "MessageStartPayload",
+        "type": "object"
+      },
       "MoaAggregatingPayload": {
         "additionalProperties": false,
         "properties": {
@@ -26261,6 +26434,97 @@
         "title": "PluginActivation",
         "type": "object"
       },
+      "PluginCatalogLookupEntry": {
+        "additionalProperties": false,
+        "description": "The fields an install needs: the same ones the embedded catalog picker posts on a pick.",
+        "properties": {
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "repo": {
+            "title": "Repo",
+            "type": "string"
+          },
+          "sha": {
+            "title": "Sha",
+            "type": "string"
+          },
+          "subdir": {
+            "title": "Subdir",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "repo",
+          "sha",
+          "subdir"
+        ],
+        "title": "PluginCatalogLookupEntry",
+        "type": "object"
+      },
+      "PluginCatalogLookupParams": {
+        "additionalProperties": false,
+        "properties": {
+          "profile": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Profile"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "title": "PluginCatalogLookupParams",
+        "type": "object"
+      },
+      "PluginCatalogLookupResult": {
+        "additionalProperties": false,
+        "description": "``found`` carries ``entry``. ``unknown`` covers a name the catalog doesn't list and one it removed;\n``unavailable`` means neither the live catalog nor the in-tree fallback could be read.",
+        "properties": {
+          "status": {
+            "$ref": "#/components/schemas/PluginCatalogLookupStatus"
+          },
+          "entry": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PluginCatalogLookupEntry"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          }
+        },
+        "required": [
+          "status"
+        ],
+        "title": "PluginCatalogLookupResult",
+        "type": "object"
+      },
+      "PluginCatalogLookupStatus": {
+        "enum": [
+          "found",
+          "invalid_name",
+          "unknown",
+          "unavailable"
+        ],
+        "title": "PluginCatalogLookupStatus",
+        "type": "string"
+      },
       "PluginLiveNow": {
         "additionalProperties": false,
         "properties": {
@@ -27431,6 +27695,18 @@
             "default": null,
             "title": "Exited At"
           },
+          "started_epoch": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Started Epoch"
+          },
           "completion_reason": {
             "anyOf": [
               {
@@ -27677,6 +27953,11 @@
         "properties": {
           "killed": {
             "title": "Killed",
+            "type": "integer"
+          },
+          "delegations": {
+            "default": 0,
+            "title": "Delegations",
             "type": "integer"
           }
         },
@@ -31420,7 +31701,33 @@
       },
       "ReloadEnvParams": {
         "additionalProperties": false,
-        "properties": {},
+        "description": "The shared owner serves ``/reload`` for one session the caller controls (``session_id``).",
+        "properties": {
+          "session_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Session Id"
+          },
+          "profile": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Profile"
+          }
+        },
         "title": "ReloadEnvParams",
         "type": "object"
       },
@@ -32998,6 +33305,17 @@
           },
           "session_create": {
             "$ref": "#/components/schemas/SessionCreateDescriptor"
+          },
+          "skin": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SkinPayload"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
           }
         },
         "required": [
@@ -33534,6 +33852,108 @@
           "session_key"
         ],
         "title": "SessionArchiveResult",
+        "type": "object"
+      },
+      "SessionAutomationParams": {
+        "additionalProperties": false,
+        "properties": {
+          "session_id": {
+            "title": "Session Id",
+            "type": "string"
+          },
+          "kind": {
+            "enum": [
+              "goal",
+              "loop",
+              "heartbeat"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "call": {
+            "title": "Call",
+            "type": "string"
+          },
+          "args": {
+            "anyOf": [
+              {
+                "items": {},
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Args"
+          },
+          "kwargs": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Kwargs"
+          }
+        },
+        "required": [
+          "session_id",
+          "kind",
+          "call"
+        ],
+        "title": "SessionAutomationParams",
+        "type": "object"
+      },
+      "SessionAutomationResult": {
+        "additionalProperties": false,
+        "description": "``gateway/session_viewer_automation.py``: the manager's persisted state after the call (its own\nJSON, ``null`` when none) and the call's value, or the refusal main's manager raised.",
+        "properties": {
+          "state": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "State"
+          },
+          "value": {
+            "anyOf": [
+              {},
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Value"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Error"
+          }
+        },
+        "required": [
+          "state"
+        ],
+        "title": "SessionAutomationResult",
         "type": "object"
       },
       "SessionBranchParams": {
@@ -35102,6 +35522,18 @@
           "subscription_id": {
             "title": "Subscription Id",
             "type": "string"
+          },
+          "end_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "End Reason"
           }
         },
         "required": [
@@ -45739,6 +46171,24 @@
       }
     },
     {
+      "name": "session.automation",
+      "summary": "The classic CLI's /goal, /subgoal, /loop, /heartbeat manager calls (state writes, the goal judge, quality gates), run by the owner on the session's row.",
+      "params": [
+        {
+          "name": "params",
+          "schema": {
+            "$ref": "#/components/schemas/SessionAutomationParams"
+          }
+        }
+      ],
+      "result": {
+        "name": "result",
+        "schema": {
+          "$ref": "#/components/schemas/SessionAutomationResult"
+        }
+      }
+    },
+    {
       "name": "session.create",
       "summary": "",
       "params": [
@@ -45758,7 +46208,7 @@
     },
     {
       "name": "session.detach",
-      "summary": "Drop this connection's subscription; a stale subscription id answers detached=false.",
+      "summary": "Drop this connection's subscription; a stale subscription id answers detached=false. end_reason (snake_case): the viewer is closing the conversation; the last viewer leaving an idle local session ends its row with that reason.",
       "params": [
         {
           "name": "params",
@@ -46584,13 +47034,12 @@
     },
     {
       "name": "message.start",
-      "summary": "A turn began streaming; no payload.",
+      "summary": "A turn began streaming; an automation turn carries its async-result card.",
       "params": [
         {
           "name": "payload",
           "schema": {
-            "type": "object",
-            "additionalProperties": false
+            "$ref": "#/components/schemas/MessageStartPayload"
           }
         }
       ]

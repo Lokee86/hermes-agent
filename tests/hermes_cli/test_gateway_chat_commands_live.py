@@ -57,14 +57,21 @@ def classic_session(tmp_path):
     def screen():
         return tmux("capture-pane", "-p", "-J", "-S", "-3000", "-t", "chat").stdout
 
-    def send(line, expect, timeout=45):
+    def composer_shows(text):
+        return any(row.startswith("❯") and text in row for row in screen().splitlines())
+
+    def send(line, expect, timeout=45, composer=None):
+        """``composer``: text the CLI itself put in the composer (``/undo``'s prefill), awaited like
+        typed text. An Enter within 50 ms of any buffer change is a newline (#10994's paste guard,
+        main's own), so a bare Enter right behind the prefill would only add a line."""
         # The pane is fixed-height (blank rows pad it), so a new answer is one more occurrence.
         seen = screen().count(expect)
-        if line:
-            tmux("send-keys", "-t", "chat", "-l", line)
+        if line or composer:
+            if line:
+                tmux("send-keys", "-t", "chat", "-l", line)
             echo = time.monotonic() + 10
-            while line not in screen():
-                assert time.monotonic() < echo, (line, screen())
+            while (line not in screen()) if line else not composer_shows(composer):
+                assert time.monotonic() < echo, (line or composer, screen())
                 time.sleep(.1)
             time.sleep(1)  # health: allow HX013 -- main drops an Enter sent in the same burst as the text (probe_pty.py); the gap is the input timing
         tmux("send-keys", "-t", "chat", "Enter")
@@ -100,7 +107,10 @@ def classic_session(tmp_path):
             tmux("new-session", "-d", "-s", "chat", "-x", "200", "-y", "50", "-c", str(cwd),
                  command + '; printf "\\nCLI_RC=%s\\n" "$?"; sleep 120')
             deadline = time.monotonic() + 60
-            while "Welcome to Hermes Agent" not in screen():
+            # The banner prints before prompt_toolkit owns the tty: keys typed then are echoed raw and
+            # reach the app in one burst with their Enter (a newline, not a submit). The drawn
+            # composer row means the app is reading keys.
+            while not ("Welcome to Hermes Agent" in screen() and composer_shows("")):
                 assert time.monotonic() < deadline, (screen(), (home / "gw.log").read_text())
                 time.sleep(.1)
             yield send, screen, db, session_id
@@ -133,9 +143,6 @@ def test_classic_view_title_and_usage_match_main(tmp_path):
 
 
 @pytest.mark.platforms("linux")
-@pytest.mark.xfail(strict=True, reason="not on the gateway session yet: GatewaySessionStore.rewind_user_turn "
-                   "refuses (/retry, /undo) and /new <title>'s rename is not_found. Main's behaviour is "
-                   "asserted so the gap stays visible.")
 def test_classic_view_retry_undo_new_match_main(tmp_path):
     with classic_session(tmp_path) as (send, screen, db, session_id):
         send("first question", "RECOVERY_ACK_first question")
@@ -147,9 +154,24 @@ def test_classic_view_retry_undo_new_match_main(tmp_path):
         send("/undo", "destroys conversation state")
         send("", "Undid 1 turn")
         # The removed message is back in the composer: Enter alone resubmits it.
-        send("", "RECOVERY_ACK_second question")
+        send("", "RECOVERY_ACK_second question", composer="second question")
         send("/new Second Thread", "destroys conversation state")
         send("", "New session started")
         second = session_id()
         assert second != sid
         assert db("SELECT title FROM sessions WHERE id=?", second) == [("Second Thread",)]
+
+
+@pytest.mark.platforms("linux")
+def test_classic_view_plan_and_goal_run_on_the_gateway(tmp_path):
+    """/plan queues main's plan-mode turn; /goal sets the session's goal and kicks it off. Both reach
+    the model as normal turns of this session (the loopback model echoes the user text)."""
+    with classic_session(tmp_path) as (send, _screen, db, session_id):
+        send("first question", "RECOVERY_ACK_first question")
+        send("/plan add a cache", "RECOVERY_ACK_[/plan")
+        send("/goal ship the cache", "Goal set")
+        send("/goal status", "Goal (")
+        sid = session_id()
+        users = [r[0] for r in db("SELECT content FROM messages WHERE session_id=? AND role='user'", sid)]
+        assert any("add a cache" in u and "PLAN MODE" in u for u in users), users
+        assert "ship the cache" in users, users

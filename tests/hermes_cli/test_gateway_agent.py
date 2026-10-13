@@ -37,6 +37,8 @@ class FakeClient:
             return {"admission_id": "adm-1", "status": "queued", "execution_generation": 7}
         if method == "prompt.receipt":
             return {"admission_id": "adm-1", "status": "terminal", "result": self.result, "usage": self.usage}
+        if method == "session.resume":
+            return {"session_id": params["session_id"], "revision": 1, "execution_generation": 7, "messages": []}
         if method == "session.interrupt":
             if self.on_interrupt:
                 await self.events.put(self.on_interrupt)
@@ -344,3 +346,308 @@ def test_moa_reference_maps_index_and_count_to_mains_kwargs(make_agent):
     agent.run_conversation("q")
     assert seen[0][0][:3] == ("moa.reference", "gpt-x", "ref")
     assert seen[0][1] == {"moa_index": 1, "moa_count": 2}
+
+
+def test_agent_follows_mains_session_id_switch(make_agent):
+    """/new, /resume and /branch point ``agent.session_id`` at another session: the agent attaches to it
+    (``session.resume``) and reads that session's state."""
+    agent, client = make_agent([])
+    agent.connection.state("local-other").info = {"model": "other-model"}
+    agent.session_id = "local-other"
+    assert agent.session_id == "local-other"
+    assert ("session.resume", {"session_id": "local-other"}) in client.calls
+    agent.connection.state("local-other").apply_usage({"api_calls": 3, "input_tokens": 9})
+    assert agent.session_api_calls == 3
+
+
+def test_turn_after_a_rewind_anchors_on_its_first_response(make_agent):
+    """/undo and /retry bump the session's runtime generation, so the gateway rebuilds its agent and the
+    cumulative counters restart below this viewer's turn base. The turn still completed an API call:
+    the bar anchors on its reply (no `~`), as main's does after /retry."""
+    usage = dict(SESSION_USAGE, context_tokens=120, api_calls=1)
+    agent, client = make_agent([frame("message.complete", {"text": "done", "outcome": "completed"})],
+                               result={"final_response": "done", "api_calls": 1})
+    original = client.rpc
+
+    async def rpc(method, *, _timeout=None, **params):
+        if method == "session.stats":
+            return usage
+        return await original(method, _timeout=_timeout, **params)
+    client.rpc = rpc
+    agent.session_api_calls = 4  # the previous agent's cumulative count
+    agent.run_conversation("again", conversation_history=[{"role": "user", "content": "a"},
+                                                          {"role": "assistant", "content": "b"}])
+    msgs = agent._session_messages
+    assert agent._turn_base_usage_anchor["base_count"] == len(msgs) - 1  # through the ask; reply follows
+
+
+def test_verbose_mode_reaches_the_gateway_session(make_agent):
+    """``/verbose`` / ``/focus`` write ``agent.tool_progress_mode``: the gateway renders tool events in
+    that mode (``config.set verbose`` with the explicit mode, never ``cycle``)."""
+    agent, client = make_agent([])
+    agent.tool_progress_mode = "verbose"
+    agent.tool_progress_mode = "verbose"
+    agent.tool_progress_mode = "off"
+    # Own key only: the stand-in also sends show_reasoning at build (the reasoning-sink test above).
+    sets = [p for m, p in client.calls if m == "config.set" and p.get("key") == "verbose"]
+    assert sets == [{"session_id": SID, "key": "verbose", "value": "verbose"},
+                    {"session_id": SID, "key": "verbose", "value": "off"}]
+
+
+def test_a_non_default_verbose_mode_is_sent_when_the_agent_is_built(make_agent):
+    _agent, client = make_agent([], tool_progress_mode="new")
+    assert {"session_id": SID, "key": "verbose", "value": "new"} in [p for m, p in client.calls if m == "config.set"]
+
+
+def test_reasoning_level_change_is_the_session_reasoning_mutation(make_agent):
+    """``/reasoning high`` sets ``reasoning_config`` and rebuilds the agent: the rebuilt agent commits
+    the effort as ``session.mutate reasoning`` (session scope, as main's), once."""
+    agent, client = make_agent([], reasoning_config={"enabled": True, "effort": "high"})
+    mut = [p for m, p in client.calls if m == "session.mutate"]
+    assert len(mut) == 1 and mut[0]["operation"] == "reasoning" and mut[0]["payload"] == {"effort": "high"}
+    # A policy mutation without the generation it was read at is refused by the owner (invalid_params).
+    assert mut[0]["expected_generation"] == 7
+    agent.reasoning_config = {"enabled": False}
+    mut = [p for m, p in client.calls if m == "session.mutate"]
+    assert mut[-1]["payload"] == {"effort": "none"}
+    agent.connection.state(SID).info["reasoning_effort"] = "none"
+    agent2 = GatewayAgent(connection=agent.connection, session_id=SID, reasoning_config={"enabled": False})
+    assert len([p for m, p in client.calls if m == "session.mutate"]) == 2  # already the session's effort
+    assert agent2.reasoning_config == {"enabled": False}
+
+
+def test_reasoning_sink_sets_the_sessions_show_reasoning_flag_on_attach_and_toggle(make_agent):
+    """Main: a reasoning sink on the agent (show_reasoning, or verbose) makes the agent request and
+    stream reasoning. The gateway session gets the same switch at construction and on every toggle."""
+    shown = []
+    agent, client = make_agent(
+        [frame("reasoning.delta", {"text": "thinking hard"}),
+         frame("message.complete", {"text": "ok", "outcome": "completed"})],
+        reasoning_callback=shown.append)
+    sets = [p for m, p in client.calls if m == "config.set"]
+    assert sets == [{"session_id": SID, "key": "show_reasoning", "value": "1"}]
+    agent.run_conversation("q")
+    assert shown == ["thinking hard"]
+    agent.reasoning_callback = None  # /reasoning hide
+    agent.reasoning_callback = None  # unchanged: no second RPC
+    agent.reasoning_callback = shown.append  # /reasoning show
+    values = [p["value"] for m, p in client.calls if m == "config.set" and p.get("key") == "show_reasoning"]
+    assert values == ["1", "0", "1"]
+
+
+def test_gateway_sudo_request_opens_mains_sudo_panel_and_replies_with_the_value(make_agent):
+    """The gateway's ``sudo`` server→client request (a JSON-RPC request frame with an ``srq-`` id)
+    is answered by main's masked sudo panel (the turn's registered callback) as a response frame."""
+    from tools.terminal_tool import set_sudo_password_callback
+    request = {"jsonrpc": "2.0", "id": "srq-abc", "method": "sudo",
+               "params": {"session_id": SID, "command": "sudo true"}}
+    agent, _ = make_agent([request, frame("message.complete", {"text": "ok", "outcome": "completed"})])
+    replies = []
+    agent.connection.reply = lambda rid, result: replies.append((rid, result)) or True
+    asked = []
+    set_sudo_password_callback(lambda: asked.append(1) or "pw-from-panel")
+    try:
+        agent.run_conversation("run sudo")
+    finally:
+        set_sudo_password_callback(None)
+    assert asked == [1]
+    assert replies == [("srq-abc", {"value": "pw-from-panel"})]
+
+
+def test_connection_reply_sends_a_jsonrpc_response_frame():
+    sent = []
+
+    class WS:
+        async def send(self, raw):
+            sent.append(raw)
+    client = FakeClient([])
+    client.websocket = WS()
+    conn = GatewayConnection(connect=connect_with(client))
+    conn.start(5)
+    try:
+        assert conn.reply("srq-1", {"value": ""}) is True
+    finally:
+        conn.close()
+    import json
+    assert [json.loads(raw) for raw in sent] == [{"jsonrpc": "2.0", "id": "srq-1", "result": {"value": ""}}]
+
+
+def test_gateway_secret_request_opens_mains_secret_panel_and_the_gateway_saves(make_agent, monkeypatch):
+    """``secret`` (skill env var): main's panel collects the value and prints its lines, but the CLI
+    process never writes ``.env`` — the value goes back to the gateway, which saves it."""
+    from hermes_cli import callbacks
+    from tools import skills_tool
+    request = {"jsonrpc": "2.0", "id": "srq-sec", "method": "secret",
+               "params": {"session_id": SID, "env_var": "HAB_KEY", "prompt": "Enter it",
+                          "metadata": {"skill_name": "hab"}}}
+    agent, _ = make_agent([request, frame("message.complete", {"text": "ok", "outcome": "completed"})])
+    replies = []
+    agent.connection.reply = lambda rid, result: replies.append((rid, result)) or True
+    local_writes = []
+    monkeypatch.setattr(callbacks, "save_env_value_secure", lambda k, v: local_writes.append((k, v)))
+    monkeypatch.setattr(callbacks, "cprint", lambda *a, **k: None)
+    seen = []
+
+    class Cli:  # no prompt_toolkit app: main's prompt_for_secret reads the masked prompt
+        pass
+    monkeypatch.setattr(callbacks, "masked_secret_prompt", lambda prompt: seen.append(prompt) or "sekrit")
+    monkeypatch.setattr(skills_tool, "_secret_capture_callback",
+                        lambda var, prompt, metadata=None: callbacks.prompt_for_secret(Cli(), var, prompt, metadata))
+    agent.run_conversation("view the skill")
+    assert seen and seen[0].startswith("Enter it")
+    assert replies == [("srq-sec", {"value": "sekrit"})]
+    assert local_writes == []  # the gateway saves; this process never writes .env
+
+
+def test_gateway_clarify_batch_request_opens_mains_batch_panel(make_agent):
+    """All questions arrive in one ``clarify`` request; main's batch panel answers the set."""
+    request = {"jsonrpc": "2.0", "id": "srq-clr", "method": "clarify", "params": {"session_id": SID, "questions": [
+        {"qid": "q0", "question": "colour?", "choices": ["red", "blue"]},
+        {"qid": "q1", "question": "size?", "choices": ["s", "l"], "multi_select": True}]}}
+    shown = []
+
+    def panel(questions):
+        shown.append(questions)
+        return {"answers": {"q0": "red", "q1": ["s", "l"]}, "outcome": "submitted"}
+    agent, client = make_agent([request, frame("message.complete", {"text": "ok", "outcome": "completed"})],
+                          clarify_callback=panel)
+    replies = []
+    agent.connection.reply = lambda rid, result: replies.append((rid, result)) or True
+    agent.run_conversation("ask")
+    assert [q["qid"] for q in shown[0]] == ["q0", "q1"] and shown[0][1]["multi_select"] is True
+    assert replies == [("srq-clr", {"answers": {"q0": "red", "q1": '["s", "l"]'}, "outcome": "submitted"})]
+    # The turn is marked as answered by main's batch panel: the gateway sends this viewer the batch.
+    assert dict(client.calls)["prompt.submit"]["clarify_batch"] is True
+
+
+def test_a_mid_turn_steer_row_is_estimated_delta_like_main(make_agent):
+    """Main anchors the bar on the turn's first response priced over the history through the turn's
+    own ask; a /steer delivered mid-turn is a later user-role row, so it is delta and the bar shows `~`."""
+    usage = dict(SESSION_USAGE, context_tokens=900, api_calls=2)
+    suffix = [{"role": "assistant", "content": "", "tool_calls": [{"id": "c1", "type": "function",
+               "function": {"name": "terminal", "arguments": "{}"}}]},
+              {"role": "tool", "tool_call_id": "c1", "content": "ok"},
+              {"role": "user", "content": "[USER STEER] also this", "display_kind": "steer"},
+              {"role": "assistant", "content": "done"}]
+    agent, client = make_agent([frame("message.complete", {"text": "done", "outcome": "completed"})],
+                               result={"final_response": "done", "api_calls": 2, "messages": suffix})
+    original = client.rpc
+
+    async def rpc(method, *, _timeout=None, **params):
+        if method == "session.stats":
+            return usage
+        return await original(method, _timeout=_timeout, **params)
+    client.rpc = rpc
+    agent.run_conversation("slow", conversation_history=[{"role": "user", "content": "a"},
+                                                          {"role": "assistant", "content": "b"}])
+    assert agent._turn_base_usage_anchor["base_count"] == 3  # history + the ask, not the steer row
+
+
+def test_first_turn_on_a_rebuilt_gateway_agent_keeps_the_exact_figure(make_agent):
+    """/personality or /model rebuilds the gateway's agent, whose session counters restart: the turn
+    result's own api_calls says the turn answered, so its reply is anchored (no `~`), as on main."""
+    usage = dict(SESSION_USAGE, context_tokens=120, api_calls=1)  # restarted counters
+    agent, client = make_agent([frame("message.complete", {"text": "arr", "outcome": "completed"})],
+                               result={"final_response": "arr", "api_calls": 1,
+                                       "messages": [{"role": "assistant", "content": "arr"}]})
+    original = client.rpc
+
+    async def rpc(method, *, _timeout=None, **params):
+        if method == "session.stats":
+            return usage
+        return await original(method, _timeout=_timeout, **params)
+    client.rpc = rpc
+    agent.session_api_calls = 9  # what the retired agent's counters had reached
+    agent.run_conversation("who are you", conversation_history=[{"role": "user", "content": "a"},
+                                                                 {"role": "assistant", "content": "b"}])
+    assert agent._turn_base_usage_anchor["base_count"] == 3  # anchored after the ask: no estimated delta
+
+
+def test_native_image_parts_are_staged_and_submitted_as_attachments(make_agent):
+    """Main hands run_conversation OpenAI content parts for a vision model (images read locally);
+    prompt.submit takes text + attachments, so each image is staged with image.attach_bytes first."""
+    from agent.image_routing import build_native_content_parts
+    import base64
+    import tempfile
+    from pathlib import Path
+    png = base64.b64decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGNg+M8AAAICAQB7CYF4AAAAAElFTkSuQmCC")
+    with tempfile.TemporaryDirectory(dir=Path(__file__).parent) as tmp:
+        path = Path(tmp) / "pixel.png"
+        path.write_bytes(png)
+        parts, skipped = build_native_content_parts("what is this?", [str(path)])
+    assert not skipped
+    agent, client = make_agent([frame("message.complete", {"text": "a pixel", "outcome": "completed"})])
+    original = client.rpc
+
+    async def rpc(method, *, _timeout=None, **params):
+        if method == "image.attach_bytes":
+            client.calls.append((method, params))
+            return {"attached": True, "path": "/owner/cache/images/upload_1.png", "mime": "image/png"}
+        return await original(method, _timeout=_timeout, **params)
+    client.rpc = rpc
+    agent.run_conversation(parts, persist_user_message=None)
+    staged = [p for m, p in client.calls if m == "image.attach_bytes"]
+    assert len(staged) == 1 and staged[0]["content_base64"].startswith("data:image/png;base64,")
+    submit = dict(client.calls)["prompt.submit"]
+    assert submit["text"] == "what is this?"
+    assert submit["attachments"] == [{"path": "/owner/cache/images/upload_1.png", "mime": "image/png"}]
+
+
+def test_after_a_redirect_the_redirect_row_is_the_turns_ask_like_main(make_agent):
+    """busy_input_mode=interrupt redirects the streaming call: main's first completed response answers
+    the redirect row, so the reply is anchored (no `~`), unlike a /steer row."""
+    usage = dict(SESSION_USAGE, context_tokens=300, api_calls=1)
+    suffix = [{"role": "assistant", "content": "STEP8 story: w000 w001"},
+              {"role": "user", "content": "[Context from the interrupted assistant response] redirect now"},
+              {"role": "assistant", "content": "redirected"}]
+    agent, client = make_agent([frame("message.delta", {"text": "w000 "}), "wait", "wait",
+                                frame("message.complete", {"text": "redirected", "outcome": "completed"})],
+                               result={"final_response": "redirected", "api_calls": 1, "messages": suffix},
+                               stream_delta_callback=lambda text: None)
+    original = client.rpc
+
+    async def rpc(method, *, _timeout=None, **params):
+        if method == "session.stats":
+            return usage
+        if method == "session.redirect":
+            client.calls.append((method, params))
+            return {"status": "redirected"}
+        return await original(method, _timeout=_timeout, **params)
+    client.rpc = rpc
+    out = {}
+    worker = threading.Thread(target=lambda: out.update(agent.run_conversation("story")))
+    worker.start()
+    from tests.waiting import wait_until
+    wait_until(lambda: agent._generation is not None, timeout=5)
+    assert agent.redirect("redirect now") is True
+    worker.join(5)
+    assert agent._turn_base_usage_anchor["base_count"] == 3  # through the redirect row
+
+
+def test_voice_turn_flag_rides_prompt_submit(make_agent):
+    """Main sets agent._voice_turn_pending for a spoken turn (auxiliary.voice_chat route); the gateway
+    gets it as prompt.submit voice_turn=true, and a typed turn carries no flag."""
+    agent, client = make_agent([frame("message.complete", {"text": "ok", "outcome": "completed"})])
+    agent._voice_turn_pending = True
+    agent.run_conversation("[Voice input — respond concisely] hi", persist_user_message="hi")
+    submit = dict(client.calls)["prompt.submit"]
+    assert submit["voice_turn"] is True and submit["text"] == "hi"
+    assert submit["api_text"].startswith("[Voice input")
+    client.calls.clear()
+    client.script = [frame("message.complete", {"text": "ok", "outcome": "completed"})]
+    agent._voice_turn_pending = False
+    agent.run_conversation("typed")
+    assert "voice_turn" not in dict(client.calls)["prompt.submit"]
+
+
+def test_fast_tier_reaches_the_session_on_each_rebuild_and_back_to_normal(make_agent):
+    """/fast: main rebuilds AIAgent(service_tier=tier). Each rebuilt stand-in sends the tier as the
+    session's override when it changed; /fast normal clears it; an unset tier never overrides."""
+    agent, client = make_agent([])  # first build, no tier: the session keeps its own default
+    assert not [p for m, p in client.calls if m == "config.set" and p.get("key") == "service_tier"]
+    fast = GatewayAgent(connection=agent.connection, session_id=SID, service_tier="priority")
+    again = GatewayAgent(connection=agent.connection, session_id=SID, service_tier="priority")
+    normal = GatewayAgent(connection=agent.connection, session_id=SID, service_tier=None)
+    assert fast and again and normal
+    sets = [p["value"] for m, p in client.calls if m == "config.set" and p.get("key") == "service_tier"]
+    assert sets == ["priority", "normal"]

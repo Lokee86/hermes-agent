@@ -11,7 +11,7 @@ CREATE_FIELDS = frozenset({'request_id', 'source', 'cwd', 'model', 'toolsets',
                            'provider', 'base_url', 'reasoning', 'max_turns', 'ignore_rules', 'api_key', 'editor',
                            'yolo', 'safe_mode', 'ignore_user_config',
                            'skills', 'checkpoints', 'accept_hooks', 'pass_session_id', 'follow_profile_config',
-                           'service_tier', 'cwd_explicit'})
+                           'service_tier', 'cwd_explicit', 'run_budget', 'verbose', 'row_cwd'})
 # Sections a ``follow_profile_config`` session re-reads from the owning profile's CURRENT config each
 # turn (main's Bot Chat row), credentials included: a frozen key never crosses a profile route change.
 FOLLOW_SECTIONS = ('model', 'providers', 'custom_providers', 'fallback_providers', 'fallback_model', 'model_aliases',
@@ -131,8 +131,13 @@ class LocalSessionPolicy:
             return self.toolsets
         return tuple(sorted(_resolve_toolsets({}, config, self.source, self.safe_mode)))
 
-    def current_reasoning_config(self, runner):
-        """The next turn's reasoning: the profile's current effort when following, else the frozen one."""
+    def current_reasoning_config(self, runner, session_key=None):
+        """The next turn's reasoning: a typed session /reasoning (the messaging handler's override), else
+        the profile's current effort when following, else the frozen one."""
+        peek = getattr(runner, '_peek_session_state', None)
+        state = peek(session_key) if session_key and peek is not None else None
+        if state is not None and state.conversation.reasoning_override is not None:
+            return dict(state.conversation.reasoning_override)
         if not self.follows_profile:
             return self.reasoning_config
         from gateway.session_authorities import active_authority
@@ -189,6 +194,18 @@ class LocalSessionPolicy:
         from hermes_cli.config import resolve_turn_limit
         cfg = self.config()
         return resolve_turn_limit(cfg.get('agent', {}).get('max_turns', cfg.get('max_turns')))
+
+    @property
+    def verbose(self):
+        """`hermes chat -v`: the session's agent runs with quiet_mode off, so its status lines reach the
+        viewer (``agent.print``) as main's in-process verbose agent printed them."""
+        return json.loads(self.request_json).get('verbose', False)
+
+    @property
+    def run_budget_seconds(self):
+        """Frozen `agent.run_budget_seconds` (`--run-budget` folds into it); None = no budget."""
+        from agent.agent_init import _normalize_run_budget_seconds
+        return _normalize_run_budget_seconds(self.config().get('agent', {}).get('run_budget_seconds'))
 
     @property
     def reasoning_config(self):
@@ -251,6 +268,9 @@ def build_policy(params, config, *, private_secrets=None, profile_terminal=True)
     cwd = params.get('cwd', str(resolve_agent_cwd()))
     if not isinstance(cwd, str) or not Path(cwd).is_absolute() or not Path(cwd).is_dir():
         raise RuntimeStoreError('invalid_params')
+    row_cwd = params.get('row_cwd')
+    if 'row_cwd' in params and (not isinstance(row_cwd, str) or (row_cwd and not Path(row_cwd).is_absolute())):
+        raise RuntimeStoreError('invalid_params')
     if params.get('cwd_explicit') is False and 'cwd' in params:
         cwd = _profile_workspace_cwd(get_hermes_home()) or cwd
     from gateway.session_local_editor import validate_editor
@@ -307,7 +327,7 @@ def _apply_launch_overrides(params, config):
                     raise RuntimeStoreError('invalid_params')
             config.setdefault('model', {})[key] = value
     for flag in ('ignore_rules', 'yolo', 'checkpoints', 'accept_hooks', 'pass_session_id', 'follow_profile_config',
-                 'cwd_explicit'):
+                 'cwd_explicit', 'verbose'):
         if flag in params and type(params[flag]) is not bool:
             raise RuntimeStoreError('invalid_params')
     if 'service_tier' in params:
@@ -321,6 +341,13 @@ def _apply_launch_overrides(params, config):
         if tier is None:
             raise RuntimeStoreError('invalid_params')
         config.setdefault('agent', {})['service_tier'] = tier or 'normal'
+    if 'run_budget' in params:
+        # `--run-budget SECONDS`: the wall-clock budget per run (80% wrap-up notice, capped provider
+        # timeouts), frozen as the session's `agent.run_budget_seconds` like main's CLI flag over config.
+        value = params['run_budget']
+        if isinstance(value, bool) or not isinstance(value, (int, float)) or not value > 0:
+            raise RuntimeStoreError('invalid_params')
+        config.setdefault('agent', {})['run_budget_seconds'] = float(value)
     if params.get('checkpoints'):
         section = config.get('checkpoints')
         section = dict(section) if isinstance(section, dict) else {'enabled': bool(section)} if section else {}

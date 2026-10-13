@@ -91,6 +91,21 @@ _AUTOMATION_METADATA = frozenset({'gateway_session_key', 'gateway_session_id', '
     'display_kind', 'display_text', 'gateway_proven_session_id', 'gateway_completion_ids'})
 
 
+def admission_display(payload):
+    """An automation admission's async-result card (plus its model text) for the claim's
+    ``message.start``: a viewer that did not submit the turn (the classic CLI, idle while a
+    background process it started finishes in the gateway) paints the same header the submitting
+    surface would. ``{}`` for every other input."""
+    descriptor = payload.get('local_automation_v1') or (payload.get('native_text_v1') or {}).get('automation') or {}
+    kind, text = descriptor.get('display_kind'), descriptor.get('display_text')
+    if not kind or not isinstance(text, str) or not text.strip():
+        return {}
+    card = {'display_kind': kind, 'display_text': text, 'text': str(payload.get('text') or '')}
+    if descriptor.get('notification_category') == 'diagnostic':
+        card['notification_category'] = 'diagnostic'
+    return card
+
+
 def snapshot_automation(authority, adapter, event, identity):
     runner = authority.runner
     if (not event.internal or event.message_type != MessageType.TEXT or event.is_command()
@@ -283,8 +298,22 @@ async def admit_route_wake(runner, adapter, source, text, producer, metadata=Non
     authority = active_authority(runner)
     key = runner._session_key_for_source(source)
     entry = runner.session_store.lookup_by_session_key(key) if authority is not None else None
-    if entry is None or source.platform == Platform.LOCAL:
+    if authority is None or entry is None:
         return False
+    import uuid
+    identity = json.dumps([producer, key, uuid.uuid4().hex], separators=(',', ':'))
+    if source.platform == Platform.LOCAL:
+        # A local route has no messaging provenance to borrow: its wake rides local_automation_v1 on
+        # the live session's own source object (``snapshot_local_automation`` checks identity).
+        live = authority.sessions.get(source.chat_id)
+        if live is None or live.route != key:
+            return False
+        event = MessageEvent(text=text, message_type=MessageType.TEXT, source=live.source, internal=True,
+                             message_id=identity, metadata={'gateway_session_key': key,
+                                                            'gateway_session_id': entry.session_id,
+                                                            **(metadata or {})})
+        await authority.admit_automation(adapter, event, identity)
+        return True
     from gateway.session_envelope import restore_native
     from hermes_state_runtime import list_session_admissions
     prior = list_session_admissions(authority.db, session_id=authority.logical_owner(entry.session_id),
@@ -296,8 +325,6 @@ async def admit_route_wake(runner, adapter, source, text, producer, metadata=Non
     # The route's committed source, which ``snapshot_automation`` re-derives and compares.
     restored = restore_native({'text': text, 'native_text_v1': {
         k: v for k, v in envelope.items() if k != 'media'}}, runner)
-    import uuid
-    identity = json.dumps([producer, key, uuid.uuid4().hex], separators=(',', ':'))
     event = MessageEvent(text=text, message_type=MessageType.TEXT, source=restored.source, internal=True,
                          message_id=identity, metadata={'gateway_session_key': key,
                                                         'gateway_session_id': entry.session_id,
