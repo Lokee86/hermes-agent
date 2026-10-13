@@ -116,7 +116,7 @@ def _bypass_policy(params, *, private_secrets):
     return build_policy(params, defaults, private_secrets=private_secrets, profile_terminal=False)
 
 
-def create_local_session(authority, actor, params, *, trusted_policy=None, trusted_secrets=None, skills_prompt=None):
+def create_local_session(authority, actor, params, *, trusted_policy=None, trusted_secrets=None, skills_prompt=None, title=None):
     if actor.profile_id != authority.profile_id:
         raise RuntimeStoreError('profile_mismatch')
     if 'session:create' not in actor.capabilities:
@@ -173,7 +173,7 @@ def create_local_session(authority, actor, params, *, trusted_policy=None, trust
     # naive cutoff, and one aware entry aborts the whole iteration.
     now = _now()
     entry = SessionEntry(route, sid, now, now, origin=source, platform=Platform.LOCAL)
-    commit_local_session(authority.db, epoch=authority.epoch, receipt={
+    commit_local_session(authority.db, epoch=authority.epoch, title=title, receipt={
         'profile_id': authority.profile_id, 'principal_id': actor.subject, 'request_id': request_id,
         'session_id': sid, 'route': route, 'entry': entry.to_dict(), 'policy': asdict(policy)})
     return restore_local_session(authority, sid)

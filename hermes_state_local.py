@@ -9,8 +9,8 @@ API_BINDING_PREFIX = 'gateway.api.binding.v1.'
 API_DECLARED_PREFIX = 'gateway.api.conversation.v1.'
 
 
-def commit_local_session(db, *, epoch, receipt):
-    """Reserve the row, route and immutable policy together, before publication."""
+def commit_local_session(db, *, epoch, receipt, title=None):
+    """Reserve the row, title, route and immutable policy together, before publication."""
     encoded = _json(receipt)
     receipt = json.loads(encoded)
     sid, route = receipt['session_id'], receipt['route']
@@ -50,6 +50,11 @@ def commit_local_session(db, *, epoch, receipt):
             ON CONFLICT(id) DO NOTHING''',
             (sid, policy['source'], receipt['principal_id'], route, entry['origin']['chat_id'],
              policy['model'], policy['cwd'], db._own_profile_name(), _json(entry['origin']), started))
+        if title is not None:
+            try:
+                db._set_session_title_in_transaction(conn, sid, title, source=db.TITLE_SOURCE_USER)
+            except ValueError:
+                raise RuntimeStoreError('admission_conflict') from None
         conn.execute("INSERT INTO gateway_routing(scope,session_key,entry_json,updated_at) VALUES('',?,?,?)",
                      (route, _json(entry), started))
         conn.execute('INSERT INTO state_meta(key,value) VALUES(?,?)', (key, encoded))

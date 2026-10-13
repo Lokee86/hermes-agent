@@ -240,9 +240,8 @@ class AuthorityConnection:
 
     async def create(self, ref, params):
         from gateway.session_local import create_local_session
-        from gateway.session_local_title import resolve_titled_session, title_new_session, validate_title
-        # ``-c <title> --create-if-missing``: resolve-or-create is one owner step (no await
-        # between lookup and creation), so concurrent programmatic callers converge.
+        from gateway.session_local_title import resolve_titled_session, validate_title
+        # The title is part of birth; asynchronous preparation must recheck its identity.
         title = validate_title(params.pop('title')) if 'title' in params else None
         # Bot Mode's forever-chat mint: born hidden from the sidebar; `follow_profile_config` is
         # the canonical default (a local session's runtime is built from the profile's current
@@ -268,16 +267,18 @@ class AuthorityConnection:
                     session_id = local_identity(self.authority.profile_id, self.actor.subject,
                                                 request_id or '')
                     skills_prompt = await asyncio.to_thread(render_launch_skills, params, session_id)
+            if title:
+                ref = resolve_titled_session(self.authority, self.actor, title, missing_ok=True)
+                if ref:
+                    return await self.resume(ref, {})
             ref = create_local_session(self.authority, self.actor, params,
-                                       skills_prompt=skills_prompt)
+                                       skills_prompt=skills_prompt, title=title)
             from gateway.session_policy import accept_launch_hooks, restore_policy
             from hermes_state_local import local_receipt
             launch_policy = restore_policy(local_receipt(self.authority.db, ref.session_id)['policy'])
-            await asyncio.to_thread(accept_launch_hooks, launch_policy)
-            if title:
-                title_new_session(self.authority, ref, title)
             if hidden:
                 self.authority.db.set_session_hidden(ref.session_id, True)
+            await asyncio.to_thread(accept_launch_hooks, launch_policy)
         return await self.resume(ref, {})
 
     async def ping(self, ref, params):
@@ -353,11 +354,9 @@ class AuthorityConnection:
             if cwd is not None and (not isinstance(cwd, str) or not cwd):
                 raise RuntimeStoreError('invalid_params')
             candidates = self.authority.db.list_sessions_rich(
-                sources=['cli', 'tui', 'gui', 'oneshot'], cwd_prefix=cwd,
+                sources=['cli', 'tui', 'gui', 'oneshot'], cwd_exact=cwd,
                 order_by_last_active=True, limit=100)
             for candidate in candidates:
-                if cwd is not None and candidate.get('cwd') != cwd:
-                    continue
                 try:
                     ref = resolve_local_target(self.authority, self.actor, candidate['id'])
                     break

@@ -20,7 +20,7 @@ async def test_latest_chooses_authorized_same_workspace_candidate(monkeypatch):
     requested = []
     def select(**kwargs):
         requested.append(kwargs)
-        return rows
+        return [row for row in rows if row["cwd"] == kwargs.get("cwd_exact")]
     def resolve(_authority, _actor, sid):
         if sid == 'foreign':
             raise RuntimeStoreError('permission_denied')
@@ -40,6 +40,7 @@ async def test_latest_chooses_authorized_same_workspace_candidate(monkeypatch):
         await connection.resume(SessionRef('home', ''), {'latest': True, 'cwd': '/project'})
     assert requested[0]['sources'] == ['cli', 'tui', 'gui', 'oneshot']
     assert requested[0]['order_by_last_active'] is True
+    assert requested[0]['cwd_exact'] == '/project'
 
 
 @pytest.mark.asyncio
