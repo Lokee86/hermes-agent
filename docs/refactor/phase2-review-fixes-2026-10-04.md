@@ -1,10 +1,10 @@
 # Phase 2 Review Fixes — Systemd Behavior Preservation
 
-**Date:** 2026-10-04  
-**Repository:** `hermes-agent`  
-**PR:** NousResearch/hermes-agent#125028 — Phase 2, Gateway Control and Topology  
-**Implementation branch:** `split/phase2-gateway`  
-**Reviewed baseline:** `4eb21abf1393528ae1ec94552e4f8985a3286fdf`  
+**Date:** 2026-10-04
+**Repository:** `hermes-agent`
+**PR:** NousResearch/hermes-agent#125028 — Phase 2, Gateway Control and Topology
+**Implementation branch:** `split/phase2-gateway`
+**Reviewed baseline:** `4eb21abf1393528ae1ec94552e4f8985a3286fdf`
 **Phase 1 parent:** `db6d2da391a132bddc24018a83ad7c79ba660881`
 
 ## 1. Objective

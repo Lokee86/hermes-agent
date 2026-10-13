@@ -1,11 +1,11 @@
 # Phase 2 Follow-up Repair — Systemd Authority Ordering
 
-**Date:** 2026-10-04  
-**Repository:** `hermes-agent`  
-**PR:** NousResearch/hermes-agent#125028 — Phase 2, Gateway Control and Topology  
-**Implementation branch:** `split/phase2-gateway`  
-**Current head:** `a91182e7053ee063a8f937b3784fd48601e6fa1a`  
-**Phase 1 behavioral parent:** `db6d2da391a132bddc24018a83ad7c79ba660881`  
+**Date:** 2026-10-04
+**Repository:** `hermes-agent`
+**PR:** NousResearch/hermes-agent#125028 — Phase 2, Gateway Control and Topology
+**Implementation branch:** `split/phase2-gateway`
+**Current head:** `a91182e7053ee063a8f937b3784fd48601e6fa1a`
+**Phase 1 behavioral parent:** `db6d2da391a132bddc24018a83ad7c79ba660881`
 **Preceding repair spec:** `docs/refactor/phase2-review-fixes-2026-10-04.md`
 
 ## 1. Objective
