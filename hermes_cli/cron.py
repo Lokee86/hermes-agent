@@ -578,7 +578,7 @@ def cron_status():
             # process. On a standalone fleet that is this profile itself, not default (#120871).
             owner = None
             with contextlib.suppress(Exception):
-                from hermes_cli.gateway import host_multiplexer_serving
+                from gateway.host_topology import host_multiplexer_serving
                 owner = host_multiplexer_serving(active)
             host_profile = owner.profile_label if owner is not None else "default"
             _print_ticker_health([host.pid], restart_command=f"hermes --profile {host_profile} gateway restart")
