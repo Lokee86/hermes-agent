@@ -96,8 +96,8 @@ class GatewayACPAgent(acp.Agent):
             if (getattr(event.direction, 'value', None) == 'incoming'
                     and message.get('method') == 'initialize'):
                 self._form_elicitation = client_supports_form_elicitation(message.get('params'))
-        if hasattr(conn, 'add_observer'):
-            conn.add_observer(observe)
+        # The pinned SDK exposes raw messages on the wrapped JSON-RPC connection.
+        conn._conn.add_observer(observe)
 
     async def initialize(self, **kwargs):
         from acp_adapter.elicitation import client_supports_form_elicitation
@@ -428,7 +428,7 @@ class GatewayACPAgent(acp.Agent):
         try:
             answer = None
             if self._form_elicitation:
-                result = await self._conn.send_request(
+                result = await self._conn._conn.send_request(
                     ELICITATION_METHOD, build_clarify_elicitation(self._editor_id(session_id), prompt))
                 answer = elicited_answer(result)
             else:

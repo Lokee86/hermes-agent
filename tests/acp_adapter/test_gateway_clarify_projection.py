@@ -5,6 +5,8 @@ from types import SimpleNamespace
 
 import pytest
 
+from acp.core import AgentSideConnection
+from acp.connection import Connection
 from acp_adapter.gateway_server import GatewayACPAgent
 
 
@@ -28,15 +30,16 @@ async def test_clarify_permission_card_answers_exact_generation():
 async def test_clarify_form_answers_and_settlement_cancels_viewer():
     agent = GatewayACPAgent()
     agent._form_elicitation = True
-    agent._conn = AsyncMock()
-    agent._conn.send_request.return_value = {'action': 'accept', 'content': {'answer': 'green'}}
+    agent._conn = AsyncMock(spec=AgentSideConnection)
+    agent._conn._conn = AsyncMock(spec=Connection)
+    agent._conn._conn.send_request.return_value = {'action': 'accept', 'content': {'answer': 'green'}}
     agent._gateway = AsyncMock()
     agent._snapshots['s'] = {}
     prompt = {'kind': 'clarify', 'prompt_id': 'q', 'execution_generation': 5,
               'question': 'Pick a color', 'choices': ['red', 'green']}
     await agent._project({'session_id': 's', 'type': 'clarify.request', 'payload': prompt})
     await agent._permissions[('s', 'q', 5)]
-    args = agent._conn.send_request.await_args
+    args = agent._conn._conn.send_request.await_args
     assert args.args[0] == 'elicitation/create'
     assert args.args[1]['requestedSchema']['properties']['answer']['enum'] == ['red', 'green']
     agent._gateway.rpc.assert_awaited_once_with(

@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import os
 import platform
-import pwd
 import subprocess
 from pathlib import Path
 
@@ -25,10 +24,6 @@ def profile_env(tmp_path, monkeypatch):
     monkeypatch.setattr(Path, "home", lambda: tmp_path)
     monkeypatch.setenv("HERMES_HOME", str(home))
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
-    real = pwd.getpwuid(os.getuid())
-    fake = pwd.struct_passwd((real.pw_name, real.pw_passwd, real.pw_uid, real.pw_gid,
-                              real.pw_gecos, str(tmp_path), real.pw_shell))
-    monkeypatch.setattr(pwd, "getpwuid", lambda uid: fake)  # launchd plists live under the account home
     calls: list[list[str]] = []
 
     def _run(cmd, *args, **kwargs):
@@ -37,6 +32,15 @@ def profile_env(tmp_path, monkeypatch):
 
     monkeypatch.setattr(profiles.subprocess, "run", _run)
     return tmp_path
+
+
+@pytest.fixture
+def posix_account_home(tmp_path, monkeypatch):
+    import pwd
+    real = pwd.getpwuid(os.getuid())
+    fake = pwd.struct_passwd((real.pw_name, real.pw_passwd, real.pw_uid, real.pw_gid,
+                              real.pw_gecos, str(tmp_path), real.pw_shell))
+    monkeypatch.setattr(pwd, "getpwuid", lambda uid: fake)  # launchd plists live under the account home
 
 
 def _host_unit_path(profile_dir: Path) -> Path:
@@ -50,7 +54,7 @@ def _host_unit_path(profile_dir: Path) -> Path:
 
 
 @pytest.mark.platforms("posix")
-def test_rename_removes_the_old_names_service_while_the_gateway_is_stopped(profile_env):
+def test_rename_removes_the_old_names_service_while_the_gateway_is_stopped(profile_env, posix_account_home):
     old_dir = profiles.create_profile("coder", no_alias=True)
     unit = _host_unit_path(old_dir)
     assert "coder" in unit.name

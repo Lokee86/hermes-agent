@@ -328,6 +328,7 @@ class AuthorityConnection:
                                   'message_count': row.get('message_count', 0),
                                   'running': found.session_id in self.authority.sessions}],
                     'scope': 'stored'}
+        from hermes_state_sessions import INTERNAL_LISTING_SOURCES
         sessions = []
         for sid in tuple(self.authority.sessions):
             candidate = SessionRef(self.actor.profile_id, sid)
@@ -338,6 +339,8 @@ class AuthorityConnection:
                     raise
                 continue
             row = self.authority.db.get_session(sid)
+            if row.get('source') in INTERNAL_LISTING_SOURCES:
+                continue
             sessions.append({'session_id': sid, 'id': sid, 'title': row.get('title') or '',
                              'source': row.get('source'), 'started_at': row.get('started_at'),
                              'message_count': row.get('message_count', 0),
