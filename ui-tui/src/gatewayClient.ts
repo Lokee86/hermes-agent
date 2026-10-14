@@ -7,6 +7,7 @@ import type { GatewayEvent } from '@hermes/shared/gateway-events'
 import {
   DEFAULT_HEARTBEAT_DEADLINE_MS,
   DEFAULT_HEARTBEAT_INTERVAL_MS,
+  JsonRpcGatewayError,
   JsonRpcRequestChannel,
   type ServerRequest,
   wireFrameText
@@ -121,8 +122,10 @@ const redactUrl = (raw: string): string => {
 export interface LocalGatewayGrant { url: string; protocols: string[]; profile_id: string; instance_id: string }
 
 // Reconnects after the first launch are discovery-only, except that a bounded number per window
-// may re-ensure an owner that crashed (gateway_bootstrap.py --recover decides from the owner's
-// retained runtime record; an explicitly stopped gateway is never resurrected).
+// re-ensure an owner that is not ready (gateway_bootstrap.py --recover): crashed, idle-exited,
+// stopped with `hermes gateway stop` while this TUI is open, or an older Hermes's gateway. Main's
+// TUI owned its sidecar, so an open TUI comes back on its own; the budget keeps a crash-looping
+// owner from being respawned without pause.
 export const OWNER_RECOVERY_LIMIT = 3
 export const OWNER_RECOVERY_WINDOW_MS = 60_000
 
@@ -136,6 +139,8 @@ const bootstrapLocalGateway = async (start: boolean, recover = false): Promise<L
   return JSON.parse(stdout) as LocalGatewayGrant
 }
 
+
+export interface AttachHold { sid: string; frames: AnyGatewayEvent[] }
 export class GatewayClient extends EventEmitter {
   private ws: WebSocket | null = null
   private wsConnectPromise: Promise<void> | null = null
@@ -183,7 +188,11 @@ export class GatewayClient extends EventEmitter {
   private recoveryAttempts: number[] = []
   isCanonical = false
   private creationContract?: CreationContract
+  private describedSkin?: Record<string, unknown>
   private describeFlight?: Promise<void>
+  private attachHold: AttachHold | null = null
+  // The last session.create whose outcome is in doubt (see createCanonical).
+  private unsettledCreate?: { key: string; requestId: unknown }
 
   constructor(
     private bootstrap: (start: boolean, recover?: boolean) => Promise<LocalGatewayGrant> = bootstrapLocalGateway
@@ -227,9 +236,20 @@ export class GatewayClient extends EventEmitter {
     }
 
     if (this.isCanonical) {
+      // An idle frame (session.info from _publish_pending) carries its stamp in the payload only
+      // (B2-18): fall back to it, and never stamp an absent value over it.
       const shared = ev as AnyGatewayEvent & { authority_epoch?: number; execution_generation?: number }
-      ev.payload = { ...canonicalEvent(ev).payload, execution_epoch: String(shared.authority_epoch),
-        execution_generation: shared.execution_generation } as never
+      const payload = (canonicalEvent(ev).payload ?? {}) as { authority_epoch?: number; execution_generation?: number }
+      const epoch = shared.authority_epoch ?? payload.authority_epoch
+      const generation = shared.execution_generation ?? payload.execution_generation
+      ev.payload = { ...payload, ...(epoch !== undefined ? { execution_epoch: String(epoch) } : {}),
+        ...(generation !== undefined ? { execution_generation: generation } : {}) } as never
+
+      if (this.attachHold && (ev as { session_id?: unknown }).session_id === this.attachHold.sid) {
+        this.attachHold.frames.push(ev)
+
+        return
+      }
     }
 
     this.publish(ev)
@@ -244,15 +264,28 @@ export class GatewayClient extends EventEmitter {
       this.channel.startHeartbeat()
     }
 
+    this.describeThenReady(ws, { skin: ev.payload?.skin })
+  }
+
+  /** Canonical readiness is runtime.describe on this socket. A failed describe is a transport
+   * failure (B2-21): drop the socket onto the backoff path, which redials and re-describes. */
+  private describeThenReady(ws: WebSocket | null, payload: Record<string, unknown>) {
     this.describeFlight = undefined
     void this.describeRuntime().then(() => {
-      if (this.ws === ws) {
-        this.publish({ type: 'gateway.ready', payload: { skin: ev.payload?.skin } } as unknown as AnyGatewayEvent)
-      }
+      // The owner's resolved profile skin (`runtime.describe.skin`, main's `gateway.ready.skin`)
+      // unless the listener's own ready already carried one.
+      const ready = payload.skin === undefined && this.describedSkin ? { ...payload, skin: this.describedSkin } : payload
+
+      if (this.ws === ws) { this.publish({ type: 'gateway.ready', payload: ready } as unknown as AnyGatewayEvent) }
     }).catch(error => {
       this.publish({ type: 'gateway.start_timeout', payload: {
         python: 'runtime.describe', cwd: '', stderr_tail: String(error)
       } })
+
+      if (this.ws === ws) {
+        this.closeGatewaySocket()
+        this.handleTransportExit(1, String(error))
+      }
     })
   }
 
@@ -480,6 +513,32 @@ export class GatewayClient extends EventEmitter {
     }
   }
 
+  /** B2-19: hold this session's canonical frames while its resume/activate is in flight. Fanout
+   * frames can beat the reply; the caller applies the snapshot, then settleAttach replays only the
+   * held frames after the snapshot (same replay_epoch, seq > last_sequence). */
+  holdAttach(sessionId: string): AttachHold | null {
+    if (!this.isCanonical) { return null }
+
+    return (this.attachHold = { sid: sessionId, frames: [] })
+  }
+
+  /** End a hold: with the applied snapshot, replay only frames it does not contain; without one
+   * (failed or superseded attach), deliver what was held. A replaced hold is a no-op. */
+  settleAttach(hold: AttachHold | null, snapshot?: object | null) {
+    if (!hold || this.attachHold !== hold) { return }
+    this.attachHold = null
+
+    const fence = snapshot as { last_sequence?: unknown; replay_epoch?: unknown } | null | undefined
+
+    for (const ev of hold.frames) {
+      const { replay_epoch: epoch, seq } = ev as { replay_epoch?: unknown; seq?: unknown }
+
+      if (!fence || (epoch === fence.replay_epoch && typeof seq === 'number' && seq > Number(fence.last_sequence ?? -1))) {
+        this.publish(ev)
+      }
+    }
+  }
+
   hydrateSharedPrompts(snapshot: unknown) {
     if (!this.isCanonical) { return }
     const result = snapshot as { session_id: string; authority_epoch: number; prompts?: Array<Record<string, unknown>> }
@@ -534,6 +593,9 @@ export class GatewayClient extends EventEmitter {
       if (this.disposed || generation !== this.localGeneration) { return }
       this.attachUrl = grant.url
       this.isCanonical = true
+      // Main's /logs opened with the sidecar's spawn line; the shared owner's equivalent is the attach.
+      this.lifecycle(`[lifecycle] attached shared gateway ${start ? 'start' : recover ? 'recover' : 'discover'} ` +
+        `url=${redactUrl(grant.url)} profile=${grant.profile_id} instance=${grant.instance_id}`)
       this.startAttachedGateway(grant.url, grant.protocols)
     }).catch(error => {
       if (this.disposed || generation !== this.localGeneration) { return }
@@ -602,19 +664,9 @@ export class GatewayClient extends EventEmitter {
 
             this.connectSidecarMirror()
 
-            if (this.isCanonical) {
-              this.describeFlight = undefined
-              void this.describeRuntime().then(() => {
-                // The canonical gateway has no ready frame (readiness is the discovery
-                // grant + runtime.describe); publish a client-local ready with no skin so
-                // the renderer boots on its default theme.
-                if (this.ws === ws) { this.publish({ type: 'gateway.ready', payload: {} } as unknown as AnyGatewayEvent) }
-              }).catch(error => {
-                this.publish({ type: 'gateway.start_timeout', payload: {
-                  python: 'runtime.describe', cwd: '', stderr_tail: String(error)
-                } })
-              })
-            }
+            // The canonical gateway has no ready frame (readiness is the discovery grant +
+            // runtime.describe); the client-local ready carries the skin runtime.describe resolved.
+            if (this.isCanonical) { this.describeThenReady(ws, {}) }
           },
           { once: true }
         )
@@ -829,8 +881,11 @@ export class GatewayClient extends EventEmitter {
    * session.create asks again instead of reporting an outdated gateway forever. */
   private describeRuntime(): Promise<void> {
     if (!this.describeFlight) {
-      const flight: Promise<void> = this.requestOverWebSocket<{ session_create: CreationContract }>('runtime.describe').then(
-        description => { this.creationContract = description.session_create },
+      const flight: Promise<void> = this.requestOverWebSocket<{ session_create: CreationContract; skin?: Record<string, unknown> | null }>('runtime.describe').then(
+        description => {
+          this.creationContract = description.session_create
+          this.describedSkin = description.skin && typeof description.skin === 'object' ? description.skin : undefined
+        },
         error => {
           if (this.describeFlight === flight) { this.describeFlight = undefined }
 
@@ -880,8 +935,31 @@ export class GatewayClient extends EventEmitter {
     return (async () => {
       if (method === 'session.create' && !this.creationContract) { await this.describeRuntime() }
       const request = canonicalRequest(method, params, this.creationContract)
-      const toolProgress = method === 'session.create' ? launchToolProgress() : undefined
+
+      if (request.method === 'session.create') { return this.createCanonical<T>(request.params, timeoutMs) }
       const value = await this.requestOverWebSocket<T>(request.method, request.params, timeoutMs)
+
+      return canonicalResult(method, value, request.params)
+    })()
+  }
+
+  /** session.create plus the launch tool-progress pin, as one outcome for the caller. The owner keys a
+   * local session by request_id, so a create that failed after it may have committed (lost ACK, or the
+   * pin refused after the ACK) is retried with the SAME request_id when the options match: the owner
+   * answers with the session it already minted and the pin is reapplied, never a second session. */
+  private async createCanonical<T>(prepared: Record<string, unknown>, timeoutMs?: number): Promise<T> {
+    const toolProgress = launchToolProgress()
+    const { request_id: _fresh, ...options } = prepared
+    const key = JSON.stringify(Object.keys(options).sort().map(name => [name, options[name]]))
+    const retry = this.unsettledCreate?.key === key ? this.unsettledCreate : undefined
+    // Taken, not peeked: a concurrent create never shares an identity still in flight.
+    this.unsettledCreate = undefined
+    const params = retry ? { ...prepared, request_id: retry.requestId } : prepared
+    let acknowledged = false
+
+    try {
+      const value = await this.requestOverWebSocket<T>('session.create', params, timeoutMs)
+      acknowledged = true
 
       if (toolProgress) {
         // Launch pin, before the caller can submit: a refusal fails this create visibly.
@@ -890,8 +968,16 @@ export class GatewayClient extends EventEmitter {
         await this.requestOverWebSocket('config.set', { key: 'verbose', session_id: sid, value: toolProgress })
       }
 
-      return canonicalResult(method, value, request.params)
-    })()
+      return canonicalResult('session.create', value, params)
+    } catch (error) {
+      // An owner's error reply to the create itself is a definitive refusal (nothing to recover);
+      // an ACKed create, a timeout or a dropped socket may have committed the session.
+      if (acknowledged || !(error instanceof JsonRpcGatewayError)) {
+        this.unsettledCreate = { key, requestId: params.request_id }
+      }
+
+      throw error
+    }
   }
 
   kill(reason = 'requested') {

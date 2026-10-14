@@ -1017,14 +1017,14 @@ class CredentialPoolRefreshMixin:
             return False
 
     def _entry_needs_refresh(self, entry: PooledCredential) -> bool:
-        from auth.credential_pool import AUTH_TYPE_OAUTH, time
+        from auth.credential_pool import AUTH_TYPE_OAUTH
+        from auth.credential_pool_plugin import plugin_row_is_expiring
+        from auth.plugin_hooks import plugin_refresh_hook
 
         if entry.auth_type != AUTH_TYPE_OAUTH:
             return False
-        if self.provider == "anthropic":
-            if entry.expires_at_ms is None:
-                return False
-            return int(entry.expires_at_ms) <= int(time.time() * 1000) + 120_000
+        if self.provider == "anthropic" or plugin_refresh_hook(self.provider) is not None:
+            return plugin_row_is_expiring(entry)
         if self.provider == "openai-codex":
             return self._provider_hooks.token_expiring(entry.access_token)
         if self.provider == "xai-oauth":

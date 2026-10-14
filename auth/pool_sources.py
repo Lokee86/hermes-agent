@@ -134,7 +134,8 @@ def _seed_nous_singleton(seed: _Seeder, auth_store: Dict[str, Any]) -> None:
         # fork strip/heal) must not re-seed root's single-use refresh token into its
         # own pool from the global-root fallback: that re-creates the fork.
         return
-    has_runtime_material = bool(
+    from auth.providers.nous_guest import guest_without_free_tier
+    has_runtime_material = not guest_without_free_tier(state, environment=seed.environment) and bool(
         isinstance(state, dict)
         and (str(state.get("access_token") or "").strip() or str(state.get("agent_key") or "").strip())
     )

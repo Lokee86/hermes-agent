@@ -91,11 +91,14 @@ ANON_CREDENTIAL_DEAD = "anon_credential_dead"
 ANON_UNREACHABLE = "anon_unreachable"
 
 ANON_SERVER_ERROR = "anon_server_error"
+ANON_CHALLENGE_REQUIRED = "anon_challenge_required"
+ANON_SIGNIN_REQUIRED = "anon_signin_required"
 
 ANON_TERMINAL_CODES = frozenset({
     ANON_GATE_CLOSED,
     ANON_POW_REQUIRED,
     ANON_ACCOUNT_LOCKED,
+    ANON_SIGNIN_REQUIRED,
 })
 
 ANON_UNREACHABLE_CODES = frozenset({ANON_UNREACHABLE, ANON_SERVER_ERROR})
@@ -109,6 +112,8 @@ ANON_FAILURE_COPY = {
     "Signing in is free and skips the wait.",
     ANON_POW_REQUIRED: "The Nous server asked for a proof of work, but that isn't implemented in your "
     "Agent yet. Sign in with a Nous account to continue.",
+    ANON_CHALLENGE_REQUIRED: "Finish the quick check in your browser, then try again.",
+    ANON_SIGNIN_REQUIRED: "Free guest access isn't available here. Sign in with a Nous account to continue.",
     ANON_ACCOUNT_LOCKED: f"This session can't continue without signing in. {_SIGNIN_IS_FREE}",
     ANON_CREDENTIAL_DEAD: "Your session ended. A new one starts on its own.",
     ANON_UNREACHABLE: "The Nous service couldn't be reached. Check your internet connection and try again.",
@@ -197,6 +202,11 @@ def current_nous_state() -> Optional[Dict[str, Any]]:
 
 def has_guest() -> bool:
     return is_guest_state(current_nous_state())
+
+def guest_without_free_tier(state: Any, *, environment) -> bool:
+    """A guest identity while free inference is off remains connector-only."""
+    return is_guest_state(state) and not guest_enabled(environment=environment)
+
 
 
 def guest_carries_inference(*, environment) -> bool:

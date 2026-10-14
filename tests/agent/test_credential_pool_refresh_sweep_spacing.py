@@ -11,8 +11,8 @@ from __future__ import annotations
 
 import time
 
-from hermes_cli import auth
-from agent.credential_pool import CredentialPool
+from auth.credential_pool import CredentialPool
+from auth.store import _auth_store_lock
 
 
 def test_pending_refresh_sweep_leaves_waiter_windows_between_holds(tmp_path):
@@ -25,7 +25,7 @@ def test_pending_refresh_sweep_leaves_waiter_windows_between_holds(tmp_path):
     def fake_refresh(entry, *, force):
         # Same shape as a real single-use refresh: the cross-process lock is held
         # across the "POST" (the sleep), released only when the entry is done.
-        with auth._auth_store_lock(timeout_seconds=30.0, target_path=auth_path):
+        with _auth_store_lock(timeout_seconds=30.0, target_path=auth_path):
             hold_events.append(("acquired", time.monotonic()))
             time.sleep(0.05)
             hold_events.append(("released", time.monotonic()))

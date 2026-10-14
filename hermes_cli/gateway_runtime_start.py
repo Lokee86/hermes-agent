@@ -10,6 +10,21 @@ from hermes_cli._subprocess_compat import windows_detach_popen_kwargs, _WINDOWS_
 from hermes_cli.gateway_runtime_service import RuntimeStartError, remaining
 
 
+# One launch's policy and pins, never the shared daemon's: hook consent would become daemon-lifetime
+# auto-approval for messaging/cron, and a Kanban worker's or terminal's pins would retarget every later
+# session's board, cwd and source. HERMES_INFERENCE_* fallbacks stay (the daemon's own defaults).
+DAEMON_STRIPPED_ENV = (
+    "HERMES_PROFILE", "HERMES_YOLO_MODE", "HERMES_IGNORE_RULES", "HERMES_SAFE_MODE",
+    "HERMES_IGNORE_USER_CONFIG", "HERMES_ACCEPT_HOOKS", "HERMES_SESSION_SOURCE", "TERMINAL_CWD",
+    "HERMES_KANBAN_TASK", "HERMES_KANBAN_WORKSPACE", "HERMES_KANBAN_BRANCH", "HERMES_KANBAN_RUN_ID",
+    "HERMES_KANBAN_CLAIM_LOCK", "HERMES_KANBAN_CLAIM_TTL_SECONDS", "HERMES_KANBAN_GOAL_MODE",
+    "HERMES_KANBAN_GOAL_MAX_TURNS", "HERMES_KANBAN_DB", "HERMES_KANBAN_WORKSPACES_ROOT",
+    "HERMES_KANBAN_BOARD", "HERMES_TENANT", "HERMES_SESSION_SOURCE_EXPLICIT", "HERMES_TURN_AUTHOR",
+    # Human-presence/one-shot markers: inherited, every messaging/cron turn would read as attended or -q.
+    "HERMES_INTERACTIVE", "HERMES_GATEWAY_SESSION", "HERMES_SINGLE_QUERY_SESSION",
+)
+
+
 def spawn_unmanaged_gateway(profile_home: Path, *, deadline: float, idle_exit: bool = False) -> subprocess.Popen:
     """Request a daemon, not readiness. Refuse Windows no-breakaway fallback.
 
@@ -26,7 +41,10 @@ def spawn_unmanaged_gateway(profile_home: Path, *, deadline: float, idle_exit: b
     selector = [] if home.parent.name == "profiles" else ["--profile", "default"]
     command = [sys.executable, "-m", "hermes_cli.main", *selector, "gateway", "run", "--quiet",
                *(["--idle-exit"] if idle_exit else [])]
-    env = dict(os.environ)
+    # The target profile's own secrets, never the launching client's: a `hermes -p work` client's
+    # dotenv would otherwise become the default daemon's frozen launch env (host_gateway_child_env).
+    from tools.environments.local import served_profile_child_env
+    env = served_profile_child_env(base=dict(os.environ), target_home=home, inherit_credentials=True)
     if sys.platform == "win32":
         from hermes_cli.gateway_windows import windowless_gateway_restart_spec
         command, _, overlay = windowless_gateway_restart_spec(command)
@@ -38,11 +56,9 @@ def spawn_unmanaged_gateway(profile_home: Path, *, deadline: float, idle_exit: b
     # Profile selection is the explicit home, not the invoking client's display
     # name. Launch-only approval/context/config flags ride the launching session's frozen
     # policy, not the shared daemon or every later session.
-    env.pop("HERMES_PROFILE", None)
-    env.pop("HERMES_YOLO_MODE", None)
-    env.pop("HERMES_IGNORE_RULES", None)
-    env.pop("HERMES_SAFE_MODE", None)
-    env.pop("HERMES_IGNORE_USER_CONFIG", None)
+    from gateway.session_context import _VAR_MAP  # the launching turn's session identity, too
+    for key in (*DAEMON_STRIPPED_ENV, *_VAR_MAP):
+        env.pop(key, None)
     remaining(deadline)
     logs = home / "logs"
     logs.mkdir(parents=True, exist_ok=True)

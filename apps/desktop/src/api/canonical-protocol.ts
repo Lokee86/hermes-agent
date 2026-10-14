@@ -88,8 +88,113 @@ function branchBoundary(params: Record<string, unknown>): Record<string, unknown
   return {}
 }
 
+const RELAY_HANDLE = /^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$/
+const RELAY_SENDER_STAMP = /^(Message from 🤖 [\s\S]+? \(@)[A-Za-z0-9_-]+(\): )/u
+
+// The canonical `bot_relay.deliver` is a closed key set without the legacy `from_*` sender
+// fields. Translate them as the legacy bridge did (tui_gateway/methods_bot_relay.py): a bot
+// author keyed by the sender's connection (`delivery_turn_author`), and the message's
+// `(@handle)` stamp qualified with that connection so a reply never lands on the recipient's
+// own same-named bot (#103731; `<handle>@<connection>` always resolves there).
+function canonicalBotDelivery(params: Record<string, unknown>): Record<string, unknown> {
+  const { from_profile: rawProfile, from_handle: rawHandle, from_connection: rawConnection, ...rest } = params
+  const [profile, connection] = [String(rawProfile ?? '').trim(), String(rawConnection ?? '').trim()]
+  const handle = String(rawHandle ?? '').trim().replace(/^@/, '')
+
+  if (!profile) { return rest }
+
+  const author = { id: connection ? `bot:${connection}/${profile}` : `bot:${profile}`, name: handle || profile, is_bot: true }
+  const qualify = typeof rest.message === 'string' && RELAY_HANDLE.test(handle) && RELAY_HANDLE.test(connection)
+  const message = qualify ? String(rest.message).replace(RELAY_SENDER_STAMP, `$1${handle}@${connection}$2`) : rest.message
+
+  return { ...rest, message, author }
+}
+
+// The legacy `prompt.submit` truncation keys (edit / regenerate / restore). The owner has no such
+// keys: the cut is a revision-fenced `rewind` mutation on the user row, then a plain submit. The
+// deep-cut confirm (#133716) guards the legacy sidecar's implicit cut; the owner's rewind names its
+// row explicitly and the user already confirmed before Desktop sent it, so it is dropped here too.
+const TRUNCATE_KEYS = ['confirm_truncate', 'confirm_empty_truncate', 'confirm_deep_truncate', 'truncate_before_row_id',
+  'truncate_before_message_id', 'truncate_before_user_ordinal', 'rebind_survivor_row_ids']
+
+export function splitRewindSubmit(params: Record<string, unknown>): { rewind: Record<string, unknown> | null; submit: Record<string, unknown> } | null {
+  if (!TRUNCATE_KEYS.some(key => key in params)) { return null }
+  const row = params.truncate_before_row_id
+  const submit = Object.fromEntries(Object.entries(params).filter(([key]) => !TRUNCATE_KEYS.includes(key)))
+
+  if (typeof row === 'number' && Number.isInteger(row) && row > 0) {
+    return { rewind: { session_id: params.session_id, target_message_id: row, ...(params.profile !== undefined ? { profile: params.profile } : {}) }, submit }
+  }
+
+  // Only a durable row id names the owner's cut; a message id or ordinal would be a guess.
+  if (['truncate_before_row_id', 'truncate_before_message_id', 'truncate_before_user_ordinal'].some(key => key in params)) {
+    throw new Error('This message is not saved yet; wait for it to settle, then edit it again')
+  }
+
+  return { rewind: null, submit }
+}
+
+// Session verbs only the legacy sidecar implements: it looks the session up in its own table,
+// which never holds an owner session, and answers `session not found` (read by the renderer as a
+// reaped runtime). Refused by name until the owner serves them.
+const SIDECAR_SESSION_VERBS = new Set(['handoff.request', 'handoff.state', 'handoff.fail', 'preview.restart'])
+
+// `config.set` keys the owner serves (tui_gateway/contracts/canonical_projections.py::CanonicalConfigSetParams;
+// gateway/session_tui_config.py), with the keys that take a `scope` (`reasoning --global`, the
+// Shift+click global yolo zap).
+const CANONICAL_CONFIG_KEYS = new Set([
+  'busy', 'verbose', 'yolo', 'model', 'reasoning', 'fast', 'personality', 'approvals.mode', 'voice.voice_chat_mode',
+  'display.message_reactions', 'display.in_app_tips', 'display.in_app_tours'
+])
+
+const SCOPED_CONFIG_KEYS = new Set(['reasoning', 'yolo'])
+
+// The one guard between a Desktop producer and the owner's closed contracts: translate a legacy
+// shape the owner has a canonical form for, refuse by name what it does not serve.
+function canonicalProducerFrame(method: string, params: Record<string, unknown>): Record<string, unknown> {
+  // Any other key, or a scope on a key without one: refuse before the wire, like Ink, instead of a
+  // bare invalid_params.
+  if (method === 'config.set' && (!CANONICAL_CONFIG_KEYS.has(String(params.key)) || ('scope' in params && !SCOPED_CONFIG_KEYS.has(String(params.key))))) {
+    throw new Error(`Changing ${params.key}${'scope' in params ? ` (${params.scope})` : ''} is not available on the shared gateway yet`)
+  }
+
+  if (SIDECAR_SESSION_VERBS.has(method) || (method.startsWith('connect') && (params.owner as { type?: unknown } | undefined)?.type === 'session')) {
+    throw new Error(`${method} is not available on the shared gateway yet`)
+  }
+
+  // The owner admits identified input only. An identityless producer (session tile, quick entry,
+  // bot chats) is a fresh send on every call, which is what the legacy wire did with it.
+  if (method === 'prompt.submit' && !params.submission_id && !params.input_id) { return { ...params, submission_id: crypto.randomUUID() } }
+
+  return method === 'bot_relay.deliver' ? canonicalBotDelivery(params) : params
+}
+
+// The levels `hermes_constants.parse_reasoning_effort` accepts: a session `/reasoning <level>` is the
+// owner's `reasoning` mutation; the display words (show/hide/full/clamp) are config.yaml writes.
+const REASONING_EFFORTS = new Set(['none', 'false', 'disabled', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra'])
+
+// Frozen-policy edits: a session-scope `/reasoning <level>` (`--global` stays the named refusal, no
+// owner config-write verb) and Move to project, which re-homes the execution cwd and TERMINAL_CWD
+// with the row (`session_key` names the sidebar row).
+function policyEdit(method: string, params: Record<string, unknown>): { session: unknown; operation: string; payload: Record<string, unknown> } | null {
+  const effort = String(params.value ?? '').trim().toLowerCase()
+
+  if (method === 'config.set' && params.key === 'reasoning' && params.scope !== 'global' && REASONING_EFFORTS.has(effort)) {
+    return { session: params.session_id, operation: 'reasoning', payload: { effort } }
+  }
+
+  // The composer's folder picker on an open chat (main's session.cwd.set) is the same re-home.
+  if (method === 'session.cwd.set') { return { session: params.session_id, operation: 'workspace', payload: { cwd: params.cwd } } }
+
+  return method === 'session.workspace.move' ? { session: params.session_key, operation: 'workspace', payload: { cwd: params.cwd } } : null
+}
+
+// Desktop methods that become `session.mutate` once prepareMutation chose an operation.
+const POLICY_EDIT_METHODS = new Set(['slash.exec', 'config.set', 'session.workspace.move', 'session.cwd.set'])
 const BRANCH_METHODS = new Set(['session.branch', 'session.branch_stored', 'session.branch_whole'])
-const MUTATION_METHODS = new Set(['session.title', 'session.archive', 'session.compress', ...BRANCH_METHODS])
+// Value-setting mutations: re-applying one is harmless, so a later acknowledged edit retires it.
+const VALUE_OPERATIONS = new Set(['rename', 'archive', 'model', 'reasoning', 'workspace'])
+const MUTATION_METHODS = new Set(['session.title', 'session.archive', 'session.compress', 'session.rewind', ...BRANCH_METHODS])
 
 export class CanonicalDesktopProtocol {
   private creates = new Map<string, string>()
@@ -104,11 +209,22 @@ export class CanonicalDesktopProtocol {
   // [owner, model payload] → the owner's one-time token from a `confirmation_required` model
   // answer (a guarded target: cost / data policy / large context; nothing was written). The
   // dialog's resend (`confirm_expensive_model: true`, the legacy handshake every Desktop surface
-  // speaks) carries it as `payload.confirm`; consumed once, so a re-refusal is never auto-confirmed.
-  private modelConfirmations = new Map<string, string>()
+  // speaks) carries it as `payload.confirm`. It is spent by the owner's ANSWER to that resend,
+  // not by sending it: until an answer (applied, refused, re-refused with a fresh token) arrives,
+  // `sent` keeps the token so a retry after a lost reply re-sends the exact same token-bearing
+  // request (same retained request id) instead of a new unconfirmed mutation. A re-refusal
+  // replaces it with an unsent token, so it is never auto-confirmed.
+  private modelConfirmations = new Map<string, { token: string; sent: boolean }>()
 
   failure(params: Record<string, unknown>, error: unknown) {
-    if ((error as { data?: { reason?: string } })?.data?.reason !== 'revision_conflict') { return }
+    const reason = (error as { data?: { reason?: string } })?.data?.reason
+
+    // The owner answered (a typed refusal): the confirmed request's outcome is known. A transport
+    // failure carries no reason; its outcome is unknown and the token stays for the exact retry.
+    if (typeof reason === 'string') { this.settleModelConfirmation(params) }
+
+    // A typed busy refusal of a rewind or a move wrote nothing either; the retry is a new request at the new revision.
+    if (reason !== 'revision_conflict' && !(reason === 'session_busy' && ['rewind', 'workspace'].includes(params.operation as string))) { return }
 
     // A confirmed CAS refusal did not mutate. Ambiguous transport failures keep
     // the original revision/id so a retry cannot overwrite another user's edit.
@@ -126,12 +242,13 @@ export class CanonicalDesktopProtocol {
     // rebinds the live event transport and returns the same snapshot shape.
     if (method === 'session.activate') { return 'session.resume' }
 
-    return (method === 'slash.exec' || method === 'config.set') && typeof prepared.operation === 'string' ? 'session.mutate' : method
+    return POLICY_EDIT_METHODS.has(method) && typeof prepared.operation === 'string' ? 'session.mutate' : method
   }
 
   private retainedMutation(sessionId: unknown, profile: unknown, operation: string, payload: Record<string, unknown>, withGeneration: boolean): Record<string, unknown> {
     const owner = canonicalSessionKey(sessionId, profile)
     const key = JSON.stringify([owner, operation, payload])
+    this.retireMutations(owner, key)
     const retained = this.mutations.get(key)
 
     if (retained) { return retained }
@@ -158,15 +275,30 @@ export class CanonicalDesktopProtocol {
     return method !== 'session.create' && params.profile !== undefined ? { ...prepared, profile: params.profile } : prepared
   }
 
+  // Only a session's very next control may retry an ambiguous one: any other verb retires the rest.
+  private retireMutations(owner: string, keep?: string) {
+    for (const key of [...this.mutations.keys()]) { if (key !== keep && JSON.parse(key)[0] === owner) { this.mutations.delete(key) } }
+  }
+
   private preparePayload(method: string, params: Record<string, unknown>): Record<string, unknown> {
     const mutation = this.prepareMutation(method, params)
 
     if (mutation) { return mutation }
 
+    if (method === 'prompt.submit') { this.retireMutations(canonicalSessionKey(params.session_id, params.profile)) }
+
     if (method === 'session.create') { return this.prepareCreate(params) }
 
     if (method === 'session.activate') {
       return { session_id: params.session_id, source: 'desktop', ...(params.profile ? { profile: params.profile } : {}) }
+    }
+
+    // N93: a watch window's legacy `lazy` attach is not in the owner's resume contract (the owner
+    // holds the agent; nothing to defer). It skipped the REST prefetch, so it takes the transcript.
+    if (method === 'session.resume' && 'lazy' in params) {
+      const { lazy: _lazy, ...resume } = params
+
+      return { ...resume, omit_messages: false }
     }
 
     if (method === 'session.interrupt' || method === 'session.redirect' || method === 'session.steer') {
@@ -187,7 +319,7 @@ export class CanonicalDesktopProtocol {
 
     if (method === 'approval.respond' || method === 'clarify.respond') { return this.preparePromptResponse(method, params) }
 
-    return params
+    return canonicalProducerFrame(method, params)
   }
 
   // Metadata, branch and typed slash directives that travel as canonical `session.mutate`; null otherwise.
@@ -199,7 +331,8 @@ export class CanonicalDesktopProtocol {
     // Branch and compress fence the execution generation like the slash directives.
     const fenced = ({
       'session.branch': () => ({ operation: 'branch', payload: branchBoundary(params) }),
-      'session.compress': () => ({ operation: 'compress', payload: params.focus_topic ? { focus: String(params.focus_topic) } : {} })
+      'session.compress': () => ({ operation: 'compress', payload: params.focus_topic ? { focus: String(params.focus_topic) } : {} }),
+      'session.rewind': () => ({ operation: 'rewind', payload: { target_message_id: params.target_message_id } })
     } as Record<string, () => { operation: string; payload: Record<string, unknown> }>)[method]?.()
 
     if (fenced) { return this.retainedMutation(params.session_id, params.profile, fenced.operation, fenced.payload, true) }
@@ -211,6 +344,10 @@ export class CanonicalDesktopProtocol {
 
       return this.retainedMutation(parent, params.profile, 'branch', payload, true)
     }
+
+    const policy = policyEdit(method, params)
+
+    if (policy) { return this.retainedMutation(policy.session, params.profile, policy.operation, policy.payload, true) }
 
     if (method === 'config.set' && params.key === 'model') {
       const pick = pickerModelMutation(params.value)
@@ -237,26 +374,51 @@ export class CanonicalDesktopProtocol {
     return JSON.stringify([canonicalSessionKey(params.session_id, params.profile), target])
   }
 
-  // A user-confirmed resend of a guarded model target presents the owner's token once.
+  // A user-confirmed resend of a guarded model target presents the owner's token. While that
+  // confirmed request's outcome is unknown (reply lost), any retry of the same target is the same
+  // confirmed intent and re-sends it verbatim: the token is part of the retained mutation's key,
+  // so the retry keeps its request id and the owner resolves it as an exact retry.
   private confirmedModel(params: Record<string, unknown>, payload: Record<string, unknown>): Record<string, unknown> {
-    if (!params.confirm_expensive_model) { return payload }
     const key = this.modelConfirmationKey(params, payload)
-    const token = this.modelConfirmations.get(key)
+    const confirmation = this.modelConfirmations.get(key)
 
-    if (!token) { return payload }
-    this.modelConfirmations.delete(key)
+    if (!confirmation || !(params.confirm_expensive_model || confirmation.sent)) { return payload }
+    confirmation.sent = true
 
-    return { ...payload, confirm: token }
+    return { ...payload, confirm: confirmation.token }
   }
 
-  private prepareCreate(params: Record<string, unknown>): Record<string, unknown> {
-    const allowed = new Set(['request_id', 'source', 'cwd', 'model', 'toolsets', 'profile', 'cols', 'title', 'hidden', 'follow_profile_config'])
-    const unsupported = Object.keys(params).filter(key => !allowed.has(key) && !(key === 'fast' && params[key] === false))
+  // The owner answered a token-bearing model request: that token is spent.
+  private settleModelConfirmation(params: Record<string, unknown>): void {
+    const payload = params.payload as Record<string, unknown> | undefined
+
+    if (params.operation !== 'model' || typeof payload?.confirm !== 'string') { return }
+    const key = this.modelConfirmationKey(params, payload)
+
+    if (this.modelConfirmations.get(key)?.token === payload.confirm) { this.modelConfirmations.delete(key) }
+  }
+
+  // The composer's per-session create options in the owner's create contract: the effort is the
+  // frozen launch `reasoning`; a manual model pick keeps its `provider`; the speed pick is `service_tier` (main: an explicit tier wins, Fast
+  // pins priority, Normal pins normal over a profile tier, omitted inherits); `cwd_explicit` is the
+  // provenance that lets a named profile's own workspace beat an inherited cwd.
+  private prepareCreate(input: Record<string, unknown>): Record<string, unknown> {
+    const { reasoning_effort: effort, fast, service_tier: picked, ...params } = input
+    const tier = typeof picked === 'string' && picked ? picked : fast === true ? 'priority' : fast === false ? 'normal' : undefined
+
+    if (typeof effort === 'string' && effort) { params.reasoning = effort }
+
+    if (tier) { params.service_tier = tier }
+
+    if (typeof params.cwd_explicit !== 'boolean') { delete params.cwd_explicit }
+
+    const allowed = new Set(['request_id', 'source', 'cwd', 'model', 'provider', 'toolsets', 'reasoning', 'profile', 'cols', 'title', 'hidden', 'follow_profile_config', 'service_tier', 'cwd_explicit'])
+    const unsupported = Object.keys(params).filter(key => !allowed.has(key))
 
     if (unsupported.length) { throw new Error(`Canonical gateway does not support explicit session options: ${unsupported.join(', ')}`) }
 
     const result = Object.fromEntries(Object.entries(params).filter(([key, value]) =>
-      ['request_id', 'cwd', 'model', 'toolsets', 'title', 'hidden'].includes(key) || (key === 'profile' && siblingRoute(value))))
+      ['request_id', 'cwd', 'model', 'provider', 'toolsets', 'reasoning', 'title', 'hidden', 'follow_profile_config', 'service_tier', 'cwd_explicit'].includes(key) || (key === 'profile' && siblingRoute(value))))
 
     const key = JSON.stringify(result)
     const requestId = params.request_id ?? this.creates.get(key) ?? crypto.randomUUID()
@@ -292,6 +454,24 @@ export class CanonicalDesktopProtocol {
     }
   }
 
+  // Turns advance the CAS revision without a session.updated event; the pending session.info fanout
+  // is where a viewer learns the value its next mutation must present. N91: another viewer's
+  // committed mutation broadcasts its receipt as session.updated: adopt it monotonically (a
+  // replayed older receipt never rewinds) and settle this viewer's superseded retained edits.
+  private adoptEventRevision(type: string, sid: string, profile: string, payload: Record<string, unknown>): void {
+    const owner = canonicalSessionKey(sid, profile)
+    const revision = payload.revision
+
+    if (typeof revision !== 'number') { return }
+
+    if (type === 'session.info') { this.revisions.set(owner, revision) }
+
+    if (type === 'session.updated' && (payload.session_id ?? sid) === sid && revision > (this.revisions.get(owner) ?? -1)) {
+      this.revisions.set(owner, revision)
+      this.retireSupersededMutations({ session_id: sid, profile }, revision)
+    }
+  }
+
   event(event: { type: string; session_id?: string; profile?: string; execution_generation?: unknown; payload?: unknown }) {
     const payload = event.payload as Record<string, unknown> | undefined
 
@@ -300,11 +480,7 @@ export class CanonicalDesktopProtocol {
     const profile = canonicalProfile(event.profile)
     const owner = canonicalSessionKey(sid, profile)
 
-    if (Array.isArray(payload.pending)) {
-      payload.pending_submissions = payload.pending.map(row => ({ ...row, user: row.text }))
-
-      this.reconcileUnknownAdmissions(sid, profile, payload.pending)
-    }
+    if (Array.isArray(payload.pending)) { payload.pending_submissions = payload.pending.map(row => ({ ...row, user: row.text })) }
 
     const generation = event.execution_generation ?? payload.execution_generation
 
@@ -315,9 +491,10 @@ export class CanonicalDesktopProtocol {
       this.generations.set(owner, generation)
     }
 
-    // Turns advance the CAS revision without a session.updated event; the
-    // pending fanout is where a viewer learns the value its next mutation must present.
-    if (event.type === 'session.info' && typeof payload.revision === 'number') { this.revisions.set(owner, payload.revision) }
+    // C20: only a frame that passed the generation fence may retire a live Discard action.
+    if (Array.isArray(payload.pending)) { this.reconcileUnknownAdmissions(sid, profile, payload.pending) }
+
+    this.adoptEventRevision(event.type, sid, profile, payload)
 
     if (typeof payload.prompt_id === 'string') {
       if (event.type.endsWith('.settled')) { this.prompts.delete(canonicalSessionKey(payload.prompt_id, profile));
@@ -334,13 +511,10 @@ export class CanonicalDesktopProtocol {
   result(method: string, params: Record<string, unknown>, value: any): any {
     if (!value || typeof value !== 'object') { return value }
 
-    if (typeof value.session_id === 'string' && typeof value.revision === 'number') {
-      this.revisions.set(canonicalSessionKey(value.session_id, params.profile), value.revision)
-    }
+    const mutation = MUTATION_METHODS.has(method) || (POLICY_EDIT_METHODS.has(method) && typeof params.operation === 'string')
+    this.adoptRevision(params, value, mutation)
 
-    if (MUTATION_METHODS.has(method) || ((method === 'slash.exec' || method === 'config.set') && typeof params.operation === 'string')) {
-      return this.mutationReceipt(method, params, value)
-    }
+    if (mutation) { return this.mutationReceipt(method, params, value) }
 
     if (method === 'session.create') {
       for (const [key, id] of this.creates) { if (id === params.request_id) { this.creates.delete(key) } }
@@ -355,6 +529,14 @@ export class CanonicalDesktopProtocol {
     }
 
     return value
+  }
+
+  // An exact-retry mutation receipt replays its ORIGINAL revision; never move the CAS value backwards.
+  private adoptRevision(params: Record<string, unknown>, value: any, mutation: boolean): void {
+    if (typeof value.session_id !== 'string' || typeof value.revision !== 'number') { return }
+    const owner = canonicalSessionKey(value.session_id, params.profile)
+
+    if (!mutation || value.revision >= (this.revisions.get(owner) ?? -1)) { this.revisions.set(owner, value.revision) }
   }
 
   private admissionReceipt(method: string, params: Record<string, unknown>, value: any): any {
@@ -379,11 +561,13 @@ export class CanonicalDesktopProtocol {
     if (value.session_id !== params.session_id) { throw new Error('Metadata receipt destination mismatch') }
 
     for (const [key, mutation] of this.mutations) { if (mutation.request_id === params.request_id) { this.mutations.delete(key) } }
+    this.settleModelConfirmation(params)
+    this.retireSupersededMutations(params, value.revision)
 
     if (params.operation === 'model' && value.status === 'confirmation_required' && typeof value.confirm === 'string') {
       // The owner wrote nothing: answer in the legacy handshake (`confirm_required` +
       // `confirm_message`) so the shared confirm dialog asks, and keep the token for its resend.
-      this.modelConfirmations.set(this.modelConfirmationKey(params, params.payload as Record<string, unknown>), value.confirm)
+      this.modelConfirmations.set(this.modelConfirmationKey(params, params.payload as Record<string, unknown>), { token: value.confirm, sent: false })
       const refusal = { ...value, confirm_required: true }
 
       return method === 'slash.exec' ? { ...refusal, type: 'exec', output: value.confirm_message } : refusal
@@ -395,7 +579,26 @@ export class CanonicalDesktopProtocol {
 
     if (method === 'slash.exec') { return { ...value, type: 'exec', output: mutationSummary(params.operation as string, value) } }
 
-    return { ...value, ok: true }
+    // The legacy config.set answer every reasoning caller reads (`result.value`).
+    return params.operation === 'reasoning' ? { ...value, ok: true, value: value.effort } : { ...value, ok: true }
+  }
+
+  // An acknowledged mutation at revision R settles every older retained value-setting request of
+  // the same owner: it either applied before R or can only be refused, so replaying its request
+  // id would return a stale receipt for a later, equal edit. Its confirmed model token goes with
+  // it. Branch/compress stay retained: a new request id there would execute a second time.
+  private retireSupersededMutations(params: Record<string, unknown>, revision: unknown): void {
+    if (typeof revision !== 'number') { return }
+    const owner = canonicalSessionKey(params.session_id, params.profile)
+
+    for (const [key, mutation] of this.mutations) {
+      const [keyOwner, operation] = JSON.parse(key)
+
+      if (keyOwner === owner && VALUE_OPERATIONS.has(operation) && (mutation.expected_revision as number) < revision) {
+        this.mutations.delete(key)
+        this.settleModelConfirmation({ ...mutation, profile: params.profile })
+      }
+    }
   }
 
   private snapshotResult(value: any, route: unknown): any {
@@ -410,7 +613,7 @@ export class CanonicalDesktopProtocol {
       return projected
     })
 
-    return { ...value, pending_approval: prompts.find((p: any) => p.kind === 'approval'), pending_clarify: prompts.find((p: any) => p.kind === 'clarify'), info: { ...value.info, stored_session_id: value.stored_session_id, pending_submissions: value.pending_submissions, execution_generation: value.execution_generation, running: value.running } }
+    return { ...value, pending_approval: prompts.find((p: any) => p.kind === 'approval'), pending_clarify: prompts.find((p: any) => p.kind === 'clarify'), info: { ...value.info, stored_session_id: value.stored_session_id, pending_submissions: value.pending_submissions, replay_epoch: value.replay_epoch, last_sequence: value.last_sequence, execution_generation: value.execution_generation, running: value.running } }
   }
 
   // The canonical compress receipt carries counts, not the retained transcript;

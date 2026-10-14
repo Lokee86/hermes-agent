@@ -41,6 +41,7 @@ class OAuthPKCEConfig:
     allowed_hosts: Tuple[str, ...] = ()
     timeout_seconds: float = 180.0
     label: str = ""
+    token_request: Optional[Callable[[dict[str, str]], Mapping[str, Any]]] = None
 
 
 def _err(provider: str, message: str, code: str):
@@ -67,6 +68,8 @@ def _endpoint_host(provider: str, name: str, url: str) -> str:
 
 def validate_config(provider: str, cfg: OAuthPKCEConfig) -> None:
     """Refuse a misdeclared config before any network request (login AND refresh call this)."""
+    if cfg.token_request is not None:
+        return
     if not str(cfg.client_id or "").strip():
         raise _err(provider, "OAuth client_id is missing.", "oauth_client_id_missing")
     authorize_host = _endpoint_host(provider, "authorize_url", cfg.authorize_url)
@@ -87,45 +90,37 @@ def validate_config(provider: str, cfg: OAuthPKCEConfig) -> None:
         )
 
 
-def _post_token(
-    provider: str, cfg: OAuthPKCEConfig, data: Dict[str, str], *, code: str
-) -> Dict[str, Any]:
-    """POST the token endpoint and return the rotated pool fields; the payload is never logged."""
-    from auth.oauth import _coerce_ttl_seconds, _default_verify, _utc_now_z
+def _post_token(provider: str, cfg: OAuthPKCEConfig, data: Dict[str, str], *, code: str) -> Dict[str, Any]:
+    """POST the token endpoint or delegate the grant to a confidential-client broker."""
+    if cfg.token_request is not None:
+        return _token_fields(provider, cfg.token_request(dict(data)), data, code)
+    from auth.oauth import _default_verify
     from auth.constants import httpx
-
     body = {**cfg.extra_token_params, **data, "client_id": cfg.client_id}
     if cfg.audience:
         body.setdefault("audience", cfg.audience)
     try:
-        response = httpx.post(
-            cfg.token_url,
-            data=body,
-            headers={"Accept": "application/json"},
-            timeout=30.0,
-            verify=_default_verify(),
-        )
+        response = httpx.post(cfg.token_url, data=body, headers={"Accept": "application/json"},
+                              timeout=30.0, verify=_default_verify())
     except Exception as exc:
-        raise _err(
-            provider, f"OAuth token request failed: {type(exc).__name__}", code
-        ) from exc
+        raise _err(provider, f"OAuth token request failed: {type(exc).__name__}", code) from exc
     if response.status_code >= 400:
         raise _token_http_error(provider, response, code)
-    payload = response.json()
+    return _token_fields(provider, response.json(), data, code)
+
+
+def _token_fields(provider: str, payload: Mapping[str, Any], data: Dict[str, str], code: str) -> Dict[str, Any]:
+    from auth.oauth import _coerce_ttl_seconds, _utc_now_z
     access_token = str(payload.get("access_token") or "").strip()
     if not access_token:
         raise _err(provider, "OAuth token response carried no access_token.", code)
     ttl = _coerce_ttl_seconds(payload.get("expires_in", 0))
     return {
         "access_token": access_token,
-        "refresh_token": str(
-            payload.get("refresh_token") or data.get("refresh_token") or ""
-        ).strip()
-        or None,
+        "refresh_token": str(payload.get("refresh_token") or data.get("refresh_token") or "").strip() or None,
         "expires_at_ms": int(time.time() * 1000) + ttl * 1000 if ttl else None,
         "last_refresh": _utc_now_z(),
     }
-
 
 def _token_http_error(provider: str, response: Any, fallback_code: str):
     """Map a failed token HTTP response. A grant-dead JSON ``error`` value becomes the

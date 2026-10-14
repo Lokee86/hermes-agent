@@ -43,9 +43,10 @@ from dataclasses import dataclass, field, replace
 from typing import Any, Callable, Dict, Optional, TypeVar
 from urllib.parse import urlparse
 
-from hermes_cli.anon_auth import (
+from auth.errors import AuthError
+from auth.providers.nous_guest import (
     ANON_CHALLENGE_REQUIRED, ANON_FAILURE_COPY, ANON_SIGNIN_REQUIRED, _anon_headers, _mint_memo_key)
-from hermes_cli.auth_constants import AuthError, httpx
+from auth.constants import httpx
 
 logger = logging.getLogger("hermes_cli.auth")
 

@@ -4,9 +4,9 @@ import json
 import logging
 import sqlite3
 import time
-from contextlib import suppress
+from contextlib import closing, suppress
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Optional
 
 # Logger parity with the origin module (moved log records keep their name).
 logger = logging.getLogger("gateway.platforms.api_server")
@@ -30,13 +30,13 @@ class ResponseStore:
     the bound the oldest-settled are dropped from all three tables plus their ``idem:`` replay
     record, in the same transaction as body eviction. An unsettled identity (admission pending,
     running, or outcome unknown) neither counts nor is ever dropped; it joins the bound once an
-    observer settles it. Public ``delete`` of a settled response drops its identity the same way.
+    observer stores its record or, with no observer left, once its canonical admission is terminal. Public ``delete`` of a settled response drops its identity the same way.
 
     An expired or deleted key is not a new request: the canonical admission still carries the
     request id, so a reuse is refused with ``admission_conflict`` and never re-executes.
     """
 
-    def __init__(self, max_size: int = MAX_STORED_RESPONSES, db_path: str = None,
+    def __init__(self, max_size: int = MAX_STORED_RESPONSES, db_path: Optional[str] = None,
                  max_identities: Optional[int] = None):
         self._max_size = max_size
         self._max_identities = max_identities
@@ -77,7 +77,10 @@ class ResponseStore:
         self._conn.execute('CREATE INDEX IF NOT EXISTS response_keys_response ON response_keys(response_id)')
         # Rows written before settlement was tracked: settled iff their replay record survives.
         self._mark_settled('1', ())
-        self._conn.commit()
+        self._settle_terminal_admissions()
+        # The identity bound holds from open, not only from the next write (a lowered bound or a
+        # store that crashed past it would otherwise keep every settled identity until then).
+        self._evict_and_commit()
         # Conversation history lives here: owner-only perms, once at init (not per commit).
         self._tighten_file_permissions()
 
@@ -92,7 +95,7 @@ class ResponseStore:
             except OSError:
                 logger.debug("Failed to restrict response store permissions for %s", candidate, exc_info=True)
 
-    def get(self, response_id: str) -> Optional[Dict[str, Any]]:
+    def get(self, response_id: str) -> Optional[dict[str, Any]]:
         """Retrieve a stored response by ID (updates access time for LRU)."""
         row = self._conn.execute(
             "SELECT data FROM responses WHERE response_id = ?", (response_id,)).fetchone()
@@ -110,7 +113,7 @@ class ResponseStore:
             self._conn.commit()
             return None
 
-    def put(self, response_id: str, data: Dict[str, Any]) -> None:
+    def put(self, response_id: str, data: dict[str, Any]) -> None:
         """Store a response, evicting the oldest if at capacity."""
         insert = 'INSERT OR IGNORE' if response_id.startswith('idem:') else 'INSERT OR REPLACE'
         self._conn.execute(
@@ -127,6 +130,51 @@ class ResponseStore:
             "WHERE responses.response_id=request_key) WHERE settled_at IS NULL AND "
             f"{selector} AND EXISTS (SELECT 1 FROM responses WHERE responses.response_id=request_key "
             f"AND {_RECORD}') IS NOT NULL)", (time.time(), *params))
+
+    def _settle_terminal_admissions(self, at: Optional[float] = None) -> None:
+        """Settle an identity whose canonical admission already finished but left no replay
+        record: rows migrated from a release that did not track settlement (their record aged
+        out of the old body LRU), or a request whose client left before the record was written
+        (a disconnected stream's observer is gone, so nothing else would ever settle it).
+
+        Runs at open and before every bound or delete decision, so it does not depend on any
+        HTTP observer. The authority is this home's ``state.db`` (live row or retired
+        tombstone), read-only. Only a terminal admission settles: at ``at``, or on open at its
+        acceptance time so a migrated row ages out first. Its deterministic response id is
+        recorded so ``DELETE /v1/responses/<id>`` reaches it. A queued/started/unknown one keeps
+        its identity, so its exact retry is unchanged."""
+        if not self._db_path:
+            return
+        pending = dict(self._conn.execute(
+            'SELECT a.admission_id, k.request_key FROM response_keys k JOIN response_admissions a '
+            'ON a.request_key=k.request_key WHERE k.settled_at IS NULL').fetchall())
+        state_db = Path(self._db_path).parent / 'state.db'
+        if not pending or not state_db.is_file():
+            return
+        from hermes_state_holders import read_only_db_uri
+        from hermes_state_terminal import ADMISSION_PREFIX
+        terminal = []
+        ids = list(pending)
+        try:
+            with closing(sqlite3.connect(read_only_db_uri(state_db), uri=True)) as canon:
+                for start in range(0, len(ids), 500):
+                    chunk = ids[start:start + 500]
+                    marks = ','.join('?' * len(chunk))
+                    terminal += [row[0] for row in canon.execute(
+                        f"SELECT admission_id FROM session_admissions WHERE status='terminal' "
+                        f"AND admission_id IN ({marks})", chunk)]
+                    terminal += [row[0][len(ADMISSION_PREFIX):] for row in canon.execute(
+                        f'SELECT key FROM state_meta WHERE key IN ({marks})',
+                        [ADMISSION_PREFIX + admission_id for admission_id in chunk])]
+        except sqlite3.Error:
+            # Unreadable canonical store: nothing is proven terminal, so nothing is settled.
+            logger.debug('Responses identity settlement skipped: %s unreadable', state_db, exc_info=True)
+            return
+        from gateway.platforms.api_server_response_identity import durable_response_id
+        self._conn.executemany(
+            'UPDATE response_keys SET settled_at=COALESCE(?, created_at), response_id=COALESCE(response_id, ?) '
+            'WHERE request_key=? AND settled_at IS NULL',
+            [(at, durable_response_id(pending[a]), pending[a]) for a in set(terminal)])
 
     def _identity_bound(self) -> int:
         return self._max_identities or IDENTITY_RETENTION_FACTOR * self._max_size
@@ -153,6 +201,7 @@ class ResponseStore:
                 # Conversation mappings pointing at evicted responses go too.
                 self._conn.execute(f"DELETE FROM conversations WHERE response_id IN ({placeholders})", evict_ids)
                 self._conn.execute(f"DELETE FROM responses WHERE response_id IN ({placeholders})", evict_ids)
+        self._settle_terminal_admissions(time.time())
         excess = self._conn.execute(
             'SELECT COUNT(*) FROM response_keys WHERE settled_at IS NOT NULL').fetchone()[0] - self._identity_bound()
         if excess > 0:
@@ -227,6 +276,7 @@ class ResponseStore:
         identity (replay record included). True if anything was found and deleted."""
         self._conn.execute("DELETE FROM conversations WHERE response_id = ?", (response_id,))
         cursor = self._conn.execute("DELETE FROM responses WHERE response_id = ?", (response_id,))
+        self._settle_terminal_admissions(time.time())
         forgotten = self._forget_identities('response_id = ?', (response_id,))
         self._conn.commit()
         return cursor.rowcount > 0 or forgotten > 0

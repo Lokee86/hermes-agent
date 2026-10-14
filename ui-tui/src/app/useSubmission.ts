@@ -8,12 +8,13 @@ import type { GatewayClient } from '../gatewayClient.js'
 import type { ShellExecResponse } from '../gatewayTypes.js'
 import { queueItem, type QueueItem } from '../hooks/useQueue.js'
 import { t } from '../i18n/runtime.js'
-import { asRpcResult } from '../lib/rpc.js'
+import { asRpcResult, rpcErrorMessage } from '../lib/rpc.js'
 import { hasInterpolation, INTERPOLATION_RE } from '../protocol/interpolation.js'
 import type { Msg } from '../types.js'
 
 import { reportSlashCommand } from './createSlashHandler.js'
 import type { BusyInputMode, ComposerActions, ComposerRefs, ComposerState, ComposerToken, SlashHandler } from './interfaces.js'
+import { findSlashCommand } from './slash/registry.js'
 import { submitPrompt } from './submissionCore.js'
 import { captureDestination, isCurrentDestination, type SubmissionDestination } from './submissionDestination.js'
 import { turnController } from './turnController.js'
@@ -199,8 +200,11 @@ export function useSubmission(opts: UseSubmissionOptions) {
     [appendMessage, gw, sys]
   )
 
+  // A `{!cmd}` that could not run refuses the whole submit: the model never receives a
+  // placeholder such as `(error)` standing in for output the user expected (dokterdok N22). The
+  // staged row settles as not accepted, so the input stays retained for Alt+K / an edit.
   const interpolate = useCallback(
-    (text: string, then: (result: string) => void, destination = captureDestination()) => {
+    (text: string, then: (result: string) => void, destination = captureDestination(), item?: QueueItem) => {
       patchUiState({ status: 'interpolating…' })
       const matches = [...text.matchAll(new RegExp(INTERPOLATION_RE.source, 'g'))]
 
@@ -211,13 +215,26 @@ export function useSubmission(opts: UseSubmissionOptions) {
             .then(raw => {
               const r = asRpcResult<ShellExecResponse>(raw)
 
-              return [r?.stdout, r?.stderr].filter(Boolean).join('\n').trim()
+              if (!r) {
+                throw new Error(t('session.common.invalidResponse', 'shell.exec'))
+              }
+
+              return [r.stdout, r.stderr].filter(Boolean).join('\n').trim()
             })
-            .catch(() => '(error)')
         )
-      ).then(results => then(spliceMatches(text, matches, results)))
+      ).then(
+        results => then(spliceMatches(text, matches, results)),
+        (error: unknown) => {
+          item?.settle?.(false)
+
+          if (isCurrentDestination(destination)) {
+            sys(t('session.common.interpolationFailed', rpcErrorMessage(error)))
+            patchUiState({ busy: false, status: 'ready' })
+          }
+        }
+      )
     },
-    [gw]
+    [gw, sys]
   )
 
   const sendQueued = useCallback(
@@ -240,7 +257,8 @@ export function useSubmission(opts: UseSubmissionOptions) {
         return interpolate(
           text,
           result => send(result, true, undefined, value => value, { destination, queueItem: item }),
-          destination
+          destination,
+          item
         )
       }
 
@@ -455,7 +473,8 @@ export function useSubmission(opts: UseSubmissionOptions) {
               destination,
               queueItem: item, attachments: submission.attachments
             }),
-          destination
+          destination,
+          item
         )
       }
 
@@ -480,7 +499,10 @@ export function useSubmission(opts: UseSubmissionOptions) {
     (value: string) => {
       if (composerState.completions.length) {
         const row = composerState.completions[composerState.compIdx]
-        const next = completionToApplyOnSubmit(value, row?.text, composerState.compReplace)
+
+        const next = completionToApplyOnSubmit(value, row?.text, composerState.compReplace, name =>
+          Boolean(findSlashCommand(name))
+        )
 
         if (next !== null) {
           return composerActions.setInput(next)

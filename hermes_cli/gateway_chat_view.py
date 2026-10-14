@@ -10,6 +10,22 @@ from hermes_cli.gateway_client import GatewayClientError
 logger = logging.getLogger(__name__)
 
 
+_PREVIEW_CHARS = 80
+
+
+def _pending_preview(text):
+    """One terminal-safe line of a pending admission's prompt: escape sequences removed, every
+    other non-printable (C0/C1, bidi and zero-width format chars, newlines) folded to a space,
+    capped at ``_PREVIEW_CHARS``. Empty when the row carries no text."""
+    from tools.ansi_strip import strip_ansi
+    if not isinstance(text, str):
+        return ""
+    line = " ".join("".join(ch if ch.isprintable() else " " for ch in strip_ansi(text)).split())
+    if len(line) > _PREVIEW_CHARS:
+        line = line[:_PREVIEW_CHARS - 1] + "…"
+    return f": {line}" if line else ""
+
+
 _BLOCKING_CONTROL_EVENTS = frozenset({
     "approval.request", "approval.settled", "clarify.request", "clarify.settled",
     "session.info",
@@ -37,6 +53,7 @@ class GatewayChatView:
         self.finite = False
         self.unattended = False  # `-z`: the classic one-shot auto-approves; `-q` stays single-query
         self.resume_footer = False  # `chat -q` without -Q: main's "Resume this session with:" block
+        self.launch_api_key = None  # `--api-key` of this terminal's launch; never durable (/new reuses it)
         self.finite_admission = None
         self._finite_events = []
         self.streams = {}
@@ -64,11 +81,13 @@ class GatewayChatView:
                   "without replaying it; queued work may then continue.", file=sys.stderr)
         for row in self.pending:
             admission = row["admission_id"]
+            # A queued prompt is not in the transcript yet: show what is about to run (or was lost).
+            preview = _pending_preview(row.get("text"))
             if row["status"] == "unknown":
-                print(f"Unknown admission: {admission}\n/discard {admission}", file=sys.stderr)
+                print(f"Unknown admission: {admission}{preview}\n/discard {admission}", file=sys.stderr)
             elif row["status"] == "queued":
                 context = "waiting behind unknown work" if unknown else "waiting to run"
-                print(f"Queued admission: {admission} ({context})", file=sys.stderr)
+                print(f"Queued admission: {admission} ({context}){preview}", file=sys.stderr)
 
     def show_prompt(self, prompt):
         print(f"\n{prompt.get('description') or prompt.get('question') or 'Approval required'}", file=sys.stderr)
@@ -140,6 +159,7 @@ class GatewayChatView:
             "approval.request": self._request, "clarify.request": self._request,
             "approval.settled": self._settled, "clarify.settled": self._settled,
             "session.info": self._session_info,
+            "status.update": self._notice, "notification.show": self._notice,
         }.get(kind)
         if handler:
             handler(admission, payload)
@@ -147,6 +167,11 @@ class GatewayChatView:
     def _session_info(self, admission, payload):
         self.pending = payload.get("pending", self.pending)
         self.generation = payload.get("execution_generation", self.generation)
+
+    def _notice(self, admission, payload):
+        # The owner already applied display.warning_notifications; it publishes only what shows.
+        if not self.quiet and str(payload.get("text") or "").strip():
+            print(str(payload["text"]).strip(), file=sys.stderr, flush=True)
 
     def _tool_start(self, admission, payload):
         # Deltas before a tool call are interim commentary the final reply does not repeat;
@@ -210,6 +235,7 @@ class GatewayChatView:
         self.prompts.pop(payload["prompt_id"], None)
 
     async def submit(self, text):
+        self.mutations.retire(self.session_id)
         return await self.client.rpc("prompt.submit", session_id=self.session_id,
                                      input_id=uuid.uuid4().hex, text=text,
                                      **({"finite": True} if self.finite else {}),
@@ -256,6 +282,12 @@ class GatewayChatView:
                 self.mutations.acknowledge(original, operation, payload)
                 print('\n'.join(result['lines']))
                 return True
+            if result.get('status') == 'noop':
+                # Nothing removable: main's report, nothing committed (gateway/session_mutation_compress.py).
+                self.mutations.acknowledge(original, operation, payload)
+                summary = result.get('summary') or {}
+                print('\n'.join(filter(None, (summary.get('headline'), summary.get('token_line'), summary.get('note')))))
+                return True
             target = result.get('branched_session_id', original)
             await self.adopt(await self.client.rpc('session.resume', session_id=target))
             self.mutations.acknowledge(original, operation, payload)
@@ -285,6 +317,11 @@ class GatewayChatView:
         self.prompts = {p['prompt_id']: p for p in snapshot.get('prompts', [])}
         self.pending = snapshot.get('pending', [])
         self.model = str((snapshot.get('info') or {}).get('model') or self.model).split('/')[-1]
+        if not self.finite:
+            # Bare `hermes -c` in this terminal continues the session it is now on, as the
+            # in-process CLI re-wrote its breadcrumb on every session switch.
+            from hermes_cli.terminal_breadcrumbs import write_breadcrumb
+            await asyncio.to_thread(write_breadcrumb, self.session_id)
 
     async def _confirm_model_switch(self, refusal):
         """The owner refused a guarded model target (cost / data policy / large context): ask as
@@ -349,8 +386,10 @@ class GatewayChatView:
 
     def _print_exit_ids(self):
         """The finite run's durable id on stderr (automation wrappers parse it; it names the
-        physical row a compaction may have advanced) and, for `chat -q`, main's resume block."""
-        print(f"\nsession_id: {self.session_id}", file=sys.stderr, flush=True)
+        physical row a compaction may have advanced) and, for `chat -q`, main's resume block. Main's
+        `-z` (unattended) printed only the reply: no id line."""
+        if not self.unattended:
+            print(f"\nsession_id: {self.session_id}", file=sys.stderr, flush=True)
         if self.resume_footer:
             print(resume_footer(self.session_id), flush=True)
 
@@ -430,7 +469,8 @@ class GatewayChatView:
                                    bottom_toolbar=lambda: f" \u2624 {self.model} \u2502 {self.session_id} ")
             prompt_symbol = get_active_prompt_symbol("❯ ")
             self._composer = prompt if sys.stdin.isatty() else None
-            with patch_stdout():
+            from hermes_cli.gateway_chat_inject import plugin_inject_slot
+            with patch_stdout(), plugin_inject_slot(self):
                 while not self.failure:
                     try:
                         # Empty when the stream failed first: the loop guard then raises it.

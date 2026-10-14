@@ -104,6 +104,9 @@ def _codex_http_client(**kwargs: Any) -> "httpx.Client":
     token refresh / device login / usage probes time out where the official Codex CLI (which races families
     per RFC 8305) works.
     """
+    from utils import normalize_proxy_env_vars
+
+    normalize_proxy_env_vars()
     client = httpx.Client(
         event_hooks={"response": [_cap_codex_response_body]}, **kwargs
     )

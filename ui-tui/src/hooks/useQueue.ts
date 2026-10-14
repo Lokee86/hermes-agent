@@ -53,7 +53,23 @@ export function takeQueueItem(queue: QueueItem[], index: number, editedDisplay?:
 
   const text = editedDisplay.includes(item.display) ? editedDisplay.replace(item.display, item.text) : editedDisplay
 
-  return text === item.text ? { ...item, display: editedDisplay } : { display: editedDisplay, text }
+  if (text === item.text) {
+    return { ...item, display: editedDisplay }
+  }
+
+  // New text is a new submission (fresh id, no prior attempt), but the edit keeps what the
+  // user queued it with: attachments, destination and the busy-control intent.
+  const {
+    failed: _f,
+    inFlight: _i,
+    legacyAttempted: _l,
+    preparedText: _p,
+    settle: _s,
+    submissionId: _id,
+    ...kept
+  } = item
+
+  return { ...kept, display: editedDisplay, text }
 }
 
 // Mutates `arr` in place; returned reference is the same input array, kept
@@ -187,7 +203,10 @@ export function useQueue(gw?: { request: (method: string, params: Record<string,
 
   const queuedDisplay = [
     ...queueRef.current.map(item => `${item.failed ? t('canonical.queue.unconfirmedPrefix') : ''}${item.display}`),
-    ...serverRows.map(row => t('canonical.queue.serverRow', String(row.status), String(row.user)))
+    // A queued row reads as main's plain queue line; only an unknown execution keeps its status tag.
+    ...serverRows.map(row =>
+      row.status === 'queued' ? String(row.user) : t('canonical.queue.serverRow', String(row.status), String(row.user))
+    )
   ]
 
   // Indexes past the local items address server rows (read live, not from
@@ -339,7 +358,7 @@ export function useQueue(gw?: { request: (method: string, params: Record<string,
           item.submissionId === (receipt.input_id ?? receipt.admission_id) &&
           Boolean(item.destination?.storedSid) &&
           item.destination?.storedSid === receipt.target_session_id &&
-          item.destination?.profileHome === receipt.target_profile_home
+          (item.destination?.ownerHome ?? item.destination?.profileHome) === receipt.target_profile_home
       )
 
       if (!item) {

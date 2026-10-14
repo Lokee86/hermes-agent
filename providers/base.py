@@ -320,7 +320,7 @@ class ProviderProfile:
         """
         if not self.hidden:
             return True
-        from hermes_cli.auth import read_credential_pool  # lazy: providers/ must not import hermes_cli at load
+        from auth.pool_persistence import read_credential_pool
         return bool(read_credential_pool(self.name))
 
     def create_client(self, **client_kwargs: Any) -> Any | None:

@@ -166,6 +166,8 @@ FAILURE_REASON_BILLING_UNVERIFIED = "billing_unverified"
 # dedup in #58265.
 NO_AVAILABLE_ENTRIES_LOG_THROTTLE_SECONDS = 60.0
 
+_REFRESH_SWEEP_SPACING_SECONDS = 0.5
+
 # Pool key prefix for custom OpenAI-compatible endpoints: all share
 # provider='custom' but are keyed 'custom:<normalized_name>'.
 CUSTOM_POOL_PREFIX = "custom:"
@@ -1316,7 +1318,7 @@ class CredentialPool(CredentialPoolRefreshMixin, CredentialPoolAdminMixin, Crede
         # Permanent OAuth failures become STATUS_DEAD, not STATUS_EXHAUSTED:
         # otherwise a revoked credential re-enters rotation every hour and
         # fails immediately until the user removes it (#32849).
-        terminal = self._is_terminal_auth_failure(status_code, normalized_error)
+        terminal = entry.last_status == STATUS_DEAD or self._is_terminal_auth_failure(status_code, normalized_error)
         # Carry the classifier's verdict so the cooldown is sized by what
         # actually failed (a billing 403 must not get the sole-credential
         # transient cooldown); absent a classification, clear a stale one.
@@ -1371,7 +1373,9 @@ class CredentialPool(CredentialPoolRefreshMixin, CredentialPoolAdminMixin, Crede
         possible) and merges into the pool through the self-locking mutation
         primitives; failures are silently skipped.
         """
-        for entry in pending:
+        for index, entry in enumerate(pending):
+            if index:
+                time.sleep(_REFRESH_SWEEP_SPACING_SECONDS)
             self._refresh_entry(entry, force=False)
 
     def _reset_cleared_after(self, entry: PooledCredential) -> Optional[float]:

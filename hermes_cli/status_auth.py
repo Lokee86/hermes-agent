@@ -10,7 +10,7 @@ import auth.providers.nous as _auth_auth_providers_nous
 Origin helpers (``_row``, ``_first_env_value``, ...) are resolved through the ``hermes_cli.status``
 module object so tests that monkeypatch that module keep working."""
 
-from datetime import datetime, timezone
+from datetime import datetime, timezone, UTC
 
 from auth.errors import AuthError
 from hermes_cli.nous_account import format_nous_portal_entitlement_message, get_nous_portal_account_info
@@ -30,12 +30,12 @@ def _format_iso_timestamp(value) -> str:
     except Exception:
         return value
     if parsed.tzinfo is None:
-        parsed = parsed.replace(tzinfo=timezone.utc)
+        parsed = parsed.replace(tzinfo=UTC)
     return safe_strftime(parsed.astimezone(), "%Y-%m-%d %H:%M:%S %Z")
 
 
 def _qwen_expiry(expires_at_ms) -> str:
-    return datetime.fromtimestamp(int(expires_at_ms) / 1000, tz=timezone.utc).isoformat()
+    return datetime.fromtimestamp(int(expires_at_ms) / 1000, tz=UTC).isoformat()
 
 
 def _oauth_block(name: str, status: dict, hint: str, rows) -> None:

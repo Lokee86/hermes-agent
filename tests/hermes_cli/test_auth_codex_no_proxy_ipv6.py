@@ -26,7 +26,7 @@ def clash_env(monkeypatch):
 
 
 def test_codex_http_client_constructs_under_clash_ipv6_no_proxy(clash_env):
-    from hermes_cli.auth import _codex_http_client
+    from auth.providers.codex_http import _codex_http_client
 
     # Red on base: InvalidURL('Invalid port: :1]') is raised at httpx.Client construction.
     client = _codex_http_client(timeout=5.0)

@@ -20,9 +20,10 @@ import { applyConfiguredTuiTheme } from '../../createGatewayEventHandler.js'
 import { DEFAULT_INDICATOR_STYLE, INDICATOR_STYLES, type IndicatorStyle } from '../../interfaces.js'
 import { patchOverlayState } from '../../overlayStore.js'
 import { getUiState, patchUiState } from '../../uiStore.js'
-import { canonicalUsage } from '../canonicalSessionCommands.js'
+import { canonicalReasoning, canonicalUsage } from '../canonicalSessionCommands.js'
 import { runCanonicalSessionControl } from '../canonicalSessionControls.js'
 import type { SlashCommand, SlashRunCtx } from '../types.js'
+import { usageTotalsSections } from '../usagePanel.js'
 
 const TUI_SESSION_MODEL_RE = new RegExp(`(?:^|\\s)${TUI_SESSION_MODEL_FLAG}(?:\\s|$)`)
 const REASONING_SESSION_FLAGS = new Set(['--session'])
@@ -116,10 +117,6 @@ export const sessionCommands: SlashCommand[] = [
         return ctx.transcript.sys(t('slashCmd.session.bg.usage'))
       }
 
-      if (ctx.gateway.gw?.isCanonical) {
-        return ctx.transcript.sys(t('canonical.controls.notAvailable', 'bg'))
-      }
-
       ctx.gateway.rpc<BackgroundStartResponse>('prompt.background', { session_id: ctx.sid, text: arg }).then(
         ctx.guarded<BackgroundStartResponse>(r => {
           if (!r.task_id) {
@@ -139,10 +136,6 @@ export const sessionCommands: SlashCommand[] = [
     run: (arg, ctx) => {
       if (!arg) {
         return ctx.transcript.sys(t('slashCmd.session.btw.usage'))
-      }
-
-      if (ctx.gateway.gw?.isCanonical) {
-        return ctx.transcript.sys(t('canonical.controls.notAvailable', 'btw'))
       }
 
       ctx.gateway.rpc<BackgroundStartResponse>('prompt.btw', { session_id: ctx.sid, text: arg }).then(
@@ -264,6 +257,14 @@ export const sessionCommands: SlashCommand[] = [
     help: 'switch personality for this session',
     name: 'personality',
     run: (arg, ctx) => {
+      // The bare form is the owner's /personality listing (one behaviour on every surface).
+      if (!arg && ctx.gateway.gw?.isCanonical) {
+        return ctx.gateway.gw
+          .request<SlashExecResponse>('slash.exec', { command: 'personality', session_id: ctx.sid })
+          .then(ctx.guarded<SlashExecResponse>(r => r.output && ctx.transcript.sys(r.output)))
+          .catch(ctx.guardedErr)
+      }
+
       if (!arg) {
         return
       }
@@ -392,6 +393,15 @@ export const sessionCommands: SlashCommand[] = [
         normalized === 'on' || normalized === 'off' || normalized === 'tts' || normalized === 'status'
           ? normalized
           : 'status'
+
+      // `/voice tts` is the session's voice state, held by the owner's `/voice` handler (one behaviour
+      // on every surface); recording and playback stay in this terminal.
+      if (action === 'tts' && ctx.gateway.gw?.isCanonical) {
+        return ctx.gateway.gw
+          .request<SlashExecResponse>('slash.exec', { command: 'voice tts', session_id: ctx.sid })
+          .then(ctx.guarded<SlashExecResponse>(r => r.output && ctx.transcript.sys(r.output)))
+          .catch(ctx.guardedErr)
+      }
 
       ctx.gateway.rpc<VoiceToggleResponse>('voice.toggle', { action }).then(
         ctx.guarded<VoiceToggleResponse>(r => {
@@ -635,7 +645,15 @@ export const sessionCommands: SlashCommand[] = [
           )
       }
 
-      ctx.gateway.rpc<ConfigSetResponse>('config.set', reasoningConfigPayload(arg, ctx.sid ?? '')).then(
+      const payload = reasoningConfigPayload(arg, ctx.sid ?? '')
+
+      // The shared owner sets a session level through its frozen-policy mutation; `--global`, `reset`
+      // and the display words are the owner's `/reasoning` handler behind `config.set reasoning`.
+      if (ctx.gateway.gw?.isCanonical && canonicalReasoning(payload, ctx)) {
+        return
+      }
+
+      ctx.gateway.rpc<ConfigSetResponse>('config.set', payload).then(
         ctx.guarded<ConfigSetResponse>(r => {
           if (!r.value) {
             return
@@ -845,35 +863,7 @@ export const sessionCommands: SlashCommand[] = [
           return
         }
 
-        const f = (v: number | undefined) => (v ?? 0).toLocaleString()
-
-        const rows: [string, string][] = [
-          [t('slashCmd.session.usage.rowModel'), r.model ?? ''],
-          [t('slashCmd.session.usage.rowInputTokens'), f(r.input)],
-          [t('slashCmd.session.usage.rowOutputTokens'), f(r.output)],
-          [t('slashCmd.session.usage.rowTotalTokens'), f(r.total)],
-          [t('slashCmd.session.usage.rowApiCalls'), f(r.calls)]
-        ]
-
-        const sections: PanelSection[] = [{ rows }]
-
-        if (r.context_max) {
-          const mark = r.context_estimated ? '~' : ''
-          sections.push({
-            text: t(
-              'slashCmd.session.usage.context',
-              `${mark}${f(r.context_used)}`,
-              f(r.context_max),
-              `${mark}${r.context_percent}`
-            )
-          })
-        }
-
-        if (r.compressions) {
-          sections.push({ text: t('slashCmd.session.usage.compressions', String(r.compressions)) })
-        }
-
-        ctx.transcript.panel(t('slashCmd.session.usage.usageTitle'), sections)
+        ctx.transcript.panel(t('slashCmd.session.usage.usageTitle'), usageTotalsSections(r))
 
         sys(t('slashCmd.session.usage.cta'))
       })

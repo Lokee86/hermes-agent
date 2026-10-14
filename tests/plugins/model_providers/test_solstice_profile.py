@@ -52,7 +52,8 @@ def test_solstice_is_off_every_discovery_surface_until_signed_in_but_always_reso
 def test_brokered_opaque_bearer_rotates_on_stored_expiry_and_keeps_the_refresh_token(monkeypatch, tmp_path, request):
     """Google access tokens are opaque (no JWT ``exp``): the pool must rotate on ``expires_at_ms``, through the
     plugin's broker instead of a token URL, and keep the refresh token when the response omits it."""
-    from agent.credential_pool import load_pool
+    from auth.credential_pool import load_pool
+    from hermes_cli.config_credentials import credential_pool_environment
 
     home = tmp_path / "hermes"
     home.mkdir()
@@ -71,10 +72,10 @@ def test_brokered_opaque_bearer_rotates_on_stored_expiry_and_keeps_the_refresh_t
 
     now_ms = int(time.time() * 1000)
     _write_pool(home, name, _pool_row(name, access="ya29.live", expires_at_ms=now_ms + 3_600_000))
-    assert load_pool(name).select().access_token == "ya29.live" and grants == []  # fresh: no broker call
+    assert load_pool(name, environment=credential_pool_environment()).select().access_token == "ya29.live" and grants == []  # fresh: no broker call
 
     _write_pool(home, name, _pool_row(name, access="ya29.stale", expires_at_ms=now_ms - 1000))
-    leased = load_pool(name).select()
+    leased = load_pool(name, environment=credential_pool_environment()).select()
     assert leased.access_token == "ya29.fresh-1"
     assert grants == [{"grant_type": "refresh_token", "refresh_token": "1//rt-0"}]
     disk = json.loads((home / "auth.json").read_text())["credential_pool"][name][0]
@@ -83,8 +84,8 @@ def test_brokered_opaque_bearer_rotates_on_stored_expiry_and_keeps_the_refresh_t
 
     # A grant the broker rejects is DEAD and stays DEAD through the inference 401 that follows (never re-benched
     # as EXHAUSTED, which would replay the dead token every cooldown).
-    from agent.credential_pool import STATUS_DEAD
-    from hermes_cli.auth_constants import AuthError
+    from auth.credential_pool import STATUS_DEAD
+    from auth.errors import AuthError
 
     def dead_broker(grant: dict) -> dict:
         raise AuthError("rejected", provider=name, code="invalid_grant", relogin_required=True)
@@ -93,7 +94,7 @@ def test_brokered_opaque_bearer_rotates_on_stored_expiry_and_keeps_the_refresh_t
     providers._REGISTRY[name] = ProviderProfile(name=name, auth_type="oauth_external", base_url="https://example.invalid/v1",
                                                 refresh_credential=pkce.pkce_refresh_credential(cfg_dead))
     _write_pool(home, name, _pool_row(name, access="ya29.revoked", expires_at_ms=now_ms + 3_600_000))
-    pool = load_pool(name)
+    pool = load_pool(name, environment=credential_pool_environment())
     pool.select()
     assert pool.try_refresh_current() is None
     pool.mark_exhausted_and_rotate(status_code=401, api_key_hint="ya29.revoked")

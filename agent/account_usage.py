@@ -5,7 +5,7 @@ from hermes_cli.config_credentials import credential_pool_environment as _phase6
 import logging
 import math
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timezone, UTC
 from typing import TYPE_CHECKING, Any, Callable, Optional
 
 import httpx
@@ -26,7 +26,7 @@ _DEPLETED_LINE = "Status: access depleted — top up to restore"
 
 
 def _utc_now() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 @dataclass(frozen=True)
@@ -77,13 +77,13 @@ def _parse_dt(value: Any) -> Optional[datetime]:
     if value in {None, ""}:
         return None
     if isinstance(value, (int, float)):
-        return datetime.fromtimestamp(float(value), tz=timezone.utc)
+        return datetime.fromtimestamp(float(value), tz=UTC)
     if not isinstance(value, str) or not (text := value.strip()):
         return None
     text = text[:-1] + "+00:00" if text.endswith("Z") else text
     try:
         dt = datetime.fromisoformat(text)
-        return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
+        return dt if dt.tzinfo else dt.replace(tzinfo=UTC)
     except ValueError:
         return None
 
