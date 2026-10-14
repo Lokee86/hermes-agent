@@ -9535,6 +9535,9 @@
                 "type": "string"
               },
               {
+                "type": "boolean"
+              },
+              {
                 "type": "null"
               }
             ],
@@ -9564,11 +9567,6 @@
             ],
             "default": null,
             "title": "Source"
-          },
-          "latest": {
-            "default": false,
-            "title": "Latest",
-            "type": "boolean"
           },
           "cwd": {
             "anyOf": [

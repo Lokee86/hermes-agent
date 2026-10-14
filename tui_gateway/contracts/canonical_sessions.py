@@ -53,10 +53,10 @@ class CanonicalResumeParams(ProfileParams):
     title: str | None = None
     # Bare `-c` / `--resume latest`: the owner resolves the most recent session of this surface
     # family (``workspace`` = the caller's git root / cwd, tried first).
-    latest: Literal['cli', 'tui'] | None = None
+    latest: Literal['cli', 'tui'] | bool | None = None
     workspace: str | None = None
     source: str | None = None
-    latest: bool = False
+    # Legacy/classic callers use latest=True plus exact cwd; canonical clients use a source family.
     cwd: str | None = None
     editor: dict[str, JsonValue] | None = None
     # Re-supplies a launch-only key a restart revoked; never durable, must match the launch's.

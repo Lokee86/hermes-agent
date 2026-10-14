@@ -4930,10 +4930,9 @@ export interface CanonicalResumeParams {
   profile?: string | null
   session_id?: string
   title?: string | null
-  latest?: 'cli' | 'tui' | null
+  latest?: 'cli' | 'tui' | boolean | null
   workspace?: string | null
   source?: string | null
-  latest?: boolean
   cwd?: string | null
   editor?: Record<string, unknown> | null
   api_key?: string | null
