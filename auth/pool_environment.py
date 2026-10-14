@@ -7,7 +7,8 @@ callbacks are supplied by provider implementations; the pool owns their invocati
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Callable, Mapping
+from typing import Any, Callable, ContextManager, Mapping
+
 from auth.context import CredentialScope
 from hermes_constants import get_hermes_home
 
@@ -51,6 +52,7 @@ class PoolEnvironment:
     anon_signin_required_error: Callable[[Any], BaseException] | None = field(default=None, repr=False)
     anon_note_optional_challenges: Callable[[Mapping[str, Any], str], None] | None = field(default=None, repr=False)
     anon_run_with_challenge: Callable[[Callable[[], Any]], Any] | None = field(default=None, repr=False)
+    anon_background_caller: Callable[[], ContextManager[Any]] | None = field(default=None, repr=False)
 
     def require_current_scope(self) -> None:
         if self.scope != CredentialScope(get_hermes_home()):

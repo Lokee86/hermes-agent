@@ -86,7 +86,10 @@ def _compute_nous_auth_status(*, environment) -> Dict[str, Any]:
         state, logged_in=bool(state.get("access_token")), source="auth_store"
     )
     try:
-        creds = resolve_nous_runtime_credentials(environment=environment)
+        from contextlib import nullcontext
+        background = environment.anon_background_caller or nullcontext
+        with background():
+            creds = resolve_nous_runtime_credentials(environment=environment)
         refreshed_state = get_provider_auth_state("nous") or state
         base_status.update({
             "logged_in": True,

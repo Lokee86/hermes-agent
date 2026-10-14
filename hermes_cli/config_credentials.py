@@ -270,6 +270,7 @@ def credential_pool_environment():
         anon_signin_required_error=anon_challenge.signin_required_error,
         anon_note_optional_challenges=anon_challenge.note_optional_challenges,
         anon_run_with_challenge=anon_challenge.run_with_challenge,
+        anon_background_caller=anon_challenge.background_caller,
         entitlement_message=lambda capability: _nous_entitlement_message(
             capability, environment
         ),

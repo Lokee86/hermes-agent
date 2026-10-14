@@ -173,7 +173,12 @@ def refresh_nous_auth_keepalive_once(
         if is_guest_state(state):
             return False
         try:
-            resolve_nous_runtime_credentials(timeout_seconds=_timeout_seconds(timeout_seconds), environment=environment)
+            from contextlib import nullcontext
+            background = environment.anon_background_caller or nullcontext
+            with background():
+                resolve_nous_runtime_credentials(
+                    timeout_seconds=_timeout_seconds(timeout_seconds), environment=environment
+                )
             logger.debug("Nous auth keepalive: refreshed singleton auth state")
             return True
         except Exception as exc:
