@@ -318,10 +318,29 @@ FREE_TIER_AVAILABLE_NOTICE = (
     "/model to try them, /login to sign in.")
 
 
+def has_free_tier_account() -> bool:
+    from auth.providers.nous_guest import guest_carries_inference
+    from hermes_cli.config_credentials import credential_pool_environment
+    return guest_carries_inference(environment=credential_pool_environment())
+
+
+def free_tier_route() -> bool:
+    if not has_free_tier_account():
+        return False
+    from hermes_cli.auth import resolve_provider
+    try:
+        return resolve_provider("auto") == "nous"
+    except Exception:
+        return False
+
+
 def guest_notice_pending() -> bool:
-    """True when a guest identity exists and the one-time availability notice has not been shown."""
+    """True when a free-inference guest exists and its one-time notice is still pending."""
+    from auth.providers.nous_guest import guest_carries_inference
+    from hermes_cli.config_credentials import credential_pool_environment
     state = current_nous_state()
-    return is_guest_state(state) and not bool(state.get(GUEST_NOTICE_FLAG))
+    return (guest_carries_inference(environment=credential_pool_environment())
+            and is_guest_state(state) and not bool(state.get(GUEST_NOTICE_FLAG)))
 
 
 def mark_guest_notice_shown() -> bool:

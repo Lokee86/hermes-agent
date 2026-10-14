@@ -45,6 +45,12 @@ class PoolEnvironment:
     read_secret: Callable[[str], str | None] | None = field(default=None, repr=False)
     entitlement_message: Callable[[str], str] | None = field(default=None, repr=False)
     oauth_user_agent: Callable[[], str] | None = field(default=None, repr=False)
+    anon_user_agent: Callable[[], str] | None = field(default=None, repr=False)
+    anon_client_info: Callable[[], Mapping[str, Any]] | None = field(default=None, repr=False)
+    anon_challenge_error: Callable[..., BaseException] | None = field(default=None, repr=False)
+    anon_signin_required_error: Callable[[Any], BaseException] | None = field(default=None, repr=False)
+    anon_note_optional_challenges: Callable[[Mapping[str, Any], str], None] | None = field(default=None, repr=False)
+    anon_run_with_challenge: Callable[[Callable[[], Any]], Any] | None = field(default=None, repr=False)
 
     def require_current_scope(self) -> None:
         if self.scope != CredentialScope(get_hermes_home()):

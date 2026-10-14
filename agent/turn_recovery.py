@@ -1422,7 +1422,7 @@ def compute_error_backoff(
         LIVE_RETRY_WAIT_CAP_S, RETRY_AFTER_CAP_S, adaptive_rate_limit_backoff, jittered_backoff,
         provider_retry_after_seconds,
     )
-    from hermes_cli.anon_auth import on_free_model
+    from auth.providers.nous_guest import on_free_model
 
     # Respect Retry-After on every retryable provider error, not just 429s. Retryable
     # 5xx responses (e.g. Cloudflare 520/524) also carry the header or a structured
@@ -1483,7 +1483,7 @@ def free_tier_cooldown_ends_turn(agent: Any, api_error: Exception, base_url: Any
     ``fallback.min_switch_reset_seconds`` relies on that wait."""
     from agent.retry_utils import LIVE_RETRY_WAIT_CAP_S, provider_retry_after_seconds
     from agent.session_source import is_attended
-    from hermes_cli.anon_auth import on_free_model
+    from auth.providers.nous_guest import on_free_model
     if not (on_free_model(agent, base_url) and is_attended(agent)):
         return False
     cooldown = provider_retry_after_seconds(api_error)

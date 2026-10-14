@@ -307,7 +307,15 @@ def get_nous_portal_account_info(*, force_fresh: bool = False, min_jwt_ttl_secon
     except Exception as exc:
         return _error_info(error=exc, logged_in=False)
 
-    access_token = state.get("access_token")
+    # A guest that has only used connectors holds just a connectors-only token (same claims). With
+    # the free tier off a guest is not an account login: the pool and logged-out answers apply.
+    from auth.providers.nous_guest import guest_without_free_tier, held_connectors_token
+
+    access_token = (
+        ""
+        if guest_without_free_tier(state, environment=environment)
+        else (held_connectors_token(state) or "")
+    )
     portal_base_url = _portal_base_url(state)
     if not _nonblank(access_token):
         return (
@@ -358,8 +366,9 @@ def _fresh_account_info(state: dict[str, Any], force_fresh: bool, portal_base_ur
     try:
         from auth.provider_state import get_provider_auth_state
         from auth.providers.nous import resolve_nous_access_token
+        from hermes_cli.config_credentials import credential_pool_environment
 
-        access_token = resolve_nous_access_token()
+        access_token = resolve_nous_access_token(environment=credential_pool_environment())
         refreshed_state = get_provider_auth_state("nous") or state
         portal_base_url = _portal_base_url(refreshed_state) or portal_base_url
         digest = hashlib.sha256(access_token.encode("utf-8")).hexdigest()

@@ -406,8 +406,8 @@ def wait_for_challenge(exc: AnonChallengeRequired) -> bool:
 
     Called under the profile's work lock. A caller that queued behind another finds the ticket
     already settled on its first status read and returns without presenting anything."""
-    from hermes_cli.auth import _resolve_verify
-    from hermes_cli.auth_nous import _nous_http_client
+    from auth.oauth import _resolve_verify
+    from auth.providers.nous import _nous_http_client
     if _gave_up_recently():
         return False
     challenge = exc.challenge

@@ -236,7 +236,7 @@ def _pool_provider_hooks(provider: str, environment):
 def credential_pool_environment():
     """Capture the active scope and provide the existing configuration owner."""
     from auth.pool_environment import PoolEnvironment
-    from hermes_cli import config
+    from hermes_cli import anon_challenge, config
     from hermes_cli import auth as provider_auth
     from hermes_cli.env_loader import get_secret_source
     from hermes_cli.route_identity import normalize_route_base_url
@@ -264,6 +264,12 @@ def credential_pool_environment():
         provider_hooks=lambda provider: _pool_provider_hooks(provider, environment),
         read_secret=config.get_env_value_prefer_dotenv,
         oauth_user_agent=_codex_oauth_user_agent,
+        anon_user_agent=anon_challenge.user_agent,
+        anon_client_info=anon_challenge.client_info,
+        anon_challenge_error=anon_challenge.challenge_error,
+        anon_signin_required_error=anon_challenge.signin_required_error,
+        anon_note_optional_challenges=anon_challenge.note_optional_challenges,
+        anon_run_with_challenge=anon_challenge.run_with_challenge,
         entitlement_message=lambda capability: _nous_entitlement_message(
             capability, environment
         ),

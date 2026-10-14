@@ -13,7 +13,9 @@ import json
 
 import pytest
 
-from hermes_cli import anon_auth
+from auth.providers import nous_guest as anon_auth
+from hermes_cli import anon_auth as anon_ui
+from hermes_cli.config_credentials import credential_pool_environment
 from tests.hermes_cli.anon_portal import install_portal
 
 
@@ -55,14 +57,15 @@ def test_first_hosted_action_creates_one_connectors_only_guest(nas, monkeypatch)
     assert bearers and all(anon_auth.is_connectors_only(b) for b in bearers)
 
     # The free model and its surfaces stay off; the identity survives for connectors.
-    from hermes_cli.auth_constants import AuthError
-    from hermes_cli.auth_nous import get_nous_auth_status_local, resolve_nous_runtime_credentials
+    from auth.errors import AuthError
+    from auth.providers.nous import resolve_nous_runtime_credentials
+    from auth.providers.nous_status import get_nous_auth_status_local
 
     with pytest.raises(AuthError) as refused:
-        resolve_nous_runtime_credentials()
+        resolve_nous_runtime_credentials(environment=credential_pool_environment())
     assert refused.value.code == "nous_auth_missing" and not refused.value.relogin_required
-    assert not get_nous_auth_status_local().get("logged_in")
-    assert not anon_auth.guest_notice_pending() and not anon_auth.has_free_tier_account()
+    assert not get_nous_auth_status_local(environment=credential_pool_environment()).get("logged_in")
+    assert not anon_ui.guest_notice_pending() and not anon_ui.has_free_tier_account()
     assert anon_auth.has_guest()
     assert [r["body"].get("purpose") for r in nas.token_requests] == ["connectors"]
 

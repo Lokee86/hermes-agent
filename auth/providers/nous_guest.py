@@ -20,7 +20,7 @@ from agent.retry_utils import parse_retry_after_seconds
 
 from auth.errors import AuthError
 
-from auth.constants import DEFAULT_NOUS_WELCOME_URL, httpx
+from auth.constants import DEFAULT_NOUS_WELCOME_URL, NOUS_INFERENCE_INVOKE_SCOPE, httpx
 
 from auth.token_validation import _decode_jwt_claims
 
@@ -41,6 +41,8 @@ ANON_SECRET_HEADER = "x-anonymous-api-secret"
 ANON_SECRET_ENV = "HERMES_ANON_API_SECRET"
 
 GUEST_ONBOARDING_ENV = "HERMES_GUEST_ONBOARDING"
+
+PREVIEW_FULL_CONNECTORS_ENV = "HERMES_PREVIEW_FULL_CONNECTORS"
 
 GUEST_MINT_TIMEOUT_SECONDS = 5.0
 
@@ -144,23 +146,25 @@ def anon_failure_copy(code: str, *, retry_after: Any = None) -> str:
     return template.format(wait=friendly_wait(retry_after if retry_after else 60))
 
 
-def guest_enabled(*, environment) -> bool:
-    """The free tier is on for this process: the launch gate is set AND ``nous.guest`` (default
-    True) has not switched it off. The only place either is read."""
+def guest_allowed(*, environment) -> bool:
     environment.require_current_scope()
-    if (os.environ.get(GUEST_ONBOARDING_ENV) or "").strip() != "1":
-        return False
     try:
-        pass
-        nous_cfg = environment.read_config().get("nous")
-    except (
-        Exception
-    ) as exc:  # config unreadable: keep today's behaviour (no guest) rather than mint
+        nous_cfg = (environment.read_config() or {}).get("nous")
+    except Exception as exc:
         logger.debug("guest: config unreadable, treating nous.guest as false: %s", exc)
         return False
     if not isinstance(nous_cfg, dict):
         return True
     return bool(nous_cfg.get("guest", True))
+
+
+def guest_enabled(*, environment) -> bool:
+    environment.require_current_scope()
+    return (
+        (os.environ.get(GUEST_ONBOARDING_ENV) or "").strip() == "1"
+        and guest_allowed(environment=environment)
+    )
+
 
 
 def is_guest_state(state: Any) -> bool:
@@ -256,15 +260,23 @@ def route_is_welcome_host(base_url: Any) -> bool:
     return host in welcome_hosts()
 
 
+def on_free_model(agent: Any, base_url: Any) -> bool:
+    return route_is_welcome_host(base_url) and is_anonymous_agent(agent)
+
+
 def anon_secret() -> str:
     return (os.environ.get(ANON_SECRET_ENV) or "").strip()
 
 
-def _anon_headers() -> Dict[str, str]:
+def _anon_headers(*, environment=None) -> Dict[str, str]:
     headers = {"content-type": "application/json"}
+    user_agent = getattr(environment, "anon_user_agent", None) if environment is not None else None
+    if callable(user_agent):
+        headers["user-agent"] = str(user_agent())
     if secret := anon_secret():
         headers[ANON_SECRET_HEADER] = secret
     return headers
+
 
 
 _NAS_REFUSALS: Dict[tuple, tuple] = {
@@ -290,7 +302,7 @@ _NAS_REFUSALS: Dict[tuple, tuple] = {
 }
 
 
-def _raise_for_anon_status(response: httpx.Response, *, action: str) -> Dict[str, Any]:
+def _raise_for_anon_status(response: httpx.Response, *, action: str, overrides: Optional[Dict[tuple, Any]] = None) -> Dict[str, Any]:
     try:
         payload = response.json()
     except ValueError:
@@ -302,38 +314,33 @@ def _raise_for_anon_status(response: httpx.Response, *, action: str) -> Dict[str
     if status in (200, 201):
         return payload
     if error.startswith("pow_"):
-        error = "pow_"  # pow_required / pow_invalid / pow_replayed are one verdict
-    cls, code = (
-        _NAS_REFUSALS.get((status, error))
-        or _NAS_REFUSALS.get((status, None))
-        or (
-            (AuthError, ANON_POW_REQUIRED)
-            if error == "pow_"
-            else (AuthError, ANON_SERVER_ERROR)
-        )
-    )
+        error = "pow_"
+    if overrides:
+        build = overrides.get((status, error)) or overrides.get((status, None))
+        if build:
+            raise build(payload)
+    cls, code = (_NAS_REFUSALS.get((status, error)) or _NAS_REFUSALS.get((status, None))
+                 or ((AuthError, ANON_POW_REQUIRED) if error == "pow_" else (AuthError, ANON_SERVER_ERROR)))
     if code == ANON_SERVER_ERROR:
-        logger.info(
-            "Nous free tier %s failed (%s%s)",
-            action,
-            status,
-            f": {error}" if error else "",
-        )
+        logger.info("Nous free tier %s failed (%s%s)", action, status, f": {error}" if error else "")
     retry_after = parse_retry_after_seconds(response.headers)
-    raise cls(
-        anon_failure_copy(code, retry_after=retry_after),
-        code=code,
-        retry_after=retry_after,
-        retryable=code not in ANON_TERMINAL_CODES,
-    )
+    raise cls(anon_failure_copy(code, retry_after=retry_after), code=code,
+              retry_after=retry_after, retryable=code not in ANON_TERMINAL_CODES)
 
 
-def mint_guest(client: httpx.Client, portal_base_url: str) -> Dict[str, Any]:
-    """``POST /api/anonymous/create`` -> ``{user_id, org_id, token, idle_ttl_days}``. Token shown once."""
+
+def mint_request_body() -> Dict[str, Any]:
+    raw = (os.environ.get(PREVIEW_FULL_CONNECTORS_ENV) or "").strip()
+    if raw in ("1", "true", "0", "false"):
+        return {"preview_full_connectors": raw in ("1", "true")}
+    return {}
+
+
+def mint_guest(client: httpx.Client, portal_base_url: str, *, environment=None) -> Dict[str, Any]:
     response = client.post(
         f"{portal_base_url.rstrip('/')}/api/anonymous/create",
-        headers=_anon_headers(),
-        json={},
+        headers=_anon_headers(environment=environment),
+        json=mint_request_body(),
     )
     payload = _raise_for_anon_status(response, action="sign-up")
     token = payload.get("token")
@@ -343,61 +350,87 @@ def mint_guest(client: httpx.Client, portal_base_url: str) -> Dict[str, Any]:
     return payload
 
 
-def exchange_anon_jwt(
-    client: httpx.Client, portal_base_url: str, anon_token: str
-) -> Dict[str, Any]:
-    """``POST /api/anonymous/token {token}`` -> ``{access_token, expires_in, inference_base_url, ...}``.
 
-    Raises :class:`AnonCredentialDead` on 404 ``unknown_token`` / 401 (reaped or claimed).
-    """
+def is_connectors_only(token: Any) -> bool:
+    from auth.token_validation import _scope_values
+    claims = _decode_jwt_claims(token)
+    scopes = _scope_values(claims.get("scope")) | _scope_values(claims.get("scp"))
+    return bool(scopes) and NOUS_INFERENCE_INVOKE_SCOPE not in scopes
+
+
+def held_connectors_token(state: Any, *, skew_seconds: Optional[int] = None) -> Optional[str]:
+    from auth.token_validation import _is_expiring
+    if not isinstance(state, dict):
+        return None
+    slots = (state, state.get("connectors_token") if is_guest_state(state) else None)
+    held = [(slot["access_token"], slot.get("expires_at")) for slot in slots
+            if isinstance(slot, dict) and isinstance(slot.get("access_token"), str) and slot["access_token"]]
+    live = next((token for token, expires_at in held
+                 if not _is_expiring(expires_at, skew_seconds or 0)), None)
+    return live or (held[0][0] if held and skew_seconds is None else None)
+
+
+def exchange_anon_jwt(client: httpx.Client, portal_base_url: str, anon_token: str, *,
+                      auth_state: Dict[str, Any], purpose: str = "inference", environment=None) -> Dict[str, Any]:
+    client_info = getattr(environment, "anon_client_info", None) if environment is not None else None
     response = client.post(
         f"{portal_base_url.rstrip('/')}/api/anonymous/token",
-        headers=_anon_headers(),
-        json={"token": anon_token},
+        headers=_anon_headers(environment=environment),
+        json={"token": anon_token, "client": client_info() if callable(client_info) else {}, "purpose": purpose},
     )
-    payload = _raise_for_anon_status(response, action="token exchange")
+    def challenge(body):
+        build = getattr(environment, "anon_challenge_error", None) if environment is not None else None
+        if callable(build):
+            return build(body, portal_base_url=portal_base_url, anon_token=anon_token, auth_state=auth_state)
+        return _anon_err(ANON_FAILURE_COPY[ANON_CHALLENGE_REQUIRED], ANON_CHALLENGE_REQUIRED)
+    def signin(body):
+        build = getattr(environment, "anon_signin_required_error", None) if environment is not None else None
+        if callable(build):
+            return build(body.get("message"))
+        return AuthError(ANON_FAILURE_COPY[ANON_SIGNIN_REQUIRED], provider="nous", code=ANON_SIGNIN_REQUIRED, retryable=False)
+    def proof_of_work(_body):
+        return _anon_err(ANON_FAILURE_COPY[ANON_POW_REQUIRED], ANON_POW_REQUIRED)
+    payload = _raise_for_anon_status(response, action="token exchange", overrides={
+        (428, "challenge_required"): challenge, (428, "pow_"): proof_of_work,
+        (428, None): signin, (403, "signin_required"): signin, (403, "access_denied"): signin})
     if not isinstance(payload.get("access_token"), str) or not payload["access_token"]:
         logger.info("Nous free tier token exchange returned no token")
         raise _anon_err(ANON_FAILURE_COPY[ANON_SERVER_ERROR], ANON_SERVER_ERROR)
+    if not is_connectors_only(payload["access_token"]):
+        note = getattr(environment, "anon_note_optional_challenges", None) if environment is not None else None
+        if callable(note):
+            note(payload, portal_base_url)
     return payload
 
 
-def apply_exchange_to_state(state: Dict[str, Any], exchanged: Dict[str, Any]) -> None:
-    """Write a fresh exchange result into a guest state in place (token, expiry, routing)."""
-    from auth.providers.nous import _validate_nous_inference_url_from_network
 
+def apply_exchange_to_state(state: Dict[str, Any], exchanged: Dict[str, Any]) -> None:
+    from auth.providers.nous import _validate_nous_inference_url_from_network
     access_token = exchanged["access_token"]
     claims = _decode_jwt_claims(access_token)
     now = datetime.now(timezone.utc)
     exp = claims.get("exp")
-    if isinstance(exp, (int, float)):
-        expires_at = datetime.fromtimestamp(float(exp), tz=timezone.utc)
-    else:
-        expires_at = now + timedelta(seconds=int(exchanged.get("expires_in") or 900))
-    # NAS names the welcome host on every exchange; absent (older NAS) or outside the allowlist
-    # (a staging host without NOUS_INFERENCE_BASE_URL set), the literal stands in. Never the paid
-    # host: the gateway cross-refuses an anonymous JWT there.
-    inference_url = (
-        _validate_nous_inference_url_from_network(exchanged.get("inference_base_url"))
-        or DEFAULT_NOUS_WELCOME_URL
-    )
+    expires_at = (datetime.fromtimestamp(float(exp), tz=timezone.utc)
+                  if isinstance(exp, (int, float))
+                  else now + timedelta(seconds=int(exchanged.get("expires_in") or 900)))
+    if is_connectors_only(access_token):
+        state["connectors_token"] = {"access_token": access_token, "expires_at": expires_at.isoformat()}
+        return
+    inference_url = (_validate_nous_inference_url_from_network(exchanged.get("inference_base_url"))
+                     or DEFAULT_NOUS_WELCOME_URL)
     scope = claims.get("scope") or claims.get("scp") or state.get("scope")
     if isinstance(scope, (list, tuple)):
-        scope = " ".join(str(s) for s in scope)
-    state.update(
-        access_token=access_token,
-        token_type="Bearer",
-        scope=scope,
-        obtained_at=now.isoformat(),
-        expires_at=expires_at.isoformat(),
-        expires_in=max(0, int((expires_at - now).total_seconds())),
-        account_tier=str(claims.get("account_tier") or ANON_ACCOUNT_TIER),
-    )
+        scope = " ".join(str(item) for item in scope)
+    state.update(access_token=access_token, token_type="Bearer", scope=scope,
+                 obtained_at=now.isoformat(), expires_at=expires_at.isoformat(),
+                 expires_in=max(0, int((expires_at - now).total_seconds())),
+                 account_tier=str(claims.get("account_tier") or ANON_ACCOUNT_TIER))
     state["inference_base_url"] = inference_url
     for key in ("user_id", "org_id"):
         if exchanged.get(key):
             state[key] = exchanged[key]
     state.pop("refresh_token", None)
+
 
 
 def _portal_base_url() -> str:
@@ -422,6 +455,7 @@ def _mint_locked(
     auth_store: Dict[str, Any],
     *,
     carries_inference: bool = True,
+    environment=None,
 ) -> Dict[str, Any]:
     """Mint under the caller's locks. The identity is persisted as soon as ``create`` succeeds, BEFORE
     the exchange: a 429 or timeout on the exchange must not lose a credential NAS still honours (the
@@ -434,7 +468,7 @@ def _mint_locked(
     from auth.store import _save_auth_store
     from auth.providers.nous_store import _write_shared_nous_state
 
-    minted = mint_guest(client, portal)
+    minted = mint_guest(client, portal, environment=environment)
     state: Dict[str, Any] = {
         "auth_method": ANON_AUTH_METHOD,
         "account_tier": ANON_ACCOUNT_TIER,
@@ -445,7 +479,7 @@ def _mint_locked(
         "org_id": minted.get("org_id"),
         "idle_ttl_days": minted.get("idle_ttl_days"),
     }
-    _store_provider_state(auth_store, "nous", state, set_active=carries_inference)
+    _store_provider_state(auth_store, "nous", state, set_active=False)
     _save_auth_store(auth_store)
     _write_shared_nous_state(state)
     logger.info("Nous free tier ready (identity minted)")
@@ -568,7 +602,7 @@ def _note_mint_failure(err: AuthError) -> MintFailure:
 
 
 def _reconcile_and_provision(
-    *, timeout_seconds: float, carries_inference: bool = True
+    *, timeout_seconds: float, carries_inference: bool = True, environment
 ) -> Optional[Dict[str, Any]]:
     """The lifecycle body, run under profile lock THEN shared lock (the documented order).
 
@@ -604,7 +638,7 @@ def _reconcile_and_provision(
                     auth_store,
                     "nous",
                     state,
-                    set_active=carries_inference or not is_guest_state(state),
+                    set_active=not is_guest_state(state),
                 )
                 _save_auth_store(auth_store)
                 logger.debug("Nous identity adopted from the shared store")
@@ -616,95 +650,54 @@ def _reconcile_and_provision(
             verify = _resolve_verify(insecure=None, ca_bundle=None, auth_state=None)
             with _nous_http_client(timeout_seconds, verify) as client:
                 return _mint_locked(
-                    client, portal, auth_store, carries_inference=carries_inference
+                    client, portal, auth_store, environment=environment
                 )
 
 
 def ensure_portal_identity(
-    *,
-    explicit: bool,
-    timeout_seconds: float = GUEST_MINT_TIMEOUT_SECONDS,
-    carries_inference: bool = True,
-    force: bool = False,
-    environment,
+    *, explicit: bool, timeout_seconds: float = GUEST_MINT_TIMEOUT_SECONDS,
+    carries_inference: bool = True, force: bool = False,
+    for_connectors: bool = False, environment,
 ) -> Optional[Dict[str, Any]]:
-    """Make sure this profile has a Nous identity (guest or account); mint a guest only if the shared
-    store has none. Returns the ``providers.nous`` state, or None (disabled / failed once already).
-
-    ``explicit`` is required and must be True: the only callers are the boot bootstrap
-    (``free_tier_bootstrap.run_bootstrap``), the desktop's ``free_tier.provision`` retry, and the
-    dead-credential replacements (``auth_nous.resolve_nous_runtime_credentials``,
-    ``managed_tool_gateway._replace_dead_guest_token``). Nothing creates an identity as a side effect
-    of reading status, resolving a provider or fetching a connector bearer (NS-845 Q1.2).
-
-    Order: ``guest_enabled`` gate -> reconcile with the shared store -> mint. Locks are taken profile
-    first, then shared, matching every other Nous path. ``carries_inference=False`` leaves
-    ``active_provider`` alone (the identity is for connectors; another provider does inference).
-    Blocking, bounded by ``timeout_seconds``; the bootstrap puts it on its own thread.
-
-    A failed mint is memoised with a cooldown (``MintFailure``): until it passes, and for a
-    terminal code forever, this returns None without touching the portal. ``force=True`` is the
-    user's own retry (the desktop's ``free_tier.provision`` button): it makes exactly one attempt
-    regardless of the cooldown. Every failure raises an ``AuthError`` whose ``code`` is one of the
-    ``ANON_*`` codes and whose ``retry_after`` / ``retryable`` say what a caller may do next.
-    """
     environment.require_current_scope()
     if not explicit:
-        raise ValueError(
-            "ensure_portal_identity: only explicit creators may call this (explicit=True)"
-        )
-    if not guest_enabled(environment=environment):
+        raise ValueError("ensure_portal_identity: only explicit creators may call this (explicit=True)")
+    if not (guest_allowed(environment=environment) if for_connectors
+            else guest_enabled(environment=environment)):
         return None
+    if for_connectors:
+        carries_inference = False
     failure = _mint_failure_for_profile()
-    if (
-        failure
-        and not force
-        and not current_nous_state()
-        and time.monotonic() < failure.not_before
-    ):
-        return (
-            None  # in cooldown (or terminal) for this profile; do not hammer the portal
-        )
+    if failure and not force and not current_nous_state() and time.monotonic() < failure.not_before:
+        return None
     try:
-        state = _reconcile_and_provision(
-            timeout_seconds=timeout_seconds, carries_inference=carries_inference
-        )
+        state = _reconcile_and_provision(timeout_seconds=timeout_seconds,
+                                         carries_inference=carries_inference, environment=environment)
     except Exception as exc:
         err = classify_mint_exception(exc)
-        noted = _note_mint_failure(err)
-        logger.info(
-            "Nous free tier not set up (%s, attempt %d%s)",
-            noted.code,
-            noted.attempts,
-            f", next try in {noted.retry_after:.0f}s"
-            if noted.retryable
-            else ", not retried",
-        )
+        noted = getattr(err, "mint_failure", None) or _note_mint_failure(err)
+        logger.info("Nous free tier not set up (%s, attempt %d%s)", noted.code, noted.attempts,
+                    f", next try in {noted.retry_after:.0f}s" if noted.retryable else ", not retried")
         if err is exc:
             raise
         raise err from exc
-    _clear_mint_failure()
+    if state is not None:
+        _clear_mint_failure()
     return state
 
 
-def refresh_guest_state(state: Dict[str, Any], client: httpx.Client) -> None:
-    """Token-acquisition seam for a guest: re-exchange the ``anon_`` credential in place.
 
-    The portal URL is the resolver's canonical one (env override, else the validated stored URL,
-    else the default), never a raw stored value on its own.
-    Raises :class:`AnonCredentialDead` when NAS no longer knows the credential; the caller owns
-    re-minting (:func:`ensure_portal_identity` after :func:`clear_dead_guest`).
-    """
+def refresh_guest_state(state: Dict[str, Any], client: httpx.Client, *,
+                        purpose: str = "inference", environment=None) -> str:
     anon_token = state.get("anon_token")
     if not isinstance(anon_token, str) or not anon_token:
-        raise AnonCredentialDead(
-            ANON_FAILURE_COPY[ANON_CREDENTIAL_DEAD], code=ANON_CREDENTIAL_DEAD
-        )
+        raise AnonCredentialDead(ANON_FAILURE_COPY[ANON_CREDENTIAL_DEAD], code=ANON_CREDENTIAL_DEAD)
     from auth.providers.nous import _nous_portal_base_url
+    exchanged = exchange_anon_jwt(client, _nous_portal_base_url(state), anon_token,
+                                  auth_state=state, purpose=purpose, environment=environment)
+    apply_exchange_to_state(state, exchanged)
+    return exchanged["access_token"]
 
-    apply_exchange_to_state(
-        state, exchange_anon_jwt(client, _nous_portal_base_url(state), anon_token)
-    )
 
 
 def clear_dead_guest(reason: str, *, dead_token: Optional[str] = None) -> None:

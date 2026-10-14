@@ -203,7 +203,7 @@ class TestBootstrapRecord:
             429, json={"error": "temporarily_unavailable"}, headers={"Retry-After": "30"})
         record = free_tier_bootstrap.run_bootstrap(announce=False)
         assert record.has_identity is False and record.free_tier_account is False
-        assert record.failure["error_code"] == anon_auth.ANON_RATE_LIMITED
+        assert record.failure["error_code"] == _auth_auth_providers_nous_guest.ANON_RATE_LIMITED
         assert record.failure["retryable"] is True and 28 <= record.failure["retry_after"] <= 30
         assert record.failure_fields() == {
             "error": record.error, "error_code": _auth_auth_providers_nous_guest.ANON_RATE_LIMITED, "retryable": True,
@@ -228,7 +228,7 @@ class TestBootstrapRecord:
         free_tier_bootstrap._bootstrap_then_retry()
         record = free_tier_bootstrap.current_record()
         assert record.has_identity is True and record.free_tier_account is True
-        assert slept == [int(w) for w in anon_auth._MINT_RETRY_LADDER[:2]]
+        assert slept == [int(w) for w in _auth_auth_providers_nous_guest._MINT_RETRY_LADDER[:2]]
         assert nas.creates() == 3
 
     def test_the_background_loop_never_retries_a_terminal_code(self, nas, monkeypatch):

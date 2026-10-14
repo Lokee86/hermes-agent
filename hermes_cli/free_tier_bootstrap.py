@@ -164,8 +164,6 @@ def _resolve_inference() -> str:
 def _build_record(*, other: bool, force: bool) -> SetupRecord:
     """One inventory-then-mint pass into a record. ``force`` is the user's own retry: it makes one
     attempt even inside the mint memo's cooldown (``anon_auth.ensure_portal_identity``)."""
-    from hermes_cli import anon_auth
-
     error = ""
     failure: Dict[str, Any] = {}
     state: Optional[Dict[str, Any]] = _auth_auth_providers_nous_guest.current_nous_state()
@@ -181,9 +179,9 @@ def _build_record(*, other: bool, force: bool) -> SetupRecord:
             # cooldown still runs: the record carries that verdict either way.
             failure = _auth_auth_providers_nous_guest.last_mint_failure() or {}
             error = error or str(failure.get("error") or "")
-    free_tier = bool(state) and _auth_auth_providers_nous_guest.is_guest_state(state) and _auth_auth_providers_nous_guest.guest_enabled(environment=_phase6_auth_environment())
+    free_tier_account = bool(state) and _auth_auth_providers_nous_guest.is_guest_state(state) and _auth_auth_providers_nous_guest.guest_enabled(environment=_phase6_auth_environment())
     return SetupRecord(
-        provider_configured=other or free_tier or (bool(state) and not _auth_auth_providers_nous_guest.is_guest_state(state)),
+        provider_configured=other or free_tier_account or (bool(state) and not _auth_auth_providers_nous_guest.is_guest_state(state)),
         inference_provider=_resolve_inference(),
         free_tier_account=free_tier_account,
         has_identity=bool(state),

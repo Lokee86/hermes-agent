@@ -115,10 +115,10 @@ def connectors_available(
 def guest_identity_pending() -> bool:
     """No Nous identity or bearer yet, and a guest one may be created (``nous.guest`` is not false
     and no earlier mint was refused for good). No network: this feeds the ``check_fn``."""
-    from hermes_cli.anon_auth import guest_allowed, last_mint_failure
+    from auth.providers.nous_guest import guest_allowed, last_mint_failure
     from tools.managed_tool_gateway import _read_nous_provider_state, peek_nous_access_token
 
-    if not guest_allowed() or _read_nous_provider_state() is not None or peek_nous_access_token():
+    if not guest_allowed(environment=_phase6_auth_environment()) or _read_nous_provider_state() is not None or peek_nous_access_token():
         return False
     failure = last_mint_failure()
     return not failure or bool(failure["retryable"])
@@ -129,7 +129,7 @@ _SETUP_FAILED = "Hosted connectors could not be set up. "
 
 def guest_setup_failure() -> Optional[str]:
     """The last failed guest creation for this profile, worded with the wait still left, or None."""
-    from hermes_cli.anon_auth import anon_failure_copy, last_mint_failure
+    from auth.providers.nous_guest import anon_failure_copy, last_mint_failure
 
     if not (failure := last_mint_failure()):
         return None
@@ -143,11 +143,11 @@ def ensure_guest_identity() -> Optional[str]:
     a refusal, a rate limit or an unreachable portal, with the wait when there is one."""
     if not guest_identity_pending():
         return None
-    from hermes_cli.anon_auth import ensure_portal_identity
-    from hermes_cli.auth_constants import AuthError
+    from auth.errors import AuthError
+    from auth.providers.nous_guest import ensure_portal_identity
 
     try:
-        if ensure_portal_identity(explicit=True, for_connectors=True) is not None:
+        if ensure_portal_identity(explicit=True, for_connectors=True, environment=_phase6_auth_environment()) is not None:
             return None
     except AuthError as exc:
         return _SETUP_FAILED + str(exc)

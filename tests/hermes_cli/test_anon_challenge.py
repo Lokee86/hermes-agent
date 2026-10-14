@@ -9,9 +9,22 @@ from __future__ import annotations
 import httpx
 import pytest
 
-from hermes_cli import anon_auth, anon_challenge
+from auth.providers import nous_guest as anon_auth
+from auth.providers.nous import resolve_nous_access_token as _resolve_access_token
+from auth.providers.nous import resolve_nous_runtime_credentials as _resolve_runtime_credentials
+from hermes_cli import anon_challenge
+from hermes_cli.config_credentials import credential_pool_environment
+from tui_gateway.launch_profile_policy import launch_profile_scope_if_multiplexed
 
 from tests.hermes_cli.anon_portal import PORTAL, install_portal
+
+
+def resolve_nous_runtime_credentials(**kwargs):
+    return _resolve_runtime_credentials(environment=credential_pool_environment(), **kwargs)
+
+
+def resolve_nous_access_token(**kwargs):
+    return _resolve_access_token(environment=credential_pool_environment(), **kwargs)
 
 
 @pytest.fixture
@@ -33,8 +46,7 @@ def _desktop_backend(monkeypatch):
 
 
 def _resolve():
-    from hermes_cli.auth_nous import resolve_nous_runtime_credentials
-    assert anon_auth.is_guest_state(anon_auth.ensure_portal_identity(explicit=True))
+    assert anon_auth.is_guest_state(anon_auth.ensure_portal_identity(explicit=True, environment=credential_pool_environment()))
     return resolve_nous_runtime_credentials()
 
 
@@ -61,7 +73,6 @@ class TestRequiredChallenge:
         assert [p for _, p in nas.calls].count("/api/anonymous/challenge/status") == 1
         # A window that crashed is not a reason to let a boot burst of callers each re-mint and
         # reopen a window: the second 428 starts the same fail-fast cooldown as a timeout.
-        from hermes_cli.auth_nous import resolve_nous_runtime_credentials
         with pytest.raises(anon_auth.AuthError):
             resolve_nous_runtime_credentials()
         assert [p for _, p in nas.calls].count("/api/anonymous/challenge/status") == 1
@@ -88,9 +99,9 @@ class TestRequiredChallenge:
     def test_the_status_poll_trusts_what_the_credential_was_minted_with(self, nas, presented, monkeypatch):
         """A guest whose ``auth.json`` carries a ``tls`` block polls under it (a private CA, say),
         not under a fresh default context that would fail every read and run out the clock."""
-        from hermes_cli import auth_nous
-        from hermes_cli.auth import _auth_store_lock, _load_auth_store, _save_auth_store
-        assert anon_auth.is_guest_state(anon_auth.ensure_portal_identity(explicit=True))
+        from auth.providers import nous as auth_nous
+        from auth.store import _auth_store_lock, _load_auth_store, _save_auth_store
+        assert anon_auth.is_guest_state(anon_auth.ensure_portal_identity(explicit=True, environment=credential_pool_environment()))
         with _auth_store_lock():
             store = _load_auth_store()
             store["providers"]["nous"]["tls"] = {"insecure": True}
@@ -100,7 +111,6 @@ class TestRequiredChallenge:
         monkeypatch.setattr(auth_nous, "_nous_http_client",
                             lambda timeout, verify: polled_with.append(verify) or real(timeout, verify))
         nas.challenge_required = True
-        from hermes_cli.auth_nous import resolve_nous_runtime_credentials
         resolve_nous_runtime_credentials()
         assert [p for _, p in nas.calls].count("/api/anonymous/challenge/status") >= 1
         assert polled_with and all(verify is False for verify in polled_with)
@@ -135,7 +145,7 @@ class TestRequiredChallenge:
 
     def test_the_wait_happens_outside_the_auth_locks(self, nas, monkeypatch):
         """A sibling process must be able to take the shared-store lock while the page runs."""
-        from hermes_cli.auth_nous import _nous_shared_store_lock
+        from auth.providers.nous_store import _nous_shared_store_lock
         nas.challenge_required = True
         nas.challenge_statuses = ["pending"]
 
@@ -155,7 +165,6 @@ class TestRequiredChallenge:
         assert exc.value.code == anon_auth.ANON_CHALLENGE_REQUIRED and exc.value.retryable is True
         assert "browser" in str(exc.value)
         # The callers queued behind it fail fast instead of each parking for a full wait.
-        from hermes_cli.auth_nous import resolve_nous_runtime_credentials
         with pytest.raises(anon_auth.AuthError):
             resolve_nous_runtime_credentials()
         assert len(presented) == 1
@@ -178,8 +187,7 @@ class TestRequiredChallenge:
 
     def test_the_managed_tool_token_path_works_a_challenge_too(self, nas, presented):
         """Against a NAS from before the connectors purpose, which still challenges that mint."""
-        from hermes_cli.auth import resolve_nous_access_token
-        assert anon_auth.is_guest_state(anon_auth.ensure_portal_identity(explicit=True))
+        assert anon_auth.is_guest_state(anon_auth.ensure_portal_identity(explicit=True, environment=credential_pool_environment()))
         nas.honours_purpose = False
         nas.challenge_required = True
         nas.challenge_statuses = ["pending"]
@@ -190,8 +198,7 @@ class TestRequiredChallenge:
 class TestWhoWaits:
     def test_a_background_caller_announces_and_returns_at_once(self, nas, presented):
         """A keepalive tick or a status paint has nobody waiting on it: no poll, no parked thread."""
-        from hermes_cli.auth_nous import resolve_nous_runtime_credentials
-        assert anon_auth.is_guest_state(anon_auth.ensure_portal_identity(explicit=True))
+        assert anon_auth.is_guest_state(anon_auth.ensure_portal_identity(explicit=True, environment=credential_pool_environment()))
         nas.challenge_required = True
         nas.challenge_never_clears = True
         with anon_challenge.background_caller():
@@ -205,12 +212,11 @@ class TestWhoWaits:
     def test_the_messaging_gateway_never_waits_on_a_challenge(self, nas, presented, monkeypatch):
         """Nobody sits at a gateway's console, and its token reads can run on the event loop."""
         from gateway import status
-        assert anon_auth.is_guest_state(anon_auth.ensure_portal_identity(explicit=True))
+        assert anon_auth.is_guest_state(anon_auth.ensure_portal_identity(explicit=True, environment=credential_pool_environment()))
         monkeypatch.setattr(status, "owns_gateway_runtime_lock", lambda: True)
         monkeypatch.setattr(anon_challenge, "CHALLENGE_WAIT_SECONDS", 0.05)
         nas.challenge_required = True
         nas.challenge_never_clears = True
-        from hermes_cli.auth_nous import resolve_nous_runtime_credentials
         with pytest.raises(anon_auth.AuthError) as exc:
             resolve_nous_runtime_credentials()
         assert exc.value.code == anon_auth.ANON_CHALLENGE_REQUIRED and exc.value.retryable is True
@@ -225,13 +231,13 @@ class TestWhoWaits:
         assert capsys.readouterr().err == ""
 
     def test_the_keepalive_and_the_status_paint_are_background_callers(self, nas, presented):
-        from hermes_cli.auth_nous import _compute_nous_auth_status
-        from hermes_cli.nous_auth_keepalive import refresh_nous_auth_keepalive_once
-        assert anon_auth.is_guest_state(anon_auth.ensure_portal_identity(explicit=True))
+        from auth.providers.nous_status import _compute_nous_auth_status
+        from auth.keepalive import refresh_nous_auth_keepalive_once
+        assert anon_auth.is_guest_state(anon_auth.ensure_portal_identity(explicit=True, environment=credential_pool_environment()))
         nas.challenge_required = True
         nas.challenge_never_clears = True
-        assert refresh_nous_auth_keepalive_once() is False
-        _compute_nous_auth_status()
+        assert refresh_nous_auth_keepalive_once(environment_factory=credential_pool_environment, scope_context=launch_profile_scope_if_multiplexed) is False
+        _compute_nous_auth_status(environment=credential_pool_environment())
         assert "/api/anonymous/challenge/status" not in [p for _, p in nas.calls]
 
     def test_a_poll_error_is_a_blip_not_a_verdict(self, nas, presented):
@@ -260,19 +266,19 @@ class TestOtherEndpointsAreUnchanged:
     def test_a_428_on_sign_up_is_still_the_proof_of_work_verdict(self, nas):
         nas.create_response = httpx.Response(428, json={"error": "challenge_required", "challenges": []})
         with pytest.raises(anon_auth.AuthError) as exc:
-            anon_auth.ensure_portal_identity(explicit=True)
+            anon_auth.ensure_portal_identity(explicit=True, environment=credential_pool_environment())
         assert exc.value.code == anon_auth.ANON_POW_REQUIRED
 
     def test_a_proof_of_work_verdict_off_428_stays_the_proof_of_work_verdict(self, nas):
         nas.create_response = httpx.Response(400, json={"error": "pow_invalid"})
         with pytest.raises(anon_auth.AuthError) as exc:
-            anon_auth.ensure_portal_identity(explicit=True)
+            anon_auth.ensure_portal_identity(explicit=True, environment=credential_pool_environment())
         assert exc.value.code == anon_auth.ANON_POW_REQUIRED and exc.value.retryable is False
 
     def test_a_403_on_sign_up_stays_retryable(self, nas):
         nas.create_response = httpx.Response(403, json={"error": "access_denied"})
         with pytest.raises(anon_auth.AuthError) as exc:
-            anon_auth.ensure_portal_identity(explicit=True)
+            anon_auth.ensure_portal_identity(explicit=True, environment=credential_pool_environment())
         assert exc.value.code == anon_auth.ANON_SERVER_ERROR and exc.value.retryable is True
 
 

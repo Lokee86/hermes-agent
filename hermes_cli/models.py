@@ -1471,8 +1471,10 @@ def _nous_catalog(normalized: str, force_refresh: bool) -> Optional[list[str]]:
     try:
         from hermes_cli.auth_nous import fetch_nous_models
         from auth.providers.nous import resolve_nous_runtime_credentials
+        from hermes_cli.anon_challenge import background_caller
 
-        creds = resolve_nous_runtime_credentials(environment=_phase6_auth_environment())
+        with background_caller():
+            creds = resolve_nous_runtime_credentials(environment=_phase6_auth_environment())
         if creds:
             live = fetch_nous_models(api_key=creds.get("api_key", ""), inference_base_url=creds.get("base_url", ""))
             if live:

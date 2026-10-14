@@ -187,10 +187,11 @@ def first_contact_turn_note(
             and not is_seen(config, PROFILE_BUILD_FLAG)
         ):
             mark_seen(config_path, PROFILE_BUILD_FLAG)
-            from hermes_cli.anon_auth import guest_enabled
+            from auth.providers.nous_guest import guest_enabled
+            from hermes_cli.config_credentials import credential_pool_environment
 
             # /initiate-setup is the offer only where the setup flow ships; elsewhere keep the memory profile offer.
-            return SETUP_OFFER_NOTE.format(command=command) if guest_enabled() else profile_build_directive().strip()
+            return SETUP_OFFER_NOTE.format(command=command) if guest_enabled(environment=credential_pool_environment()) else profile_build_directive().strip()
         return PLAIN_INTRO_NOTE
     except Exception as e:
         logger.debug("first_contact_turn_note failed, using plain intro: %s", e)

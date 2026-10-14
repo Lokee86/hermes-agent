@@ -54,9 +54,9 @@ def _read_nous_provider_state() -> Optional[dict]:
         nous_provider = get_provider_auth_state("nous")
         if not isinstance(nous_provider, dict):
             return None
-        from auth.providers.nous_guest import guest_enabled, is_guest_state
+        from auth.providers.nous_guest import guest_allowed, is_guest_state
 
-        if is_guest_state(nous_provider) and not guest_enabled(environment=_phase6_auth_environment()):
+        if is_guest_state(nous_provider) and not guest_allowed(environment=_phase6_auth_environment()):
             return None
         return nous_provider
     except Exception:
@@ -118,7 +118,7 @@ def read_nous_access_token() -> Optional[str]:
     try:
         from auth.providers.nous import resolve_nous_access_token
 
-        if refreshed_token := _clean(resolve_nous_access_token(refresh_skew_seconds=_NOUS_ACCESS_TOKEN_REFRESH_SKEW_SECONDS)):
+        if refreshed_token := _clean(resolve_nous_access_token(refresh_skew_seconds=_NOUS_ACCESS_TOKEN_REFRESH_SKEW_SECONDS, environment=_phase6_auth_environment())):
             return refreshed_token
     except Exception as exc:
         # Same dead-credential rule as inference (one place decides it: anon_auth): a retired free-tier
@@ -142,7 +142,7 @@ def _replace_dead_guest_token(dead_state: dict, code: str = "anon_credential_dea
     try:
         if ensure_portal_identity(explicit=True, environment=_phase6_auth_environment()) is None:
             return None
-        return _clean(resolve_nous_access_token(refresh_skew_seconds=_NOUS_ACCESS_TOKEN_REFRESH_SKEW_SECONDS))
+        return _clean(resolve_nous_access_token(refresh_skew_seconds=_NOUS_ACCESS_TOKEN_REFRESH_SKEW_SECONDS, environment=_phase6_auth_environment()))
     except Exception as exc:
         logger.debug("Nous free tier replacement after a retired credential failed: %s", exc)
         return None

@@ -46,7 +46,7 @@ def _(rid, params: dict) -> dict:
         if enabled and not has_guest:
             # Why there is no identity, when the last attempt to make one failed:
             # ``{error, error_code, retryable, retry_after}`` (the mint memo's verdict).
-            payload.update(anon_auth.last_mint_failure() or {})
+            payload.update(_auth_auth_providers_nous_guest.last_mint_failure() or {})
         # A browser challenge the account service is waiting on (``anon_challenge``): the same
         # payload the ``free_tier.challenge`` event carried, for a client that connected after it.
         from hermes_cli import anon_challenge

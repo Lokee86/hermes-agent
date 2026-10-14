@@ -18,22 +18,25 @@ _TIMEOUT_SECONDS = 30.0
 
 
 def _err(message: str, code: str, *, relogin: bool = False):
-    from hermes_cli.auth_constants import AuthError
+    from auth.errors import AuthError
     return AuthError(f"solstice: {message}", provider="solstice", code=code, relogin_required=relogin)
 
 
 def _nas_base_url() -> str:
     """The Nous portal the user is signed into (``HERMES_PORTAL_BASE_URL`` override first)."""
-    from hermes_cli.auth import _nous_portal_base_url, get_provider_auth_state
+    from auth.provider_state import get_provider_auth_state
+    from auth.providers.nous import _nous_portal_base_url
     return _nous_portal_base_url(get_provider_auth_state("nous") or {})
 
 
 def _nas_request(method: str, path: str, *, json: Mapping[str, Any] | None = None) -> dict[str, Any]:
-    from hermes_cli.auth import _default_verify, resolve_nous_access_token
-    from hermes_cli.auth_constants import httpx
+    from auth.constants import httpx
+    from auth.oauth import _default_verify
+    from auth.providers.nous import resolve_nous_access_token
+    from hermes_cli.config_credentials import credential_pool_environment
 
     try:
-        token = resolve_nous_access_token()
+        token = resolve_nous_access_token(environment=credential_pool_environment())
     except Exception as exc:
         raise _err("sign in to Nous Portal first (`hermes auth add nous`).", "solstice_nous_login_required",
                    relogin=True) from exc

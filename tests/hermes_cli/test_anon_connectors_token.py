@@ -16,9 +16,13 @@ from datetime import datetime, timedelta, timezone, UTC
 import httpx
 import pytest
 
-from hermes_cli import anon_auth, anon_challenge
-from hermes_cli import auth as auth_mod
-from hermes_cli.auth_nous import resolve_nous_runtime_credentials
+from auth.providers import nous_guest as anon_auth
+from auth.providers import nous as nous_mod
+from auth.providers.nous import resolve_nous_access_token as _resolve_access_token
+from auth.providers.nous import resolve_nous_runtime_credentials
+from hermes_cli import anon_challenge
+from hermes_cli.config_credentials import credential_pool_environment
+from tui_gateway.launch_profile_policy import launch_profile_scope_if_multiplexed
 
 from tests.hermes_cli.anon_portal import WELCOME, install_portal, make_jwt
 
@@ -26,7 +30,9 @@ from tests.hermes_cli.anon_portal import WELCOME, install_portal, make_jwt
 @pytest.fixture
 def nas(monkeypatch, tmp_path):
     fake = install_portal(monkeypatch, tmp_path)
-    assert anon_auth.is_guest_state(anon_auth.ensure_portal_identity(explicit=True))
+    assert anon_auth.is_guest_state(
+        anon_auth.ensure_portal_identity(explicit=True, environment=credential_pool_environment())
+    )
     return fake
 
 
@@ -37,6 +43,15 @@ def presented(monkeypatch):
     return seen
 
 
+
+
+def _runtime_credentials():
+    return resolve_nous_runtime_credentials(environment=credential_pool_environment())
+
+
+def _access_token():
+    return _resolve_access_token(environment=credential_pool_environment())
+
 def _purposes(nas) -> list:
     return [r["body"].get("purpose") for r in nas.token_requests]
 
@@ -46,13 +61,13 @@ def _scope(token: str) -> str:
 
 
 def _forget_memo(monkeypatch):
-    monkeypatch.setattr(auth_mod, "_RESOLVE_TOKEN_CACHE", {})
+    monkeypatch.setattr(nous_mod, "_RESOLVE_TOKEN_CACHE", {})
 
 
 def _persist_guest_tokens(*, inference: int | None = None, connectors: int | None = None) -> dict:
     """Write held tokens expiring in the given seconds. An inference-only write is exactly what
     current releases persist; ``connectors`` adds the new slot beside it."""
-    from hermes_cli.auth import _auth_store_lock, _load_auth_store, _save_auth_store
+    from auth.store import _auth_store_lock, _load_auth_store, _save_auth_store
     at = lambda s: (datetime.now(UTC) + timedelta(seconds=s)).isoformat()
     tokens = {}
     with _auth_store_lock():
@@ -74,7 +89,7 @@ class TestConnectorsCallers:
         from tools.managed_tool_gateway import read_nous_access_token
         nas.challenge_required = True
         nas.challenge_never_clears = True
-        token = auth_mod.resolve_nous_access_token()
+        token = _access_token()
         assert _scope(token) == "connectors:invoke"
         assert read_nous_access_token() == token
         assert _purposes(nas) == ["connectors"]
@@ -91,7 +106,7 @@ class TestConnectorsCallers:
         from tools.managed_tool_gateway import read_nous_access_token
         held = _persist_guest_tokens(inference=inference, connectors=connectors)
         nas.challenge_required = True
-        token = auth_mod.resolve_nous_access_token()
+        token = _access_token()
         _forget_memo(monkeypatch)
         assert read_nous_access_token() == token
         if serves:
@@ -102,18 +117,18 @@ class TestConnectorsCallers:
         assert presented == []
 
     def test_the_connectors_token_is_persisted_beside_the_inference_slot(self, nas, monkeypatch):
-        token = auth_mod.resolve_nous_access_token()
+        token = _access_token()
         state = anon_auth.current_nous_state()
         assert state["connectors_token"]["access_token"] == token
         assert not state.get("access_token")      # filled only when the free model is used
         _forget_memo(monkeypatch)
-        assert auth_mod.resolve_nous_access_token() == token
+        assert _access_token() == token
         assert len(nas.token_requests) == 1
 
     def test_account_reads_use_the_connectors_token(self, nas, presented):
         from hermes_cli.nous_account import get_nous_portal_account_info, reset_nous_portal_account_info_cache
         nas.challenge_required = True
-        auth_mod.resolve_nous_access_token()
+        _access_token()
         reset_nous_portal_account_info_cache()
         info = get_nous_portal_account_info()
         assert info.logged_in and info.source == "jwt" and info.account_tier == "anonymous"
@@ -123,25 +138,25 @@ class TestConnectorsCallers:
     def test_a_refusal_surfaces_as_it_does_today(self, nas, error):
         nas.token_response = httpx.Response(403, json={"error": error})
         with pytest.raises(anon_auth.AuthError) as exc:
-            auth_mod.resolve_nous_access_token()
+            _access_token()
         assert exc.value.code == anon_auth.ANON_SIGNIN_REQUIRED and exc.value.retryable is False
         assert str(exc.value) == anon_auth.ANON_FAILURE_COPY[anon_auth.ANON_SIGNIN_REQUIRED]
 
 
 class TestInferenceCallers:
     def test_still_work_the_challenge_and_never_take_the_connectors_token(self, nas, presented):
-        connectors = auth_mod.resolve_nous_access_token()
+        connectors = _access_token()
         nas.challenge_required = True
         nas.challenge_statuses = ["pending"]
-        creds = resolve_nous_runtime_credentials()
+        creds = _runtime_credentials()
         assert creds["api_key"] != connectors and _scope(creds["api_key"]) == "inference:invoke"
         assert [c.url for c in presented] == [nas.challenge_url]
         assert _purposes(nas) == ["connectors", "inference", "inference"]
 
     def test_a_held_inference_token_satisfies_connectors_callers(self, nas, monkeypatch):
-        creds = resolve_nous_runtime_credentials()
+        creds = _runtime_credentials()
         _forget_memo(monkeypatch)
-        assert auth_mod.resolve_nous_access_token() == creds["api_key"]
+        assert _access_token() == creds["api_key"]
         assert len(nas.token_requests) == 1
 
     def test_a_connectors_mint_leaves_a_pending_inference_challenge_alone(self, nas, presented):
@@ -150,9 +165,9 @@ class TestInferenceCallers:
         nas.challenge_required = True
         nas.challenge_never_clears = True
         with anon_challenge.background_caller(), pytest.raises(anon_auth.AuthError):
-            resolve_nous_runtime_credentials()
+            _runtime_credentials()
         assert anon_challenge.pending_challenge()["url"] == nas.challenge_url
-        auth_mod.resolve_nous_access_token()
+        _access_token()
         assert anon_challenge.pending_challenge()["url"] == nas.challenge_url
 
     def test_a_connectors_caller_never_queues_behind_an_inference_challenge(self, nas, monkeypatch):
@@ -163,11 +178,11 @@ class TestInferenceCallers:
 
         def present(_challenge):
             reader = threading.Thread(
-                target=lambda: during_wait.append(auth_mod.resolve_nous_access_token()), daemon=True)
+                target=lambda: during_wait.append(_access_token()), daemon=True)
             reader.start()
             reader.join(timeout=5)
         monkeypatch.setattr(anon_challenge, "present", present)
-        assert resolve_nous_runtime_credentials()["api_key"]
+        assert _runtime_credentials()["api_key"]
         assert [_scope(t) for t in during_wait] == ["connectors:invoke"]
 
     def test_an_inference_give_up_cooldown_does_not_fail_connectors_callers_fast(
@@ -176,18 +191,18 @@ class TestInferenceCallers:
         nas.challenge_never_clears = True
         monkeypatch.setattr(anon_challenge, "CHALLENGE_WAIT_SECONDS", 0)
         with pytest.raises(anon_auth.AuthError):
-            resolve_nous_runtime_credentials()
+            _runtime_credentials()
         assert anon_challenge._gave_up_recently()
-        assert _scope(auth_mod.resolve_nous_access_token()) == "connectors:invoke"
+        assert _scope(_access_token()) == "connectors:invoke"
 
 
 class TestNoInferenceIntent:
     """Paths that are not a free-model call never mint inference in the foreground or on a timer."""
 
     def test_the_keepalive_never_mints_for_a_guest(self, nas):
-        from hermes_cli.nous_auth_keepalive import refresh_nous_auth_keepalive_once
-        auth_mod.resolve_nous_access_token()
-        assert refresh_nous_auth_keepalive_once() is False
+        from auth.keepalive import refresh_nous_auth_keepalive_once
+        _access_token()
+        assert refresh_nous_auth_keepalive_once(environment_factory=credential_pool_environment, scope_context=launch_profile_scope_if_multiplexed) is False
         assert _purposes(nas) == ["connectors"]
 
     def test_a_model_catalog_read_never_waits_on_a_challenge(self, nas, presented):
@@ -203,18 +218,18 @@ class TestOlderNas:
 
     def test_an_inference_token_for_a_connectors_mint_fills_the_inference_slot(self, nas, monkeypatch):
         nas.honours_purpose = False
-        token = auth_mod.resolve_nous_access_token()
+        token = _access_token()
         assert _scope(token) == "inference:invoke"
         state = anon_auth.current_nous_state()
         assert state["access_token"] == token and "connectors_token" not in state
-        assert resolve_nous_runtime_credentials()["api_key"] == token
+        assert _runtime_credentials()["api_key"] == token
         assert len(nas.token_requests) == 1
 
     def test_a_challenged_connectors_mint_falls_back_to_the_challenge_flow(self, nas, presented):
         nas.honours_purpose = False
         nas.challenge_required = True
         nas.challenge_statuses = ["pending"]
-        assert _scope(auth_mod.resolve_nous_access_token()) == "inference:invoke"
+        assert _scope(_access_token()) == "inference:invoke"
         assert len(presented) == 1
 
 
@@ -223,6 +238,6 @@ class TestPersistedState:
         from tools.managed_tool_gateway import peek_nous_access_token
         token = _persist_guest_tokens(inference=900)["inference"]
         assert peek_nous_access_token() == token
-        assert auth_mod.resolve_nous_access_token() == token
-        assert resolve_nous_runtime_credentials()["api_key"] == token
+        assert _access_token() == token
+        assert _runtime_credentials()["api_key"] == token
         assert nas.token_requests == []

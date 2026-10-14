@@ -49,7 +49,9 @@ def _shared_store(tmp_path) -> dict:
 
 class TestIdentityLifecycle:
     def test_fresh_install_mints_once_and_resolves_without_claiming_active_provider(self, portal, tmp_path):
-        state = anon_auth.ensure_portal_identity(explicit=True)
+        state = _auth_auth_providers_nous_guest.ensure_portal_identity(
+            explicit=True, environment=_phase6_auth_environment()
+        )
         assert anon_auth.is_guest_state(state)
         assert "refresh_token" not in state
         store = _load_auth_store()
@@ -159,10 +161,12 @@ class TestExplicitProvision:
         real boolean. "1" turns it on, as it does HERMES_GUEST_ONBOARDING, so one bundle command reads
         the same for both; an unrecognised value leaves the body empty (the service default)."""
         if raw is None:
-            monkeypatch.delenv(anon_auth.PREVIEW_FULL_CONNECTORS_ENV, raising=False)
+            monkeypatch.delenv(_auth_auth_providers_nous_guest.PREVIEW_FULL_CONNECTORS_ENV, raising=False)
         else:
-            monkeypatch.setenv(anon_auth.PREVIEW_FULL_CONNECTORS_ENV, raw)
-        anon_auth.ensure_portal_identity(explicit=True)
+            monkeypatch.setenv(_auth_auth_providers_nous_guest.PREVIEW_FULL_CONNECTORS_ENV, raw)
+        _auth_auth_providers_nous_guest.ensure_portal_identity(
+            explicit=True, environment=_phase6_auth_environment()
+        )
         assert portal.create_requests == [body]
 
 

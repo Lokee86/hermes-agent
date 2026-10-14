@@ -963,7 +963,7 @@ class _NousRuntimeResolve:
         # Persist immediately so validation failures cannot drop rotated refresh tokens.
         self.persist("post_refresh_access_token")
 
-    def ensure_usable_access_token(self, client: httpx.Client) -> None:
+    def ensure_usable_access_token(self, client: httpx.Client, *, environment) -> None:
         """Merge from the shared store / refresh until the access token is a usable invoke JWT."""
         from auth.providers.nous_guest import is_guest_state, refresh_guest_state
 
@@ -971,7 +971,7 @@ class _NousRuntimeResolve:
             # Guest seam: the anon_ credential is the refresh material; re-exchange instead of
             # redeeming a rotating refresh token. Quarantine never applies to a guest.
             if self.force_refresh or self.invoke_jwt_status() is not None:
-                refresh_guest_state(self.state, client)
+                refresh_guest_state(self.state, client, environment=environment)
                 self.access_token = self.state["access_token"]
                 self.stored_inference_base_url = (
                     self.state.get("inference_base_url")
@@ -1006,60 +1006,36 @@ class _NousRuntimeResolve:
 
 
 def resolve_nous_runtime_credentials(
-    *,
-    timeout_seconds: float = 15.0,
-    insecure: Optional[bool] = None,
-    ca_bundle: Optional[str] = None,
-    force_refresh: bool = False,
-    stale_access_token: Optional[str] = None,
-    environment,
+    *, timeout_seconds: float = 15.0, insecure: Optional[bool] = None,
+    ca_bundle: Optional[str] = None, force_refresh: bool = False,
+    stale_access_token: Optional[str] = None, environment,
 ) -> Dict[str, Any]:
-    """Resolve Nous inference credentials for runtime use (refreshing under the auth-store lock).
-
-    A guest whose ``anon_`` credential NAS no longer knows (reaped or claimed) is retired and a new
-    identity is set up once, transparently -- the one client rule covering both reap and claim.
-    """
     environment.require_current_scope()
     from auth.providers.nous_guest import (
-        AnonCredentialDead,
-        clear_dead_guest,
-        ensure_portal_identity,
+        ANON_ACCOUNT_LOCKED, AnonCredentialDead, clear_dead_guest, ensure_portal_identity,
     )
-
-    try:
+    run_with_challenge = environment.anon_run_with_challenge or (lambda callback: callback())
+    def resolve_once(*, stale=stale_access_token, force=force_refresh):
         return _resolve_nous_runtime_credentials(
-            timeout_seconds=timeout_seconds,
-            insecure=insecure,
-            ca_bundle=ca_bundle,
-            force_refresh=force_refresh,
-            stale_access_token=stale_access_token,
-            environment=environment,
+            timeout_seconds=timeout_seconds, insecure=insecure, ca_bundle=ca_bundle,
+            force_refresh=force, stale_access_token=stale, environment=environment,
         )
+    try:
+        return run_with_challenge(resolve_once)
     except AnonCredentialDead as dead_exc:
         from auth.provider_state import get_provider_auth_state
-        from auth.providers.nous_guest import ANON_ACCOUNT_LOCKED
-
         dead = get_provider_auth_state("nous") or {}
-        clear_dead_guest(
-            str(dead_exc.code or "anon_credential_dead"),
-            dead_token=dead.get("anon_token"),
-        )
-        # A locked account is retired but never silently replaced: the way forward is a sign-in.
+        clear_dead_guest(str(dead_exc.code or "anon_credential_dead"),
+                         dead_token=dead.get("anon_token"))
         if dead_exc.code == ANON_ACCOUNT_LOCKED:
             raise
-        if (
-            ensure_portal_identity(
-                explicit=True, timeout_seconds=timeout_seconds, environment=environment
-            )
-            is None
-        ):
+        if ensure_portal_identity(explicit=True, timeout_seconds=timeout_seconds,
+                                  environment=environment) is None:
             raise
-        return _resolve_nous_runtime_credentials(
-            timeout_seconds=timeout_seconds,
-            insecure=insecure,
-            ca_bundle=ca_bundle,
-            environment=environment,
-        )
+        return run_with_challenge(lambda: _resolve_nous_runtime_credentials(
+            timeout_seconds=timeout_seconds, insecure=insecure, ca_bundle=ca_bundle,
+            environment=environment))
+
 
 
 def _resolve_nous_runtime_credentials(
@@ -1094,6 +1070,9 @@ def _resolve_nous_runtime_credentials(
                 "nous_auth_missing",
                 relogin=True,
             )
+        from auth.providers.nous_guest import guest_without_free_tier
+        if guest_without_free_tier(state, environment=environment):
+            raise _nous_err("Hermes is not logged into Nous Portal.", "nous_auth_missing")
         run = _NousRuntimeResolve(
             auth_store,
             state,
@@ -1111,7 +1090,7 @@ def _resolve_nous_runtime_credentials(
             refresh_token_fp=_token_fingerprint(state.get("refresh_token")),
         )
         with _nous_http_client(timeout_seconds or 15.0, verify) as client:
-            run.ensure_usable_access_token(client)
+            run.ensure_usable_access_token(client, environment=environment)
             _assert_nous_inference_jwt_usable(state, access_token=run.access_token)
             _select_nous_invoke_jwt(
                 state, access_token=run.access_token, sequence_id=run.sequence_id
@@ -1240,11 +1219,21 @@ def _nous_portal_base_url(state: Dict[str, Any]) -> str:
 
 
 def resolve_nous_access_token(
-    *,
-    timeout_seconds: float = 15.0,
-    insecure: Optional[bool] = None,
+    *, timeout_seconds: float = 15.0, insecure: Optional[bool] = None,
     ca_bundle: Optional[str] = None,
-    refresh_skew_seconds: int = ACCESS_TOKEN_REFRESH_SKEW_SECONDS,
+    refresh_skew_seconds: int = ACCESS_TOKEN_REFRESH_SKEW_SECONDS, environment=None,
+) -> str:
+    run_with_challenge = getattr(environment, "anon_run_with_challenge", None)
+    resolve = lambda: _resolve_nous_access_token(
+        timeout_seconds=timeout_seconds, insecure=insecure, ca_bundle=ca_bundle,
+        refresh_skew_seconds=refresh_skew_seconds, environment=environment)
+    return run_with_challenge(resolve) if callable(run_with_challenge) else resolve()
+
+
+def _resolve_nous_access_token(
+    *, timeout_seconds: float = 15.0, insecure: Optional[bool] = None,
+    ca_bundle: Optional[str] = None,
+    refresh_skew_seconds: int = ACCESS_TOKEN_REFRESH_SKEW_SECONDS, environment=None,
 ) -> str:
     """Resolve a refresh-aware Nous Portal access token for managed tool gateways."""
     # Only a default-TLS resolution is memoised; error paths never populate the memo.
@@ -1295,27 +1284,20 @@ def resolve_nous_access_token(
             timeout_seconds + 5.0, auth_storage.AUTH_LOCK_TIMEOUT_SECONDS
         )
         with _nous_shared_store_lock(timeout_seconds=lock_timeout):
-            from auth.providers.nous_guest import is_guest_state, refresh_guest_state
+            from auth.providers.nous_guest import held_connectors_token, is_guest_state, refresh_guest_state
 
             if is_guest_state(state):
-                # Guest seam: the anon_ credential is the identity; a first use has no access token
-                # yet and an expired one is re-exchanged. No refresh token, no quarantine.
-                access_token = state.get("access_token")
-                if (
-                    isinstance(access_token, str)
-                    and access_token
-                    and not _is_expiring(state.get("expires_at"), refresh_skew_seconds)
-                ):
+                if access_token := held_connectors_token(state, skew_seconds=refresh_skew_seconds):
                     return _memo(access_token)
                 with httpx.Client(
                     timeout=httpx.Timeout(timeout_seconds or 15.0),
                     headers={"Accept": "application/json"},
                     verify=verify,
                 ) as client:
-                    refresh_guest_state(state, client)
+                    minted = refresh_guest_state(state, client, purpose="connectors", environment=environment)
                 persist()
                 _write_shared_nous_state(state)
-                return _memo(state["access_token"])
+                return _memo(minted)
 
             merged_shared = _merge_shared_nous_oauth_state(state)
             access_token = state.get("access_token")
