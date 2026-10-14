@@ -80,6 +80,13 @@ class PluginLoadContext(Protocol):
         frontmatter: Optional[Mapping[str, Any]] = None,
     ) -> Any: ...
 
+    def register_locale_dir(
+        self,
+        path: str | Path,
+        *,
+        metadata: Optional[Mapping[str, Mapping[str, Any]]] = None,
+    ) -> list[Any]: ...
+
 
 class PluginLoadTimeout(Exception):
     """Raised on the loading thread when a plugin's import + ``register()`` overran its deadline."""
@@ -518,6 +525,32 @@ class PluginLoaderMixin:
         for warning in validate_config_schema(plugin_id, manifest.config_schema, settings):
             logger.warning("Plugin %s config: %s", plugin_id, warning)
 
+    @staticmethod
+    def _is_manifest_only_language_pack(manifest: PluginManifest) -> bool:
+        """Return whether declared locales are the entire plugin (no Python package)."""
+        return bool(
+            manifest.provides_locales
+            and manifest.path
+            and not (Path(manifest.path) / "__init__.py").is_file()
+        )
+
+    def _register_declared_locales(self, manifest: PluginManifest, ctx: PluginLoadContext) -> None:
+        """Register ``provides_locales`` files through the canonical plugin context."""
+        if not manifest.provides_locales or not manifest.path:
+            return
+        locales_dir = Path(manifest.path) / "locales"
+        handles = ctx.register_locale_dir(locales_dir, metadata=manifest.locale_metadata)
+        registered = {handle.key.split(".", 1)[0] for handle in handles}
+        for lang_id in manifest.provides_locales:
+            if lang_id not in registered:
+                logger.warning(
+                    "Plugin '%s' declares provides_locales %r but %s has no %s.yaml",
+                    manifest.name,
+                    lang_id,
+                    locales_dir,
+                    lang_id,
+                )
+
     def _load_plugin(self, manifest: PluginManifest) -> None:
         """Import a plugin module and call its ``register(ctx)`` function."""
         with self._discovery_lock, plugin_home_scope(self.home_path):
@@ -546,13 +579,26 @@ class PluginLoaderMixin:
         module_name = self._policy_module_name(manifest)
         self._track_tool_override_policy(manifest, module_name)
         ctx = self.context_for(manifest)
+        in_host = self._runs_in_plugin_host(manifest)
 
         def _import_and_register() -> bool:
             """Import + register() — the part a plugin controls, so the part the deadline covers."""
+            # Declared locale files are ledger-owned registrations and therefore unwind with a failed load.
+            self._register_declared_locales(manifest, ctx)
+            if in_host and not self._is_manifest_only_language_pack(manifest):
+                self._plugin_host().load(
+                    manifest,
+                    ctx,
+                    module_name=module_name,
+                    entrypoint=manifest.source not in {"user", "project"},
+                )
+                return True
             # Reuse a deferred platform's already-imported package so its body doesn't run twice.
             # See #78050.
             module = self._predeclared_modules.pop(plugin_key, None)
             if module is None and manifest.source in {"user", "project", "bundled"}:
+                if self._is_manifest_only_language_pack(manifest):
+                    return True
                 module = self._load_directory_module(manifest, module_name=module_name)
             elif module is None:
                 module = self._load_entrypoint_module(manifest)

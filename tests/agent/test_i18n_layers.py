@@ -191,7 +191,7 @@ def test_later_pack_wins_over_earlier_pack(home):
 
 def test_register_locale_accepts_dicts_and_rejects_bad_ids(home):
     from hermes_cli.plugins import PluginContext
-    from hermes_cli.plugins_manifest import PluginManifest
+    from plugin_runtime.manifest import PluginManifest
 
     manager = PluginManager()
     ctx = PluginContext(PluginManifest(name="inline-pack", source="user", path=str(home)), manager)

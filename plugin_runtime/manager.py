@@ -70,6 +70,7 @@ class PluginManager(PluginLoaderMixin, PluginDispatchMixin, PluginOwnershipMixin
         self.home_path = Path(self.scope_key)
         self._discovery_lock = threading.RLock()
         self._discovered: bool = False
+        self._plugin_host_instance = None  # Lazily created through the host adapter for this profile.
         self._cli_ref = None  # Set by CLI after plugin discovery
         self._gateway_message_injector: tuple[object, Callable] | None = None
         # Ink TUI / desktop. Must not alias ``_gateway_message_injector``: a live
@@ -131,6 +132,25 @@ class PluginManager(PluginLoaderMixin, PluginDispatchMixin, PluginOwnershipMixin
     def context_for(self, manifest: PluginManifest) -> PluginContext:
         """Construct the runtime-owned plugin context requested by plugin loading."""
         return PluginContext(manifest, self)
+
+    def _runs_in_plugin_host(self, manifest: PluginManifest) -> bool:
+        """Return whether a non-bundled Python plugin must execute in the profile host."""
+        if manifest.source == "bundled":
+            return False
+        resolve_mode = get_plugin_host_callback("plugin_isolation_mode")
+        if resolve_mode is None:
+            raise RuntimeError("plugin isolation host adapter is unavailable")
+        return str(resolve_mode()) == "host"
+
+    def _plugin_host(self) -> Any:
+        """Return this profile's lazily created host through the upper host adapter."""
+        host = self._plugin_host_instance
+        if host is None:
+            factory = get_plugin_host_callback("plugin_host_factory")
+            if factory is None:
+                raise RuntimeError("plugin host factory is unavailable")
+            host = self._plugin_host_instance = factory(self)
+        return host
 
     def on_plugin_loaded(self, callback: Callable[[list[dict[str, Any]]], Any]) -> Callable[[], None]:
         """Subscribe to discovery sweeps that load plugins this process did not already have."""

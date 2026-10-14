@@ -38,6 +38,7 @@ from hermes_cli.colors import Colors, color
 from hermes_cli import managed_scope
 from hermes_cli.default_soul import DEFAULT_SOUL_MD, is_legacy_template_soul
 from hermes_cli.secret_prompt import masked_secret_prompt
+from hermes_cli.plugin_runtime_host_adapter import bind_plugin_runtime_host_adapter
 # Managed-mode, container and HERMES_UID/GID policy live in hermes_constants (import-safe);
 # re-exported here so existing callers/patch targets keep working.
 from hermes_constants import (
@@ -53,6 +54,10 @@ from hermes_cli.config_read_errors import (
     _yaml_error_location)
 
 logger = logging.getLogger(__name__)
+
+# Import-safe inversion point for plugin-runtime host isolation. The adapter itself keeps
+# PluginHost/plugin_isolation imports lazy, so ordinary config startup does not pull host machinery.
+bind_plugin_runtime_host_adapter()
 
 
 def is_uv_tool_install() -> bool:
