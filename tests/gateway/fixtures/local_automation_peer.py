@@ -10,6 +10,7 @@ import threading
 
 from automation_peer import Model
 from local_recovery_probe import daemon, websocket, rpc
+from tests.waiting import async_wait_until
 
 
 def probe(base, source):
@@ -41,9 +42,7 @@ def probe(base, source):
             return [dict(r) for r in db.execute('SELECT * FROM session_admissions ORDER BY seq')]
 
     async def wait(predicate):
-        async with asyncio.timeout(30):
-            while not predicate():
-                await asyncio.sleep(.05)
+        await async_wait_until(predicate, timeout=30)
 
     async def run(desc):
         async with websocket(home, desc) as ws:
@@ -67,7 +66,9 @@ def probe(base, source):
             await submit('follower', 'HUMAN_FIFO_FOLLOWER')
         # Last observer closes while owner remains in a model call.
         model.gate.touch()
-        await asyncio.sleep(8)
+        await wait(lambda: any(r['principal_id'].startswith('automation:') for r in rows()))
+        # The completion is in; a duplicate admission would land within this window (none may).
+        await asyncio.sleep(8)  # health: allow HX013 -- proves no second automation row arrives
         ledger = rows()
         automatic = [r for r in ledger if r['principal_id'].startswith('automation:')]
         assert automatic, {'missing_automation': ledger}
@@ -84,9 +85,15 @@ def probe(base, source):
         assert 'REAL_TERMINAL_COMPLETION' in str(texts[-1]), texts
         assert sum('REAL_TERMINAL_COMPLETION' in str(text) for text in texts) == 1, texts
         with sqlite3.connect(home / 'state.db') as db:
-            notices = db.execute("SELECT display_kind FROM messages WHERE role='user' AND content LIKE ?",
-                                 ('%REAL_TERMINAL_COMPLETION%',)).fetchall()
-        assert notices == [('internal_notification',)], notices
+            notices = db.execute("SELECT display_kind, json_extract(display_metadata, '$.display_text') FROM messages"
+                                 " WHERE role='user' AND content LIKE ?", ('%REAL_TERMINAL_COMPLETION%',)).fetchall()
+        # A completion is the same async-result card the in-process TUI persisted; a watch match is not one.
+        assert len(notices) == 1, notices
+        if watch:
+            assert notices[0][0] == 'internal_notification', notices
+        else:
+            assert notices[0][0] == 'process_complete', notices
+            assert str(notices[0][1]).startswith('Background Process Finished: '), notices
         prefixes = [json.dumps([m for m in r['messages'] if m['role'] in ('system', 'developer')], sort_keys=True)
                     for r in model.requests if r.get('messages')]
         assert len(set(prefixes)) == 1, 'automation changed the cached system prefix'
@@ -113,7 +120,7 @@ def probe(base, source):
             async def recovered(desc):
                 await wait(lambda: all(r['status'] == 'terminal' for r in rows()))
                 # Leave ordinary startup/watchers running before checking zero replay.
-                await asyncio.sleep(8)
+                await asyncio.sleep(8)  # health: allow HX013 -- proves recovery replays nothing in the window
                 assert len(rows()) == len(receipt['committed']), rows()
                 assert rows()[-1]['outcome'] == 'completed', rows()
                 async with websocket(home, desc) as ws:

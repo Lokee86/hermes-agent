@@ -21,6 +21,8 @@ def test_policy_selects_surface_and_isolates_cwd(tmp_path):
     assert policies[2].platform == 'desktop'
     assert 'desktop_ui' in policies[2].toolsets
     assert all('desktop_ui' not in p.toolsets for p in policies[:2])
+    # Platform-gated toolsets (catalog) ride on the Desktop surface only, like the native TUI factory.
+    assert 'catalog' in policies[2].toolsets and all('catalog' not in p.toolsets for p in policies[:2])
     cfg['platform_toolsets']['cli'].clear()
     assert 'terminal' in policies[0].toolsets
 
@@ -32,9 +34,73 @@ def test_policy_selects_surface_and_isolates_cwd(tmp_path):
         list(pool.map(run, policies))
     assert dict(os.environ) == before
     for params in ({'source': 'cron'}, {'toolsets': ['not-a-toolset']}, {'cwd': '.'},
-                   {'provider': 12}, {'skills': ['x']}, {'toolsets': ['desktop_ui'], 'source': 'cli'}):
+                   {'provider': 12}, {'skills': 'x'}, {'skills': []}, {'pass_session_id': 1},
+                   {'toolsets': ['desktop_ui'], 'source': 'cli'}):
         with pytest.raises(RuntimeStoreError, match='invalid_params'):
             build_policy(params, {})
+
+
+@pytest.mark.asyncio
+async def test_launch_options_reach_the_owner_frozen_and_hooks_consented(tmp_path, monkeypatch):
+    """`-s/--skills`, `--checkpoints`, `--pass-session-id`, `--accept-hooks` (and an exported
+    HERMES_ACCEPT_HOOKS=1, which the TUI forwards) were refused by session.create, so no session
+    could be created with them. They are this session's creation policy, applied by the owner."""
+    import json
+    from types import SimpleNamespace
+    from gateway import run
+    from gateway.config import GatewayConfig
+    from gateway.session import SessionStore
+    from gateway.session_authority import initialize_session_authority
+    from gateway.session_controls import AuthorityConnection
+    from gateway.session_policy import restore_policy
+    from hermes_state_local import local_receipt
+    from agent import shell_hooks
+    from hermes_cli.plugins import get_plugin_manager
+
+    home = tmp_path / 'home'
+    (home / 'skills' / 'launch-fixture').mkdir(parents=True)
+    (home / 'skills' / 'launch-fixture' / 'SKILL.md').write_text(
+        '---\nname: launch-fixture\ndescription: fixture\n---\n\nLAUNCH_SKILL_BODY\n')
+    monkeypatch.setenv('HERMES_HOME', str(home))
+    monkeypatch.delenv('HERMES_ACCEPT_HOOKS', raising=False)
+    hook = tmp_path / 'hook.sh'
+    hook.write_text('#!/bin/sh\nexit 0\n')
+    cfg = {'platform_toolsets': {'cli': []}, 'hooks': {'pre_tool_call': [{'command': str(hook)}]}}
+    monkeypatch.setattr(run, '_load_gateway_config', lambda: cfg)
+    monkeypatch.setattr(run, '_resolve_gateway_model', lambda config: 'fixture')
+    monkeypatch.setattr(get_plugin_manager(), '_hooks', {})
+    shell_hooks.reset_for_tests()
+    store = SessionStore(tmp_path / 'sessions', GatewayConfig())
+    runner = SimpleNamespace(session_store=store, _session_db=store._db, adapters={}, _draining=False,
+                             _cached_agent_for=lambda route: None)
+    runner._adapter_for_source = lambda source: runner.adapters.get(source.platform)
+    authority = await initialize_session_authority(runner, profile_id=str(home), instance_id='first')
+    connection = AuthorityConnection(authority, object(), {'user_id': 'human'})
+
+    async def create(request_id, **params):
+        reply = await connection.dispatch({'id': 1, 'method': 'session.create', 'params': {
+            'request_id': request_id, 'source': 'tui', 'cwd': str(tmp_path), **params}})
+        return reply.get('result', {}).get('session_id') or reply['error']['message']
+
+    launch = dict(skills=['launch-fixture', 'missing-typo'], checkpoints=True, pass_session_id=True, accept_hooks=True)
+    sid = await create('launch', **launch)
+    def frozen(session_id):
+        return restore_policy(local_receipt(authority.db, session_id)['policy'])
+    policy = frozen(sid)
+    assert 'LAUNCH_SKILL_BODY' in policy.skills_prompt and policy.pass_session_id and policy.checkpoints_enabled
+    assert str(hook) in (home / shell_hooks.ALLOWLIST_FILENAME).read_text()
+    assert len(get_plugin_manager()._hooks['pre_tool_call']) == 1
+    # Retrying the request id resumes the frozen route; nothing re-renders or re-registers.
+    assert await create('launch', **launch) == sid
+    assert len(get_plugin_manager()._hooks['pre_tool_call']) == 1
+    plain = frozen(await create('plain'))
+    assert plain.skills_prompt is None and not plain.pass_session_id and not plain.checkpoints_enabled
+    # Never silently dropped: nothing resolving, bad shapes, or profile reads on a bypass launch refuse.
+    for params in ({'skills': ['missing-typo']}, {'skills': 'launch-fixture'}, {'checkpoints': 'yes'},
+                   {'model': 'm', 'safe_mode': True, 'skills': ['launch-fixture']}):
+        assert await create('refused-' + json.dumps(params), **params) in {'unknown_skill', 'invalid_params'}, params
+    # An exported HERMES_ACCEPT_HOOKS=1 must not brick a --safe-mode TUI: no profile hooks, no refusal.
+    assert (await create('safe', model='m', safe_mode=True, accept_hooks=True)).startswith('local-')
 
 
 def test_launch_policy_reaches_real_turn_runner(tmp_path):
@@ -46,10 +112,11 @@ def test_launch_policy_reaches_real_turn_runner(tmp_path):
     home, state = tmp_path / 'home', tmp_path / 'state'
     home.mkdir()
     state.mkdir()
-    env = {k: os.environ[k] for k in ('PATH', 'SYSTEMROOT', 'LANG', 'TZ') if k in os.environ}
+    from tests.gateway.fixtures.local_recovery_probe import child_env
+    env = child_env()
     env.update(HOME=str(home), USERPROFILE=str(home), HERMES_HOME=str(state), PYTHONPATH=str(repo))
     result = subprocess.run([sys.executable, str(Path(__file__).parent / 'fixtures' / 'session_policy_peer.py')],
-                            cwd=repo, env=env, stdin=subprocess.DEVNULL, capture_output=True, text=True, encoding='utf-8', errors='replace', timeout=130)
+                            cwd=repo, env=env, stdin=subprocess.DEVNULL, capture_output=True, text=True, encoding='utf-8', errors='replace', timeout=130, check=False)
     assert result.returncode == 0, result.stdout + '\n' + result.stderr
     receipt = json.loads((state / 'policy-receipt.json').read_text())
     assert receipt['cwd_effects'] and receipt['same_agents'] and receipt['no_spill']
@@ -70,10 +137,26 @@ def test_launch_options_are_frozen_and_validated(tmp_path):
     cfg['agent']['reasoning_effort'] = 'none'
     assert policy.reasoning_config == parse_reasoning_effort('high')
     assert build_policy(dict(cwd=str(tmp_path), ignore_rules=False), cfg).ignore_rules is False
-    for bad in ({'max_turns': True}, {'max_turns': 0}, {'reasoning': 'garbage'},
+    for bad in ({'max_turns': True}, {'max_turns': 'garbage'}, {'max_turns': 2.5}, {'reasoning': 'garbage'},
                 {'ignore_rules': 'false'}, {'base_url': 'http://user:secret@localhost/v1'}):
         with pytest.raises(RuntimeStoreError, match='invalid_params'):
             build_policy(dict(cwd=str(tmp_path), **bad), cfg)
+
+
+def test_unlimited_max_turns_spellings_create_an_uncapped_session(tmp_path):
+    """`--max-turns 0` / -1 / none / unlimited meant "no cap" before the gateway cutover: session.create
+    freezes them as the unlimited budget, and `hermes chat` sends 0 instead of dropping it as falsy."""
+    import argparse
+    import sys
+    from gateway.session_policy import build_policy
+    from hermes_cli.gateway_chat import _launch_flags, _requested_policy
+    cfg = {'agent': {'max_turns': 8}}
+    for spelling in (0, -1, 'none', 'unlimited', '0'):
+        assert build_policy(dict(cwd=str(tmp_path), max_turns=spelling), cfg).max_turns == sys.maxsize, spelling
+    assert build_policy(dict(cwd=str(tmp_path), max_turns='12'), cfg).max_turns == 12
+    for zero in (0, -1):
+        args = argparse.Namespace(max_turns=zero, model=None, ignore_rules=False, yolo=False)
+        assert _launch_flags(args) == _requested_policy(args) == {'max_turns': zero}
 
 
 def test_explicit_key_is_private_and_missing_after_restart_fails_closed(tmp_path):
@@ -116,8 +199,184 @@ def test_ordinary_daemon_cli_launch_policy(tmp_path):
         'import json,sys; from pathlib import Path; '
         'from tests.gateway.fixtures.cli_launch_policy_probe import probe; '
         'print(json.dumps(probe(Path(sys.argv[1]))))', str(tmp_path)], cwd=root,
-        stdin=subprocess.DEVNULL, capture_output=True, text=True, encoding='utf-8', errors='replace', timeout=180)
+        stdin=subprocess.DEVNULL, capture_output=True, text=True, encoding='utf-8', errors='replace', timeout=180, check=False)
     assert result.returncode == 0, result.stdout + result.stderr
     print(json.dumps(json.loads(result.stdout.splitlines()[-1])))
 
 
+def test_null_config_sections_read_as_absent(tmp_path):
+    # A fresh install's config.yaml carries a bare ``gateway:`` (YAML null); the managed-worker gate chains
+    # ``.get('gateway', {}).get(...)`` on the frozen policy and must read the default, not crash the turn.
+    from gateway.session_policy import build_policy, LocalSessionPolicy
+    from dataclasses import replace
+    import json
+
+    cfg = {'gateway': None, 'display': None, 'platform_toolsets': {'cli': ['terminal']}}
+    policy = build_policy({'source': 'cli', 'cwd': str(tmp_path)}, cfg)
+    assert policy.config().get('gateway', {}).get('managed_workers') is None
+    legacy = replace(policy, config_json=json.dumps(cfg))  # persisted before normalization
+    assert isinstance(legacy, LocalSessionPolicy)
+    assert legacy.config().get('display', {}).get('busy_input_mode', 'interrupt') == 'interrupt'
+
+
+
+def test_frozen_route_keeps_its_endpoint_after_live_config_edit(tmp_path, monkeypatch):
+    """R2-M2: the frozen policy's config-derived endpoint is the one its frozen credential
+    belongs to; a later ``model.base_url`` edit must not redirect that credential."""
+    import json
+    from types import SimpleNamespace
+    from gateway.session_policy import build_policy, bind_launch_key
+    from gateway.run_turn_prepare import GatewayTurnPrepareMixin
+    from hermes_cli.config_effective import load_user_config_effective
+    home = tmp_path / 'home'
+    home.mkdir()
+    monkeypatch.setenv('HERMES_HOME', str(home))
+
+    def write(url, key):
+        (home / 'config.yaml').write_text(json.dumps(
+            {'model': {'provider': 'custom', 'base_url': url, 'api_key': key, 'default': 'm'}}))
+    write('http://127.0.0.1:1/v1', 'sk-frozen-endpoint-one')
+    private = {}
+    policy = build_policy({'cwd': str(tmp_path), 'model': 'm'}, load_user_config_effective(home / 'config.yaml'),
+                          private_secrets=private)
+    authority = SimpleNamespace(instance_id='i', epoch=1, profile_id='p', db=None)
+    policy = bind_launch_key(authority, 'sid', policy, None, config_secrets=private)
+    write('http://127.0.0.1:2/v1', 'sk-new-endpoint-two')
+    monkeypatch.setattr('gateway.session_policy.policy_for_source', lambda runner, source: policy)
+    runner = SimpleNamespace(session_authority=authority)
+    _, runtime = GatewayTurnPrepareMixin._resolve_session_agent_runtime(runner, source=SimpleNamespace())
+    assert (runtime['base_url'], runtime['api_key']) == ('http://127.0.0.1:1/v1', 'sk-frozen-endpoint-one')
+
+
+def test_frozen_bare_custom_route_keeps_its_endpoint_pool_and_launch_key_wins(tmp_path, monkeypatch):
+    """The frozen ``model.api_key`` is config, not a launch key: a URL-matched credential pool still
+    serves the frozen endpoint (refresh/rotation on 401/429), while a bound launch key wins (R2-M1)."""
+    import json
+    from types import SimpleNamespace
+    from gateway.session_policy import build_policy, bind_launch_key
+    from gateway.run_turn_prepare import GatewayTurnPrepareMixin
+    from hermes_cli.config_effective import load_user_config_effective
+    home = tmp_path / 'home'
+    home.mkdir()
+    monkeypatch.setenv('HERMES_HOME', str(home))
+    url = 'http://127.0.0.1:1/v1'
+    (home / 'config.yaml').write_text(json.dumps(
+        {'model': {'provider': 'custom', 'base_url': url, 'api_key': 'sk-frozen-config', 'default': 'm'}}))
+    pool = object()
+    monkeypatch.setattr('hermes_cli.runtime_provider._try_resolve_from_custom_pool', lambda base_url, *a, **k: {
+        'provider': 'custom', 'api_mode': 'chat_completions', 'base_url': base_url, 'api_key': 'sk-pooled',
+        'source': 'pool:custom', 'credential_pool': pool} if base_url.rstrip('/') == url else None)
+    authority = SimpleNamespace(instance_id='i', epoch=1, profile_id='p', db=None)
+    runner = SimpleNamespace(session_authority=authority)
+    runtimes = []
+    for sid, launch in (('config-keyed', None), ('launch-keyed', 'sk-launch-explicit')):
+        private = {}
+        params = {'cwd': str(tmp_path), 'model': 'm'} | ({'api_key': launch} if launch else {})
+        policy = build_policy(params, load_user_config_effective(home / 'config.yaml'), private_secrets=private)
+        policy = bind_launch_key(authority, sid, policy, launch, config_secrets=private)
+        monkeypatch.setattr('gateway.session_policy.policy_for_source', lambda runner, source, p=policy: p)
+        runtimes.append(GatewayTurnPrepareMixin._resolve_session_agent_runtime(runner, source=SimpleNamespace())[1])
+    assert (runtimes[0]['base_url'], runtimes[0]['credential_pool']) == (url, pool)
+    assert (runtimes[1]['api_key'], runtimes[1]['credential_pool']) == ('sk-launch-explicit', None)
+
+
+def _frozen_fixture_routes(tmp_path, monkeypatch, *launches):
+    """Freeze ``custom_providers: Fixture`` at endpoint A with a pool-only key in auth.json, freeze one
+    route per launch ``base_url``, then edit the LIVE entry to endpoint B; return each route's runtime."""
+    import json
+    from types import SimpleNamespace
+    from gateway.session_policy import build_policy, bind_launch_key
+    from gateway.run_turn_prepare import GatewayTurnPrepareMixin
+    from hermes_cli.config_effective import load_user_config_effective
+    home = tmp_path / 'home'
+    home.mkdir()
+    monkeypatch.setenv('HERMES_HOME', str(home))
+
+    def write(url):
+        (home / 'config.yaml').write_text(json.dumps({'model': {'provider': 'fixture', 'default': 'm'},
+                                                      'custom_providers': [{'name': 'Fixture', 'base_url': url}]}))
+    write('https://a.fixture.example/v1')
+    (home / 'auth.json').write_text(json.dumps({'version': 1, 'providers': {}, 'credential_pool': {'custom:fixture': [
+        {'id': 'k1', 'label': 'a', 'auth_type': 'api_key', 'priority': 0, 'source': 'manual',
+         'access_token': 'sk-pool-key-for-endpoint-a'}]}}))
+    authority = SimpleNamespace(instance_id='i', epoch=1, profile_id='p', db=None)
+    policies = []
+    for n, url in enumerate(launches):
+        private = {}
+        params = {'cwd': str(tmp_path), 'model': 'm', 'provider': 'fixture'} | ({'base_url': url} if url else {})
+        policy = build_policy(params, load_user_config_effective(home / 'config.yaml'), private_secrets=private)
+        policies.append(bind_launch_key(authority, f's{n}', policy, None, config_secrets=private))
+    write('https://b.fixture.example/v1')
+    runner = SimpleNamespace(session_authority=authority)
+    runtimes = []
+    for policy in policies:
+        monkeypatch.setattr('gateway.session_policy.policy_for_source', lambda runner, source, p=policy: p)
+        runtimes.append(GatewayTurnPrepareMixin._resolve_session_agent_runtime(runner, source=SimpleNamespace())[1])
+    return runtimes
+
+
+def test_frozen_named_route_keeps_its_pool_after_live_endpoint_edit(tmp_path, monkeypatch):
+    """A frozen named route stays on endpoint A after the live entry moves to B; A's pool key goes
+    with it (the pool-key lookup reads the FROZEN entry, not live config) instead of no-key-required."""
+    (runtime,) = _frozen_fixture_routes(tmp_path, monkeypatch, None)
+    assert (runtime['base_url'], runtime['api_key']) == ('https://a.fixture.example/v1', 'sk-pool-key-for-endpoint-a')
+    assert runtime['credential_pool'] is not None
+
+
+def test_frozen_launch_url_override_never_borrows_the_named_pool(tmp_path, monkeypatch):
+    """R2-M1 under a frozen route: a launch ``base_url`` B for the provider frozen at A never borrows
+    A's pool key, even after the live entry is edited to B."""
+    (runtime,) = _frozen_fixture_routes(tmp_path, monkeypatch, 'https://b.fixture.example/v1')
+    assert runtime['base_url'] == 'https://b.fixture.example/v1'
+    assert (runtime['api_key'], runtime['credential_pool']) == ('no-key-required', None)
+
+
+def test_lazy_info_reports_the_free_tier_pinned_model(tmp_path, monkeypatch):
+    """A not-yet-built session with no launch model/provider runs on ``nous/welcome`` on the free
+    tier (the agent build pins it), so ``session.info`` says so; an explicit launch model stands."""
+    from dataclasses import replace
+    from types import SimpleNamespace
+    from gateway.session_local import _lazy_model
+    from gateway.session_policy import build_policy
+    from hermes_cli import anon_auth
+    authority = SimpleNamespace(runner=None, profile_id='fixture')
+    monkeypatch.setattr(anon_auth, 'free_tier_route', lambda: True)
+    configured = replace(build_policy({'cwd': str(tmp_path)}, {'model': {'default': 'cfg-model'}}), model='cfg-model')
+    assert _lazy_model(authority, configured) == anon_auth.GUEST_MODEL
+    assert _lazy_model(authority, build_policy({'cwd': str(tmp_path), 'model': 'pick'}, {})) == 'pick'
+    monkeypatch.setattr(anon_auth, 'free_tier_route', lambda: False)
+    assert _lazy_model(authority, configured) == 'cfg-model'
+
+
+def test_run_budget_is_a_frozen_launch_option(tmp_path):
+    """`hermes chat --run-budget N` (main: AIAgent(run_budget_seconds=N)): frozen as the session's
+    agent.run_budget_seconds; the profile's own value applies without the flag; junk is refused."""
+    from gateway.session_policy import build_policy
+    from hermes_state_runtime import RuntimeStoreError
+    cfg = {'agent': {'run_budget_seconds': 300}}
+    assert build_policy(dict(cwd=str(tmp_path), run_budget=120), cfg).run_budget_seconds == 120.0
+    assert build_policy(dict(cwd=str(tmp_path)), cfg).run_budget_seconds == 300.0
+    assert build_policy(dict(cwd=str(tmp_path)), {}).run_budget_seconds is None
+    for bad in (0, -5, True, 'soon'):
+        with pytest.raises(RuntimeStoreError, match='invalid_params'):
+            build_policy(dict(cwd=str(tmp_path), run_budget=bad), cfg)
+
+
+def test_run_budget_passes_the_session_create_contract():
+    """The canonical dispatcher refuses undeclared session.create keys before the policy sees them."""
+    from tui_gateway.contracts.registry import CANONICAL_METHODS, canonical_param_problems
+    from gateway.session_policy import CREATE_FIELDS
+    contract = CANONICAL_METHODS['session.create']
+    assert canonical_param_problems(contract, {'request_id': 'r', 'source': 'cli', 'run_budget': 120.0}) == []
+    declared = set(contract.params.model_fields)
+    assert CREATE_FIELDS <= declared | {'request_id'}, CREATE_FIELDS - declared
+
+
+def test_verbose_is_a_frozen_launch_option(tmp_path):
+    """`hermes chat -v` (main: AIAgent(quiet_mode=False)): the session agent's status lines are not quieted."""
+    from gateway.session_policy import build_policy
+    from hermes_state_runtime import RuntimeStoreError
+    assert build_policy(dict(cwd=str(tmp_path), verbose=True), {}).verbose is True
+    assert build_policy(dict(cwd=str(tmp_path)), {}).verbose is False
+    with pytest.raises(RuntimeStoreError, match='invalid_params'):
+        build_policy(dict(cwd=str(tmp_path), verbose='yes'), {})

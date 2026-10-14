@@ -14,6 +14,8 @@ import sqlite3
 import threading
 import time
 
+import importlib.machinery
+
 import pytest
 
 from tests.gateway.fixtures.local_recovery_probe import Model, child_env, daemon
@@ -35,7 +37,7 @@ async def test_paused_fifo_releases_the_messaging_waiter_with_one_notice_per_epi
     from tests.gateway.test_authority_unknown_resolution import Peer, _restarted_owner_with_unknown_head
 
     executed = []
-    store, authority, ref, unknown, follower = await _restarted_owner_with_unknown_head(tmp_path, monkeypatch, executed)
+    store, authority, ref, unknown, _follower = await _restarted_owner_with_unknown_head(tmp_path, monkeypatch, executed)
     try:
         actor = Principal('human', 'p', frozenset({'session:submit'}), 'fixture')
 
@@ -68,7 +70,8 @@ async def test_paused_fifo_releases_the_messaging_waiter_with_one_notice_per_epi
         store.close_all_db_handles()
 
 
-@pytest.mark.linux_only
+@pytest.mark.skipif(importlib.machinery.PathFinder.find_spec("telegram") is None, reason="python-telegram-bot not installed (on-demand extra)")
+@pytest.mark.platforms("linux")
 def test_crash_mid_turn_then_platform_message_gets_one_pause_notice_and_reset_unpauses(tmp_path):
     root = Path(__file__).resolve().parents[2]
     home, user = tmp_path / 'state', tmp_path / 'user'
@@ -126,14 +129,14 @@ def test_crash_mid_turn_then_platform_message_gets_one_pause_notice_and_reset_un
         wait_for(lambda: rows().get(text, {}).get('status') == status, diagnostic)
 
     try:
-        with daemon(root, home, env, barrier=False) as (proc, desc):
+        with daemon(root, home, env, barrier=False) as (proc, _desc):
             send('WARM_HISTORY', 'terminal')
             send('BLOCK_STARTED', 'started')
             assert model.blocked.wait(20), diagnostic()
             proc.kill()
             assert proc.wait(timeout=10) == -9
         model.release.set()
-        with daemon(root, home, env, barrier=False) as (proc, desc):
+        with daemon(root, home, env, barrier=False) as (proc, _desc):
             wait_for(lambda: rows()['BLOCK_STARTED']['status'] == 'unknown', diagnostic)
             paused_session = rows()['BLOCK_STARTED']['session']
             # First message onto the paused FIFO: admitted (durable), the user is told once,

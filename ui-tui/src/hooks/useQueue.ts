@@ -6,6 +6,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { isServerQueued } from '../app/pendingBubbles.js'
 import { captureDestination, type SubmissionDestination } from '../app/submissionDestination.js'
 import { $uiState, getUiState, patchUiState } from '../app/uiStore.js'
+import { t } from '../i18n/runtime.js'
 import {
   loadPendingInputs,
   pendingDestinationKey,
@@ -52,7 +53,23 @@ export function takeQueueItem(queue: QueueItem[], index: number, editedDisplay?:
 
   const text = editedDisplay.includes(item.display) ? editedDisplay.replace(item.display, item.text) : editedDisplay
 
-  return text === item.text ? { ...item, display: editedDisplay } : { display: editedDisplay, text }
+  if (text === item.text) {
+    return { ...item, display: editedDisplay }
+  }
+
+  // New text is a new submission (fresh id, no prior attempt), but the edit keeps what the
+  // user queued it with: attachments, destination and the busy-control intent.
+  const {
+    failed: _f,
+    inFlight: _i,
+    legacyAttempted: _l,
+    preparedText: _p,
+    settle: _s,
+    submissionId: _id,
+    ...kept
+  } = item
+
+  return { ...kept, display: editedDisplay, text }
 }
 
 // Mutates `arr` in place; returned reference is the same input array, kept
@@ -185,8 +202,11 @@ export function useQueue(gw?: { request: (method: string, params: Record<string,
   const serverRows = (ui.info?.pending_submissions ?? []).filter(isServerQueued)
 
   const queuedDisplay = [
-    ...queueRef.current.map(item => `${item.failed ? '[unconfirmed · Alt+K retry] ' : ''}${item.display}`),
-    ...serverRows.map(row => `[${row.status}] ${row.user}`)
+    ...queueRef.current.map(item => `${item.failed ? t('canonical.queue.unconfirmedPrefix') : ''}${item.display}`),
+    // A queued row reads as main's plain queue line; only an unknown execution keeps its status tag.
+    ...serverRows.map(row =>
+      row.status === 'queued' ? String(row.user) : t('canonical.queue.serverRow', String(row.status), String(row.user))
+    )
   ]
 
   // Indexes past the local items address server rows (read live, not from
@@ -217,7 +237,7 @@ export function useQueue(gw?: { request: (method: string, params: Record<string,
         session_id, admission_id: row.admission_id,
         ...(unknown ? { execution_generation: row.execution_generation } : {})
       }) ?? Promise.resolve()).catch((error: Error) => {
-        if (getUiState().sid === session_id) { patchUiState({ status: `discard failed: ${error.message}` }) }
+        if (getUiState().sid === session_id) { patchUiState({ status: t('canonical.queue.discardFailed', error.message) }) }
 
         throw error
       })
@@ -236,25 +256,34 @@ export function useQueue(gw?: { request: (method: string, params: Record<string,
     [queueEditRef, syncQueue]
   )
 
-  const enqueue = useCallback(
-    (text: string, display = text, destination?: SubmissionDestination) => {
+  const draft = useCallback(
+    (text: string, display: string, destination?: SubmissionDestination, attachments?: QueueItem['attachments']) => {
       const owner = pendingInputOwner(destination ?? captureDestination())
       const queue = getQueue(owner)
 
-      const item = {
+      const item: QueueItem = {
         ...queueItem(text, display),
+        ...(attachments?.length ? { attachments } : {}),
         submissionId: randomUUID(),
         destination: owner,
         createdAt: Math.max(Date.now(), (queue.items.at(-1)?.createdAt ?? 0) + 1)
       }
 
+      return { queue, item }
+    },
+    [getQueue]
+  )
+
+  const enqueue = useCallback(
+    (text: string, display = text, destination?: SubmissionDestination, attachments?: QueueItem['attachments']) => {
+      const { queue, item } = draft(text, display, destination, attachments)
       savePendingInput(item)
       queue.items.push(item)
       syncQueue()
 
       return item
     },
-    [getQueue, syncQueue]
+    [draft, syncQueue]
   )
 
   const prependQ = useCallback(
@@ -278,9 +307,11 @@ export function useQueue(gw?: { request: (method: string, params: Record<string,
     (queue: PendingQueue, item: QueueItem) => {
       item.submissionId ??= randomUUID()
       item.destination ??= captureDestination()
+      // Journal the attempt first: a failed write must leave the row claimable,
+      // not marked in flight with no settle to ever clear it.
+      savePendingInput({ ...item, inFlight: true, failed: false })
       item.inFlight = true
       item.failed = false
-      savePendingInput(item)
       let confirmed = false
 
       item.settle = accepted => {
@@ -295,7 +326,9 @@ export function useQueue(gw?: { request: (method: string, params: Record<string,
         item.failed = !accepted
 
         if (accepted) {
-          removePendingInput(item)
+          try { removePendingInput(item) } catch (error) {
+            patchUiState({ status: t('canonical.queue.journalCleanupFailed', (error as Error).message) })
+          }
 
           for (const pending of queues.current.values()) {
             removeAtInPlace(pending.items, pending.items.indexOf(item))
@@ -325,7 +358,7 @@ export function useQueue(gw?: { request: (method: string, params: Record<string,
           item.submissionId === (receipt.input_id ?? receipt.admission_id) &&
           Boolean(item.destination?.storedSid) &&
           item.destination?.storedSid === receipt.target_session_id &&
-          item.destination?.profileHome === receipt.target_profile_home
+          (item.destination?.ownerHome ?? item.destination?.profileHome) === receipt.target_profile_home
       )
 
       if (!item) {
@@ -342,14 +375,19 @@ export function useQueue(gw?: { request: (method: string, params: Record<string,
     }
   }, [ui.info, getQueue, syncQueue])
 
+  // One durable write: the row joins the queue only once its attempt is journaled,
+  // so a failed write leaves the composer as the draft's only copy.
   const stage = useCallback(
-    (text: string, display = text, destination = captureDestination()) => {
-      const item = enqueue(text, display, destination)
+    (text: string, display = text, destination = captureDestination(), attachments?: QueueItem['attachments']) => {
+      const { queue, item } = draft(text, display, destination, attachments)
       item.queued = false
+      claim(queue, item)
+      queue.items.push(item)
+      syncQueue()
 
-      return claim(getQueue(destination), item)
+      return item
     },
-    [enqueue, claim, getQueue]
+    [draft, claim, syncQueue]
   )
 
   const dequeue = useCallback(
@@ -362,7 +400,13 @@ export function useQueue(gw?: { request: (method: string, params: Record<string,
         return undefined
       }
 
-      return claim(queue, item)
+      try {
+        return claim(queue, item)
+      } catch (error) {
+        patchUiState({ status: t('canonical.queue.notSavedQueueKept', (error as Error).message) })
+
+        return undefined
+      }
     },
     [getQueue, claim]
   )
@@ -378,15 +422,17 @@ export function useQueue(gw?: { request: (method: string, params: Record<string,
       // draft (Alt+K) instead of admitting a second copy behind the original.
       if (server) {
         if (server.status === 'unknown') {
-          patchUiState({ status: 'unknown execution — Ctrl+X to discard before retrying' })
+          patchUiState({ status: t('canonical.queue.unknownExecution') })
 
           return undefined
         }
 
         const text = editedDisplay ?? server.user
-        const item = enqueue(text, text, queue.destination)
+        const { item } = draft(text, text, queue.destination)
+        savePendingInput({ ...item, inFlight: true })
         item.inFlight = true
-        savePendingInput(item)
+        queue.items.push(item)
+        syncQueue()
 
         return cancelServerRow(server).then(
           () => claim(queue, item),
@@ -419,7 +465,7 @@ export function useQueue(gw?: { request: (method: string, params: Record<string,
 
       return claim(queue, item)
     },
-    [getQueue, claim, cancelServerRow, enqueue, serverRowAt, syncQueue]
+    [getQueue, claim, cancelServerRow, draft, serverRowAt, syncQueue]
   )
 
   const removeQ = useCallback(

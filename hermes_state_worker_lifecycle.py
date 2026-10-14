@@ -133,10 +133,10 @@ def worker_billing_route(db, conn, session_id, payload):
     if (set(payload) != {'provider', 'base_url', 'billing_mode'}
             or any(payload[k] is not None and not isinstance(payload[k], str) for k in payload)):
         raise RuntimeStoreError('invalid_params')
-    conn.execute('UPDATE sessions SET billing_provider=?,billing_base_url=?,billing_mode=COALESCE(?,billing_mode),'
-                 'system_prompt=NULL,system_prompt_hash=NULL WHERE id=?',
-                 (payload['provider'], payload['base_url'], payload['billing_mode'], session_id))
-    db._delete_unreferenced_system_prompts(conn)
+    # Same contract as SessionDB.update_session_billing_route: route writers never touch the
+    # stored prompt; only session.prompt replaces the frozen snapshot.
+    conn.execute('UPDATE sessions SET billing_provider=?,billing_base_url=?,billing_mode=COALESCE(?,billing_mode) '
+                 'WHERE id=?', (payload['provider'], payload['base_url'], payload['billing_mode'], session_id))
     return {'value': None}
 
 
@@ -151,6 +151,33 @@ def worker_api_content(db, conn, session_id, payload):
     return {'value': value}
 
 
+def _row_id(payload):
+    row_id = payload.get('row_id')
+    if type(row_id) is not int or row_id <= 0:
+        raise RuntimeStoreError('invalid_params')
+    return row_id
+
+
+def worker_message_api_content(db, conn, session_id, payload):
+    """Row-addressed sidecar backfill, same guards as ``SessionDB.set_message_api_content``."""
+    from hermes_state_messages import _scrub_surrogates
+    if set(payload) != {'row_id', 'content', 'api_content'} or not isinstance(payload['api_content'], str):
+        raise RuntimeStoreError('invalid_params')
+    return {'value': conn.execute(
+        "UPDATE messages SET api_content=? WHERE id=? AND session_id=? AND role='user' AND active=1 AND content IS ?",
+        (_scrub_surrogates(payload['api_content']), _row_id(payload), session_id,
+         db._encode_content(payload['content']))).rowcount}
+
+
+def worker_user_content(db, conn, session_id, payload):
+    """Rewrite ONE active user row of this session, same guards as ``SessionDB.set_user_message_content``."""
+    if set(payload) != {'row_id', 'content'}:
+        raise RuntimeStoreError('invalid_params')
+    return {'value': conn.execute(
+        "UPDATE messages SET content=? WHERE id=? AND session_id=? AND role='user' AND active=1",
+        (db._encode_content(payload['content']), _row_id(payload), session_id)).rowcount}
+
+
 WORKER_LIFECYCLE_HANDLERS = {
     'session.title': worker_title,
     'session.title_source': worker_title_source,
@@ -159,6 +186,8 @@ WORKER_LIFECYCLE_HANDLERS = {
     'session.activity_clear': worker_activity_clear,
     'session.billing_route': worker_billing_route,
     'session.api_content': worker_api_content,
+    'session.message_api_content': worker_message_api_content,
+    'session.user_content': worker_user_content,
     'session.create': worker_create,
     'session.end': worker_end,
     'session.lifecycle': worker_lifecycle,
@@ -169,7 +198,8 @@ def insert_session_row_in_transaction(
         self, conn, session_id, source, model=None, model_config=None,
         system_prompt=None, user_id=None, session_key=None, chat_id=None,
         chat_type=None, thread_id=None, parent_session_id=None, cwd=None,
-        profile_name=None, git_repo_root=None, origin_json=None, display_name=None):
+        profile_name=None, git_repo_root=None, origin_json=None, display_name=None,
+        transport_profile=None):
     """Connection-taking body of the keep-existing constructor upsert.
 
     The ordinary constructor should delegate here too. Worker identity is
@@ -188,12 +218,12 @@ def insert_session_row_in_transaction(
     system_prompt_hash = self._store_system_prompt(conn, system_prompt)
     conn.execute(
         """INSERT INTO sessions (
-           id, source, user_id, session_key, chat_id, chat_type, thread_id,
+           id, source, created_source, user_id, session_key, chat_id, chat_type, thread_id,
            model, model_config, system_prompt, system_prompt_hash,
-           parent_session_id, cwd, profile_name, git_repo_root,
+           parent_session_id, cwd, profile_name, transport_profile, git_repo_root,
            origin_json, display_name, started_at
         )
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?)
            ON CONFLICT(id) DO UPDATE SET
                source = CASE
                    WHEN sessions.source = 'unknown'
@@ -232,10 +262,10 @@ def insert_session_row_in_transaction(
                END,
 """ + _UPSERT_KEEP_EXISTING_SQL,
         (
-            session_id, source, user_id, session_key, chat_id, chat_type, thread_id, model,
+            session_id, source, source, user_id, session_key, chat_id, chat_type, thread_id, model,
             json.dumps(model_config) if model_config else None, system_prompt_hash,
-            parent_session_id, cwd, profile_name, git_repo_root, origin_json, display_name,
-            time.time(),
+            parent_session_id, cwd, profile_name, transport_profile, git_repo_root, origin_json,
+            display_name, time.time(),
         ),
     )
     if system_prompt_hash is not None:

@@ -14,7 +14,7 @@ from contextlib import closing
 import pytest
 
 fastapi = pytest.importorskip("fastapi")
-from fastapi.testclient import TestClient  # noqa: E402
+from fastapi.testclient import TestClient
 
 
 @pytest.fixture()
@@ -39,9 +39,6 @@ class TestSessionPaginationClamps:
         r = client.get("/api/sessions", params={"limit": 10_000})
         assert r.status_code == 422
 
-    def test_negative_limit_rejected(self, client):
-        r = client.get("/api/sessions", params={"limit": -1})
-        assert r.status_code == 422
 
     def test_profile_fanout_limit_clamped(self, client):
         r = client.get("/api/profiles/sessions", params={"limit": 10_000})

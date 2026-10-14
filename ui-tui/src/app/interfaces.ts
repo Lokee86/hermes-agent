@@ -30,6 +30,8 @@ import type {
   SessionInfo,
   SlashCatalog,
   SudoReq,
+  VaultCodeReq,
+  VaultSaveLoginReq,
   VaultUnlockReq
 } from '../types.js'
 
@@ -283,6 +285,10 @@ export interface SubscriptionOverlayState {
   stepUpRetry?: null | SubscriptionStepUpRetry
 }
 
+export interface ConnectionOverlayState {
+  opId: string
+}
+
 export interface OverlayState {
   agents: boolean
   agentsInitialHistoryIndex: number
@@ -290,6 +296,8 @@ export interface OverlayState {
   billing: BillingOverlayState | null
   clarify: ClarifyReq | null
   confirm: ConfirmReq | null
+  connection: ConnectionOverlayState | null
+  connectors: boolean
   /** Ambient widget apps — glanceable dock, non-blocking (never in $isBlocked). */
   ambient: ActiveWidget[]
   /** Modal widget app — owns input, blocks the composer. */
@@ -300,6 +308,8 @@ export interface OverlayState {
   petPicker: boolean
   pluginsHub: boolean
   secret: null | SecretReq
+  vaultCode: null | VaultCodeReq
+  vaultSaveLogin: null | VaultSaveLoginReq
   vaultUnlock: null | VaultUnlockReq
   sessions: boolean
   skillsHub: boolean
@@ -389,9 +399,9 @@ export interface ComposerActions {
   /** Attach an image by path in as a token. */
   attachImagePath: (path: string) => void
   clearIn: () => void
-  stage?: (text: string, display?: string, destination?: SubmissionDestination) => QueueItem
+  stage?: (text: string, display?: string, destination?: SubmissionDestination, attachments?: QueueItem['attachments']) => QueueItem
   dequeue: (retry?: boolean) => QueueItem | undefined
-  enqueue: (text: string, display?: string, destination?: SubmissionDestination) => QueueItem | void
+  enqueue: (text: string, display?: string, destination?: SubmissionDestination, attachments?: QueueItem['attachments']) => QueueItem | void
   handleTextPaste: (event: PasteEvent) => MaybePromise<ComposerPasteResult | null>
   openEditor: () => Promise<void>
   prependQueue: (item: QueueItem, destination?: SubmissionDestination) => void
@@ -444,8 +454,8 @@ export interface UseComposerStateResult {
 }
 
 export interface InputHandlerActions {
-  answerClarify: (answer: string) => void
   appendMessage: (msg: Msg) => void
+  cancelClarify: () => void
   die: () => void
   dispatchSubmission: (full: string | QueueItem) => void
   guardBusySessionSwitch: (what?: string) => boolean
@@ -537,7 +547,9 @@ export interface SlashSubmission {
   expand: (text: string) => string
 }
 
-export type SlashHandler = (cmd: string, submission?: SlashSubmission) => boolean
+/** `typed` is false for programmatic calls (a picker re-issuing `/model <x>`, the backend's alias
+ *  re-dispatch) so shared metrics count each user-typed command once. */
+export type SlashHandler = (cmd: string, submission?: SlashSubmission, typed?: boolean) => boolean
 
 export interface SlashHandlerContext {
   composer: {
@@ -559,14 +571,14 @@ export interface SlashHandlerContext {
     setCatalog: StateSetter<null | SlashCatalog>
   }
   session: {
-    closeSession: (targetSid?: null | string) => Promise<unknown>
+    closeSession: (targetSid?: null | string, deferMessages?: boolean) => Promise<unknown>
     die: () => void
     dieWithCode: (code: number) => void
     guardBusySessionSwitch: (what?: string) => boolean
     newLiveSession: (msg?: string, title?: string) => void
     newSession: (msg?: string, title?: string) => void
     resetVisibleHistory: (info?: null | SessionInfo) => void
-    resumeById: (id: string) => void
+    resumeById: (id: string) => Promise<void> | void
     setSessionStartedAt: StateSetter<number>
   }
   slashFlightRef: MutableRefObject<number>
@@ -588,11 +600,13 @@ export interface SlashHandlerContext {
 
 export interface AppLayoutActions {
   answerApproval: (choice: string) => void
-  answerClarify: (answer: string) => void
   answerClarifyQuestion: (qid: string, answer: string) => void
   answerSecret: (value: string) => void
   answerSudo: (pw: string) => void
+  answerVaultCode: (code: string) => void
+  answerVaultSaveLogin: (identifier: string, password: string) => void
   answerVaultUnlock: (password: string) => void
+  cancelClarify: () => void
   clearSelection: () => void
   activateLiveSession: (id: string) => void
   closeLiveSession: (id: string) => Promise<null | SessionCloseResponse>
@@ -657,7 +671,7 @@ export interface AppOverlaysProps {
   compIdx: number
   completions: CompletionItem[]
   onApprovalChoice: (choice: string) => void
-  onClarifyAnswer: (value: string) => void
+  onClarifyCancel: () => void
   onClarifyQuestionAnswer: (qid: string, value: string) => void
   onActiveSessionSelect: (sessionId: string) => void
   onActiveSessionClose: (sessionId: string) => Promise<null | SessionCloseResponse>
@@ -667,6 +681,8 @@ export interface AppOverlaysProps {
   onResumeSelect: (sessionId: string) => void
   onSecretSubmit: (value: string) => void
   onSudoSubmit: (pw: string) => void
+  onVaultCodeSubmit: (code: string) => void
+  onVaultSaveLoginSubmit: (identifier: string, password: string) => void
   onVaultUnlockSubmit: (password: string) => void
   pagerPageSize: number
 }

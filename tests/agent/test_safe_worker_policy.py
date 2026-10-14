@@ -18,11 +18,11 @@ def run_worker(tmp_path, body, mode="safe"):
         env.pop(key, None)
     root = Path(__file__).resolve().parents[2]
     script = home / "worker_probe.py"
-    script.write_text(f"import sys; sys.path.insert(0, {str(root)!r})\n" + textwrap.dedent(body))
+    script.write_text(f"import sys; sys.path.insert(0, {str(root)!r})\n" + textwrap.dedent(body), encoding="utf-8")
     result = subprocess.run(
         [sys.executable, str(script)], env=env,
         cwd=root, stdin=subprocess.DEVNULL,
-        capture_output=True, text=True, timeout=45,
+        capture_output=True, text=True, timeout=45, check=False
     )
     assert result.returncode == 0, result.stdout + result.stderr
     return json.loads(result.stdout.strip().splitlines()[-1])
@@ -47,7 +47,7 @@ def test_worker_config_is_frozen_before_any_profile_read(tmp_path, mode):
         from hermes_cli.config import load_config, load_config_readonly, read_raw_config, read_raw_config_readonly, DEFAULT_CONFIG
         from hermes_cli import env_loader
         callbacks = []
-        env_loader._apply_managed_env = lambda: callbacks.append("managed")
+        env_loader._apply_managed_env = lambda **kw: callbacks.append("managed")
         env_loader._apply_external_secret_sources = lambda home: callbacks.append("secrets")
         env_loader._reapply_terminal_config_bridge = lambda home: callbacks.append("terminal")
         env_loader.load_hermes_dotenv()
@@ -132,7 +132,7 @@ def test_safe_worker_never_discovers_or_invokes_customizations(tmp_path, mode):
             _bind_safe_worker_policy(safe_mode=mode == "safe", ignore_user_config=True, config={"plugins": {"enabled": ["sentinel"]}})
         reads = []
         def audit(event, args):
-            if event == "open" and "/plugins/" in str(args[0]) and args[1] != "w":
+            if event == "open" and "plugins" in Path(str(args[0])).parts and args[1] != "w":
                 reads.append(str(args[0]))
         sys.addaudithook(audit)
         import providers
@@ -289,7 +289,7 @@ def test_direct_secret_hydration_cannot_read_bypassed_yaml(tmp_path, mode):
     assert bool(result["reads"]) == (mode == "ordinary")
 
 
-@pytest.mark.linux_only
+@pytest.mark.platforms("linux")
 def test_private_policy_refuses_late_binding_and_fork_inheritance(tmp_path):
     late = run_worker(tmp_path, r"""
         import json

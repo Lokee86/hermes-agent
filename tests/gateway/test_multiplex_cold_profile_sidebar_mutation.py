@@ -83,7 +83,7 @@ def desktop_ensure(env, root, profile):
     """The exact child the Desktop spawns: ``hermes --profile <p> gateway ensure --json``."""
     result = subprocess.run([sys.executable, '-m', 'hermes_cli.main', '--profile', profile,
                              'gateway', 'ensure', '--json', '--timeout', '30'],
-                            cwd=root, env=env, stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=60)
+                            cwd=root, env=env, stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=60, check=False)
     payload = json.loads(result.stdout)
     assert result.returncode == 0 and payload['state'] == 'ready', (result.returncode, payload, result.stderr[-500:])
     return payload['endpoint']
@@ -127,7 +127,7 @@ def desktop_sidebar_patch(client, endpoint, profile, sid, payload, request_id):
                         json={**payload, **identity, 'profile': profile}, headers=native_headers(endpoint))
 
 
-@pytest.mark.linux_only
+@pytest.mark.platforms("linux")
 def test_cold_profile_archive_unarchive_while_another_profile_is_attached(tmp_path):
     with multiplex_daemon(tmp_path) as (home, descriptor, env), \
             httpx.Client(base_url=descriptor['api_origin'], trust_env=False, timeout=30) as client:

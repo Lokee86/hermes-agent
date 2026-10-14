@@ -12,7 +12,7 @@ No POSIX-only primitive is used (no AF_UNIX at import, no SIGKILL, no pty).
 """
 import asyncio
 from contextlib import closing, contextmanager
-from datetime import datetime, timezone
+from datetime import datetime, timezone, UTC
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 import os
@@ -146,7 +146,7 @@ def planned_stop(home, proc, desc):
     the Popen handle: a Windows uv venv ``python.exe`` is a trampoline whose pid differs."""
     pid = desc['pid']
     marker = {'target_pid': pid, 'target_start_time': process_start_time(pid),
-              'stopper_pid': os.getpid(), 'written_at': datetime.now(timezone.utc).isoformat()}
+              'stopper_pid': os.getpid(), 'written_at': datetime.now(UTC).isoformat()}
     (home / '.gateway-planned-stop.json').write_text(json.dumps(marker), encoding='utf-8')
     try:
         return proc.wait(timeout=90)
@@ -299,7 +299,7 @@ def records(audit):
 
 
 def test_native_gateway_runtime_live(harness):
-    home, env, peer, url, audit = harness['home'], harness['env'], harness['peer'], harness['url'], harness['audit']
+    home, env, peer = harness['home'], harness['env'], harness['peer']
     receipt = {'os': sys.platform}
 
     async def discovery_attach_and_turn(desc):
@@ -392,11 +392,14 @@ def test_native_gateway_runtime_live(harness):
                 raise AssertionError('second gateway did not refuse while the first owns gateway.lock')
             log.flush(); log.seek(0)
             text = log.read()
-        assert code != 0, text
-        # The refusal is logged before the stderr handler exists (gap: silent on the console);
-        # the durable errors.log carries the ownership refusal.
+        # One gateway per host: a second `gateway run` for a profile the live owner already serves
+        # ATTACHES (exit 0, spawns nothing) rather than starting a second process; only a launch the
+        # owner cannot serve is refused non-zero. Either way the owner keeps the lock and its identity.
         errors = (home / 'logs' / 'errors.log').read_text(encoding='utf-8', errors='replace')
-        assert 'already running' in text + errors or 'Cannot reserve gateway profiles' in text + errors, (text, errors[-2000:])
+        attached = code == 0 and 'already serves' in text
+        refused = code != 0 and ('already running' in text + errors or 'Cannot reserve gateway profiles' in text + errors
+                                 or 'Another gateway already owns this host' in text + errors)
+        assert attached or refused, (code, text, errors[-2000:])
         assert owner.poll() is None
         assert control(home, 'identify')['instance_id'] == desc['instance_id']
         return code

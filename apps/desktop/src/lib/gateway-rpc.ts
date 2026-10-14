@@ -16,6 +16,10 @@ export function isMissingRpcMethod(error: unknown): boolean {
   return /method not found|-32601|unknown method|no such method/i.test(message)
 }
 
+export function isOutOfSyncRpcParams(error: Error | string): boolean {
+  return /out of sync \(different versions\)/i.test(error.toString())
+}
+
 /** REST twin of isMissingRpcMethod: the route does not exist on this backend.
  *  Matches the backend catch-all ('404: {"detail":"No such API endpoint: …}'),
  *  FastAPI's bare 404 on headless serve — directly, or wrapped as "Error
@@ -31,6 +35,22 @@ export function isMissingRestEndpoint(error: unknown): boolean {
     /no such api endpoint/i.test(message) ||
     /endpoint is likely missing/i.test(message) ||
     /(?:^\s*|error:\s*)404\b/i.test(message)
+  )
+}
+
+/** Narrow twin of isMissingRestEndpoint for routes with path params: only a
+ *  backend catch-all verdict (or the Electron HTML guard) proves the ROUTE is
+ *  absent; a handler's own 404 (unknown session/profile) never matches. Two
+ *  catch-alls exist: `hermes dashboard` answers unmatched `/api/*` with
+ *  "No such API endpoint", and headless `hermes serve` (what Desktop's SSH
+ *  remotes launch) answers every unmatched GET with its fixed "web UI disabled"
+ *  body. A bare `{"detail":"Not Found"}` is not a route verdict. */
+export function isUnroutedRestPath(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error)
+
+  return (
+    /no such api endpoint|endpoint is likely missing/i.test(message) ||
+    /(?:^\s*|error:\s*)404:.*headless backend \(hermes serve\): web ui disabled/i.test(message)
   )
 }
 

@@ -64,7 +64,7 @@ def _operations(calls):
     return [json.loads(line) for line in calls.read_text().splitlines()] if calls.exists() else []
 
 
-@pytest.mark.linux_only
+@pytest.mark.platforms("linux")
 @pytest.mark.parametrize("choice", [None, "decline", "install"])
 @pytest.mark.parametrize("installed", [False, True])
 def test_import_and_ordinary_setup_never_authorize_install(supervisor, choice, installed):
@@ -88,10 +88,10 @@ def test_import_and_ordinary_setup_never_authorize_install(supervisor, choice, i
     assert (profile / "config.yaml").read_bytes() == before
 
 
-@pytest.mark.linux_only
+@pytest.mark.platforms("linux")
 @pytest.mark.parametrize("answer, fail", [(False, False), (True, False), (True, True)])
 def test_explicit_setup_consent_is_durable_only_after_success(supervisor, monkeypatch, answer, fail):
-    profile, calls = supervisor
+    _profile, calls = supervisor
     config_api.save_config({"gateway": {"service_install_choice": None}, "custom": "keep"})
     prompts = []
     monkeypatch.setattr(gateway, "prompt_yes_no", lambda *args: prompts.append(args) or answer)
@@ -116,11 +116,11 @@ def test_explicit_setup_consent_is_durable_only_after_success(supervisor, monkey
         assert not any(set(op) & {"enable", "enable-linger", "start", "daemon-reload"} for op in _operations(calls))
 
 
-@pytest.mark.linux_only
+@pytest.mark.platforms("linux")
 @pytest.mark.parametrize("start_now", [False, True])
 @pytest.mark.parametrize("consent", [False, True])
 def test_wizard_service_choice_controls_installation(supervisor, monkeypatch, start_now, consent):
-    profile, calls = supervisor
+    _profile, _calls = supervisor
     config_api.save_config({"gateway": {"service_install_choice": None}})
     stream = io.StringIO()
     stream.isatty = lambda: True
@@ -147,7 +147,7 @@ def test_wizard_service_choice_controls_installation(supervisor, monkeypatch, st
         assert "--replace" not in spawned[0][0]
 
 
-@pytest.mark.linux_only
+@pytest.mark.platforms("linux")
 @pytest.mark.parametrize("fail", [False, True])
 def test_explicit_install_records_only_completed_install(supervisor, monkeypatch, fail):
     from argparse import Namespace
@@ -165,10 +165,10 @@ def test_explicit_install_records_only_completed_install(supervisor, monkeypatch
     assert config_api.load_config()["gateway"]["service_install_choice"] == ("decline" if fail else "install")
 
 
-@pytest.mark.linux_only
+@pytest.mark.platforms("linux")
 def test_wizard_start_does_not_spawn_over_reserved_owner(supervisor, monkeypatch):
     from gateway.runtime_ownership import ProfileOwnership
-    profile, calls = supervisor
+    profile, _calls = supervisor
     profile.chmod(0o700)
     config_api.save_config({"gateway": {"service_install_choice": "decline"}})
     stream = io.StringIO()

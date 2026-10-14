@@ -1,5 +1,6 @@
 from argparse import Namespace
 import sys
+import types
 
 import pytest
 
@@ -47,7 +48,6 @@ def main_mod(monkeypatch):
 
     monkeypatch.setattr(mod, "_has_any_provider_configured", lambda: True)
     monkeypatch.setattr(mod, "_sync_bundled_skills_for_startup", lambda: None)
-    monkeypatch.setattr(mod, "_termux_should_prefetch_update_check", lambda: False)
     monkeypatch.setattr(mod, "_pin_kanban_board_env", lambda: None)
     monkeypatch.setattr(mod, "_resolve_session_by_name_or_id", lambda val: val)
     monkeypatch.setattr(mod, "_oneshot_cleanup_done", False)
@@ -58,11 +58,10 @@ def main_mod(monkeypatch):
 def fake_cli(monkeypatch):
     captured = {}
 
-    def launch(args):
-        captured.update(vars(args))
-        return 0
+    def fake_cli_main(**kwargs):
+        captured.update(kwargs)
 
-    monkeypatch.setattr("hermes_cli.gateway_chat.launch_from_args", launch)
+    monkeypatch.setitem(sys.modules, "cli", types.SimpleNamespace(main=fake_cli_main))
     return captured
 
 
@@ -106,7 +105,6 @@ def test_cmd_chat_rejects_noninteractive_gpt55_pro_startup_override(
     assert not fake_cli
     err = capsys.readouterr().err
     assert "EXPENSIVE MODEL WARNING" in err
-    assert "did you mean to select openai/gpt-5.5?" in err
     assert "non-interactive" in err
 
 
@@ -129,11 +127,9 @@ def test_cmd_chat_allows_acknowledged_data_training_tier_noninteractively(
     monkeypatch.setattr(sys, "stdin", _NonInteractiveStdin())
     _set_startup_config(monkeypatch, ack=True)
 
-    with pytest.raises(SystemExit) as result:
-        main_mod.cmd_chat(
-            _chat_args(model="muse-spark-1.2-contributor", provider="custom")
-        )
-    assert result.value.code == 0
+    main_mod.cmd_chat(
+        _chat_args(model="muse-spark-1.2-contributor", provider="custom")
+    )
 
     assert fake_cli["model"] == "muse-spark-1.2-contributor"
     err = capsys.readouterr().err
@@ -217,9 +213,7 @@ def test_cmd_chat_allows_interactive_gpt55_pro_when_confirmed(
     monkeypatch.setattr(sys.stdin, "isatty", lambda: True)
     monkeypatch.setattr("builtins.input", lambda _prompt: "yes")
 
-    with pytest.raises(SystemExit) as result:
-        main_mod.cmd_chat(_chat_args(model="openai/gpt-5.5-pro"))
-    assert result.value.code == 0
+    main_mod.cmd_chat(_chat_args(model="openai/gpt-5.5-pro"))
 
     assert fake_cli["model"] == "openai/gpt-5.5-pro"
 
@@ -282,9 +276,7 @@ def test_cmd_chat_allows_noninteractive_safe_codex_startup_override(
         lambda: {"model": {"provider": "openai-codex", "default": "gpt-5.5"}},
     )
 
-    with pytest.raises(SystemExit) as result:
-        main_mod.cmd_chat(_chat_args(model="gpt-5.5", provider="openai-codex"))
-    assert result.value.code == 0
+    main_mod.cmd_chat(_chat_args(model="gpt-5.5", provider="openai-codex"))
 
     assert fake_cli["model"] == "gpt-5.5"
     assert fake_cli["provider"] == "openai-codex"

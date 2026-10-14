@@ -469,7 +469,7 @@ class HostedRoomService:
         self.prepare_room(binding)
         self.runtime.wakeup()
 
-    def create_room(self, *, room_id: str, name: str, members: Any) -> dict[str, Any]:
+    def create_room(self, *, room_id: str, name: str, members: Any, admit: Any = None) -> dict[str, Any]:
         normalized = discussion.validate_roster(members, local_profiles=self.local_profiles())
         room = hosted_rooms.create_room(
             self.db_path, room_id=room_id, name=name,
@@ -479,7 +479,7 @@ class HostedRoomService:
                     "handle": member.handle, "target": dict(member.target or {}),
                     **({"display_name": member.display_name} if member.display_name else {})}
                 for member in normalized],
-            authority_gateway_id=hosted_rooms.local_authority_gateway_id())
+            authority_gateway_id=hosted_rooms.local_authority_gateway_id(), admit=admit)
         self.runtime.wakeup()
         return room
 
@@ -653,11 +653,3 @@ class _RouteStatusPeerClient:
                 self._on_ready()
             return result
         return tracked
-
-
-# ---- BEGIN PLUGIN-COMPAT (revert-scheduled; see COMPAT_MANIFEST.md) ----
-# Names external plugins imported from this module before the Sep 2026 decomposition.
-# Internal code MUST NOT use these (scripts/check_compat_pointers.py fails CI if it does).
-# The whole block is removed by reverting the commit that added it.
-import hashlib  # noqa: F401,E402
-# ---- END PLUGIN-COMPAT ----

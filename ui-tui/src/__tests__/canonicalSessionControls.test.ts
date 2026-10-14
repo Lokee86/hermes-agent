@@ -1,6 +1,7 @@
 import { beforeEach, expect, it, vi } from 'vitest'
 
 import { createSlashHandler } from '../app/createSlashHandler.js'
+import { getOverlayState, resetOverlayState } from '../app/overlayStore.js'
 import { getUiState, patchUiState, resetUiState } from '../app/uiStore.js'
 
 const flush = () => new Promise(resolve => setImmediate(resolve))
@@ -18,6 +19,10 @@ function harness() {
         info: { ...info, execution_generation: compressed ? 5 : 4 },
         messages: [{ role: 'assistant', text: 'summary' }]
       }
+    }
+
+    if (method === 'session.info') {
+      return { title: params.session_id === 'child' ? 'Parent #2' : 'Parent' }
     }
 
     if (method === 'session.mutate') {
@@ -144,4 +149,86 @@ it('busy mode is session scoped and steering includes the observed execution gen
     text: 'correction',
     execution_generation: 4
   })
+})
+
+it('a guarded canonical model switch asks; yes re-sends once with the owner token, no changes nothing', async () => {
+  for (const accept of [false, true]) {
+    resetUiState()
+    resetOverlayState()
+    patchUiState({ sid: 'owner', info })
+    const { request, slash } = harness()
+    request.mockImplementation(async (method: string, params: any) => {
+      if (method === 'session.resume') {
+        return { revision: 8, execution_generation: 4, info } as any
+      }
+
+      return params.payload.confirm === 'tok-1'
+        ? { model: 'pricey', execution_generation: 5 }
+        : { status: 'confirmation_required', confirm: 'tok-1', confirm_message: 'pricey IS EXPENSIVE', target_model: 'pricey' }
+    })
+    slash('/model pricey')
+    await flush()
+    const ask = getOverlayState().confirm
+    expect(ask?.detail).toBe('pricey IS EXPENSIVE')
+    expect(getUiState().info?.model).toBe('old')
+
+    if (accept) {
+      ask!.onConfirm()
+      await flush()
+      await flush()
+    }
+
+    const sends = request.mock.calls.filter(([method]) => method === 'session.mutate').map(([, params]) => params.payload)
+    expect(sends).toEqual(accept ? [{ model: 'pricey' }, { model: 'pricey', confirm: 'tok-1' }] : [{ model: 'pricey' }])
+    expect(getUiState().info?.model).toBe(accept ? 'pricey' : 'old')
+  }
+})
+
+it('/branch prints main\'s "branched →" confirmation after the child resume has repainted', async () => {
+  // The resume resets the visible history: a line printed before it settles is wiped (FINDINGS row 26).
+  const { ctx, slash } = harness()
+  const order: string[] = []
+  let settle!: () => void
+  ctx.session.resumeById = vi.fn(() => {
+    order.push('resume')
+
+    return new Promise<void>(resolve => {
+      settle = () => {
+        order.push('repainted')
+        patchUiState({ sid: 'child' }) // the resume moves the view (and the slash's destination) to the child
+        resolve()
+      }
+    })
+  })
+  ctx.transcript.sys = vi.fn((line: string) => order.push(`sys:${line}`))
+
+  slash('/branch Child name')
+  await flush()
+  expect(order).toEqual(['resume'])
+  settle()
+  await flush()
+  expect(order).toEqual(['resume', 'repainted', 'sys:branched → Parent #2'])
+})
+
+it('a /compress that removes nothing prints main\'s "No changes" report without re-hydrating', async () => {
+  const { ctx, request, slash } = harness()
+  request.mockImplementation(async (method: string) => {
+    if (method === 'session.resume') {
+      return { session_id: 'owner', revision: 8, execution_generation: 4, info, messages: [] } as any
+    }
+
+    return {
+      session_id: 'owner', operation: 'compress', status: 'noop',
+      summary: { headline: 'No changes from compression: 2 messages', noop: true,
+                 token_line: 'Approx request size: ~6,547 tokens (unchanged)' }
+    } as any
+  })
+
+  slash('/compress')
+  await flush()
+  await flush()
+  expect(ctx.transcript.sys).toHaveBeenCalledWith('No changes from compression: 2 messages')
+  expect(ctx.transcript.sys).toHaveBeenCalledWith('  Approx request size: ~6,547 tokens (unchanged)')
+  expect(ctx.transcript.setHistoryItems).not.toHaveBeenCalled()
+  expect(request.mock.calls.filter(([method]) => method === 'session.resume')).toHaveLength(1)
 })

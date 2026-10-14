@@ -9,7 +9,7 @@ import time
 import pytest
 
 
-@pytest.mark.linux_only
+@pytest.mark.platforms("linux")
 @pytest.mark.parametrize("case,reason", [
     ("custom", "deadline"), ("named", "deadline"), ("alias", "deadline"),
     ("default", "deadline"),
@@ -185,7 +185,7 @@ def test_task_xml_binds_actual_action_and_principal(case, reason, tmp_path):
         verify_windows_task(xml, home, user, 'S-1-5-21-123')
 
 
-@pytest.mark.macos_only
+@pytest.mark.platforms("macos")
 @pytest.mark.parametrize("case,reason", [("loaded_good_disk_wrong", None), ("loaded_wrong_disk_good", "profile_mismatch"), ("bootstrap", None)])
 def test_native_launchd_checks_loaded_job_before_disk(case, reason, tmp_path, monkeypatch):
     import plistlib
@@ -228,7 +228,7 @@ def test_native_launchd_checks_loaded_job_before_disk(case, reason, tmp_path, mo
     assert plist.read_bytes() == original
 
 
-@pytest.mark.windows_only
+@pytest.mark.platforms("windows")
 @pytest.mark.parametrize("wrong", [False, True])
 def test_native_task_query_uses_installed_xml_and_vendor_launcher(wrong, tmp_path, monkeypatch):
     from hermes_cli import gateway_runtime_service as service
@@ -242,10 +242,10 @@ def test_native_task_query_uses_installed_xml_and_vendor_launcher(wrong, tmp_pat
     script.write_text(_build_gateway_vbs_script(sys.executable, str(home), str(home), ''), encoding='utf-8', newline='')
     original = script.read_bytes()
     # whoami is read-only native account evidence; no task-manager mutation.
-    identity = subprocess.run(['whoami.exe', '/USER', '/FO', 'CSV', '/NH'], stdin=subprocess.DEVNULL, capture_output=True, timeout=5)
+    identity = subprocess.run(['whoami.exe', '/USER', '/FO', 'CSV', '/NH'], stdin=subprocess.DEVNULL, capture_output=True, timeout=5, check=False)
     from hermes_cli.gateway_windows import _schtasks_encoding
     import csv
-    account, sid = next(csv.reader(identity.stdout.decode(_schtasks_encoding()).splitlines()))
+    _account, sid = next(csv.reader(identity.stdout.decode(_schtasks_encoding()).splitlines()))
     suffix = service.service_suffix(home)
     name = 'Hermes_Gateway' + ('_' + suffix if suffix else '')
     xml = _build_scheduled_task_xml(name, script, 'S-1-5-18' if wrong else sid)
@@ -275,7 +275,7 @@ def test_native_task_query_uses_installed_xml_and_vendor_launcher(wrong, tmp_pat
     assert script.read_bytes() == original
 
 
-@pytest.mark.linux_only
+@pytest.mark.platforms("linux")
 def test_service_definition_reads_reject_fifo_without_waiting(tmp_path):
     from hermes_cli.gateway_runtime_service_identity import read_definition
     regular = tmp_path / 'regular'
@@ -296,3 +296,45 @@ def test_gateway_wrapper_requires_actual_python_entrypoint(outer, tmp_path):
             verify_gateway_argv(argv, tmp_path)
     else:
         verify_gateway_argv(argv, tmp_path)
+
+
+def test_android_python_reaches_the_unmanaged_start(tmp_path, monkeypatch):
+    """Termux is supported and has no service manager; Python 3.13+ there reports
+    sys.platform == "android". Ensure must start the gateway unmanaged, not refuse the platform."""
+    from hermes_cli import gateway_runtime as runtime, gateway_runtime_service as service, gateway_runtime_start as start
+
+    home = tmp_path / "profile"
+    home.mkdir(mode=0o700)
+    spawned = []
+    monkeypatch.setattr(service.sys, "platform", "android")
+    monkeypatch.setattr(service, "_run", lambda *a, **k: pytest.fail("no supervisor to query on Android"))
+    monkeypatch.setattr(runtime, "discover_gateway_endpoint", lambda *a, **k: runtime.GatewayDiscovery("absent"))
+    monkeypatch.setattr(start, "spawn_unmanaged_gateway", lambda target, **k: spawned.append(Path(target)))
+    result = runtime.ensure_gateway_runtime(home, timeout=0.3)
+    assert result.reason_code != "unsupported_supervisor_platform"
+    assert spawned == [home.resolve()]
+
+
+def test_windows_startup_folder_entry_still_restarts_a_stopped_owner(tmp_path, monkeypatch):
+    """The Startup-folder fallback is login persistence only (no start verb, no identity): with it
+    present and no Scheduled Task registered, ensure takes the same detached direct spawn manual
+    `hermes gateway start` uses instead of refusing until the next login."""
+    from types import SimpleNamespace
+    from hermes_cli import gateway_runtime as runtime, gateway_runtime_service as service, gateway_runtime_start as start
+    from hermes_cli import gateway_windows
+
+    home = tmp_path / "profile"
+    home.mkdir(mode=0o700)
+    startup = tmp_path / "Startup"
+    startup.mkdir()
+    (startup / f"Hermes_Gateway_{service.service_suffix(home)}.vbs").write_text("' fallback\r\n")
+    monkeypatch.setattr(gateway_windows, "_startup_dir", lambda: startup)
+    queries, spawned = [], []
+    monkeypatch.setattr(service, "_run", lambda argv, *a, **k: queries.append(argv) or SimpleNamespace(returncode=0, stdout=""))
+    monkeypatch.setattr(service.sys, "platform", "win32")
+    monkeypatch.setattr(runtime, "discover_gateway_endpoint", lambda *a, **k: runtime.GatewayDiscovery("absent"))
+    monkeypatch.setattr(start, "spawn_unmanaged_gateway", lambda target, **k: spawned.append(Path(target)))
+    result = runtime.ensure_gateway_runtime(home, timeout=0.3)
+    assert result.reason_code != "startup_service_requires_login"
+    assert spawned == [home.resolve()]
+    assert all(argv[:2] == ["schtasks.exe", "/Query"] for argv in queries)  # nothing installed or run

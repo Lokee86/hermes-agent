@@ -69,10 +69,12 @@ it('blocks Send until journal restore and durable preparation complete', async (
   const native = {
     read: vi.fn().mockImplementationOnce(() => new Promise<string>(resolve => { releaseRead = resolve }))
       .mockImplementation(async () => JSON.stringify(journal)),
-    update: vi.fn(async (key: string, value: string | null) => {
+    compareAndSet: vi.fn(async (key: string, _expected: string | null, value: string | null) => {
       await new Promise<void>(resolve => { releaseWrite = resolve })
 
       if (value === null) {delete journal[key]} else {journal[key] = JSON.parse(value)}
+
+      return { applied: true, current: value }
     })
   }
 
@@ -87,11 +89,11 @@ it('blocks Send until journal restore and durable preparation complete', async (
   await waitFor(() => expect((screen.getByRole('textbox') as HTMLTextAreaElement).disabled).toBe(false))
   fireEvent.change(screen.getByRole('textbox'), { target: { value: 'New text' } })
   fireEvent.click(screen.getByRole('button', { name: 'Send' }))
-  await waitFor(() => expect(native.update).toHaveBeenCalled())
+  await waitFor(() => expect(native.compareAndSet).toHaveBeenCalled())
   expect(request.mock.calls.some(c => c[1] === 'groups.send')).toBe(false)
   releaseWrite()
   await waitFor(() => expect(request.mock.calls.some(c => c[1] === 'groups.send')).toBe(true))
-  await waitFor(() => expect(native.update).toHaveBeenCalledTimes(2))
+  await waitFor(() => expect(native.compareAndSet).toHaveBeenCalledTimes(2))
   releaseWrite()
   await waitFor(() => expect((screen.getByRole('textbox') as HTMLTextAreaElement).value).toBe(''))
 })
@@ -137,4 +139,22 @@ it('reads back retry on the same authority and sends only through the group driv
   await waitFor(() => expect(request.mock.calls.some(c => c[1] === 'groups.send')).toBe(true))
   expect(screen.getByText('Owner reply')).toBeTruthy()
   expect(request.mock.calls.every(c => c[1].startsWith('groups.'))).toBe(true)
+})
+
+// Review 5475590057 P3: another window won the room's one intent slot after this one restored.
+// Send converges on that durable winner (4149282e49) but this window's typed text is kept, not lost.
+it('a Send that converges on another window\'s pending intent keeps this window\'s draft', async () => {
+  const binding = { connectionId: 'remote', profile: 'team', roomId: 'two-windows' }
+  request.mockImplementation(async (_route, method) => method === 'groups.state'
+    ? { room: { name: 'Room' }, driver_status: {} } : method === 'groups.log' ? { events: [] } : {})
+  render(<CanonicalGroupWorkspace binding={binding} />)
+  await screen.findByText('Room')
+  await waitFor(() => expect((screen.getByRole('textbox') as HTMLTextAreaElement).disabled).toBe(false))
+  const other = await prepareCanonicalGroupSend(binding, { text: 'from the other window', attachments: [] })
+  fireEvent.change(screen.getByRole('textbox'), { target: { value: 'typed here' } })
+  fireEvent.click(screen.getByRole('button', { name: 'Send' }))
+  await waitFor(async () => expect(await readCanonicalGroupSend(binding)).toBeUndefined())
+  expect(request.mock.calls.filter(c => c[1] === 'groups.send').map(c => c[2])).toEqual([{ ...other.params, profile: 'team' }])
+  await waitFor(() => expect((screen.getByRole('textbox') as HTMLTextAreaElement).value).toBe('typed here'))
+  expect((screen.getByRole('textbox') as HTMLTextAreaElement).disabled).toBe(false)
 })

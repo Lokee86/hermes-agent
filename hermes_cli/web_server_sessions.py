@@ -4,19 +4,29 @@
 import logging
 import asyncio
 import time
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Dict, Optional
+
+from hermes_state_common import _RESET_CHILD_SQL, _sql_json_extract
 
 # Same logger the code used before extraction (record parity).
 _log = logging.getLogger("hermes_cli.web_server")
 
-_DESCENDANTS_SQL = """
+_DESCENDANTS_SQL = f"""
             WITH RECURSIVE descendants(id, parent_session_id, started_at) AS (
                 SELECT id, parent_session_id, started_at FROM sessions WHERE id = ?
                 UNION
                 SELECT s.id, s.parent_session_id, s.started_at
                 FROM sessions s
                 JOIN descendants d ON s.parent_session_id = d.id
+                -- Continuation edges only (same predicate as the session list's chain CTE): a subagent run,
+                -- a /branch fork, a /new reset child or a tool-owned row is its own conversation, and resuming
+                -- INTO one parks the user's chat in a row the sidebar never lists (#115092).
+                WHERE {_sql_json_extract('s.model_config', '$._delegate_from')} IS NULL
+                  AND {_sql_json_extract('s.model_config', '$._branched_from')} IS NULL
+                  AND NOT ({_RESET_CHILD_SQL.format(a='s')})
+                  AND COALESCE(s.source, '') != 'tool'
             )
             SELECT id, parent_session_id, started_at FROM descendants
             """
@@ -88,9 +98,15 @@ def _session_mutation_context(request, profile):
     else:
         raise HTTPException(status_code=401, detail='Unauthorized')
     authority = getattr(request.app.state, 'session_authority', None)
-    if authority is None:
-        raise HTTPException(status_code=503, detail='session_authority_unavailable')
     home = Path(_cron_profile_home(profile)[1]) if profile else Path(_default_db_path()).parent
+    capabilities = frozenset({'session:read', 'session:control', 'session:create', 'session:operator'})
+    if authority is None:
+        if getattr(request.app.state, 'gateway_runner', None) is not None:
+            raise HTTPException(status_code=503, detail='session_authority_unavailable')
+        # Standalone ``serve``/``dashboard`` (no composed gateway; its owner cutover is a
+        # follow-up): the store is the owner. Same principal id form as a gateway authority's
+        # (``str(home)``), so import bindings written offline stay valid once one starts.
+        return None, Principal(subject, str(home.resolve()), capabilities, 'http')
     # ``?profile=`` selects a served home; its own authority (not the launch one) owns the mutation.
     from gateway.session_authorities import authority_for_home
     runner = getattr(request.app.state, 'gateway_runner', None)
@@ -102,8 +118,65 @@ def _session_mutation_context(request, profile):
     authority = owner
     if native is not None and native['profile_id'] != authority.profile_id:
         raise HTTPException(status_code=403, detail='profile_mismatch')
-    return authority, Principal(subject, authority.profile_id,
-        frozenset({'session:read', 'session:control', 'session:create', 'session:operator'}), 'http')
+    if native is not None:
+        # One transport per verified native request, so the grant's own profile can claim its old
+        # local history exactly as over the native socket (``require_history_claim``); a shared
+        # 'http' id never can.
+        import uuid
+        return authority, Principal(subject, authority.profile_id, capabilities, 'native-http:' + uuid.uuid4().hex)
+    return authority, Principal(subject, authority.profile_id, capabilities, 'http')
+
+
+@contextmanager
+def _native_history_transport(request, authority, actor):
+    """Bind a verified native HTTP actor as a native legacy transport for one mutation."""
+    native = None
+    if authority is not None and str(getattr(actor, 'transport_id', '')).startswith('native-http:'):
+        native = getattr(request.state, 'native_http_principal', None)
+    if native is None:
+        yield
+        return
+    from gateway.session_local_migration import bind_native_transport, unbind_native_transport
+    bind_native_transport(authority, actor, {'provider': 'local', 'profile_id': authority.profile_id,
+                                             'instance_id': native['instance_id']})
+    try:
+        yield
+    finally:
+        unbind_native_transport(authority, actor)
+
+
+def _mutate_offline_store(profile, actor, params):
+    """Standalone edit: the receipt transaction on this process's single shared writer.
+
+    Runs under the exact owner lock (409 while any gateway owns the store, never a
+    second writer beside it); revision/generation/idle guards are the gateway's own.
+    """
+    from fastapi import HTTPException
+    from hermes_state_runtime import begin_runtime_epoch, mutate_runtime_session
+
+    def run():
+        db = _open_session_db_for_profile(profile, read_only=False)
+        try:
+            write_guard = None
+            if params['operation'] == 'import':
+                normalized, errors = db._validate_import_payload(params['payload']['sessions'])
+                if errors:
+                    raise HTTPException(status_code=400, detail={'errors': errors})
+                from functools import partial
+                from hermes_state_mutation_binding import import_history_control
+                write_guard = partial(import_history_control, actor=actor,
+                                      session_ids=tuple(item['session']['id'] for item in normalized))
+            with db._read_ctx() as conn:
+                row = conn.execute('SELECT epoch FROM runtime_epoch WHERE singleton=1').fetchone()
+            # The reservation held here is the ownership lock begin_runtime_epoch requires.
+            epoch = row[0] if row else begin_runtime_epoch(db, instance_id='dashboard-offline')
+            return mutate_runtime_session(db, epoch=epoch, principal_id=actor.subject,
+                expected_generation=params.get('expected_generation'), _authorize_write=write_guard,
+                **{key: params[key] for key in ('session_id', 'request_id', 'expected_revision',
+                                                'operation', 'payload')})
+        finally:
+            db.close()
+    return _with_session_maintenance(profile, run)
 
 
 async def _mutate_session_request(request, profile, session_id, *, request_id,
@@ -113,10 +186,11 @@ async def _mutate_session_request(request, profile, session_id, *, request_id,
     from fastapi import HTTPException
     from gateway.session_contract import SessionRef
     from gateway.session_mutations import mutate_session
+    from hermes_state_mutation_guards import MUTATION_GUARD_REFUSALS
     from hermes_state_runtime import RuntimeStoreError
 
     authority, actor = _session_mutation_context(request, profile)
-    if operation == 'import':
+    if operation == 'import' and authority is not None:
         _, errors = authority.db._validate_import_payload(payload['sessions'])
         if errors:
             raise HTTPException(status_code=400, detail={'errors': errors})
@@ -127,12 +201,18 @@ async def _mutate_session_request(request, profile, session_id, *, request_id,
     if expected_generation is not None:
         params['expected_generation'] = expected_generation
     try:
-        result = await mutate_session(authority, actor, SessionRef(authority.profile_id, session_id), params)
+        if authority is None:
+            result = await asyncio.to_thread(_mutate_offline_store, profile, actor, params)
+        else:
+            with _native_history_transport(request, authority, actor):
+                result = await mutate_session(authority, actor, SessionRef(authority.profile_id, session_id), params)
         return {'ok': True, **result}
     except RuntimeStoreError as exc:
         status = {'permission_denied': 403, 'profile_mismatch': 403, 'not_found': 404,
                   'invalid_params': 400, 'runtime_draining': 503}.get(exc.reason, 409)
         raise HTTPException(status_code=status, detail=exc.reason) from exc
+    except MUTATION_GUARD_REFUSALS as exc:
+        raise HTTPException(status_code=409, detail='session_busy') from exc
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except sqlite3.Error as exc:
@@ -237,7 +317,7 @@ def _open_session_db_for_profile(profile: Optional[str], *, read_only: bool):
 # profile: bounds the config.yaml read to once per window; the sweep itself is
 # throttled far more coarsely by state_meta (sessions.min_interval_hours).
 _AUTO_ARCHIVE_CHECK_INTERVAL_S = 300.0
-_last_auto_archive_check: Dict[str, float] = {}
+_last_auto_archive_check: dict[str, float] = {}
 
 
 def _maybe_auto_archive_for_profile(profile: Optional[str]) -> None:
@@ -255,8 +335,31 @@ def _maybe_auto_archive_for_profile(profile: Optional[str]) -> None:
         _last_auto_archive_check[key] = now
 
         from hermes_cli.config import load_config as _load_full_config
-        cfg = (_load_full_config().get("sessions") or {})
+        from hermes_constants import reset_hermes_home_override, set_hermes_home_override
+
+        # The config that governs a store is the one in that store's OWN home. A zero-arg
+        # load_config() resolves through the PROCESS HERMES_HOME, so the dashboard swept every
+        # profile's sessions with the launch profile's sessions.auto_archive/auto_archive_days —
+        # one profile's retention silently decided another's.
+        profile_home = _session_db_path_for_profile(profile).parent
+        _home_token = set_hermes_home_override(str(profile_home))
+        try:
+            cfg = (_load_full_config().get("sessions") or {})
+        finally:
+            reset_hermes_home_override(_home_token)
         if not cfg.get("auto_archive", False):
+            return
+        from hermes_cli.profiles import _check_gateway_running
+
+        # A live gateway owns this profile's store and runs the same sweep on its own
+        # housekeeping tick ("state.db maintenance tick" in gateway/run.py, profile-scoped so a
+        # multiplexed secondary's store is swept too). Opening it WRITABLE from `hermes
+        # serve` adds a second writer to a database another process is already archiving,
+        # for zero extra coverage (#110405). `_check_gateway_running` is the canonical
+        # per-profile predicate (`_maybe_run_skill_maintenance` below uses it): its
+        # multiplexer rung catches a served secondary, which owns no gateway.pid or lock
+        # of its own and a bare lock-file probe would report stopped.
+        if _check_gateway_running(profile_home):
             return
         db = _open_session_db_for_profile(profile, read_only=False)
         try:
@@ -296,8 +399,6 @@ def _maybe_run_skill_maintenance(started_at: float) -> None:
         return
 
     from agent.curator import maybe_run_curator
-    from tools.skills_sync_client import maybe_pull_skills
-    from tools.skills_sync_client_org import maybe_pull_org_skills
 
     try:
         idle_for = _skill_maintenance_idle_for(started_at)
@@ -305,11 +406,6 @@ def _maybe_run_skill_maintenance(started_at: float) -> None:
             maybe_run_curator(idle_for_seconds=idle_for)
     except Exception as exc:
         _log.debug("serve curator tick skipped: %s", exc)
-    for pull in (maybe_pull_skills, maybe_pull_org_skills):
-        try:
-            pull()
-        except Exception as exc:
-            _log.debug("serve skill sync tick skipped: %s", exc)
 
 
 async def _auto_archive_ticker_loop(

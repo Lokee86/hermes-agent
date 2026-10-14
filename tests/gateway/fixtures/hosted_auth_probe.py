@@ -17,6 +17,7 @@ from cryptography.hazmat.primitives.asymmetric import rsa
 from websockets.asyncio.client import connect
 
 from tests.gateway.fixtures.local_recovery_probe import child_env, daemon, rpc
+from tests.waiting import async_wait_until
 
 
 class OIDC(BaseHTTPRequestHandler):
@@ -164,8 +165,10 @@ def probe(tmp_path):
         'platform_toolsets': {'gui': ['terminal'], 'bot_room': ['terminal']},
         'approvals': {'mode': 'manual', 'timeout': 60},
         'auxiliary': {'title_generation': {'enabled': False}}, 'terminal': {'cwd': str(home)}}
-    for path in (home, target):
-        (path / 'config.yaml').write_text(json.dumps(cfg))
+    (home / 'config.yaml').write_text(json.dumps(cfg))
+    # The named profile's gateway runs beside the host: `gateway.standalone: true` is the opt-out
+    # (`multiplex_profiles: false` is retired and rewritten to true at boot).
+    (target / 'config.yaml').write_text(json.dumps(cfg | {'gateway': {'standalone': True}}))
     env = child_env() | dict(HOME=str(user), USERPROFILE=str(user), HERMES_HOME=str(home),
         PYTHONPATH=str(root), OPENAI_API_KEY='loopback-only', OPENAI_BASE_URL=base, PYTHONUNBUFFERED='1')
     members = [{'member_id': 'one', 'profile': 'default', 'handle': 'one'},
@@ -212,26 +215,28 @@ def probe(tmp_path):
                     assert sibling['result']['driver_status']['counts'].get('running') == 1, sibling
             model.release.set()
             for actor, ws, _ in actors:
-                async with asyncio.timeout(90):
-                    while True:
-                        state = await rpc(ws, 'groups.state', room_id=actor + '-room')
-                        counts = state['result']['driver_status']['counts']
-                        if not counts.get('running') and not counts.get('stopping'):
-                            assert counts.get('cancelled', 0) >= 1, state
-                            break
-                        await asyncio.sleep(.1)
+                deadline = time.monotonic() + 90
+                while True:
+                    state = await rpc(ws, 'groups.state', room_id=actor + '-room')
+                    counts = state['result']['driver_status']['counts']
+                    if not counts.get('running') and not counts.get('stopping'):
+                        assert counts.get('cancelled', 0) >= 1, state
+                        break
+                    assert time.monotonic() < deadline, f'{actor} room never settled its stop: {state}'
+                    await asyncio.sleep(.1)
             assert len(model.requests) == 2, model.requests
             sent = await rpc(alice, 'groups.send', room_id='alice-room', event_id='approval',
                              payload={'text': '@two APPROVE_HOSTED', 'thread_id': 'approval-thread'})
             assert sent['result']['accepted'], sent
-            async with asyncio.timeout(90):
-                while True:
-                    state = await rpc(alice, 'groups.state', room_id='alice-room')
-                    actions = state['result']['driver_status']['pending_actions']
-                    approvals = [a for a in actions if a['kind'] == 'approval']
-                    if approvals:
-                        break
-                    await asyncio.sleep(.1)
+            deadline = time.monotonic() + 90
+            while True:
+                state = await rpc(alice, 'groups.state', room_id='alice-room')
+                actions = state['result']['driver_status']['pending_actions']
+                approvals = [a for a in actions if a['kind'] == 'approval']
+                if approvals:
+                    break
+                assert time.monotonic() < deadline, f'no approval was ever parked: {state}'
+                await asyncio.sleep(.1)
             assert removal.exists()
             action = approvals[0]
             params = {k: action[k] for k in ('member_id', 'task_id', 'execution_generation', 'request_id')}
@@ -239,9 +244,8 @@ def probe(tmp_path):
             assert denied.get('error', {}).get('message') == 'permission_denied', denied
             accepted = await rpc(alice, 'groups.approve', room_id='alice-room', choice='once', **params)
             assert accepted.get('result', {}).get('approved'), accepted
-            async with asyncio.timeout(90):
-                while removal.exists():
-                    await asyncio.sleep(.1)
+            await async_wait_until(lambda: not removal.exists(), timeout=90,
+                                   what='the approved removal to run')
 
             assert 'FORBIDDEN' not in json.dumps(model.requests)
             return {'actors': oidc.logins, 'rooms': ['alice-room', 'bob-room'],

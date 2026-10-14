@@ -41,7 +41,7 @@ class Model(BaseHTTPRequestHandler):
         self.wfile.write(payload)
 
 
-@pytest.mark.linux_only
+@pytest.mark.platforms("linux")
 @pytest.mark.parametrize('probe_constructors', [False, True])
 def test_real_agent_worker_persists_context_usage_and_releases_lease(tmp_path, probe_constructors):
     root = Path(__file__).resolve().parents[2]
@@ -72,7 +72,7 @@ def test_real_agent_worker_persists_context_usage_and_releases_lease(tmp_path, p
             result = subprocess.run([sys.executable, str(root / 'tests/gateway/fixtures/agent_persistence_worker.py')],
                 cwd=root, env=env, input=json.dumps({'home': str(home), 'url': url, 'session_id': sid,
                                                    'receipt': str(receipt), 'probe_constructors': probe_constructors}) + '\n',
-                text=True, capture_output=True, timeout=60)
+                text=True, capture_output=True, timeout=60, check=False)
             assert result.returncode == 0, result.stdout + result.stderr
             proof = json.loads(receipt.read_text())
             assert not proof['failed'], proof

@@ -68,7 +68,7 @@ class ExistingService:
 def _run(argv: list[str] | tuple[str, ...], deadline: float, *, encoding: str | None = "utf-8"):
     return subprocess.run(argv, stdin=subprocess.DEVNULL, capture_output=True,
                           text=encoding is not None, encoding=encoding, errors="strict" if encoding else None,
-                          creationflags=windows_hide_flags(), timeout=remaining(deadline))
+                          creationflags=windows_hide_flags(), timeout=remaining(deadline), check=False)
 
 
 def _verify_binding(verify, *args, **kwargs):
@@ -92,7 +92,7 @@ def _exists(path: Path) -> bool:
 def _systemd(home: Path, deadline: float) -> ExistingService | None:
     from hermes_cli import gateway as gw
     from hermes_cli.service_manager import _s6_running
-    from hermes_cli.gateway_runtime_service_identity import SYSTEMD_IDENTITY_PROPERTIES, verify_systemd
+    from hermes_cli.gateway_runtime_service_identity import ForeignRoot, SYSTEMD_IDENTITY_PROPERTIES, verify_systemd
     if _s6_running():
         raise RuntimeStartError("external_supervisor")
     suffix = service_suffix(home)
@@ -100,9 +100,11 @@ def _systemd(home: Path, deadline: float) -> ExistingService | None:
     paths = (Path.home() / ".config/systemd/user" / unit, Path("/etc/systemd/system") / unit)
     # On non-systemd hosts there is no manager to own transient units. Installed
     # definitions still count: a broken manager is not permission to bypass one.
-    manager_paths = (Path("/run/systemd/system"),
-                     Path(f"/run/user/{os.getuid()}/systemd/private"))  # windows-footgun: ok — native systemd only
-    if not any(_exists(p) for p in (*paths, *manager_paths)):
+    # Every Hermes entrypoint ensures the gateway, so a host with no installed unit must not
+    # touch the service manager at all (a headless runner has no user bus to answer it).
+    # With a unit installed anywhere, both scopes are asked: two claiming the name is a conflict.
+    installed = (*paths, Path("/usr/lib/systemd/system") / unit, Path("/lib/systemd/system") / unit)
+    if not any(_exists(p) for p in installed):
         return None
     found = []
     for system in (False, True):
@@ -110,7 +112,9 @@ def _systemd(home: Path, deadline: float) -> ExistingService | None:
         result = _run([*command, "show", unit, "--no-pager", "--all",
                        "--property=LoadState,ActiveState,SubState,UnitFileState," + ",".join(SYSTEMD_IDENTITY_PROPERTIES)], deadline)
         props = dict(line.split("=", 1) for line in result.stdout.splitlines() if "=" in line)
-        if props.get("LoadState") == "not-found" and not _exists(paths[int(system)]):
+        if not _exists(paths[int(system)]) and (result.returncode or props.get("LoadState") == "not-found"):
+            # Nothing installed in this scope: an unreachable or empty manager there has no
+            # unit that could serve or block this home.
             continue
         if result.returncode or props.get("LoadState") != "loaded":
             raise RuntimeStartError("service_manager_unavailable")
@@ -128,6 +132,11 @@ def _systemd(home: Path, deadline: float) -> ExistingService | None:
             raise RuntimeStartError("service_identity_unverified")
         try:
             verify_systemd(props, environment.stdout, home, system=system)
+        except ForeignRoot:
+            # A unit named like ours but pinned to another HOME root belongs to a
+            # different install (a sandbox HOME beside a real one); it neither serves
+            # nor blocks this home.
+            continue
         except ValueError as exc:
             reason = str(exc)
             raise RuntimeStartError(reason if reason in {
@@ -176,7 +185,7 @@ def _launchd(home: Path, deadline: float) -> ExistingService | None:
 
 
 def _windows(home: Path, deadline: float) -> ExistingService | None:
-    from hermes_cli.gateway_windows import _startup_dir, _schtasks_encoding
+    from hermes_cli.gateway_windows import _schtasks_encoding
     suffix = service_suffix(home)
     name = f"Hermes_Gateway{'_' + suffix if suffix else ''}"
     result = _run(["schtasks.exe", "/Query", "/FO", "CSV", "/NH"], deadline, encoding=_schtasks_encoding())
@@ -196,15 +205,24 @@ def _windows(home: Path, deadline: float) -> ExistingService | None:
             raise RuntimeStartError("service_identity_unverified")
         _verify_binding(verify_windows_task, definition.stdout, home, *accounts[0])
         return ExistingService("windows", ("schtasks.exe", "/Run", "/TN", name))
-    # Startup-folder entries are installed persistence too, but have no independent
-    # start supervisor. Do not bypass them with a job-bound unmanaged child.
-    if any(_exists(_startup_dir() / f"{name}.{ext}") for ext in ("cmd", "vbs")):
-        raise RuntimeStartError("startup_service_requires_login")
+    # A Startup-folder entry (the fallback when Scheduled Task install was declined/blocked) is login
+    # persistence only, with no start verb or identity to verify. Starting a stopped owner is the
+    # same detached direct spawn manual `hermes gateway start` uses beside it; the unmanaged path
+    # pins the explicit home and refuses a job-bound (no-breakaway) child, and the runtime lock
+    # plus host attach arbitrate against the entry firing again at the next login.
     return None
 
 
+def _no_supervisor(home: Path, deadline: float) -> None:
+    """Android/Termux has no service manager (main refuses `gateway install/start` there and says
+    "Run manually: hermes gateway"): an unmanaged detached start is its only owner. Python 3.13+
+    reports ``sys.platform == "android"``; older Termux interpreters report linux and reach the
+    systemd probe, which finds no unit and lands on the same unmanaged start."""
+
+
 def discover_existing_gateway_service(home: Path, *, deadline: float) -> ExistingService | None:
-    backend = {"linux": _systemd, "darwin": _launchd, "win32": _windows}.get(sys.platform)
+    backend = {"linux": _systemd, "darwin": _launchd, "win32": _windows,
+               "android": _no_supervisor}.get(sys.platform)
     if backend is None:
         raise RuntimeStartError("unsupported_supervisor_platform")
     try:

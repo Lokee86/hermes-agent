@@ -17,7 +17,7 @@ async def test_local_lineage_transitions_preserve_owner_or_roll_back(tmp_path, m
     from hermes_state_runtime import (RuntimeStoreError, admit_session_input, claim_session_input,
                                       get_session_admission, list_session_admissions)
 
-    monkeypatch.setattr(run, '_load_gateway_config', lambda: {})
+    monkeypatch.setattr(run, '_load_gateway_config', dict)
     def runner():
         store = SessionStore(tmp_path / 'sessions', GatewayConfig())
         return SimpleNamespace(session_store=store, _session_db=store._db,
@@ -130,7 +130,7 @@ async def test_local_lineage_transitions_preserve_owner_or_roll_back(tmp_path, m
     assert turn._approval_owner[1] == reset.session_id
 
 
-@pytest.mark.linux_only
+@pytest.mark.platforms("linux")
 def test_real_local_lineage_survives_cold_daemon(tmp_path):
     from tests.gateway.fixtures.local_lineage_probe import probe
     print(json.dumps(probe(tmp_path)))

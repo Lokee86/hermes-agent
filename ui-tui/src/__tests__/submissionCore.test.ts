@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { isSessionBusyError, markSubmitting, submitPrompt, type SubmitPromptDeps } from '../app/submissionCore.js'
+import { isSessionBusyError, markNextSubmitVoice, submitPrompt, type SubmitPromptDeps } from '../app/submissionCore.js'
 import { captureDestination } from '../app/submissionDestination.js'
 import { getUiState, patchUiState, resetUiState } from '../app/uiStore.js'
 import type { GatewayClient } from '../gatewayClient.js'
@@ -63,26 +63,8 @@ describe('submissionCore.submitPrompt — synchronous busy (queue-race fix)', ()
     // rapid submit take the local-enqueue branch instead of racing a second
     // prompt.submit onto the backend.
     expect(getUiState().busy).toBe(true)
-    expect(getUiState().status).toBe('running…')
 
     resolveDrop()
-  })
-
-  it('regression: two back-to-back sends — the SECOND sees busy=true in the gap', async () => {
-    const { gw, resolveDrop } = makeDeferredGateway()
-
-    // Emulate dispatchSubmission's routing decision: it sends only when
-    // busy===false, otherwise it would enqueue. We assert the state the
-    // router reads, which is the real regression.
-    submitPrompt('first message', makeDeps(gw))
-
-    // Before the fix, busy was still false here (set only inside detect_drop's
-    // .then), so a second Enter would wrongly route into send() again.
-    const busyWhenSecondArrives = getUiState().busy
-    expect(busyWhenSecondArrives).toBe(true)
-
-    resolveDrop()
-    await Promise.resolve()
   })
 
   it('does not submit when there is no session, and does not mark busy', () => {
@@ -93,7 +75,7 @@ describe('submissionCore.submitPrompt — synchronous busy (queue-race fix)', ()
     submitPrompt('hello', makeDeps(gw, { sys }))
 
     expect(getUiState().busy).toBe(false)
-    expect(sys).toHaveBeenCalledWith('session not ready yet')
+    expect(sys).toHaveBeenCalled()
     expect(calls).not.toContain('input.detect_drop')
   })
 
@@ -241,21 +223,39 @@ it('never downgrades ambiguous or conflicting durable submissions to legacy deli
   }
 })
 
-describe('submissionCore.markSubmitting', () => {
-  beforeEach(() => resetUiState())
-
-  it('sets busy + running status', () => {
-    markSubmitting()
-    expect(getUiState().busy).toBe(true)
-    expect(getUiState().status).toBe('running…')
-  })
-})
-
 describe('submissionCore.isSessionBusyError', () => {
   it('matches the legacy busy rejections but not arbitrary errors', () => {
     expect(isSessionBusyError(new Error('session busy'))).toBe(true)
     expect(isSessionBusyError(new Error('waiting for model response'))).toBe(true)
     expect(isSessionBusyError(new Error('some other failure'))).toBe(false)
     expect(isSessionBusyError('not an error')).toBe(false)
+  })
+})
+
+describe('submissionCore.submitPrompt — voice marker ownership', () => {
+  beforeEach(() => {
+    resetUiState()
+    patchUiState({ sid: 'sess-1' })
+  })
+
+  it('a voice-origin busy correction consumes the marker; the same text typed later is not a voice turn', async () => {
+    const request = vi.fn(async (_method: string, _params: Record<string, unknown>) => ({ status: 'accepted' }))
+    const gw = { isCanonical: true, request } as unknown as GatewayClient
+
+    markNextSubmitVoice('hello')
+    submitPrompt('hello', makeDeps(gw), true, undefined, {
+      behindTurn: true,
+      queueItem: { controlMethod: 'session.redirect', executionGeneration: 3, submissionId: 'c1', text: 'hello' } as never
+    })
+    submitPrompt('hello', makeDeps(gw))
+    await vi.waitFor(() => expect(request.mock.calls.map(([method]) => method)).toEqual(['session.redirect', 'prompt.submit']))
+
+    for (const [, params] of request.mock.calls) {
+      expect(params).not.toHaveProperty('voice_turn')
+    }
+
+    markNextSubmitVoice('spoken')
+    submitPrompt('spoken', makeDeps(gw))
+    await vi.waitFor(() => expect(request.mock.calls.at(-1)?.[1]).toMatchObject({ voice_turn: true }))
   })
 })

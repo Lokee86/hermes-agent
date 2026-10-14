@@ -26,7 +26,10 @@ is the facade with the method/event catalog; methods live in `methods_*.py` sibl
 `event_publisher.py` / `event_replay.py`, server→client requests in `server_requests.py` (`send()` blocks
 the agent thread until the response frame with the same `srq-<n>` id arrives; `cancel*` withdraws with a
 `request.cancel` event; `open_requests(sid)` is what `session.resume` / `session.events.since` replay so a
-reconnecting client re-renders the still-open questions). Desktop reaches the same server over WebSocket
+reconnecting client re-renders the still-open questions). A client says once per connection that it
+answers them (`client.capabilities {server_requests: true}`, sent by the shared channel on `gateway.ready`);
+a WebSocket client that never did is an app build older than server→client requests, and `send()` fails
+fast for it instead of stalling the agent for the deadline. Desktop reaches the same server over WebSocket
 via `apps/shared` (`JsonRpcGatewayClient`, `onRequest`). New RPC = a new `methods_<topic>.py` or an entry
 in an existing topical sibling, registered in the table — no `if method == ...` chain (root shape rules).
 
@@ -41,6 +44,13 @@ shape) and `gateway-contract.openrpc.json` are rendered by `scripts/gen_gateway_
 `tests/tui_gateway/contracts/test_generated.py` fails when they are stale, so the loop is: change the model →
 regenerate → `tsc` shows every consumer the field moved. `apps/shared/src/gateway-events.ts` only adds
 the client-local synthetic events and the `GatewayEvent` envelope on top.
+The native `hermes-gateway-v1` transport has a separate `CANONICAL_METHODS` catalog in
+`contracts/canonical*.py`, declared with `canonical_method(...)`. `gateway/session_controls.py::
+AuthorityConnection` validates parameters and successful results against it; unknown/missing
+parameter keys return `4001 invalid_params`. Reuse a standalone model only when its wire is
+identical: shared method names can carry different snapshots, admission receipts and producer
+results. The same generator emits `CanonicalRpcMethods` and OpenRPC `x-canonical-methods` without
+widening `RpcMethods`. `tests/gateway/test_canonical_wire_contract.py` checks handler coverage.
 New question for the user = `_ask("<method>", sid, params, timeout)` in the emitter, a handler in
 `apps/desktop/.../gateway-event/server-requests.ts` and `ui-tui/src/app/createServerRequestHandler.ts`,
 and a `server_request(...)` in `contracts/server_requests.py`.
@@ -82,17 +92,20 @@ profile's does not, and that `os.environ` is unchanged afterwards.
 | Slash commands | local handler + fallthrough | `slash.exec` → `_SlashWorker`; `command.dispatch` |
 | Completions | `useCompletion` hook | `complete.slash`, `complete.path` (under a non-local `terminal.backend`, `complete.path` lists the directory through the session's terminal backend — never the gateway host, whose same-named tree would look right and be wrong) |
 | Theming | `theme.ts` + `branding.tsx` | `gateway.ready` carries skin data |
-| Plugin compat notice | — | `plugins.compat_report` (see `plugins/AGENTS.md`) |
 | Connection operations (desktop card) | desktop `store/connection-request.ts` | `connection.request` → `connection.update`* → `connection.respond {op_id}`; `connectors.operation.status`. The op lives in `tools/connectors/live.py`; the card never parks the tool thread (`methods_connectors.py`). |
 
 ## Shared subagent snapshots
 
 `subagent.list({session_id})` returns `{subagents, delegations}` for the calling
-transport's live session. Live child records are pinned to the exact session
-record and transport. Child authority is resolved at RPC time against the owning session's
+transport's live session. The roster is read-only and follows the CONVERSATION: exact-owner
+records plus children whose durable lineage (`owner_agent_session_id` → compression tip, the
+same spine as in-process `delegate_task(action="list")`) is the session's agent, because a
+Desktop reconnect / resume remints the UI session id and compression rotates the key while the
+children keep running (#114909). Control (`steer` / `interrupt` / `tail`) stays pinned to the
+exact session record and transport. Child authority is resolved at RPC time against the owning session's
 LIVE transport slot, so every authenticated reattach path (prompt.submit, queued drain,
 resume, activate, viewer failover) carries it with no registry bookkeeping — never add a
-per-record transport sync at an attach site; foreign or retired generations remain inaccessible. `last_tool` is the last started tool, not an in-flight
+per-record transport sync at an attach site; foreign or retired generations remain uncontrollable. `last_tool` is the last started tool, not an in-flight
 indicator. Async completion units are not agents and lack exact generation authority;
 `delegations` remains an empty array for wire compatibility. No dispatch context,
 results, callbacks, or routing keys are sent. Clients hydrate from this snapshot

@@ -6,7 +6,11 @@ SessionDB transaction owner, including its inode guard and SQLite retry policy.
 import json
 import uuid
 
-from gateway.session_admission import admission_fingerprint
+from agent.conversation_compression_archive import ABSORBED_ROW_IDS
+from agent.message_metadata import (
+    CANONICAL_ROW, DB_ROW_SNAPSHOT, MESSAGE_UID, PERSISTENCE_ONLY_MESSAGE_FIELDS, TOOL_CALL_UID, TOOL_CALL_UIDS,
+)
+from hermes_state_keys import admission_fingerprint
 
 
 class RuntimeStoreError(ValueError):
@@ -59,8 +63,14 @@ def _retire_admission_workers(conn, row, owner_epoch):
     worker assignment to the child while target_session_id stays the logical ID)."""
     lineage = json.loads(row['lineage_json'])
     targets = list({row['target_session_id'], lineage[-1] if lineage else row['target_session_id']})
-    conn.execute(f"UPDATE worker_executions SET status='terminal' WHERE session_id IN ({','.join('?' * len(targets))}) "
-                 "AND generation=? AND owner_epoch=?", (*targets, row['generation'], owner_epoch))
+    scope = f"session_id IN ({','.join('?' * len(targets))}) AND generation=? AND owner_epoch=?"
+    # Settlement closes an execution that never wrote execution.finish: its read copies go too.
+    from hermes_state_runtime_workers import compact_terminal_receipts
+    for (execution_id,) in conn.execute(f"SELECT execution_id FROM worker_executions WHERE {scope} "
+                                        "AND status!='terminal'", (*targets, row['generation'], owner_epoch)).fetchall():
+        compact_terminal_receipts(conn, execution_id)
+    conn.execute(f"UPDATE worker_executions SET status='terminal' WHERE {scope}",
+                 (*targets, row['generation'], owner_epoch))
 
 
 def _row(row):
@@ -70,6 +80,7 @@ def _row(row):
     result['payload'] = json.loads(result.pop('payload_json'))
     result.pop('payload_digest')
     result.pop('lineage_json')
+    result.pop('retired_at', None)  # tombstone retention stamp, not admission state
     return result
 
 
@@ -83,8 +94,19 @@ def begin_runtime_epoch(db, *, instance_id: str) -> int:
     return db._execute_write(write)
 
 
+# Main's busy-queue cap (GatewayRunner._BUSY_QUEUE_MAX_PENDING): queued inputs one session holds.
+ADMISSION_QUEUE_MAX = 32
+
+
 def admit_session_input(db, *, epoch: int, principal_id: str, session_id: str,
-                        request_id: str, payload: dict, intent: str = 'queue') -> dict:
+                        request_id: str, payload: dict, intent: str = 'queue',
+                        _authorize_write=None) -> dict:
+    """Admit input; the trusted private guard raises to refuse a NEW write.
+
+    The guard receives the owning transaction connection, must not commit it or
+    perform external effects, and may run again on SQLite retry. Exact existing
+    and terminal replays bypass it: they cannot create or change accepted work.
+    """
     for value in (principal_id, session_id, request_id):
         _text(value)
     if intent not in ('queue', 'steer', 'redirect'):
@@ -105,6 +127,14 @@ def admit_session_input(db, *, epoch: int, principal_id: str, session_id: str,
             if old['payload_digest'] != digest:
                 raise RuntimeStoreError('admission_conflict')
             return _row(old)
+        queued = conn.execute('''SELECT COUNT(*) FROM session_admissions WHERE target_session_id=?
+            AND status='queued' ''', (session_id,)).fetchone()[0]
+        # Main's cap holds in both states: a FIFO paused behind an unknown turn runs every accepted
+        # input after Discard, so it must not grow without bound while nobody resolves it.
+        if queued >= ADMISSION_QUEUE_MAX:
+            raise RuntimeStoreError('queue_full')
+        if _authorize_write is not None:
+            _authorize_write(conn)
         admission_id = uuid.uuid4().hex
         conn.execute('''INSERT INTO session_admissions(admission_id,request_id,principal_id,
             target_session_id,lineage_json,payload_json,payload_digest,intent,status,owner_epoch)
@@ -123,22 +153,39 @@ def get_session_admission(db, *, admission_id: str) -> dict | None:
 
 def list_session_admissions(db, *, session_id: str, pending_only: bool = True) -> list[dict]:
     with db._read_ctx() as conn:
-        return [_row(row) for row in conn.execute('''SELECT * FROM session_admissions
-            WHERE target_session_id=? AND (?=0 OR status!='terminal') ORDER BY seq''', (session_id, int(pending_only)))]
+        # Pending is an explicit index-range IN, not ``!='terminal'``: a negated status cannot
+        # bound the (target, status, seq) index, so every probe scanned the session's history.
+        sql = ("SELECT * FROM session_admissions WHERE target_session_id=? "
+               + ("AND status IN ('queued','started','unknown') " if pending_only else "") + "ORDER BY seq")
+        return [_row(row) for row in conn.execute(sql, (session_id,))]
 
 
-def claim_session_input(db, *, epoch: int, session_id: str) -> dict | None:
+_ANY_HEAD = object()
+
+
+def claim_session_input(db, *, epoch: int, session_id: str, _guard=None, head=_ANY_HEAD) -> dict | bool | None:
+    """Claim the FIFO head. ``_guard(conn)`` (owner admission gate) raises to refuse inside the
+    write transaction, so a drain that began while this waited on the writer still wins.
+    ``head`` is the admission id the caller's preclaim checks validated (None: it saw nothing
+    queued); if the head is another row by the time this write runs, nothing is claimed and False
+    tells the caller to re-read and validate the row that is now first."""
     def write(conn):
         _epoch(conn, epoch)
+        if _guard is not None:
+            _guard(conn)
         session = _session(conn, session_id)
         blocked = conn.execute("SELECT status FROM session_admissions WHERE target_session_id=? AND status IN ('started','unknown')", (session_id,)).fetchall()
         if any(row[0] == 'unknown' for row in blocked):
             raise RuntimeStoreError('unknown_execution')
-        if conn.execute("SELECT 1 FROM worker_executions WHERE session_id=? AND status='unknown'", (session_id,)).fetchone():
+        from hermes_state_runtime_workers import worker_states
+        workers = worker_states(conn, session_id)
+        if 'unknown' in workers:
             raise RuntimeStoreError('unknown_execution')
-        if blocked or conn.execute("SELECT 1 FROM worker_executions WHERE session_id=? AND status IN ('registered','running')", (session_id,)).fetchone():
+        if blocked or workers:
             return None
         row = conn.execute("SELECT * FROM session_admissions WHERE target_session_id=? AND status='queued' ORDER BY seq LIMIT 1", (session_id,)).fetchone()
+        if head is not _ANY_HEAD and (row['admission_id'] if row is not None else None) != head:
+            return False
         if row is None:
             return None
         generation = session['runtime_generation'] + 1
@@ -154,7 +201,7 @@ def settle_session_input(db, *, epoch: int, admission_id: str, generation: int, 
                          result: dict | None = None) -> dict:
     if outcome not in ('completed', 'interrupted', 'rejected', 'failed'):
         raise RuntimeStoreError('invalid_params')
-    encoded = _json(result) if result is not None else None
+    from hermes_state_terminal import compact_result
     def write(conn):
         _epoch(conn, epoch)
         row = _admission(conn, admission_id)
@@ -164,8 +211,9 @@ def settle_session_input(db, *, epoch: int, admission_id: str, generation: int, 
                 or session['runtime_generation'] != generation):
             raise RuntimeStoreError('stale_generation')
         _retire_admission_workers(conn, row, epoch)
-        if encoded is not None:
+        if result is not None:
             from hermes_state_terminal import RESULT_PREFIX
+            encoded = _json(compact_result(result, user_message=json.loads(row['payload_json']).get('text')))
             conn.execute('INSERT INTO state_meta(key,value) VALUES(?,?) '
                          'ON CONFLICT(key) DO UPDATE SET value=excluded.value',
                          (RESULT_PREFIX + admission_id, encoded))
@@ -257,6 +305,7 @@ def mutate_runtime_session(db, *, epoch: int, principal_id: str, session_id: str
                          [(target,) for target in affected])
         updated = conn.execute('SELECT * FROM sessions WHERE id=?', (session_id,)).fetchone()
         result = {'session_id': session_id, 'revision': updated['runtime_revision'] if updated else expected_revision + 1,
+                  'execution_generation': updated['runtime_generation'] if updated else expected_generation,
                   'operation': operation, **projection}
         conn.execute('INSERT INTO state_meta(key,value) VALUES(?,?)',
                      (key, _json({'digest': digest, 'result': result})))
@@ -357,15 +406,41 @@ def import_legacy_session_admissions(db, *, epoch: int, source_path, principal_i
         return db._execute_write(write)
 
 
-def resolve_unknown_session_input(db, *, epoch: int, admission_id: str, generation: int) -> dict:
-    """Explicit operator acknowledgement; resolves uncertainty, never requeues it."""
+def resolve_unknown_session_input(db, *, epoch: int, admission_id: str, generation: int,
+                                  _terminal_write=None, _captured=None) -> dict:
+    """Explicit operator acknowledgement; resolves uncertainty, never requeues it.
+
+    ``_terminal_write(conn, row)`` is the owner's same-transaction effect (the discarded turn's
+    transcript boundary): it must not commit, may run again on SQLite retry, and raising rolls
+    the whole resolution back, so the FIFO can never advance past an unclosed lost turn.
+    ``_captured=(outcome, stored_result)`` is the exact result this owner captured for the turn
+    before its settlement write failed; it commits with the resolution (only for an ``unknown``
+    row stamped by this same owner epoch), so the finished answer is not thrown away."""
+    from hermes_state_terminal import RESULT_PREFIX
     def write(conn):
         _epoch(conn, epoch)
         row = _admission(conn, admission_id)
+        if (type(generation) is int and row['generation'] == generation and row['status'] == 'terminal'
+                and (row['outcome'] == 'interrupted' or conn.execute(
+                    'SELECT 1 FROM state_meta WHERE key=?', (RESULT_PREFIX + admission_id,)).fetchone())):
+            return _row(row)
         if type(generation) is not int or row['status'] != 'unknown' or row['generation'] != generation:
             raise RuntimeStoreError('stale_generation')
+        outcome = 'interrupted'
+        if _captured is not None and row['owner_epoch'] == epoch:
+            outcome, stored = _captured
+            if outcome not in ('completed', 'interrupted', 'failed'):
+                raise RuntimeStoreError('invalid_params')
+            from hermes_state_terminal import compact_result
+            conn.execute('INSERT INTO state_meta(key,value) VALUES(?,?) '
+                         'ON CONFLICT(key) DO UPDATE SET value=excluded.value',
+                         (RESULT_PREFIX + admission_id, _json(compact_result(
+                             stored, user_message=json.loads(row['payload_json']).get('text')))))
+        if _terminal_write is not None:
+            _terminal_write(conn, row)
         _retire_admission_workers(conn, row, row['owner_epoch'])
-        conn.execute("UPDATE session_admissions SET status='terminal',outcome='interrupted' WHERE admission_id=?", (admission_id,))
+        conn.execute("UPDATE session_admissions SET status='terminal',outcome=? WHERE admission_id=?",
+                     (outcome, admission_id))
         conn.execute('UPDATE sessions SET runtime_revision=runtime_revision+1 WHERE id=?', (row['target_session_id'],))
         return _row(_admission(conn, admission_id))
     return db._execute_write(write)
@@ -425,11 +500,13 @@ def register_worker_execution(db, *, epoch: int, execution_id: str, session_id: 
             if (old['session_id'], old['generation'], old['kind'], old['owner_epoch'], old['adoption_digest']) != (session_id, generation, kind, epoch, digest):
                 raise RuntimeStoreError('admission_conflict')
             return _worker_public(old)
-        if require_idle and conn.execute("SELECT 1 FROM session_admissions WHERE target_session_id=? AND status!='terminal'", (session_id,)).fetchone():
+        from hermes_state_runtime_workers import runtime_lineage, worker_states
+        targets = runtime_lineage(conn, session_id)
+        if require_idle and any(conn.execute("SELECT 1 FROM session_admissions WHERE target_session_id=? AND status IN ('queued','started','unknown')", (sid,)).fetchone() for sid in targets):
             raise RuntimeStoreError('stale_generation')
-        if conn.execute("SELECT 1 FROM worker_executions WHERE session_id=? AND status!='terminal'", (session_id,)).fetchone():
+        if worker_states(conn, session_id):
             raise RuntimeStoreError('stale_generation')
-        if conn.execute("SELECT 1 FROM session_admissions WHERE target_session_id=? AND status='unknown'", (session_id,)).fetchone():
+        if any(conn.execute("SELECT 1 FROM session_admissions WHERE target_session_id=? AND status='unknown'", (sid,)).fetchone() for sid in targets):
             raise RuntimeStoreError('unknown_execution')
         conn.execute("""INSERT INTO worker_executions(execution_id,session_id,kind,owner_epoch,generation,status,adoption_digest)
             VALUES(?,?,?,?,?,'registered',?)""", (execution_id, session_id, kind, epoch, generation, digest))
@@ -449,6 +526,12 @@ def adopt_worker_execution(db, *, epoch: int, execution_id: str, session_id: str
             raise RuntimeStoreError('stale_generation')
         if not hmac.compare_digest(row['adoption_digest'], digest):
             raise RuntimeStoreError('permission_denied')
+        # An admission-reserved worker reports to the reserving owner over that owner's pipes and
+        # dies with them, so only its same-epoch handshake adopts it. A late handshake reaching a
+        # restarted owner would re-arm the recovered `unknown` admission as `started` with nobody
+        # left to settle it (and Discard refuses `started`); refuse it so recovery's verdict stands.
+        if execution_id.startswith('admission-worker:') and row['owner_epoch'] != epoch:
+            raise RuntimeStoreError('stale_epoch')
         linked = _linked_worker_admission(
             conn, session_id, generation, row['owner_epoch'], ('started', 'unknown'))
         if linked is not None:
@@ -467,51 +550,28 @@ def adopt_worker_execution(db, *, epoch: int, execution_id: str, session_id: str
     return db._execute_write(write)
 
 
-def persist_worker_message(db, *, epoch: int, execution_id: str, session_id: str,
-                           generation: int, sequence: int, role: str, content: str) -> dict:
-    """Typed text append primitive, NOT a general remote SessionDB implementation.
-
-    Structured tools/reasoning/usage/compression require their own typed operations.
-    No caller-supplied callable can commit inside this transaction.
-    """
-    import time
-    if type(sequence) is not int or sequence < 1 or role not in ('user', 'assistant', 'system') or not isinstance(content, str):
-        raise RuntimeStoreError('invalid_params')
-    digest = admission_fingerprint(canonical_target=session_id, payload={'operation': 'append_text', 'role': role, 'content': content})
-    def write(conn):
-        _epoch(conn, epoch)
-        row = _worker_assignment(conn, execution_id, session_id, generation)
-        if row['owner_epoch'] != epoch:
-            raise RuntimeStoreError('stale_epoch')
-        old = conn.execute('SELECT * FROM worker_receipts WHERE execution_id=? AND sequence=?', (execution_id, sequence)).fetchone()
-        if old is not None:
-            if old['payload_digest'] != digest:
-                raise RuntimeStoreError('admission_conflict')
-            return json.loads(old['result_json'])
-        if row['status'] == 'terminal':
-            raise RuntimeStoreError('stale_generation')
-        if sequence != row['last_sequence'] + 1:
-            raise RuntimeStoreError('invalid_params')
-        db._check_transcript_write_guards(conn, session_id, None)
-        now = time.time()
-        message = conn.execute('INSERT INTO messages(session_id,role,content,timestamp) VALUES(?,?,?,?)', (session_id, role, db._encode_content(content), now))
-        conn.execute('UPDATE sessions SET message_count=message_count+1,last_activity_at=?,runtime_revision=runtime_revision+1 WHERE id=?', (now, session_id))
-        result = {'message_id': message.lastrowid}
-        conn.execute('INSERT INTO worker_receipts(execution_id,sequence,payload_digest,result_json) VALUES(?,?,?,?)', (execution_id, sequence, digest, json.dumps(result, ensure_ascii=True, allow_nan=False)))
-        conn.execute("UPDATE worker_executions SET last_sequence=?,status='running' WHERE execution_id=?", (sequence, execution_id))
-        return result
-    return db._execute_write(write)
-
-
-
-
 _MESSAGE_FIELDS = frozenset({
     'role', 'content', 'tool_name', 'tool_calls', 'tool_call_id', 'token_count',
     'finish_reason', 'reasoning', 'reasoning_content', 'reasoning_details',
     'codex_reasoning_items', 'codex_message_items', 'platform_message_id', 'message_id',
     'observed', 'effect_disposition', '_compressed_summary', 'timestamp', 'api_content',
-    'display_kind', 'display_metadata', '_row_id', '_canonical_content',
-})
+    'display_kind', 'display_metadata', '_row_id', '_canonical_content', DB_ROW_SNAPSHOT, CANONICAL_ROW,
+    # Main's durable message identity (message_uid / merge witness / tool-call uids) and the alternation
+    # repair's row counts ride every persisted dict; the owner's insert and coverage read them.
+}) | PERSISTENCE_ONLY_MESSAGE_FIELDS | {ABSORBED_ROW_IDS}
+# Compaction handoffs (archive/publish) also carry the summary's user-turn flag. This is the closed
+# boundary the owner validates AND the projection the worker facade applies to live dicts first.
+HANDOFF_MESSAGE_FIELDS = _MESSAGE_FIELDS | {'_compressed_summary_has_user_turn'}
+# Row state the owner's insert and transcript repair stamp on each message (main mutates the caller's
+# dict in place; a worker gets it back as an annotation). None = absent, so a stale adoption is cleared.
+# The owner-minted identity rides too: a worker dict without it re-mints a new uid on every later
+# archive/rotation copy, so the logical message changes identity across generations.
+_ROW_ANNOTATION_KEYS = ('_row_id', 'timestamp', DB_ROW_SNAPSHOT, CANONICAL_ROW,
+                        MESSAGE_UID, TOOL_CALL_UIDS, TOOL_CALL_UID)
+
+
+def row_annotations(messages):
+    return [{key: msg.get(key) for key in _ROW_ANNOTATION_KEYS} for msg in messages]
 
 
 def _worker_append(db, conn, session_id, payload):
@@ -533,8 +593,7 @@ def _worker_append(db, conn, session_id, payload):
     if holder is not None:
         _text(holder)
     count = db._append_messages_in_transaction(conn, session_id, messages, turn_lease_holder=holder)
-    return {'count': count, 'annotations': [
-        {key: msg[key] for key in ('_row_id', '_canonical_content') if key in msg} for msg in messages]}
+    return {'count': count, 'annotations': row_annotations(messages)}
 
 
 def _worker_turn(db, conn, session_id, payload, operation):
@@ -569,7 +628,7 @@ def _worker_usage(db, conn, session_id, payload, *, auxiliary=False):
         # ``source`` feeds the legacy path's row-existence guard (#111999); an authority-owned
         # session row was minted with its real surface at admission, so nothing to repair here.
         payload = {k: v for k, v in payload.items() if k != 'source'}
-    allowed = (_MODEL_USAGE_FIELDS - {'billing_mode', 'actual_cost_usd', 'cost_status', 'cost_source'} | {'task'}) if auxiliary else (_MODEL_USAGE_FIELDS | {'pricing_version', 'absolute'})
+    allowed = (_MODEL_USAGE_FIELDS - {'billing_mode', 'actual_cost_usd', 'cost_status', 'cost_source'} | {'task'}) if auxiliary else (_MODEL_USAGE_FIELDS | {'pricing_version', 'absolute', 'task'})
     if set(payload) - allowed:
         raise RuntimeStoreError('invalid_params')
     for key, value in payload.items():
@@ -601,8 +660,9 @@ def _worker_finish(db, conn, session_id, payload):
 def mutate_worker_execution(db, *, epoch, execution_id, session_id, generation,
                             sequence, operation, payload):
     """One closed durable mutation and receipt; never call a self-committing API here."""
-    from hermes_state_worker_context import worker_context, worker_prompt, worker_sidecars, worker_tool_names
-    from hermes_state_worker_compression import WORKER_COMPRESSION_HANDLERS, worker_receipt_assignment
+    from hermes_state_worker_context import (worker_context, worker_prompt, worker_row_role, worker_sidecars,
+                                             worker_tail_role, worker_tool_names)
+    from hermes_state_worker_compression import WORKER_COMPRESSION_HANDLERS
     from hermes_state_worker_lifecycle import WORKER_LIFECYCLE_HANDLERS
     handlers = {
         **WORKER_LIFECYCLE_HANDLERS,
@@ -611,6 +671,8 @@ def mutate_worker_execution(db, *, epoch, execution_id, session_id, generation,
         'session.prompt': worker_prompt,
         'session.sidecars': worker_sidecars,
         'session.tools': worker_tool_names,
+        'session.tail_role': worker_tail_role,
+        'session.row_role': worker_row_role,
         'transcript.append': _worker_append,
         'execution.finish': _worker_finish,
         'usage.main': _worker_usage,
@@ -618,6 +680,21 @@ def mutate_worker_execution(db, *, epoch, execution_id, session_id, generation,
         **{name: (lambda db, conn, sid, p, op=name: _worker_turn(db, conn, sid, p, op))
            for name in ('turn.acquire', 'turn.renew', 'turn.release')},
     }
+    return apply_worker_receipt(db, epoch=epoch, execution_id=execution_id, session_id=session_id,
+                                generation=generation, sequence=sequence, operation=operation,
+                                payload=payload, handlers=handlers)
+
+
+def apply_worker_receipt(db, *, epoch, execution_id, session_id, generation, sequence,
+                         operation, payload, handlers):
+    """The one worker receipt transaction every ``worker.persist`` family shares.
+
+    An exact (execution, sequence, digest) retry returns the stored result; otherwise the
+    epoch, assignment, live status and next sequence are fenced, ``handlers[operation]`` runs on
+    the transaction connection (it must not commit), and its result is stored as the receipt.
+    ``execution.finish`` is the only operation that makes the execution terminal.
+    """
+    from hermes_state_worker_compression import worker_receipt_assignment
     if type(sequence) is not int or sequence < 1 or not isinstance(operation, str) or operation not in handlers:
         raise RuntimeStoreError('invalid_params')
     encoded = _json(payload)
@@ -635,47 +712,29 @@ def mutate_worker_execution(db, *, epoch, execution_id, session_id, generation,
         if old is not None:
             if old['payload_digest'] != digest:
                 raise RuntimeStoreError('admission_conflict')
+            from hermes_state_runtime_workers import retired_receipt
+            if retired_receipt(old['result_json']):
+                raise RuntimeStoreError('stale_generation')  # a terminal execution's read copy
             return json.loads(old['result_json'])
         if row['status'] not in ('registered', 'running'):
             raise RuntimeStoreError('stale_generation')
         if sequence != row['last_sequence'] + 1:
             raise RuntimeStoreError('invalid_params')
         # Each SQLite retry gets fresh rows; rolled-back annotations must not escape.
+        changes = conn.total_changes
         result = handlers[operation](db, conn, session_id, json.loads(encoded))
+        # The CAS fence moves only when the handler changed durable state (or the execution
+        # closes): a read-only receipt (context, history, lineage, lifecycle) must not make a
+        # client's mutation built on the pre-read revision fail revision_conflict.
+        changed = conn.total_changes != changes or operation == 'execution.finish'
         conn.execute('INSERT INTO worker_receipts(execution_id,sequence,payload_digest,result_json) VALUES(?,?,?,?)',
                      (execution_id, sequence, digest, json.dumps(result, ensure_ascii=True, allow_nan=False)))
         conn.execute("UPDATE worker_executions SET last_sequence=?,status=? WHERE execution_id=?",
                      (sequence, 'terminal' if operation == 'execution.finish' else 'running', execution_id))
-        conn.execute('UPDATE sessions SET runtime_revision=runtime_revision+1 WHERE id=?', (session_id,))
+        if changed:
+            conn.execute('UPDATE sessions SET runtime_revision=runtime_revision+1 WHERE id=?', (session_id,))
+        if operation == 'execution.finish':
+            from hermes_state_runtime_workers import compact_terminal_receipts
+            compact_terminal_receipts(conn, execution_id)
         return result
     return db._execute_write(write, patience_s=db._TRANSCRIPT_WRITE_PATIENCE_S)
-
-
-def finish_worker_execution(db, *, epoch: int, execution_id: str, session_id: str,
-                            generation: int) -> dict:
-    def write(conn):
-        _epoch(conn, epoch)
-        row = _worker_assignment(conn, execution_id, session_id, generation)
-        if row['owner_epoch'] != epoch:
-            raise RuntimeStoreError('stale_epoch')
-        if row['status'] == 'terminal':
-            return _worker_public(row)
-        linked = _linked_worker_admission(conn, session_id, generation, epoch, ('started',))
-        changed = conn.execute(
-            "UPDATE worker_executions SET status='terminal' WHERE execution_id=? AND status!='terminal'",
-            (execution_id,))
-        if changed.rowcount != 1:
-            raise RuntimeStoreError('stale_generation')
-        if linked is not None:
-            changed = conn.execute("""UPDATE session_admissions
-                SET status='terminal',outcome='completed'
-                WHERE admission_id=? AND status='started' AND owner_epoch=? AND generation=?""",
-                (linked['admission_id'], epoch, generation))
-            if changed.rowcount != 1:
-                raise RuntimeStoreError('stale_generation')
-            conn.execute('UPDATE sessions SET runtime_revision=runtime_revision+1 WHERE id=?',
-                         (linked['target_session_id'],))
-        result = _worker_public(row)
-        result['status'] = 'terminal'
-        return result
-    return db._execute_write(write)

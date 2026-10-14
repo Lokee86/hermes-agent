@@ -51,7 +51,8 @@ async def dispatch_group_control(connection, method, params):
     if method not in _FIELDS or not isinstance(params, dict) or set(params) - (_FIELDS[method] | {'profile'}):
         raise RuntimeStoreError('invalid_params')
     home = Path(authority.profile_id)
-    if Path(authority.db.db_path).resolve().parent != home.resolve():
+    db_path = await asyncio.to_thread(Path(authority.db.db_path).resolve)
+    if db_path.parent != await asyncio.to_thread(home.resolve):
         raise RuntimeStoreError('profile_mismatch')
     from hermes_cli.profiles import profile_matches_home
     profile = params.get('profile')
@@ -84,6 +85,10 @@ def _group(authority, actor, home, method, params):
     gateway_id = rooms.local_authority_gateway_id()
     service = getattr(authority, 'hosted_room_service', None)
     room_authorizer = getattr(service, 'authorize_room', None)
+    if service is None:
+        from functools import partial
+        from gateway.session_hosted_service import authorize_room_owner
+        room_authorizer = partial(authorize_room_owner, authority)
     if service is not None:
         if Path(service.db_path).resolve() != Path(db_path).resolve():
             raise RuntimeStoreError('profile_mismatch')
@@ -92,10 +97,17 @@ def _group(authority, actor, home, method, params):
             service = None
 
     execution_methods = {'groups.send', 'groups.stop', 'groups.retry', 'groups.discard', 'groups.approve'}
-    if getattr(authority, 'hosted_room_service', None) is not None and 'room_id' in params:
+    admit = None
+    if 'room_id' in params:
         if room_authorizer is None:
             raise RuntimeStoreError('permission_denied')
-        room_authorizer(actor.subject, params['room_id'], create=method == 'groups.create')
+        if method == 'groups.create':
+            # Claim ownership inside the room insert's transaction: a create rejected by
+            # validation or storage must not leave an owner-only reservation behind.
+            def admit(conn):
+                room_authorizer(actor.subject, params['room_id'], create=True, conn=conn)
+        else:
+            room_authorizer(actor.subject, params['room_id'])
     if method in {'groups.attachment.upload', 'groups.attachment.download'}:
         if service is None:
             raise RuntimeStoreError('runtime_coordination_required')
@@ -118,26 +130,39 @@ def _group(authority, actor, home, method, params):
 
     def listing():
         limit, offset = params.get('limit', rooms.MAX_ROOM_LIST_LIMIT), params.get('offset', 0)
-        result = rooms.list_rooms(db_path, **params)
-        next_offset = offset + limit if len(result) == limit else None
-        if getattr(authority, 'hosted_room_service', None) is not None:
-            visible = []
-            for room in result:
-                if room_authorizer is None:
-                    raise RuntimeStoreError('permission_denied')
-                try:
-                    room_authorizer(actor.subject, room['room_id'])
-                except RuntimeStoreError as exc:
-                    if exc.reason != 'permission_denied':
-                        raise
-                else:
-                    visible.append(room)
-            result = visible
-        return {'rooms': result, 'next_offset': next_offset}
+        authorize = room_authorizer
+        if authorize is None:
+            raise RuntimeStoreError('permission_denied')
+
+        def visible(room):
+            try:
+                authorize(actor.subject, room['room_id'])
+            except RuntimeStoreError as exc:
+                if exc.reason != 'permission_denied':
+                    raise
+                return False
+            return True
+        # Page the actor-visible collection, not the room table: scan the underlying cursor until
+        # the page holds ``limit`` visible rooms, and continue at the next VISIBLE room (or None),
+        # so a page is never short or empty while visible rooms remain after it. ``offset`` is
+        # that underlying continuation cursor, as returned in ``next_offset``.
+        found, cursor, next_offset = [], offset, None
+        while next_offset is None:
+            batch = rooms.list_rooms(db_path, **{**params, 'offset': cursor})
+            for room in batch:
+                if visible(room):
+                    if len(found) == limit:
+                        next_offset = cursor
+                        break
+                    found.append(room)
+                cursor += 1
+            if len(batch) < limit:
+                break
+        return {'rooms': found, 'next_offset': next_offset}
 
     def create():
         if service is not None:
-            return {'room': service.create_room(**params)}
+            return {'room': service.create_room(**params, admit=admit)}
         from gateway.hosted_room_discussion import validate_roster
         from gateway.session_authorities import served_profile_name
         name = served_profile_name(home)
@@ -149,7 +174,8 @@ def _group(authority, actor, home, method, params):
                        'target': dict(m.target or {}),
                        **({'display_name': m.display_name} if m.display_name else {})} for m in members]
         return {'room': rooms.create_room(db_path, room_id=params.get('room_id'),
-                name=params.get('name'), members=normalized, authority_gateway_id=gateway_id)}
+                name=params.get('name'), members=normalized, authority_gateway_id=gateway_id,
+                admit=admit)}
 
     def disband():
         from gateway.hosted_room_driver import list_tasks
@@ -230,7 +256,7 @@ def _execution_control(service, method, params):
 
 def _profiles(authority, actor, home, params):
     from hermes_cli.profiles import _profile_info, read_profile_meta
-    import yaml
+    import hermes_yaml as yaml
     include_sessions = params.get('include_sessions', True)
     if type(include_sessions) is not bool:
         raise RuntimeStoreError('invalid_params')
@@ -242,7 +268,7 @@ def _profiles(authority, actor, home, params):
            'description': profile.description or '', 'display_name': profile.display_name or '',
            'skill_count': profile.skill_count or 0}
     path = home / 'profile.yaml'
-    meta = yaml.safe_load(path.read_text(encoding='utf-8')) if path.is_file() else {}
+    meta = yaml.safe_load(path.read_text(encoding='utf-8-sig')) if path.is_file() else {}
     meta = meta if isinstance(meta, dict) else {}
     revisions = meta.get('_ui_meta_revisions')
     row['ui_meta_revisions'] = {str(k): max(0, v) for k, v in revisions.items()
@@ -280,20 +306,44 @@ def _profiles(authority, actor, home, params):
         else:
             owner_filter, owner_params = 'user_id=? AND ', (actor.subject,)
         with authority.db._lock:
+            from hermes_state_sessions import INTERNAL_LISTING_SOURCES
+            hidden_sources = ','.join('?' * len(INTERNAL_LISTING_SOURCES))
             latest = authority.db._conn.execute(
                 f"SELECT id FROM sessions WHERE {owner_filter}chat_id LIKE 'local-%' AND archived=0 "
+                f"AND COALESCE(source,'') NOT IN ({hidden_sources}) "
                 "ORDER BY COALESCE(last_activity_at,started_at) DESC LIMIT 1",
-                owner_params).fetchone()
+                (*owner_params, *INTERNAL_LISTING_SOURCES)).fetchone()
         if latest:
             row['last_session'] = summary(authority.db.get_session(latest[0]))
     profiles = [row]
+    seen = {home.resolve()}
+
+    def discovered(configured, target):
+        # Discovery metadata only: never a licence to read another owner's state/configuration.
+        if target.resolve() in seen:
+            return
+        seen.add(target.resolve())
+        entry = {'name': configured, 'path': str(target), 'is_default': configured == 'default',
+                 'model': '', 'provider': '', 'description': '', 'display_name': configured,
+                 'skill_count': 0}
+        meta_path = target / 'profile.yaml'
+        try:
+            meta = yaml.safe_load(meta_path.read_text(encoding='utf-8-sig')) if meta_path.is_file() else {}
+        except (OSError, yaml.YAMLError):
+            meta = {}
+        if isinstance(meta, dict):
+            entry['display_name'] = str(meta.get('display_name') or configured)
+            if isinstance(meta.get('ui_meta'), dict):
+                entry['ui_meta'] = meta['ui_meta']
+        profiles.append(entry)
+
+    # Sibling profiles this process multiplexes: the roster lists them with the same
+    # standing as a hosted-room destination, and the client routes their sessions by name.
+    registry = getattr(getattr(authority, 'runner', None), 'session_authorities', None)
+    for sibling in (registry or ()):
+        discovered(served_profile_name(Path(sibling.profile_id)), Path(sibling.profile_id))
     service = getattr(authority, 'hosted_room_service', None)
     if service is not None:
         for configured, target in service.profile_homes().items():
-            if target != home:
-                # Configured execution destinations are discovery metadata, not
-                # permission to read another owner's state/configuration.
-                profiles.append({'name': configured, 'path': str(target), 'is_default': False,
-                                 'model': '', 'provider': '', 'description': '',
-                                 'display_name': configured, 'skill_count': 0})
+            discovered(configured, target)
     return {'profiles': profiles, 'bot_mode_protocol': True}

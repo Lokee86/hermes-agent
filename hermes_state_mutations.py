@@ -8,10 +8,19 @@ METADATA_FIELDS = {'title': str, 'archived': bool, 'hidden': bool, 'pinned': boo
 def validate_action(operation, payload):
     if not isinstance(payload, dict) or not isinstance(operation, str):
         raise RuntimeStoreError('invalid_params')
-    if (operation == 'model' and 'model' in payload and not set(payload) - {'model', 'provider'}
+    # ``confirm``: the owner's selection-guard token for this exact resolved target (session_mutation_model).
+    if (operation == 'model' and 'model' in payload and not set(payload) - {'model', 'provider', 'confirm'}
             and all(isinstance(v, str) and v.strip() for v in payload.values())):
         return
-    if operation == 'branch' and (not payload or (set(payload) == {'title'} and isinstance(payload['title'], str))):
+    if operation == 'branch' and _valid_branch_payload(payload):
+        return
+    # Session-scope ``/reasoning <level>`` and Desktop's Move to project: revision-fenced edits of
+    # the frozen policy (gateway/session_mutation_policy.py).
+    if operation == 'reasoning' and set(payload) == {'effort'} and isinstance(payload['effort'], str):
+        from hermes_constants import parse_reasoning_effort
+        if parse_reasoning_effort(payload['effort']) is not None:
+            return
+    if operation == 'workspace' and set(payload) == {'cwd'} and isinstance(payload['cwd'], str) and payload['cwd'].strip():
         return
     if operation == 'compress' and _valid_compress_payload(payload):
         return
@@ -33,6 +42,17 @@ def validate_action(operation, payload):
         raise RuntimeStoreError('invalid_params')
 
 
+def _valid_branch_payload(payload):
+    # ``through_message_id``: the physical row id of the last message the branch keeps (a stable
+    # boundary, never a visible-message count); absent means the whole active transcript.
+    if set(payload) - {'title', 'through_message_id'}:
+        return False
+    if 'title' in payload and not isinstance(payload['title'], str):
+        return False
+    return 'through_message_id' not in payload or (
+        type(payload['through_message_id']) is int and payload['through_message_id'] > 0)
+
+
 _COMPRESS_FIELDS = {'focus': str, 'preview': bool, 'partial': bool, 'keep_last': int}
 
 
@@ -50,9 +70,9 @@ def apply_action(db, conn, session_id, operation, payload, *, prepared=None):
     if operation == 'compress':
         from hermes_state_mutation_compress import compress_in_transaction
         return compress_in_transaction(db, conn, session_id, payload, prepared)
-    if operation == 'model':
-        from hermes_state_mutation_prepared import model_in_transaction
-        return model_in_transaction(db, conn, session_id, payload, prepared)
+    if operation in {'model', 'reasoning', 'workspace'}:
+        from hermes_state_mutation_prepared import POLICY_HANDLERS
+        return POLICY_HANDLERS[operation](db, conn, session_id, payload, prepared)
     from hermes_state_mutation_reset import reset_in_transaction
     from hermes_state_mutation_branch import branch_in_transaction
     handlers = {'delete': _delete, 'import': _import, 'rewind': _rewind, 'reset': reset_in_transaction,
@@ -87,14 +107,28 @@ def _rewind(db, conn, session_id, payload):
     from hermes_state_local_lineage import local_physical_target
     physical = local_physical_target(conn, session_id)
     require_idle(db, conn, list({session_id, physical}))
-    target, ids, head, replacement = rewind_in_transaction(db, conn, physical,
-        payload['target_message_id'], preserve_compaction_handoff=payload.get('preserve_compaction_handoff', False))
+    # A composite compaction carrier (summary + the next ask in one row) keeps its handoff, as
+    # main's rewind does; the receipt reports the live ask, so /retry resubmits it, not the summary.
+    live = _carrier_live_view(db, conn, physical, payload['target_message_id'])
+    target, ids, head, replacement = rewind_in_transaction(db, conn, physical, payload['target_message_id'],
+        preserve_compaction_handoff=live is not None or payload.get('preserve_compaction_handoff', False))
     # Receipts are JSON: publish the same public message shape get_messages() returns (decoded
     # content/tool_calls, no internal display_identity BLOB / display_order).
     target = db._row_to_message_dict(target, warn_context='rewind receipt', summary_flag=True)
+    if live is not None:
+        target['content'] = live.get('content')
     conn.execute('UPDATE sessions SET runtime_generation=runtime_generation+1 WHERE id=?', (session_id,))
     return {session_id, physical}, {'rewound_count': len(ids), 'target_message': target,
         'new_head_id': head, 'replacement_message_id': replacement}
+
+
+def _carrier_live_view(db, conn, session_id, message_id):
+    from agent.context_compressor import split_user_originated_turn
+    row = conn.execute('SELECT * FROM messages WHERE id=? AND session_id=? AND active=1',
+                       (message_id, session_id)).fetchone()
+    message = row and db._row_to_message_dict(row, warn_context='rewind target', summary_flag=True)
+    handoff, live = split_user_originated_turn(message) if message else (None, None)
+    return live if handoff is not None else None
 
 
 def _import(db, conn, session_id, payload):
@@ -118,6 +152,16 @@ def _import(db, conn, session_id, payload):
         if raw.get('parent_session_id'):
             parents.append((sid, raw['parent_session_id']))
         imported.append(sid)
-    detached = db._attach_import_parents(conn, parents)
+    # A parent outside this payload is kept only when it is history this importer already
+    # controls: its import binding equals the child's (written by import_history_control in this
+    # transaction). Linking under any other row would graft the import onto a foreign chain,
+    # which a later chain-aware delete of the import would then remove.
+    from hermes_state_mutation_binding import history_binding
+    # Rows imported now, not payload ids: a payload naming an existing foreign id skips that row.
+    fresh = set(imported)
+    foreign = [(sid, parent) for sid, parent in parents if parent not in fresh and (
+        history_binding(conn, parent) is None or history_binding(conn, parent) != history_binding(conn, sid))]
+    parents = [link for link in parents if link not in foreign]
+    detached = db._attach_import_parents(conn, parents) + len(foreign)
     return set(imported), {'ok': True, 'imported': len(imported), 'skipped': len(skipped),
         'imported_ids': imported, 'skipped_ids': skipped, 'detached': detached, 'errors': []}

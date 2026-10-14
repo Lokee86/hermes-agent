@@ -4,14 +4,16 @@ The creation ID remains the admission/execution owner. Transcript rotation must
 not re-key idempotency digests, queued inputs, subscribers or uncertain claims.
 """
 import json
+import time
 
 from hermes_state_local import POLICY_PREFIX
 from hermes_state_runtime import RuntimeStoreError, _epoch, _json
+import itertools
 
 
 def validate_local_lineage(conn, receipt):
     from hermes_state_compression import _CHAIN_STEP_SQL
-    from gateway.session_local_recovery import local_identity
+    from hermes_state_keys import local_identity
     if ('legacy_session_id' not in receipt and
             receipt['session_id'] != local_identity(receipt['profile_id'], receipt['principal_id'], receipt['request_id'])):
         raise RuntimeStoreError('storage_unavailable')
@@ -21,7 +23,7 @@ def validate_local_lineage(conn, receipt):
     if (not isinstance(lineage, list) or not lineage or len(set(lineage)) != len(lineage)
             or lineage[0] != root or lineage[-1] != receipt['entry']['session_id']):
         raise RuntimeStoreError('storage_unavailable')
-    for parent_id, child_id in zip(lineage, lineage[1:]):
+    for parent_id, child_id in itertools.pairwise(lineage):
         parent = conn.execute('SELECT end_reason FROM sessions WHERE id=?', (parent_id,)).fetchone()
         child = conn.execute('SELECT parent_session_id,model_config FROM sessions WHERE id=?', (child_id,)).fetchone()
         if parent is None or child is None or child['parent_session_id'] != parent_id:
@@ -108,8 +110,8 @@ def reset_local_target(db, *, epoch, parent_session_id, entry):
             child_session_id=entry['session_id'], source=policy['source'], model=policy['model'],
             model_config={'_reset_from': parent_session_id}, system_prompt=None,
             cwd=policy['cwd'], profile_name=parent['profile_name'])
-        conn.execute("UPDATE sessions SET ended_at=strftime('%s','now'),end_reason='session_reset' WHERE id=?",
-                     (parent_session_id,))
+        conn.execute("UPDATE sessions SET ended_at=?,end_reason='session_reset' WHERE id=?",
+                     (time.time(), parent_session_id))
         db._bump_conversation_generation(conn, parent_session_id, 'session_reset')
         advance_local_target(conn, parent_session_id, entry['session_id'], entry=entry)
         conn.execute('UPDATE sessions SET runtime_generation=runtime_generation+1 WHERE id=?', (logical_id,))

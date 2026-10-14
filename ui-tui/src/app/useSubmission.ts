@@ -7,12 +7,14 @@ import { completionToApplyOnSubmit } from '../domain/slash.js'
 import type { GatewayClient } from '../gatewayClient.js'
 import type { ShellExecResponse } from '../gatewayTypes.js'
 import { queueItem, type QueueItem } from '../hooks/useQueue.js'
-import { savePendingInput } from '../lib/pendingInputs.js'
-import { asRpcResult } from '../lib/rpc.js'
+import { t } from '../i18n/runtime.js'
+import { asRpcResult, rpcErrorMessage } from '../lib/rpc.js'
 import { hasInterpolation, INTERPOLATION_RE } from '../protocol/interpolation.js'
 import type { Msg } from '../types.js'
 
+import { reportSlashCommand } from './createSlashHandler.js'
 import type { BusyInputMode, ComposerActions, ComposerRefs, ComposerState, ComposerToken, SlashHandler } from './interfaces.js'
+import { findSlashCommand } from './slash/registry.js'
 import { submitPrompt } from './submissionCore.js'
 import { captureDestination, isCurrentDestination, type SubmissionDestination } from './submissionDestination.js'
 import { turnController } from './turnController.js'
@@ -133,7 +135,7 @@ export function useSubmission(opts: UseSubmissionOptions) {
       const destination = submitOpts.destination ?? captureDestination()
 
       const item =
-        submitOpts.queueItem ?? (destination.sid ? composerActions.stage?.(text, displayText, destination) : undefined)
+        submitOpts.queueItem ?? (destination.sid ? composerActions.stage?.(text, displayText, destination, submitOpts.attachments) : undefined)
 
       submitPrompt(
         text,
@@ -198,8 +200,11 @@ export function useSubmission(opts: UseSubmissionOptions) {
     [appendMessage, gw, sys]
   )
 
+  // A `{!cmd}` that could not run refuses the whole submit: the model never receives a
+  // placeholder such as `(error)` standing in for output the user expected (dokterdok N22). The
+  // staged row settles as not accepted, so the input stays retained for Alt+K / an edit.
   const interpolate = useCallback(
-    (text: string, then: (result: string) => void, destination = captureDestination()) => {
+    (text: string, then: (result: string) => void, destination = captureDestination(), item?: QueueItem) => {
       patchUiState({ status: 'interpolating…' })
       const matches = [...text.matchAll(new RegExp(INTERPOLATION_RE.source, 'g'))]
 
@@ -210,13 +215,26 @@ export function useSubmission(opts: UseSubmissionOptions) {
             .then(raw => {
               const r = asRpcResult<ShellExecResponse>(raw)
 
-              return [r?.stdout, r?.stderr].filter(Boolean).join('\n').trim()
+              if (!r) {
+                throw new Error(t('session.common.invalidResponse', 'shell.exec'))
+              }
+
+              return [r.stdout, r.stderr].filter(Boolean).join('\n').trim()
             })
-            .catch(() => '(error)')
         )
-      ).then(results => then(spliceMatches(text, matches, results)))
+      ).then(
+        results => then(spliceMatches(text, matches, results)),
+        (error: unknown) => {
+          item?.settle?.(false)
+
+          if (isCurrentDestination(destination)) {
+            sys(t('session.common.interpolationFailed', rpcErrorMessage(error)))
+            patchUiState({ busy: false, status: 'ready' })
+          }
+        }
+      )
     },
-    [gw]
+    [gw, sys]
   )
 
   const sendQueued = useCallback(
@@ -239,7 +257,8 @@ export function useSubmission(opts: UseSubmissionOptions) {
         return interpolate(
           text,
           result => send(result, true, undefined, value => value, { destination, queueItem: item }),
-          destination
+          destination,
+          item
         )
       }
 
@@ -330,6 +349,23 @@ export function useSubmission(opts: UseSubmissionOptions) {
       const submission = prepareSubmission(full, submissionTokens)
       const toHistory = submission.text
 
+      // The composer is the only copy of a draft until the pending-input
+      // journal holds it, so it is cleared after that first durable write and
+      // kept — text and image tokens — when the write fails.
+      const journaled = <T,>(write: () => T): { value: T } | undefined => {
+        try {
+          const value = write()
+          composerActions.clearIn()
+
+          return { value }
+        } catch (error) {
+          sys(t('canonical.queue.notSavedDraftKept', (error as Error).message))
+          patchUiState({ status: t('canonical.queue.statusInputNotSaved') })
+
+          return undefined
+        }
+      }
+
       if (looksLikeSlashCommand(full)) {
         const slash = prepareSlashSubmission(full, submissionTokens)
 
@@ -341,15 +377,16 @@ export function useSubmission(opts: UseSubmissionOptions) {
         const queued =
           parsed.name === 'queue' || parsed.name === 'q' ? queueItemFromSlash(slash.display, slash.command) : undefined
 
-        // Attachment commands capture the cleared composer's revision.
-        composerActions.clearIn()
-
         if (queued) {
-          const retained = composerActions.enqueue(queued.text, queued.display, destination)
+          // Handled here, before the slash handler, so it is counted here.
+          reportSlashCommand(gw, parsed.name, getUiState().sid)
 
-          if (retained) { retained.attachments = submission.attachments; savePendingInput(retained) }
-          sys(`queued: "${queued.display.slice(0, 50)}${queued.display.length > 50 ? '…' : ''}"`)
+          const saved = journaled(() => composerActions.enqueue(queued.text, queued.display, destination, submission.attachments))
+
+          if (saved) { sys(`queued: "${queued.display.slice(0, 50)}${queued.display.length > 50 ? '…' : ''}"`) }
         } else {
+          // Attachment commands capture the cleared composer's revision.
+          composerActions.clearIn()
           // Image tokens are labels in the command; the descriptors and their
           // expander ride along so a skill/alias send still carries the image.
           slashRef.current(slash.command, { attachments: submission.attachments, expand: expandTokens(submissionTokens) })
@@ -366,32 +403,15 @@ export function useSubmission(opts: UseSubmissionOptions) {
 
       const live = getUiState()
 
-      if (!live.sid) { return sys('session not ready — draft kept; reconnect or choose a session') }
+      // No session yet (boot, or the socket is down): the input joins the local queue and the
+      // sid/connected drain effect sends it once the session is bound. On an attached gateway
+      // the first session.create lands seconds after the composer accepts input, so an Enter
+      // in that window must not be refused.
+      const unbound = !live.sid || live.gatewayConnected === false
 
-      // The composer is the only copy of a draft until the pending-input
-      // journal holds it, so it is cleared after that first durable write and
-      // kept — text and image tokens — when the write fails.
-      const journaled = <T,>(write: () => T): { value: T } | undefined => {
-        try {
-          const value = write()
-          composerActions.clearIn()
-
-          return { value }
-        } catch (error) {
-          sys(`input not saved: ${(error as Error).message} — draft kept`)
-          patchUiState({ status: 'input not saved' })
-
-          return undefined
-        }
-      }
-
-      if (live.gatewayConnected === false) {
+      if (unbound) {
         composerActions.pushHistory(toHistory)
-        journaled(() => {
-          const retained = composerActions.enqueue(submission.text, submission.display, destination)
-
-          if (retained) { retained.attachments = submission.attachments; savePendingInput(retained) }
-        })
+        journaled(() => composerActions.enqueue(submission.text, submission.display, destination, submission.attachments))
 
         return
       }
@@ -440,7 +460,7 @@ export function useSubmission(opts: UseSubmissionOptions) {
       }
 
       if (shouldInterpolateSubmission(full)) {
-        const staged = journaled(() => composerActions.stage?.(submission.text, submission.display, destination))
+        const staged = journaled(() => composerActions.stage?.(submission.text, submission.display, destination, submission.attachments))
 
         if (!staged) { return }
         patchUiState({ busy: true })
@@ -453,7 +473,8 @@ export function useSubmission(opts: UseSubmissionOptions) {
               destination,
               queueItem: item, attachments: submission.attachments
             }),
-          destination
+          destination,
+          item
         )
       }
 
@@ -463,6 +484,7 @@ export function useSubmission(opts: UseSubmissionOptions) {
       appendMessage,
       composerActions,
       composerRefs,
+      gw,
       handleBusyInput,
       interpolate,
       send,
@@ -477,7 +499,10 @@ export function useSubmission(opts: UseSubmissionOptions) {
     (value: string) => {
       if (composerState.completions.length) {
         const row = composerState.completions[composerState.compIdx]
-        const next = completionToApplyOnSubmit(value, row?.text, composerState.compReplace)
+
+        const next = completionToApplyOnSubmit(value, row?.text, composerState.compReplace, name =>
+          Boolean(findSlashCommand(name))
+        )
 
         if (next !== null) {
           return composerActions.setInput(next)

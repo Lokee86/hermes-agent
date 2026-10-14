@@ -60,7 +60,6 @@ def _create(authority, actor, params):
     from gateway.session_policy import build_policy, bind_launch_key
     from gateway.run import _load_gateway_config
     from cron.scheduler import _load_cron_job_config
-    from hermes_state_local import commit_local_session
     from gateway.config import Platform
     from gateway.session import SessionSource, SessionEntry
     from gateway.session_lifecycle import _now
@@ -92,15 +91,24 @@ def _create(authority, actor, params):
     route = authority.runner.session_store._generate_session_key(source)
     now = _now()
     entry = SessionEntry(route, sid, now, now, origin=source, platform=Platform.LOCAL)
-    commit_local_session(authority.db, epoch=authority.epoch, receipt={
-        'profile_id': authority.profile_id, 'principal_id': actor.subject, 'request_id': request_id,
-        'session_id': sid, 'route': route, 'entry': entry.to_dict(), 'policy': asdict(policy)})
-    return restore_local_session(authority, sid), request_id
+    # The staged creation receipt: ``operation('submit')`` commits it off the owner loop.
+    return {'profile_id': authority.profile_id, 'principal_id': actor.subject, 'request_id': request_id,
+            'session_id': sid, 'route': route, 'entry': entry.to_dict(), 'policy': asdict(policy)}, request_id
+
+
+# Run-side verdicts run_job stamps on the job dict for the firing scheduler's bookkeeping tail
+# (cron/quota_hold.py parks past a closed usage window; cron/unreachable_retry.py re-runs a
+# never-reached model). They cross the authority boundary inside the cron result.
+RUN_JOB_FLAGS = ('_model_unreachable', '_quota_hold_seconds')
 
 
 async def operation(authority, name, params, actor=None):
     actor = _actor(authority, actor)
-    authority._require_admission_open()
+    from gateway.session_authorities import require_serving
+    require_serving(authority)  # released ownership: nothing here is ours to touch
+    # Only new work is fenced by a drain. ``recover``/``status``/``cancel`` observe or stop work
+    # already admitted, which the drain is waiting for: refusing them makes the firer give up
+    # (CronExecutionUnknown pauses the job) on every restart that overlaps a cron run.
     if name == 'recover':
         from gateway.session_local_recovery import local_identity
         if (set(params) != {'job_id', 'request_id', 'extra_prompt'}
@@ -124,18 +132,29 @@ async def operation(authority, name, params, actor=None):
         if frozen['extra_prompt'] != params['extra_prompt']:
             raise RuntimeStoreError('admission_conflict')
         state['job'] = frozen['cron_job']
+        # The receipt a firer whose submit answer was lost polls, exactly as if it had arrived.
+        state.update(session_id=sid, admission_id=row['admission_id'])
         return state
     if name == 'submit':
+        authority._require_admission_open()
         from gateway.session_authorities import owner_scope
         # The job id, jobs file and gateway config belong to the OWNING profile.
         with owner_scope(authority):
             ref, request_id = _create(authority, actor, params)
-        row = admit_session_input(authority.db, epoch=authority.epoch, principal_id=actor.subject,
-                                  session_id=ref.session_id, request_id=request_id,
-                                  payload={'text': params['extra_prompt'] or ''})
-        authority._publish_pending(ref)
-        authority._schedule(ref)
-        return {'session_id': ref.session_id, 'admission_id': row['admission_id']}
+        from functools import partial
+        from gateway.session_runtime_workers import tracked_write
+        if isinstance(ref, dict):
+            # The creation commit waits on the writer off the owner loop, like session.create (N50).
+            from gateway.session_local_recovery import restore_local_session
+            from hermes_state_local import commit_local_session
+            await tracked_write(authority, partial(commit_local_session, authority.db, epoch=authority.epoch, receipt=ref))
+            ref = restore_local_session(authority, ref['session_id'])
+        receipt = await tracked_write(authority, partial(
+            admit_session_input, authority.db, epoch=authority.epoch, principal_id=actor.subject,
+            session_id=ref.session_id, request_id=request_id, payload={'text': params['extra_prompt'] or ''},
+            _authorize_write=authority._admission_gate()), then=partial(authority._admitted, ref, None), ordered=True,
+            after=partial(authority._schedule_admitted, ref))
+        return {'session_id': ref.session_id, 'admission_id': receipt.admission_id}
     if set(params) != {'session_id', 'admission_id'} or name not in {'status', 'cancel'}:
         raise RuntimeStoreError('invalid_params')
     ref = SessionRef(authority.profile_id, params['session_id'])
@@ -145,20 +164,23 @@ async def operation(authority, name, params, actor=None):
         raise RuntimeStoreError('permission_denied')
     if name == 'cancel':
         if row['status'] == 'queued':
-            await authority.cancel_queued(actor, ref, row['admission_id'])
-        elif row['status'] == 'started':
+            row = await authority.cancel_or_claimed(actor, ref, row['admission_id']) or {'status': 'terminal'}
+        if row['status'] == 'started':
             # The claim commits before execute() registers its event; latching the
             # cancellation on the admission here means that window cannot lose it.
             _cancellations(authority).setdefault(row['admission_id'], threading.Event()).set()
         return {'ok': True}
-    result = None
+    result, flags = None, {}
     if row['status'] == 'terminal':
         from gateway.session_results import admission_result
         saved = admission_result(authority.db, row['admission_id'])
         result = saved['result'].get('cron_result') if saved else None
+        flags = (saved['result'].get('cron_job_flags') or {}) if saved else {}
         if result is None:
             result = [False, '', '', row.get('outcome') or 'unknown_execution']
-    return {'status': row['status'], 'result': result}
+    from cron.scheduler_liveness import owner_progress
+    return {'status': row['status'], 'result': result, 'job_flags': flags,
+            'progress_at': owner_progress.get(row['request_id'].rsplit(':', 1)[-1])}
 
 
 def _cancellations(authority):
@@ -172,6 +194,28 @@ async def rpc(connection, name, params):
     return await operation(connection.authority, name, params, connection.actor)
 
 
+def scheduler_execution_id(job_id, request_id):
+    """The scheduler's execution id this admission carries: ``_create`` admits under
+    ``cron:<job>:<request_id>`` and the ticker's ``request_id`` IS its ``cron/executions`` row id."""
+    prefix = 'cron:' + job_id + ':'
+    return request_id.removeprefix(prefix)
+
+
+def _run_identified(run_job, job, execution_id, **kwargs):
+    """``run_job`` inside this fire's cron identity (``ctx.current_cron_execution()``).
+
+    The scheduler binds it in the FIRING thread, but the owner executes on its own loop, whose
+    context never saw that binding; re-bind it here from the same ledger row, in the profile scope
+    the caller entered (so the row and the profile name are this profile's)."""
+    from cron.execution_identity import enter_cron_execution, exit_cron_execution
+    from cron.executions import get_execution
+    token = enter_cron_execution(job, execution_id, get_execution(execution_id) or {})
+    try:
+        return run_job(job, execution_id=execution_id, **kwargs)
+    finally:
+        exit_cron_execution(token)
+
+
 async def execute(authority, ref, row, policy):
     from cron.scheduler import run_job
     from gateway.run import _profile_runtime_scope
@@ -182,17 +226,26 @@ async def execute(authority, ref, row, policy):
         raise RuntimeStoreError('admission_conflict')
     cancellations = _cancellations(authority)
     cancel = cancellations.setdefault(row['admission_id'], threading.Event())
-    token = _execution.set((authority, ref.session_id, data['cron_job']['id'], row['admission_id']))
+    execution_id = scheduler_execution_id(data['cron_job']['id'], row['request_id'])
+    # The frozen snapshot predates the fire's ledger row; the run's progress stamps need its id.
+    job = dict(data['cron_job'], execution_id=execution_id)
+    token = _execution.set((authority, ref.session_id, job['id'], execution_id))
     try:
-        with _profile_runtime_scope(Path(authority.db.db_path).resolve().parent):
-            result = await asyncio.to_thread(run_job, data['cron_job'], extra_prompt=data['extra_prompt'],
-                                             execution_id=row['admission_id'], cancel_event=cancel)
+        db_path = await asyncio.to_thread(Path(authority.db.db_path).resolve)
+        with _profile_runtime_scope(db_path.parent):
+            result = await asyncio.to_thread(_run_identified, run_job, job, execution_id,
+                                             extra_prompt=data['extra_prompt'], cancel_event=cancel)
+        # run_job stamps run-side verdicts on ITS job copy (quota hold, unreachable model); the
+        # firing scheduler's bookkeeping reads them off its own dict, so they ride the result.
+        flags = {key: job[key] for key in RUN_JOB_FLAGS if key in job}
         authority.pending_results[row['admission_id']] = {
-            'result': {'final_response': result[2], 'cron_result': list(result),
+            'result': {'final_response': result[2], 'cron_result': list(result), 'cron_job_flags': flags,
                        'failed': not result[0], 'completed': result[0]}, 'usage': {}}
         if not result[0]:
             raise RuntimeError(result[3] or 'cron execution failed')
         return result[2]
     finally:
+        from cron.scheduler_liveness import owner_progress
+        owner_progress.pop(execution_id, None)
         _execution.reset(token)
         cancellations.pop(row['admission_id'], None)

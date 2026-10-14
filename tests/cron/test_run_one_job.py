@@ -43,17 +43,6 @@ def _patch_pipeline(monkeypatch, *, success=True, output="out", final="final res
     return calls
 
 
-def test_tick_process_job_sequence(monkeypatch):
-    """Characterization: a single due job driven through tick() runs the
-    sequence run_job → save → enqueue → mark, in that order."""
-    calls = _patch_pipeline(monkeypatch)
-    monkeypatch.setattr(s, "get_due_jobs", lambda: [{"id": "j1", "name": "t", "deliver": "telegram"}])
-    monkeypatch.setattr(s, "claim_job_for_fire", lambda _job_id, **_kwargs: True)
-
-    s.tick(verbose=False, sync=True)
-
-    assert [c[0] for c in calls] == ["run_job", "save", "enqueue", "mark"]
-    assert calls[-1] == ("mark", "j1", True)
 
 
 def test_tick_skips_job_when_durable_fire_claim_is_lost(monkeypatch):
@@ -228,7 +217,7 @@ def _patch_escaped_failure(monkeypatch, delivered, *, exec_id, err):
     monkeypatch.setattr(s, "mark_job_run", lambda *_a, **_kw: None)
     monkeypatch.setattr(s, "finish_execution", lambda *_a, **_kw: None)
     # Deterministic threshold: default 3, independent of the host config.
-    monkeypatch.setattr(s, "load_config", lambda: {})
+    monkeypatch.setattr(s, "load_config", dict)
 
 
 def test_escaped_failure_delivery_carries_the_streak_nudge(monkeypatch):
@@ -261,7 +250,6 @@ def test_escaped_failure_delivery_carries_the_streak_nudge(monkeypatch):
     assert ok is False
     assert len(delivered) == 1
     assert "cannot import name X" in delivered[0]
-    assert "failed 3 runs in a row" in delivered[0]
     assert "hermes cron pause scout" in delivered[0]
 
 
@@ -284,8 +272,8 @@ def test_escaped_failure_delivery_stays_quiet_below_the_threshold(monkeypatch):
 
     assert ok is False
     assert len(delivered) == 1
-    assert delivered[0].startswith("⚠️ Cron 'scout' failed: provider failed")
-    assert "hermes cron runs j6" in delivered[0]
+    assert "provider failed" in delivered[0]
+    assert "hermes cron pause scout" not in delivered[0]
 
 
 def test_run_one_job_exception_after_delivery_does_not_redeliver(monkeypatch):

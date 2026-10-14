@@ -9,7 +9,20 @@ import threading
 from fastapi import FastAPI
 from hermes_cli.pty_session import run_reaper
 
-_log = logging.getLogger("hermes_cli.web_server")
+logger = logging.getLogger("hermes_cli.web_server")
+
+
+def _unlink_pty_markers(app: FastAPI) -> None:
+    """Second pass after ``PTY_REGISTRY.close_all()``: drop channel markers left in app state,
+    including stale paths from sessions reaped earlier (``PtySession.close()`` only removes
+    markers owned by live registry sessions)."""
+    from hermes_cli.web_server import _get_pty_active_session_files
+
+    for marker in set(_get_pty_active_session_files(app).values()):
+        try:
+            marker.unlink(missing_ok=True)
+        except OSError:
+            pass
 
 
 @asynccontextmanager
@@ -17,7 +30,7 @@ async def standalone_lifespan(app: "FastAPI"):
     from hermes_cli.web_server import (
         _eager_reconcile_own_session_db, _warm_gateway_module,
         _start_desktop_cron_ticker, _dashboard_selftest_loop,
-        _auto_archive_ticker_loop, _terminate_desktop_managed_gateway,
+        _auto_archive_ticker_loop, _terminate_desktop_managed_gateway, _probe_install_before_state_db,
     )
     from hermes_cli.web_server_chat import PTY_REGISTRY
 
@@ -39,6 +52,10 @@ async def standalone_lifespan(app: "FastAPI"):
     # connection closed from the main thread mid-probe (pytest's leaked-DB
     # sweep) and segfaulted the interpreter. The worker is time-bounded by
     # SessionDB's lock patience, so the join cannot hang shutdown.
+    # The first-install check reads the default root's state.db: on the desktop's own backend it runs
+    # before this process starts creating or healing that database, and its answer is kept.
+    _probe_install_before_state_db()
+
     eager_reconcile_thread = threading.Thread(
         target=_eager_reconcile_own_session_db,
         name="statedb-eager-reconcile",
@@ -61,7 +78,12 @@ async def standalone_lifespan(app: "FastAPI"):
     # contended state.db migration, so keep it off the pre-yield path: Group
     # Chat must degrade on its own rather than block every Desktop feature.
     from tui_gateway import methods_groups as _hosted_groups
-    import tui_gateway.server  # noqa: F401
+    import tui_gateway.server
+
+    try:
+        tui_gateway.server.install_tui_message_injector()
+    except Exception:
+        logger.warning("TUI message injector did not install", exc_info=True)
 
     hosted_room_start_cancel = threading.Event()
 
@@ -69,7 +91,7 @@ async def standalone_lifespan(app: "FastAPI"):
         try:
             _hosted_groups.start_hosted_room_service()
         except Exception:
-            _log.exception("Hosted Group Chat recovery failed during backend startup")
+            logger.exception("Hosted Group Chat recovery failed during backend startup")
         finally:
             if hosted_room_start_cancel.is_set():
                 _hosted_groups.stop_hosted_room_service(timeout=1.0)
@@ -81,23 +103,27 @@ async def standalone_lifespan(app: "FastAPI"):
     )
     hosted_room_start_thread.start()
 
-    # Desktop-spawned backends (HERMES_DESKTOP=1) fire cron jobs themselves,
-    # since the app has no gateway running the scheduler. Server `hermes
-    # dashboard` is unaffected — it relies on its own gateway.
-    cron_stop: "threading.Event | None" = None
-    cron_thread: "threading.Thread | None" = None
-    if os.getenv("HERMES_DESKTOP") == "1":
+    # Desktop-spawned backends fire cron jobs themselves, since the app has no
+    # gateway running the scheduler. Server `hermes dashboard` is unaffected —
+    # it relies on its own gateway.
+    from hermes_cli.process_identity import is_desktop_owned_backend
+    cron_stop: threading.Event | None = None
+    cron_thread: threading.Thread | None = None
+    desktop_owned = is_desktop_owned_backend()
+    if desktop_owned:
         # Reap an orphaned gateway from an abnormal previous exit (reparented to
         # launchd, still holding the platform WebSocket) before forking a fresh
         # one that would race the same credential (#77276). Runs
         # unconditionally; protection of a healthy standalone gateway lives
         # INSIDE the reaper (registration probed with cleanup_stale=False).
+        # Startup grace: spare a gateway still claiming gateway.pid/lock (#122533).
         try:
+            from hermes_cli.dashboard_procs import _REAP_MIN_AGE_SECONDS
             from hermes_cli.gateway import _reap_unsupervised_gateway_orphans
 
-            _reap_unsupervised_gateway_orphans()
+            _reap_unsupervised_gateway_orphans(min_age_s=_REAP_MIN_AGE_SECONDS)
         except Exception:
-            _log.exception("Desktop startup: orphan gateway reap failed")
+            logger.exception("Desktop startup: orphan gateway reap failed")
 
         cron_stop = threading.Event()
         cron_thread = threading.Thread(
@@ -125,18 +151,28 @@ async def standalone_lifespan(app: "FastAPI"):
             from hermes_cli.local_runtime.bootstrap import ensure_local_runtime
 
             ensure_local_runtime(load_config())
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             logging.getLogger(__name__).warning("local runtime boot failed: %s", exc)
 
     threading.Thread(target=_boot_local_runtime, daemon=True, name="local-runtime-boot").start()
 
+    # Records who carries inference for setup.status / free_tier.status and broadcasts `setup.ready`
+    # (no identity is created at boot). Off-thread; the desktop's first setup.status waits on the
+    # record (bounded) instead.
     from hermes_cli.free_tier_bootstrap import start_background_bootstrap
 
     start_background_bootstrap()
+    # The desktop's onboarding due answer, worked out after that bootstrap and before it is asked.
+    # Through the server: methods_* functions run with the server's globals (``bind_module``).
+    tui_gateway.server.start_due_boot()
 
     try:
         yield
     finally:
+        try:
+            tui_gateway.server.clear_tui_message_injector()
+        except Exception:
+            logger.debug("TUI message injector clear skipped", exc_info=True)
         hosted_room_start_cancel.set()
         _hosted_groups.stop_hosted_room_service(timeout=5.0)
         hosted_room_start_thread.join(timeout=1.0)
@@ -147,14 +183,22 @@ async def standalone_lifespan(app: "FastAPI"):
         auto_archive_task.cancel()
         eager_reconcile_thread.join()
         await PTY_REGISTRY.close_all()
+
+        # PtySession.close() removes markers owned by live registry sessions.
+        # This second pass cleans any channel markers left in app state,
+        # including stale paths from sessions reaped earlier.
+        _unlink_pty_markers(app)
+
         # Stop the managed llama-server with its parent (an orphan pins VRAM).
         try:
             from hermes_cli.local_runtime.bootstrap import shutdown_local_runtime
 
             shutdown_local_runtime()
-        except Exception:  # noqa: BLE001
-            pass
-        if os.getenv("HERMES_DESKTOP") == "1":
+        except Exception:
+            # Shutdown boundary: a supervisor that fails to stop must not skip the
+            # managed-gateway teardown below; log it so the orphan is diagnosable.
+            logger.warning("managed local runtime shutdown failed", exc_info=True)
+        if desktop_owned:
             _terminate_desktop_managed_gateway()
 
 
@@ -179,6 +223,7 @@ async def http_lifespan(app: FastAPI):
             task.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)
         await PTY_REGISTRY.close_all()
+        _unlink_pty_markers(app)
 
 
 @asynccontextmanager
