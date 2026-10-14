@@ -170,6 +170,6 @@ def read_running_hermes_version() -> str:
     Compatibility policy remains runtime-owned; the CLI-owned identity
     resolver is reached only through this narrow bridge.
     """
-    from hermes_version import __version__
+    from hermes_cli.version_info import get_version_info
 
-    return str(__version__)
+    return str(get_version_info().base_version)

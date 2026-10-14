@@ -25,6 +25,27 @@ from plugin_runtime.registration import PluginRegistration
 
 logger = logging.getLogger("hermes_cli.plugins")
 
+
+def _clone_dispatch_value(value: Any) -> Any:
+    """Best-effort isolated clone for plugin callback payloads.
+
+    ``deepcopy`` is preferred. If one nested runtime object refuses copying, clone the
+    surrounding containers value-by-value and preserve only that uncopyable leaf by identity.
+    """
+    try:
+        return copy.deepcopy(value)
+    except Exception:
+        if isinstance(value, dict):
+            return {key: _clone_dispatch_value(item) for key, item in value.items()}
+        if isinstance(value, list):
+            return [_clone_dispatch_value(item) for item in value]
+        if isinstance(value, tuple):
+            return tuple(_clone_dispatch_value(item) for item in value)
+        if isinstance(value, set):
+            return {_clone_dispatch_value(item) for item in value}
+        return value
+
+
 _PLUGIN_COMMAND_AWAIT_TIMEOUT_SECS = 30.0
 
 
@@ -856,13 +877,7 @@ class PluginDispatchMixin(PluginEventDispatchMixin):
             ):
                 # A callback may mutate its arguments even when it returns None.
                 # Later callbacks see only explicit rewrites, never those mutations.
-                try:
-                    call_kwargs = copy.deepcopy(kwargs)
-                except Exception:
-                    call_kwargs = {
-                        key: copy.deepcopy(value) if isinstance(value, (dict, list)) else value
-                        for key, value in kwargs.items()
-                    }
+                call_kwargs = _clone_dispatch_value(kwargs)
             try:
                 ret = cb(**call_kwargs)
                 if ret is not None:
@@ -872,7 +887,7 @@ class PluginDispatchMixin(PluginEventDispatchMixin):
                         and isinstance(ret, dict)
                         and isinstance(ret.get(payload_key), dict)
                     ):
-                        kwargs[payload_key] = copy.deepcopy(ret[payload_key])
+                        kwargs[payload_key] = _clone_dispatch_value(ret[payload_key])
             except (Exception, SystemExit) as exc:
                 # One bad callback should not prevent subsequent middleware.
                 self._report_hook_failure(kind, cb, call_kwargs, exc, surface="Middleware")
