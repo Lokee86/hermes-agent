@@ -166,6 +166,7 @@ class TestScopedLockTakeoverReapsChildren:
         ]
 
 
+@pytest.mark.platforms("posix")
 @pytest.mark.asyncio
 async def test_start_gateway_replace_reaps_old_gateway_children_posix(
     monkeypatch, tmp_path

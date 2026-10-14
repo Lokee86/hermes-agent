@@ -227,6 +227,8 @@ def _patch_hide_flags(monkeypatch):
     import runtime.subprocess_compat as subprocess_compat
 
     monkeypatch.setattr(subprocess_compat, "windows_hide_flags", lambda: _CREATE_NO_WINDOW)
+    from runtime import git_subprocess
+    monkeypatch.setattr(git_subprocess, "windows_hide_flags", lambda: _CREATE_NO_WINDOW)
 
 
 
@@ -465,6 +467,7 @@ def test_gitlock_tag_fetch_hides_console_window(monkeypatch, tmp_path):
     assert spawns[0][1]["creationflags"] == _CREATE_NO_WINDOW
 
 
+@pytest.mark.platforms("windows")
 def test_gateway_scheduled_task_state_hides_powershell_window(monkeypatch):
     """Task Scheduler COM probe spawns powershell.exe during backend startup."""
     from hermes_cli import gateway
@@ -476,7 +479,6 @@ def test_gateway_scheduled_task_state_hides_powershell_window(monkeypatch):
         return _Completed(stdout="Ready\n", returncode=0)
 
     _patch_hide_flags(monkeypatch)
-    monkeypatch.setattr(gateway, "is_windows", lambda: True)
     monkeypatch.setattr(gateway.subprocess, "run", fake_run)
     monkeypatch.setattr(gateway.shutil, "which", lambda name: r"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.EXE")
 
@@ -548,7 +550,7 @@ def test_update_git_plumbing_spawns_hide_console_window(monkeypatch, tmp_path):
 def test_safe_directory_git_config_probes_hide_console_window(monkeypatch):
     """safe.directory replay (two git config children per internal git call)
     never flashes."""
-    from hermes_cli import _subprocess_compat
+    from runtime import git_subprocess
 
     captured = []
 
@@ -556,11 +558,11 @@ def test_safe_directory_git_config_probes_hide_console_window(monkeypatch):
         captured.append((list(cmd), kwargs))
         return _Completed(stdout="", returncode=1)
 
-    _subprocess_compat._safe_directory_cache.clear()
-    monkeypatch.setattr(_subprocess_compat, "windows_hide_flags", lambda: _CREATE_NO_WINDOW)
-    monkeypatch.setattr(_subprocess_compat.subprocess, "run", fake_run)
+    git_subprocess._safe_directory_cache.clear()
+    monkeypatch.setattr(git_subprocess, "windows_hide_flags", lambda: _CREATE_NO_WINDOW)
+    monkeypatch.setattr(git_subprocess.subprocess, "run", fake_run)
 
-    assert _subprocess_compat._user_safe_directories({}) == []
+    assert git_subprocess._user_safe_directories({}) == []
     spawns = _spawns(captured, "git", "config")
     assert len(spawns) == 2, captured
     for cmd, kwargs in spawns:

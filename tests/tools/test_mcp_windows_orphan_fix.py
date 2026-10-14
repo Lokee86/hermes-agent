@@ -14,6 +14,8 @@ verify it is invoked on the Windows spawn path and not on POSIX, plus the
 best-effort contract of the tree-kill helpers.
 """
 
+import signal
+
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -126,7 +128,7 @@ class TestWindowsTreeKillHelpers:
 
         # Force pass: survivors of the wait are killed. wait_procs reports everyone alive.
         fake_psutil.wait_procs = lambda procs, timeout: ([], list(procs))
-        lifecycle._kill_windows_process_tree(1, 9)
+        lifecycle._kill_windows_process_tree(1, getattr(signal, "SIGKILL", signal.SIGTERM))
         assert sorted(killed) == [2, 3]
 
     def test_ledger_tree_kill_helper_swallows_errors(self):

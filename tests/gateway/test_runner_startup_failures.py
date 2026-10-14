@@ -316,6 +316,9 @@ async def test_start_gateway_replace_writes_takeover_marker_before_sigterm(
     monkeypatch.setattr("hermes_logging.setup_logging", lambda hermes_home, mode: tmp_path)
     monkeypatch.setattr("hermes_logging._add_rotating_handler", lambda *args, **kwargs: None)
     monkeypatch.setattr("gateway.run.GatewayRunner", _CleanExitRunner)
+    # Fictional PIDs model takeover ordering; authenticated listener startup is tested separately.
+    control = AsyncMock()
+    monkeypatch.setattr("gateway.run_bootstrap._start_gateway_start_control_socket", AsyncMock(return_value=control))
 
     from gateway.run import start_gateway
 

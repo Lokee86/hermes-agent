@@ -63,7 +63,7 @@ async def test_gateway_startup_applies_limit_before_gateway_initialization(monke
     assert calls == ["limit", "gateway-init"]
 
 
-def test_serve_startup_applies_limit_before_web_server(monkeypatch):
+def test_serve_startup_applies_limit_before_web_server(monkeypatch, tmp_path):
     from hermes_cli import main as cli_main
     from hermes_cli import main_web_build
     import hermes_cli.plugins
@@ -94,7 +94,7 @@ def test_serve_startup_applies_limit_before_web_server(monkeypatch):
         lambda **kwargs: (calls.append("server"), served.update(kwargs)),
     )
     # Desktop SSH serve: the owner watchdog's lock sits next to the validated token (#132034).
-    token_dir = Path("/home/u/.hermes/desktop-ssh") / ("f" * 32)
+    token_dir = (tmp_path / "desktop-ssh") / ("f" * 32)
     monkeypatch.setattr(cli_main, "_read_ssh_session_token_file", lambda path: "s" * 64)
 
     args = SimpleNamespace(

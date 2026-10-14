@@ -654,7 +654,7 @@ class TestGetProcessStartTime:
 
     def test_live_process_is_stable_int(self):
         import subprocess
-        p = subprocess.Popen(["sleep", "20"])
+        p = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(20)"])
         try:
             a = status._process_identity.get_process_start_time(p.pid)
             time.sleep(0.2)
@@ -1370,6 +1370,7 @@ class TestPlannedStopMarker:
 class TestReadProcessCmdlinePsFallback:
     """Tests for _read_process_cmdline falling back to ps on non-Linux."""
 
+    @pytest.mark.platforms("posix")
     def test_ps_fallback_when_proc_unavailable(self, monkeypatch):
         monkeypatch.setattr(status.Path, "read_bytes", lambda self: (_ for _ in ()).throw(FileNotFoundError))
         # psutil sits between /proc and ps; left real, it reads whatever process holds this pid on the
@@ -1759,19 +1760,22 @@ def test_strict_gateway_identity_adopts_held_lock_when_pid_file_is_gone(tmp_path
     gateway.pid, and raising there aborted every following `hermes update` (#123430)."""
     pid_path = tmp_path / "gateway.pid"
     lock_path = tmp_path / "gateway.lock"
-    record = {"pid": 123, "start_time": 10.0, "kind": "hermes-gateway",
+    pid = os.getpid()
+    start = status._process_identity.get_process_start_time(pid)
+    record = {"pid": pid, "start_time": start, "kind": "hermes-gateway",
               "argv": ["python", "-m", "hermes_cli.main", "gateway", "run", "--replace"]}
     lock_path.write_text(json.dumps(record), encoding="utf-8")
     monkeypatch.setattr(status, "_get_gateway_lock_path", lambda _path=None: lock_path)
     monkeypatch.setattr(status, "_is_gateway_runtime_lock_active_strict", lambda _path=None: True)
     monkeypatch.setattr(status, "_pid_exists", lambda _pid: True)
-    monkeypatch.setattr(status, "_get_process_start_time", lambda _pid: 10.0)
+    monkeypatch.setattr(status._process_identity, "get_process_start_time", lambda _pid: start)
     monkeypatch.setattr(status, "_read_process_cmdline", lambda _pid: "python -m hermes_cli.main gateway run --replace")
-    monkeypatch.setattr(status, "_IS_WINDOWS", False)
 
-    assert status.get_running_pid_identity_strict(pid_path) == (123, 10.0)
+    import psutil
+    exact = psutil.Process(pid).create_time() if status._IS_WINDOWS else float(start)
+    assert status.get_running_pid_identity_strict(pid_path) == (pid, exact)
     # The lock alone is still held to the full proof: a recycled PID is refused, not adopted.
-    monkeypatch.setattr(status, "_get_process_start_time", lambda _pid: 20.0)
+    monkeypatch.setattr(status._process_identity, "get_process_start_time", lambda _pid: start + 1000)
     with pytest.raises(RuntimeError, match="identity changed"):
         status.get_running_pid_identity_strict(pid_path)
 

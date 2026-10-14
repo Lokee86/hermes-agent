@@ -26,14 +26,15 @@ def _probe_stdout(value: str) -> mock.Mock:
 class TestPidIsHermes:
     """The shared identity probe must fail closed on every ambiguity."""
 
+    @pytest.mark.platforms("posix")
     def test_non_windows_is_unconditional_pass(self):
         # Non-Windows callers have no taskkill path at all.
-        with mock.patch.object(process_identity, "IS_WINDOWS", False):
-            assert process_identity.pid_is_hermes(1234) is True
+        assert process_identity.pid_is_hermes(1234) is True
 
+    @pytest.mark.platforms("posix")
     def test_non_windows_still_rejects_recycled_identity(self):
         # An explicit fingerprint mismatch is a recycled PID on any platform.
-        with mock.patch.object(process_identity, "IS_WINDOWS", False), mock.patch.object(
+        with mock.patch.object(
             process_identity, "_process_start_time", return_value=456
         ):
             assert process_identity.pid_is_hermes(
@@ -52,23 +53,25 @@ class TestPidIsHermes:
             "/opt/hermes-agent/venv/bin/python"
         ) is True
 
+    @pytest.mark.platforms("windows")
     def test_invalid_pid_inputs_do_not_crash(self):
-        with mock.patch.object(process_identity, "IS_WINDOWS", True):
-            assert process_identity.pid_is_hermes(-1) is False
-            assert process_identity.pid_is_hermes(0) is False
-            assert process_identity.pid_is_hermes("not-a-pid") is False
-            assert process_identity.pid_is_hermes(True) is False
+        assert process_identity.pid_is_hermes(-1) is False
+        assert process_identity.pid_is_hermes(0) is False
+        assert process_identity.pid_is_hermes("not-a-pid") is False
+        assert process_identity.pid_is_hermes(True) is False
 
+    @pytest.mark.platforms("windows")
     def test_probe_matches_hermes_like_process(self):
-        with mock.patch.object(process_identity, "IS_WINDOWS", True), mock.patch.object(
+        with mock.patch.object(
             process_identity, "_process_start_time", return_value=123
         ), mock.patch.object(
             process_identity, "_process_command_is_hermes", return_value=True
         ):
             assert process_identity.pid_is_hermes(1234) is True
 
+    @pytest.mark.platforms("windows")
     def test_probe_rejects_recycled_process_identity(self):
-        with mock.patch.object(process_identity, "IS_WINDOWS", True), mock.patch.object(
+        with mock.patch.object(
             process_identity, "_process_start_time", return_value=456
         ), mock.patch.object(
             process_identity, "_process_command_is_hermes", return_value=True
@@ -77,22 +80,25 @@ class TestPidIsHermes:
                 1234, expected_start_time=123
             ) is False
 
+    @pytest.mark.platforms("windows")
     def test_probe_rejects_foreign_process(self):
-        with mock.patch.object(process_identity, "IS_WINDOWS", True), mock.patch.object(
+        with mock.patch.object(
             process_identity, "_process_start_time", return_value=123
         ), mock.patch.object(
             process_identity, "_process_command_is_hermes", return_value=False
         ):
             assert process_identity.pid_is_hermes(1234) is False
 
+    @pytest.mark.platforms("windows")
     def test_probe_blank_stdout_fails_closed(self):
-        with mock.patch.object(process_identity, "IS_WINDOWS", True), mock.patch.object(
+        with mock.patch.object(
             process_identity, "_process_start_time", return_value=None
         ):
             assert process_identity.pid_is_hermes(1234) is False
 
+    @pytest.mark.platforms("windows")
     def test_probe_oserror_fails_closed(self):
-        with mock.patch.object(process_identity, "IS_WINDOWS", True), mock.patch.object(
+        with mock.patch.object(
             process_identity, "_process_start_time", side_effect=OSError("broken pipe")
         ):
             assert process_identity.pid_is_hermes(1234) is False
@@ -116,6 +122,7 @@ class TestKillProcessTree:
     def _proc(self, pid=4321):
         return mock.Mock(pid=pid)
 
+    @pytest.mark.platforms("windows")
     def test_retained_handle_is_taskkilled_without_probe(self):
         from runtime import processes
 
@@ -224,19 +231,20 @@ class TestHermesHomeForPid:
     # `--stop` then acted on the wrong profile root.
     def _posix_scrubbed_unit(self, monkeypatch, tmp_path, passwd_home):
         """A unit whose environment carries neither HOME nor HERMES_HOME, on the POSIX branch."""
-        monkeypatch.setattr(dashboard_procs.sys, "platform", "linux")
         monkeypatch.setattr(dashboard_procs, "_pid_environ", lambda pid: {})
         monkeypatch.setattr(dashboard_procs, "_pid_passwd_home", lambda pid: passwd_home)
         monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path / "inspecting-user"))
         from hermes_cli import main_dashboard
         monkeypatch.setattr(main_dashboard, "_dashboard_cmdline_for_pid", lambda pid: ["hermes", "serve"])
 
+    @pytest.mark.platforms("posix")
     def test_scrubbed_unit_env_resolves_to_the_owners_passwd_home(self, monkeypatch, tmp_path):
         service_home = tmp_path / "hermes-service"
         self._posix_scrubbed_unit(monkeypatch, tmp_path, str(service_home))
 
         assert Path(dashboard_procs._hermes_home_for_pid(1)) == service_home / ".hermes"
 
+    @pytest.mark.platforms("posix")
     def test_unreadable_passwd_entry_keeps_the_existing_fallback(self, monkeypatch, tmp_path):
         """No owner, no entry: the previous behaviour stands rather than resolving to nothing."""
         self._posix_scrubbed_unit(monkeypatch, tmp_path, None)

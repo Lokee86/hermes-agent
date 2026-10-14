@@ -302,7 +302,7 @@ def _include_flood(repo: Path, marker: str) -> str:
     pytest.param("README filter=evil\n", lambda r, m: _evil_filter(m) + '[filter "evil"\n', True,
                  id="broken_config"),
 ])
-def test_repo_named_filters_never_run_from_kanban_gc_or_hints(tmp_path, attrs, config, refused):
+def test_repo_named_filters_never_run_from_kanban_gc_or_hints(tmp_path, monkeypatch, attrs, config, refused):
     """A filter driver is named by ``.gitattributes``, so the fixed env pins cannot reach it:
     ``worktree add`` runs its smudge command and ``status`` its clean command. Subsection names are
     case-sensitive, so ``[filter "Evil"]`` must be neutralized next to a benign ``[filter "evil"]``.
@@ -313,6 +313,7 @@ def test_repo_named_filters_never_run_from_kanban_gc_or_hints(tmp_path, attrs, c
     from hermes_cli import kanban_db_workspace as kw
     from hermes_cli import worktree_gc
     from tools.async_delegation_recovery_hints import git_state_hint
+    monkeypatch.chdir(tmp_path)  # All Git discovery belongs to the disposable repositories.
     marker = (tmp_path / "FILTER").as_posix()
     repo = _make_filter_repo(tmp_path, attrs, config, marker)
 

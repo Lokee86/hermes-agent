@@ -317,6 +317,7 @@ def test_gui_close_preview_flag_forwards_to_packaged_exe(tmp_path, monkeypatch):
     # tests do; this test is only about the flag reaching the packaged exe.
     monkeypatch.setattr(main_desktop, "_register_linux_desktop_entry", lambda **kw: None)
     packaged_exe = _make_packaged_executable(root, monkeypatch)
+    monkeypatch.setattr(main_desktop, "_desktop_exe_integrity_error", lambda exe: None)
 
     launched: list[list[str]] = []
 
@@ -327,6 +328,7 @@ def test_gui_close_preview_flag_forwards_to_packaged_exe(tmp_path, monkeypatch):
     with patch("hermes_cli.main_desktop._desktop_build_needed", return_value=False), \
          patch("hermes_cli.main_desktop._desktop_linux_sandbox_fixup", return_value=True), \
          patch("hermes_cli.main_desktop.subprocess.run", side_effect=fake_run), \
+         patch("hermes_cli.main_desktop.subprocess.Popen", side_effect=fake_run), \
          pytest.raises(SystemExit) as exc:
         cli_main.cmd_gui(_ns(close_preview=True))
 
@@ -339,19 +341,22 @@ def test_gui_close_preview_flag_forwards_to_packaged_exe(tmp_path, monkeypatch):
         assert launched == [[str(packaged_exe), "--close-preview"]]
 
 
-@pytest.mark.parametrize("exists,platform", [(True, "darwin"), (False, "darwin"), (True, "linux")])
-def test_launch_installed_macos_desktop_app_gates_on_bundle_and_platform(tmp_path, monkeypatch, exists, platform):
-    monkeypatch.setattr(main_desktop.sys, "platform", platform)
+@pytest.mark.platforms("macos")
+@pytest.mark.parametrize("exists", [True, False])
+def test_launch_installed_macos_desktop_app_gates_on_bundle(tmp_path, monkeypatch, exists):
     exe = Path("/Applications/Hermes.app/Contents/MacOS/Hermes")
-    monkeypatch.setattr(main_desktop.Path, "is_file", lambda self: exists if self == exe else Path.is_file(self))
+    real_is_file = Path.is_file
+    monkeypatch.setattr(Path, "is_file", lambda path: exists if path == exe else real_is_file(path))
+    from hermes_cli import bundled_app
     calls = []
-    if exists and platform == "darwin":
-        from hermes_cli import bundled_app
-        monkeypatch.setattr(bundled_app, "launch_detached", lambda argv, **kw: calls.append(argv) or 4321)
+    monkeypatch.setattr(bundled_app, "launch_detached", lambda argv, **kw: calls.append(argv) or 4321)
+    assert main_desktop._launch_installed_macos_desktop_app() is exists
+    assert calls == ([[str(exe)]] if exists else [])
 
-    assert main_desktop._launch_installed_macos_desktop_app() is (exists and platform == "darwin")
-    if exists and platform == "darwin":
-        assert calls == [[str(exe)]]
+
+@pytest.mark.platforms("linux", "windows")
+def test_launch_installed_macos_desktop_app_is_noop_on_other_hosts():
+    assert main_desktop._launch_installed_macos_desktop_app() is False
 
 
 # ── Content-hash stamp tests ──────────────────────────────────────────
@@ -361,9 +366,6 @@ def test_launch_installed_macos_desktop_app_gates_on_bundle_and_platform(tmp_pat
 
 
 # ── electronDist (re)download helper tests (#47266) ───────────────────
-
-
-
 
 
 # --- macOS TCC-stable local signing (relaunch fixup) -----------------------
@@ -449,8 +451,6 @@ def test_desktop_macos_local_codesign_preserves_framework_entitlements(tmp_path,
         "--entitlements",
         str(desktop_dir / "electron" / "entitlements.mac.inherit.plist"),
     ]
-
-
 
 
 # --- desktop --setup-tcc-identity ------------------------------------------
@@ -670,8 +670,6 @@ def test_setup_tcc_identity_untrusted_existing_cert_is_repaired(tmp_path, monkey
     assert any(c[0] == "/usr/bin/security" and c[1] == "add-trusted-cert" for c in calls)
 
 
-
-
 def test_cmd_gui_setup_tcc_identity_exits_before_build(tmp_path, monkeypatch):
     """`hermes desktop --setup-tcc-identity` calls the setup and exits 0/1
     without building or launching the app."""
@@ -722,8 +720,6 @@ def test_relaunchable_fixup_stable_identity_never_touches_keychain(tmp_path, mon
 
     assert cli_main._desktop_macos_relaunchable_fixup(desktop_dir) is True
     assert not any("delete-generic-password" in c for c in calls)
-
-
 
 
 @pytest.mark.platforms("macos")
@@ -1231,8 +1227,6 @@ def test_desktop_environment_bridges_only_the_accessibility_opt_out(monkeypatch)
     assert env["HERMES_DESKTOP_RENDERER_ACCESSIBILITY"] == "0"
 
 
-
-
 # --- desktop.password_store detection & bridging (linux) ------------------
 
 
@@ -1545,6 +1539,7 @@ def test_gui_foreground_launch_ctrl_c_exits_cleanly(tmp_path, monkeypatch, capsy
 
 def _gui_build_patches(root: Path, run_side_effect):
     return [
+        patch("pm.ensure", side_effect=lambda name, **kw: types.SimpleNamespace(env=kw["base_env"])),
         patch("hermes_cli.main.shutil.which", return_value="/usr/bin/npm"),
         # Staging doubles are text; the PE-validation suite owns real binaries.
         patch("hermes_cli.main_desktop._desktop_exe_integrity_error", return_value=None),
@@ -1554,6 +1549,8 @@ def _gui_build_patches(root: Path, run_side_effect):
         patch("hermes_cli.main_desktop._desktop_macos_relaunchable_fixup"),
         patch("hermes_cli.main_desktop._register_linux_desktop_entry"),
         patch("hermes_cli.main_desktop._stop_desktop_processes_locking_build", return_value=[]),
+        patch("hermes_cli.source_build.run_in_custody",
+              side_effect=lambda root, cmd, label, **kw: run_side_effect(cmd, **kw)),
         patch("hermes_cli.main.subprocess.run", side_effect=run_side_effect),
     ]
 
@@ -1640,6 +1637,7 @@ def test_swap_staged_desktop_app_stops_live_renderer_before_rename(tmp_path):
     stop.assert_called_once_with(desktop_dir, also_posix=True)
 
 
+@pytest.mark.platforms("posix")
 def test_stop_desktop_processes_locking_build_posix_swap_bypasses_early_return(tmp_path, monkeypatch):
     """#109643: also_posix=True must run the scan on POSIX (the default pack-time
     call stays Windows-only — the staging pack never touches the live tree)."""
