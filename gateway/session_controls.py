@@ -419,10 +419,31 @@ class AuthorityConnection:
     async def resume(self, ref, params):
         from gateway.session_local_inventory import snapshot_info
         if 'latest' in params:
-            # Bare `-c` / `--resume latest`: the most recent session of that surface family the
-            # actor may read (workspace first), resolved by the owner like a title.
-            from gateway.session_local_title import resolve_latest_session
-            ref = resolve_latest_session(self.authority, self.actor, params['latest'], params.get('workspace'))
+            latest = params['latest']
+            if latest is True:
+                # Legacy/classic caller contract retained by P1: exact cwd selection happens before
+                # limiting, and unauthorized candidates are skipped rather than confirming existence.
+                from gateway.session_local_migration import resolve_local_target
+                cwd = params.get('cwd')
+                if cwd is not None and (not isinstance(cwd, str) or not cwd):
+                    raise RuntimeStoreError('invalid_params')
+                candidates = self.authority.db.list_sessions_rich(
+                    sources=['cli', 'tui', 'gui', 'oneshot'], cwd_exact=cwd,
+                    order_by_last_active=True, limit=100)
+                for candidate in candidates:
+                    try:
+                        ref = resolve_local_target(self.authority, self.actor, candidate['id'])
+                        break
+                    except RuntimeStoreError as exc:
+                        if exc.reason not in {'not_found', 'permission_denied', 'profile_mismatch'}:
+                            raise
+                else:
+                    raise RuntimeStoreError('not_found')
+            else:
+                # Current One Gateway callers name their source family explicitly.
+                from gateway.session_local_title import resolve_latest_session
+                ref = resolve_latest_session(
+                    self.authority, self.actor, latest, params.get('workspace'))
         elif 'title' in params:
             from gateway.session_local_title import resolve_titled_session
             ref = resolve_titled_session(self.authority, self.actor, params['title'])
