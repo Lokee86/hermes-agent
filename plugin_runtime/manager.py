@@ -77,6 +77,10 @@ class PluginManager(PluginLoaderMixin, PluginDispatchMixin, PluginOwnershipMixin
         self.home_path = Path(self.scope_key)
         self._discovery_lock = threading.RLock()
         self._discovered: bool = False
+        # Remembers whether the preceding discovery owned plugin secret-source registrations. A force
+        # reload removes them before the post-discovery reconciliation runs, so the transition to zero
+        # sources still needs one refresh to revoke their cached/process/scope values.
+        self._had_plugin_secret_sources = False
         self._plugin_host_instance = None  # Lazily created through the host adapter for this profile.
         self._cli_ref = None  # Set by CLI after plugin discovery
         self._gateway_message_injector: tuple[object, Callable] | None = None
@@ -288,14 +292,20 @@ class PluginManager(PluginLoaderMixin, PluginDispatchMixin, PluginOwnershipMixin
                 logger.debug("force-reload %s re-register skipped: %s", label, exc)
 
     def _refresh_secret_sources_after_discovery(self) -> None:
-        """If any plugin secret source is enabled (per its own ``is_enabled(cfg)``, honoring custom
-        activation), reset the cache and re-apply. Fail-open: never raises into discover_and_load."""
+        """Reconcile plugin secret-source state after discovery.
+
+        A present plugin source triggers a refresh even when none are enabled so stale values can be
+        revoked. The first sweep with no plugin sources is a no-op, but a transition from some sources
+        to zero still refreshes once. Fail-open: never raises into ``discover_and_load``.
+        """
         try:
             from agent.secret_sources.registry import list_plugin_sources
             plugin_sources = list_plugin_sources()
         except Exception:
             return
-        if not plugin_sources:
+        had_plugin_sources = self._had_plugin_secret_sources
+        self._had_plugin_secret_sources = bool(plugin_sources)
+        if not plugin_sources and not had_plugin_sources:
             return
         try:
             secrets = (load_plugin_config() or {}).get("secrets") or {}
@@ -310,8 +320,6 @@ class PluginManager(PluginLoaderMixin, PluginDispatchMixin, PluginOwnershipMixin
                 return False  # mirrors the orchestrator: a raising is_enabled() is skipped
 
         enabled_names = [getattr(s, "name", "") for s in plugin_sources if _enabled(s)]
-        if not enabled_names:
-            return
         try:
             # Reset and reload the SAME home the process (or routed turn) resolves to: under multiplex this
             # runs at gateway boot after sibling profiles may already have hydrated, and a global clear
@@ -321,8 +329,10 @@ class PluginManager(PluginLoaderMixin, PluginDispatchMixin, PluginOwnershipMixin
             if refresh is None:
                 return
             refresh(home)
-            logger.debug("Re-applied secret sources after plugin discovery for: %s",
-                         ", ".join(sorted(enabled_names)))
+            logger.debug(
+                "Reconciled secret sources after plugin discovery; enabled plugin sources: %s",
+                ", ".join(sorted(enabled_names)) or "none",
+            )
         except Exception as exc:
             logger.debug("secret source re-apply after discovery failed: %s", exc)
 
