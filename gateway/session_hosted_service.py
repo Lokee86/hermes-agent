@@ -12,6 +12,33 @@ from tui_gateway.hosted_room_service import HostedRoomService
 _OWNER = 'gateway.hosted.owner.v1:'
 
 
+def authorize_room_owner(authority, actor_subject, room_id, *, create=False, conn=None):
+    """Check or atomically claim durable hosted-room ownership without requiring the live service."""
+    from gateway.hosted_rooms_common import IDENTIFIER_RE
+    if (not isinstance(actor_subject, str) or not actor_subject
+            or not isinstance(room_id, str) or len(room_id) > 128
+            or not IDENTIFIER_RE.fullmatch(room_id)):
+        raise RuntimeStoreError('invalid_params')
+
+    def write(conn):
+        _epoch(conn, authority.epoch)
+        key = _OWNER + room_id
+        row = conn.execute('SELECT value FROM state_meta WHERE key=?', (key,)).fetchone()
+        if row is None and create:
+            historical = conn.execute(
+                'SELECT 1 FROM hosted_rooms WHERE room_id=? UNION ALL '
+                'SELECT 1 FROM hosted_room_retired_ids WHERE room_id=?',
+                (room_id, room_id)).fetchone()
+            if historical is None:
+                conn.execute('INSERT INTO state_meta(key,value) VALUES(?,?)', (key, actor_subject))
+                return True
+        if row is None or row[0] != actor_subject:
+            raise RuntimeStoreError('permission_denied')
+        return True
+
+    return write(conn) if conn is not None else authority.db._execute_write(write)
+
+
 class CanonicalHostedRoomService(HostedControls, HostedRoomService):
     def __init__(self, authority, loop):
         self.authority, self.loop = authority, loop
@@ -101,29 +128,9 @@ class CanonicalHostedRoomService(HostedControls, HostedRoomService):
         return nullcontext()
 
     def authorize_room(self, actor_subject, room_id, *, create=False, conn=None):
-        """Check (or, with ``create``, claim) room ownership. A ``conn`` runs the claim inside
-        the caller's room-creation transaction, so owner and room commit or roll back together."""
-        from gateway.hosted_rooms_common import IDENTIFIER_RE
-        if (not isinstance(actor_subject, str) or not actor_subject
-                or not isinstance(room_id, str) or len(room_id) > 128
-                or not IDENTIFIER_RE.fullmatch(room_id)):
-            raise RuntimeStoreError('invalid_params')
-        def write(conn):
-            _epoch(conn, self.authority.epoch)
-            key = _OWNER + room_id
-            row = conn.execute('SELECT value FROM state_meta WHERE key=?', (key,)).fetchone()
-            if row is None and create:
-                historical = conn.execute(
-                    'SELECT 1 FROM hosted_rooms WHERE room_id=? UNION ALL '
-                    'SELECT 1 FROM hosted_room_retired_ids WHERE room_id=?',
-                    (room_id, room_id)).fetchone()
-                if historical is None:
-                    conn.execute('INSERT INTO state_meta(key,value) VALUES(?,?)', (key, actor_subject))
-                    return True
-            if row is None or row[0] != actor_subject:
-                raise RuntimeStoreError('permission_denied')
-            return True
-        return write(conn) if conn is not None else self.authority.db._execute_write(write)
+        """Check (or, with ``create``, claim) room ownership through the durable owner fence."""
+        return authorize_room_owner(
+            self.authority, actor_subject, room_id, create=create, conn=conn)
 
     def _owner(self, room_id):
         with self.authority.db._read_ctx() as conn:

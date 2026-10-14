@@ -85,6 +85,10 @@ def _group(authority, actor, home, method, params):
     gateway_id = rooms.local_authority_gateway_id()
     service = getattr(authority, 'hosted_room_service', None)
     room_authorizer = getattr(service, 'authorize_room', None)
+    if service is None:
+        from functools import partial
+        from gateway.session_hosted_service import authorize_room_owner
+        room_authorizer = partial(authorize_room_owner, authority)
     if service is not None:
         if Path(service.db_path).resolve() != Path(db_path).resolve():
             raise RuntimeStoreError('profile_mismatch')
@@ -94,7 +98,7 @@ def _group(authority, actor, home, method, params):
 
     execution_methods = {'groups.send', 'groups.stop', 'groups.retry', 'groups.discard', 'groups.approve'}
     admit = None
-    if getattr(authority, 'hosted_room_service', None) is not None and 'room_id' in params:
+    if 'room_id' in params:
         if room_authorizer is None:
             raise RuntimeStoreError('permission_denied')
         if method == 'groups.create':
@@ -126,9 +130,6 @@ def _group(authority, actor, home, method, params):
 
     def listing():
         limit, offset = params.get('limit', rooms.MAX_ROOM_LIST_LIMIT), params.get('offset', 0)
-        if getattr(authority, 'hosted_room_service', None) is None:
-            result = rooms.list_rooms(db_path, **params)
-            return {'rooms': result, 'next_offset': offset + limit if len(result) == limit else None}
         authorize = room_authorizer
         if authorize is None:
             raise RuntimeStoreError('permission_denied')
