@@ -115,7 +115,7 @@ class PluginContext:
         factory = get_plugin_host_callback("platform_actions_factory")
         if factory is None:
             raise RuntimeError("platform actions host is unavailable")
-        return factory(self.plugin_id)
+        return factory(self.plugin_id, self._manager.home_path)
 
     def _wrong_type(self, obj: Any, base_class: type, label: str, article: str = "a") -> bool:
         """Warn-and-ignore gate shared by every registrar that requires a base class."""
@@ -518,8 +518,8 @@ class PluginContext:
             return False
 
     def _gateway_injection_allowed(self) -> bool:
-        """Return whether this plugin may trigger gateway session turns."""
-        return plugin_gateway_injection_allowed(self.plugin_id)
+        """Return whether this plugin may trigger turns in its manager-owned profile."""
+        return plugin_gateway_injection_allowed(self.plugin_id, self._manager.home_path)
 
     @_serialized_replacement
     def register_cli_command(
@@ -771,8 +771,8 @@ class PluginContext:
         if not all(c.isalnum() or c == "_" for c in key):
             raise ValueError(f"Plugin '{me}' auxiliary task key {key!r} "
                              f"must contain only alphanumeric characters and underscores")
-        builtin_keys = get_plugin_host_callback("builtin_auxiliary_task_keys")
-        reserved = set(builtin_keys()) if builtin_keys is not None else set()
+        from agent.auxiliary_tasks import builtin_auxiliary_task_keys
+        reserved = set(builtin_auxiliary_task_keys())
         if key in reserved:
             raise ValueError(f"Plugin '{me}' cannot register auxiliary task {key!r} — that key is reserved "
                              f"for a built-in task. Pick a plugin-namespaced key (e.g. '{me}_{key}').")
@@ -986,6 +986,7 @@ class PluginContext:
             blueprint, "Plugin %s registered automation blueprint: %s", blueprint.key,
         )
 
+    @_serialized_replacement
     def register_skill(
         self, name: str, path: Path, description: str = "",
         frontmatter: Optional[Mapping[str, Any]] = None,

@@ -7,6 +7,7 @@ from unittest.mock import MagicMock, patch
 import hermes_yaml as yaml
 
 import hermes_cli.plugins as plugins_mod
+import plugin_runtime.lifecycle as plugin_lifecycle
 from agent import secret_scope
 from hermes_constants import reset_hermes_home_override, set_hermes_home_override
 from hermes_cli.plugins import PluginContext, PluginManager, PluginManifest
@@ -196,7 +197,7 @@ def test_published_gateway_host_reaches_existing_and_future_profile_managers(tmp
             })
         )
     monkeypatch.setenv("HERMES_HOME", str(homes[0]))
-    plugins_mod._reset_plugin_managers_for_tests()
+    plugin_lifecycle.reset_plugin_managers_for_tests()
     # Multiplex gateway: launch home + secondary profiles served by one process.
     was_active = secret_scope.is_multiplex_active()
     secret_scope.set_multiplex_active(True)
@@ -250,7 +251,7 @@ def test_published_gateway_host_reaches_existing_and_future_profile_managers(tmp
         assert late_manager.has_gateway_message_injector is False
     finally:
         plugins_mod.clear_published_gateway_message_host(owner)
-        plugins_mod._reset_plugin_managers_for_tests()
+        plugin_lifecycle.reset_plugin_managers_for_tests()
         secret_scope.set_multiplex_active(was_active)
 
 

@@ -154,12 +154,11 @@ def test_plugin_manager_inherits_canonical_runtime_loader_directly():
     assert plugins.PluginLoaderMixin is loading.PluginLoaderMixin
 
 
-def test_cli_manager_supplies_compatibility_policy_seam():
+def test_retired_plugin_load_disable_gate_is_absent():
     from plugin_runtime.manager import PluginManager
-    import hermes_cli.plugins as plugins
     import plugin_runtime.loading as loading
 
-    assert "_plugin_load_disable_reason" in PluginManager.__dict__
+    assert "_plugin_load_disable_reason" not in PluginManager.__dict__
     assert "_plugin_load_disable_reason" not in loading.PluginLoaderMixin.__dict__
 
 

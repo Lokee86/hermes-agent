@@ -184,7 +184,7 @@ def test_malformed_plugin_blueprint_is_warned_and_ignored(homes, caplog, fields,
 @pytest.mark.asyncio
 async def test_job_from_plugin_blueprint_survives_plugin_disable(homes):
     from cron.jobs import load_jobs
-    from hermes_cli.plugins import _reset_plugin_managers_for_tests
+    from plugin_runtime.lifecycle import reset_plugin_managers_for_tests
 
     _write_plugin(homes["default"], "teamtools", _STANDUP)
     created = await _rt_cron.instantiate_blueprint(
@@ -193,7 +193,7 @@ async def test_job_from_plugin_blueprint_survives_plugin_disable(homes):
     )
 
     _write_plugin(homes["default"], "teamtools", _STANDUP, enable=False)
-    _reset_plugin_managers_for_tests()
+    reset_plugin_managers_for_tests()
 
     listed = await _rt_cron.list_cron_blueprints(profile="default")
     assert _plugin_keys(listed["blueprints"]) == {}

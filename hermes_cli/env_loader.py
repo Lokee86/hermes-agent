@@ -834,9 +834,15 @@ def _process_hermes_home() -> Path:
 
 
 def _refresh_plugin_secret_sources(home: Path) -> None:
-    """Re-apply dotenv/external secrets after runtime plugin sources register."""
+    """Reconcile dotenv/external secrets and any already-installed profile scope."""
     reset_secret_source_cache(home)
     load_hermes_dotenv(hermes_home=home)
+    # A gateway/cron/plugin turn may already hold a profile secret scope. Rebuild that mapping in
+    # place so newly registered source values appear immediately and removed/disabled source values
+    # disappear immediately rather than surviving until the next turn/restart.
+    from agent.secret_scope import refresh_installed_secret_scope
+
+    refresh_installed_secret_scope(home)
 
 
 from plugin_runtime.host_bindings import bind_plugin_host

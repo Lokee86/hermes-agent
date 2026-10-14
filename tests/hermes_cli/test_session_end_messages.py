@@ -16,8 +16,8 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 import cli as cli_mod  # module-level, like sibling CLI tests: importing cli runs bootstrap
-from hermes_cli import plugins
 from hermes_cli.plugins import PluginManager
+from plugin_runtime import api as plugin_api
 
 DIGEST = "Session digest: 3 files touched"
 
@@ -34,15 +34,21 @@ def finalize_hook(monkeypatch):
     mgr = PluginManager()
     mgr._discovered = True
     mgr._hooks["on_session_finalize"] = [_hook]
-    monkeypatch.setattr(plugins, "get_plugin_manager", lambda: mgr)
+    monkeypatch.setattr(plugin_api, "delivery_manager", lambda: mgr)
     return calls
 
 
-def test_session_end_messages_accepts_str_and_message_dict_only():
-    from hermes_cli.lifecycle import session_end_messages
+def test_finalize_session_returns_only_user_facing_messages(monkeypatch):
+    from hermes_cli import lifecycle
 
-    assert session_end_messages(["  hi  ", {"message": "there"}, {"context": "x"}, {"message": 3}, "", None, 7]) == [
-        "hi", "there"]
+    monkeypatch.setattr(lifecycle, "_observe", lambda *a, **k: None)
+    monkeypatch.setattr(
+        lifecycle,
+        "_plugin_hooks",
+        lambda *a, **k: ["  hi  ", {"message": "there"}, {"context": "x"}, {"message": 3}, "", None, 7],
+    )
+
+    assert lifecycle.finalize_session(session_id="") == ["hi", "there"]
 
 
 # ── CLI ──────────────────────────────────────────────────────────────────────────────────────────
@@ -173,7 +179,7 @@ async def test_gateway_finalize_without_message_sends_nothing(monkeypatch):
     mgr = PluginManager()
     mgr._discovered = True
     mgr._hooks["on_session_finalize"] = [lambda **_: None]
-    monkeypatch.setattr(plugins, "get_plugin_manager", lambda: mgr)
+    monkeypatch.setattr(plugin_api, "delivery_manager", lambda: mgr)
     runner, adapter, _source, key = _gateway_runner()
     runner._cleanup_agent_resources_off_loop = AsyncMock()
     runner._flush_agent_transcript_at_shutdown = lambda agent: None

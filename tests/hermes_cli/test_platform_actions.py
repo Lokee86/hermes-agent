@@ -319,5 +319,6 @@ class TestPluginContextWiring:
         facade = ctx.platform_actions
         assert isinstance(facade, PlatformActions)
         assert facade._plugin_id == "actions-fixture"
+        assert facade._profile_home == manager.home_path.resolve()
         # Cached: property returns the same instance.
         assert ctx.platform_actions is facade

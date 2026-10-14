@@ -288,13 +288,6 @@ def installed_plugin_removal(name: str, plugin_dir) -> Optional[RemovedEntry]:
     return None
 
 
-from plugin_runtime.host_bindings import bind_plugin_host as _bind_plugin_host
-
-_bind_plugin_host(
-    installed_plugin_removal=lambda name, plugin_dir: installed_plugin_removal(name, plugin_dir),
-)
-
-
 def refuse_if_installed_removed(name: str, plugin_dir) -> None:
     """``PluginOperationError`` form of :func:`installed_plugin_removal` for ``update``/``enable``, which
     otherwise keep pulling and activating code the catalog recalled."""

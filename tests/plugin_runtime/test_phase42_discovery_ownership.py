@@ -147,18 +147,13 @@ def test_catalog_recall_lookup_runs_only_after_runtime_gates():
     assert verdict.error == "removed from the Hermes plugin catalog: fixture recall"
 
 
-def test_plugin_manager_supplies_cli_owned_catalog_lookup(monkeypatch, request):
+def test_plugin_manager_supplies_cli_owned_catalog_lookup(monkeypatch):
     from hermes_cli import plugins_cmd_catalog
+    from hermes_cli.plugin_runtime_host_adapter import bind_plugin_runtime_host_adapter
     from plugin_runtime.manager import PluginManager
     from plugin_runtime.manifest import PluginManifest
 
     calls = []
-    original_lookup = plugins_cmd_catalog.installed_plugin_removal
-    # _bind_plugin_host installs a process-global callback, unlike monkeypatch's
-    # module attribute override. Restore it before subsequent plugin tests.
-    request.addfinalizer(lambda: plugins_cmd_catalog._bind_plugin_host(
-        installed_plugin_removal=original_lookup,
-    ))
 
     class Removed:
         reason = "manager fixture"
@@ -168,11 +163,9 @@ def test_plugin_manager_supplies_cli_owned_catalog_lookup(monkeypatch, request):
         return Removed()
 
     monkeypatch.setattr(plugins_cmd_catalog, "installed_plugin_removal", lookup)
-    # Other host-binding tests deliberately clear the process-wide registry; rebind this
-    # CLI-owned callback explicitly so this test is order-independent.
-    plugins_cmd_catalog._bind_plugin_host(
-        installed_plugin_removal=plugins_cmd_catalog.installed_plugin_removal,
-    )
+    # Stable bootstrap binding resolves the current catalog owner lazily; importing the catalog
+    # module itself no longer has to mutate plugin-runtime state.
+    bind_plugin_runtime_host_adapter()
     manager = PluginManager()
     manifest = PluginManifest(name="fixture", key="fixture", source="user", path="/fixture")
 

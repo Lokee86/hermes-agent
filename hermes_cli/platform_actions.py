@@ -7,6 +7,7 @@ Every verb returns a structured result dict — ``{"ok": True, ...}`` on success
 from __future__ import annotations
 
 import logging
+from pathlib import Path
 from typing import Any, Dict
 
 logger = logging.getLogger(__name__)
@@ -78,16 +79,20 @@ class PlatformActions:
     first) still works once adapters connect.
     """
 
-    def __init__(self, plugin_id: str):
+    def __init__(self, plugin_id: str, *, profile_home: str | Path | None = None):
         self._plugin_id = plugin_id
+        self._profile_home = Path(profile_home).resolve() if profile_home is not None else None
 
     # -- shared plumbing ----------------------------------------------------
 
     def _capability_granted(self) -> bool:
         try:
             from plugin_runtime.capabilities import plugin_capability_granted
-
-            return plugin_capability_granted(self._plugin_id, CAPABILITY_ID)
+            if self._profile_home is None:
+                return plugin_capability_granted(self._plugin_id, CAPABILITY_ID)
+            from plugin_runtime.scope import plugin_home_scope
+            with plugin_home_scope(self._profile_home):
+                return plugin_capability_granted(self._plugin_id, CAPABILITY_ID)
         except Exception:
             # Ground rule: failure to read consent state = not granted.
             logger.debug("platform_actions capability check failed for %s", self._plugin_id, exc_info=True)
@@ -117,9 +122,14 @@ class PlatformActions:
         resolve_fn = getattr(runner, "_authorization_adapter", None)
         if callable(resolve_fn):
             try:
-                from hermes_cli.profiles import get_active_profile_name
-
-                profile_name = get_active_profile_name()
+                if self._profile_home is not None:
+                    from hermes_constants import profile_name_for_home
+                    profile_name = profile_name_for_home(self._profile_home)
+                    if not profile_name:
+                        raise RuntimeError(f"cannot resolve profile for {self._profile_home}")
+                else:
+                    from hermes_cli.profiles import get_active_profile_name
+                    profile_name = get_active_profile_name()
             except Exception:
                 # Fail closed: an unresolvable profile must not degrade to the default profile's bot.
                 logger.debug(

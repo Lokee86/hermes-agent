@@ -121,10 +121,10 @@ def test_dashboard_enable_on_a_fresh_config_keeps_the_core_tools(home):
 
 def _restart_backend():
     """A new process: no plugin manager has scanned yet and no plugin tool is registered."""
-    from hermes_cli.plugins import _reset_plugin_managers_for_tests
+    from plugin_runtime.lifecycle import reset_plugin_managers_for_tests
     from tools.registry import registry
 
-    _reset_plugin_managers_for_tests()
+    reset_plugin_managers_for_tests()
     registry.deregister("zzre_tool")
 
 

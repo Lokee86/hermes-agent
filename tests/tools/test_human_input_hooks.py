@@ -33,7 +33,7 @@ def captured(monkeypatch):
 
     monkeypatch.setattr(terminal_tool, "_callback_tls", threading.local())
     monkeypatch.setattr(terminal_tool_sudo, "_sudo_password_cache", {})
-    with patch("hermes_cli.plugins.invoke_hook", side_effect=fake_invoke_hook):
+    with patch("hermes_cli.lifecycle.invoke_hook", side_effect=fake_invoke_hook):
         yield calls
 
 

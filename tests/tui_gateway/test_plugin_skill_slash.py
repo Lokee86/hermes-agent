@@ -12,7 +12,7 @@ def test_plugin_skills_reach_tui_slash_menu_and_stack_per_profile(tmp_path, monk
     TUI/Desktop slash menu, scoped to the session's profile, and a stacked
     ``/plugin:a /plugin:b`` loads both bodies. Native skill menus stay filesystem-only."""
     from agent import skill_commands
-    from hermes_cli import plugins
+    from plugin_runtime.lifecycle import reset_plugin_managers_for_tests
 
     homes = {"alpha": tmp_path / "profile-a", "beta": tmp_path / "profile-b"}
     for label, home in homes.items():
@@ -30,7 +30,7 @@ def test_plugin_skills_reach_tui_slash_menu_and_stack_per_profile(tmp_path, monk
         (home / "config.yaml").write_text(f"plugins:\n  enabled: [probe-{label}]\n", encoding="utf-8")
 
     monkeypatch.setenv("HERMES_HOME", str(homes["alpha"]))
-    plugins._reset_plugin_managers_for_tests()
+    reset_plugin_managers_for_tests()
     try:
         for label in ("alpha", "beta", "alpha"):
             sid, other = f"skill-{label}", "beta" if label == "alpha" else "alpha"
@@ -54,4 +54,4 @@ def test_plugin_skills_reach_tui_slash_menu_and_stack_per_profile(tmp_path, monk
     finally:
         for label in homes:
             server._sessions.pop(f"skill-{label}", None)
-        plugins._reset_plugin_managers_for_tests()
+        reset_plugin_managers_for_tests()

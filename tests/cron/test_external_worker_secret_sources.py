@@ -50,11 +50,11 @@ def homes(tmp_path, monkeypatch):
     yield launch, profile
     from agent.secret_sources import registry
     from hermes_cli.env_loader import reset_secret_source_cache
-    from hermes_cli.plugins import _reset_plugin_managers_for_tests
+    from plugin_runtime.lifecycle import reset_plugin_managers_for_tests
 
     registry._reset_registry_for_tests()
     reset_secret_source_cache()
-    _reset_plugin_managers_for_tests()
+    reset_plugin_managers_for_tests()
 
 
 def test_worker_hydrates_owning_profile_plugin_secret_source(homes, tmp_path, monkeypatch):

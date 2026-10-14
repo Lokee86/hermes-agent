@@ -46,7 +46,7 @@ def test_tui_sudo_request_fires_human_input_hooks(monkeypatch):
     tokens = server._set_session_context(session_key, ui_session_id=sid)
     try:
         server._wire_callbacks(sid)
-        with patch("hermes_cli.plugins.invoke_hook", side_effect=capture):
+        with patch("hermes_cli.lifecycle.invoke_hook", side_effect=capture):
             assert terminal_tool_sudo._prompt_for_sudo_password(command="sudo systemctl restart nginx") == PASSWORD
     finally:
         server._clear_session_context(tokens)

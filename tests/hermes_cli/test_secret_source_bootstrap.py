@@ -133,7 +133,7 @@ def test_refresh_respects_custom_is_enabled(monkeypatch):
     assert called == {"reset": 1, "load": 1}
 
 
-def test_refresh_skips_custom_source_when_not_activated(monkeypatch):
+def test_refresh_reconciles_when_custom_source_is_not_activated(monkeypatch):
     mgr = PluginManager()
     called = {"reset": 0, "load": 0}
 
@@ -157,10 +157,10 @@ def test_refresh_skips_custom_source_when_not_activated(monkeypatch):
     )
 
     mgr._refresh_secret_sources_after_discovery()
-    assert called == {"reset": 0, "load": 0}
+    assert called == {"reset": 1, "load": 1}
 
 
-def test_refresh_skips_source_whose_is_enabled_raises(monkeypatch):
+def test_refresh_reconciles_when_source_activation_check_raises(monkeypatch):
     mgr = PluginManager()
     called = {"reset": 0, "load": 0}
 
@@ -185,9 +185,31 @@ def test_refresh_skips_source_whose_is_enabled_raises(monkeypatch):
     )
 
     mgr._refresh_secret_sources_after_discovery()
-    assert called == {"reset": 0, "load": 0}
+    assert called == {"reset": 1, "load": 1}
 
 
+def test_refresh_updates_an_already_installed_secret_scope(monkeypatch, tmp_path):
+    """A refresh replaces the live scope in place, including removing names that disappeared."""
+    from agent.secret_scope import current_secret_scope, reset_secret_scope, set_secret_scope
+    from hermes_cli import env_loader
+
+    home = tmp_path / ".hermes"
+    home.mkdir()
+    (home / ".env").write_text("CURRENT_REFRESH_SECRET=fresh\n", encoding="utf-8")
+    monkeypatch.delenv("CURRENT_REFRESH_SECRET", raising=False)
+    token = set_secret_scope(
+        {"STALE_PLUGIN_SECRET": "stale"}, profile_home=str(home.resolve())
+    )
+    try:
+        env_loader._refresh_plugin_secret_sources(home)
+        scope = current_secret_scope()
+        assert scope is not None
+        assert scope.get("CURRENT_REFRESH_SECRET") == "fresh"
+        assert "STALE_PLUGIN_SECRET" not in scope
+    finally:
+        reset_secret_scope(token)
+        os.environ.pop("CURRENT_REFRESH_SECRET", None)
+        env_loader.reset_secret_source_cache(home)
 
 
 def test_real_plugin_source_discovery_applies_dotenv(monkeypatch, tmp_path):

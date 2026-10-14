@@ -19,9 +19,11 @@ from pathlib import Path
 import pytest
 from fastapi import HTTPException
 
-import hermes_cli.plugins as plugins_mod
 from agent.auxiliary_client import _get_auxiliary_task_config
-from hermes_cli.plugins import PluginManager
+from plugin_runtime import api as plugin_api
+from plugin_runtime import discovery as plugin_discovery
+from plugin_runtime.lifecycle import reset_plugin_managers_for_tests
+from plugin_runtime.manager import PluginManager
 from hermes_cli.web_server_config import (
     _AUX_TASK_SLOTS, _apply_aux_assignment_sync, _apply_model_assignment_sync, _aux_task_slots,
     _stale_aux_pins,
@@ -64,11 +66,11 @@ def two_profile_homes(tmp_path, monkeypatch):
     _write_home(home_b, {"side": _SIDE}, "vendor/model-b")
     monkeypatch.setattr(Path, "home", lambda: tmp_path)
     monkeypatch.setenv("HERMES_HOME", str(home_a))
-    monkeypatch.setattr(plugins_mod, "get_bundled_plugins_dir", lambda: tmp_path / "empty-bundled")
+    monkeypatch.setattr(plugin_discovery, "get_bundled_plugins_dir", lambda: tmp_path / "empty-bundled")
     monkeypatch.setattr(PluginManager, "_scan_entry_points", lambda self: [])
-    plugins_mod._reset_plugin_managers_for_tests()
+    reset_plugin_managers_for_tests()
     yield home_a, home_b
-    plugins_mod._reset_plugin_managers_for_tests()
+    reset_plugin_managers_for_tests()
 
 
 def _rows(profile):
@@ -148,8 +150,8 @@ def test_plugin_discovery_failure_leaves_builtins_working(two_profile_homes, mon
     def _boom():
         raise RuntimeError("plugin scan exploded")
 
-    # Patch where production reads: the resolver imports the name from hermes_cli.plugins at call time.
-    monkeypatch.setattr(plugins_mod, "get_plugin_auxiliary_tasks", _boom)
+    # Patch where production reads: the resolver imports the canonical runtime API at call time.
+    monkeypatch.setattr(plugin_api, "get_plugin_auxiliary_tasks", _boom)
     assert _aux_task_slots() == _AUX_TASK_SLOTS
     tasks = [row["task"] for row in get_auxiliary_models(profile=None)["tasks"]]
     assert tasks == list(_AUX_TASK_SLOTS)

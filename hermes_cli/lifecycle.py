@@ -65,8 +65,12 @@ def has_hook(hook_name: str) -> bool:
     return has_plugin_hook(hook_name)
 
 
-def finalize_session(**kwargs: Any) -> List[Any]:
-    """Notify observers and hard-close one core-owned Relay conversation."""
+def finalize_session(**kwargs: Any) -> List[str]:
+    """Finalize one session and return only user-facing plugin messages.
+
+    ``on_session_finalize`` may return a non-empty string or ``{"message": <str>}``; all other
+    callback result shapes are lifecycle directives/metadata and are intentionally not surfaced.
+    """
     _observe("on_session_finalize", **kwargs)
 
     session_id = str(kwargs.get("session_id") or "")
@@ -81,4 +85,9 @@ def finalize_session(**kwargs: Any) -> List[Any]:
         except Exception:
             logger.warning("Core Relay session finalization failed", exc_info=True)
 
-    return _plugin_hooks("on_session_finalize", **kwargs)
+    messages: list[str] = []
+    for result in _plugin_hooks("on_session_finalize", **kwargs):
+        text = result.get("message") if isinstance(result, dict) else result
+        if isinstance(text, str) and text.strip():
+            messages.append(text.strip())
+    return messages

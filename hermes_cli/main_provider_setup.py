@@ -7,6 +7,8 @@ Split out of ``hermes_cli/main.py``. Names that still live in main are imported 
 import contextlib
 
 from typing import Optional
+
+from agent.auxiliary_tasks import BUILTIN_AUX_TASKS
 from hermes_cli.model_setup_flows_common import _ask, _ensure_dict_section, _print_numbered, _radiolist, _say
 
 
@@ -49,26 +51,9 @@ def _clear_stale_openai_base_url():
         print(f"Cleared stale OPENAI_BASE_URL from .env (was: {shown})")
 
 
-# (task_key, display_name, short_description)
-_AUX_TASKS: list[tuple[str, str, str]] = [
-    ("vision", "Vision", "image/screenshot analysis"),
-    ("compression", "Compression", "context summarization"),
-    ("approval", "Approval", "smart command approval"),
-    ("mcp", "MCP", "MCP tool reasoning"),
-    ("title_generation", "Title generation", "session titles"),
-    ("review", "Review", "/review reviewer subagent"),
-    ("memory_query_rewrite", "Memory query rewrite", "memory retrieval queries"),
-    ("tts_audio_tags", "TTS audio tags", "Gemini TTS tag insertion"),
-    ("voice_chat", "Voice chat", "spoken voice-mode replies"),
-    ("skills_hub", "Skills hub", "skills search/install"),
-    ("triage_specifier", "Triage specifier", "kanban spec fleshing"),
-    ("kanban_decomposer", "Kanban decomposer", "task decomposition"),
-    ("profile_describer", "Profile describer", "auto profile descriptions"),
-    ("curator", "Curator", "skill-usage review pass")]
-
-from plugin_runtime.host_bindings import bind_plugin_host
-
-bind_plugin_host(builtin_auxiliary_task_keys=lambda: {key for key, _name, _desc in _AUX_TASKS})
+# Backward-compatible module alias for callers that still render the setup menu from here;
+# canonical task identity lives in agent.auxiliary_tasks.
+_AUX_TASKS = BUILTIN_AUX_TASKS
 
 # Special non-auxiliary task surfaced in the same picker: subagent delegation.
 # under top-level `delegation.*` (NOT `auxiliary.delegation`) because delegate_task spawns full

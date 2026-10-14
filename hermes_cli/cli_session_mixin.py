@@ -431,8 +431,7 @@ class CLISessionMixin:
                 "reason": "new_session" if event_type == "on_session_reset" else "session_boundary"}
             if event_type == "on_session_finalize":
                 from cli import _cli_visible_print
-                from hermes_cli.lifecycle import session_end_messages
-                for message in session_end_messages(finalize_session(**context)):
+                for message in finalize_session(**context):
                     _cli_visible_print(message)
             else:
                 invoke_hook(event_type, **context)

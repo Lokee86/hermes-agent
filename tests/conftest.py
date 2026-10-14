@@ -400,18 +400,11 @@ def _hermetic_environment(tmp_path, tmp_path_factory, monkeypatch):
     # 5. Reset plugin singleton so tests don't leak plugins from
     #    ~/.hermes/plugins/ (which, per step 3, is now empty — but the
     #    singleton might still be cached from a previous test).
-    try:
-        import hermes_cli.plugins as _plugins_mod
-        monkeypatch.setattr(_plugin_lifecycle, "_plugin_manager", None)
-        # Also clear the keyed per-home manager cache (and any plugin
-        # submodules it left in sys.modules) so a manager built for a
-        # previous test's tmp_path HERMES_HOME can't leak forward. Paths
-        # are unique per test, so collisions are unlikely, but a full
-        # reset keeps this fixture the single source of plugin-state
-        # hygiene rather than relying on path uniqueness.
-        _plugin_lifecycle.reset_plugin_managers_for_tests()
-    except Exception:
-        pass
+    # Also clear the keyed per-home manager cache (and any plugin submodules it
+    # left in sys.modules) so a manager built for a previous test's tmp_path
+    # HERMES_HOME cannot leak forward. This is canonical runtime cleanup; failures
+    # must surface rather than silently disabling isolation for the rest of a file.
+    plugin_lifecycle.reset_plugin_managers_for_tests()
     # Explicitly clear provider-specific base URL overrides that don't match
     # the generic credential-shaped env-var filter above.
     monkeypatch.delenv("GMI_API_KEY", raising=False)
