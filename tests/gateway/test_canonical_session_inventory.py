@@ -86,7 +86,7 @@ async def test_cli_surface_snapshot_carries_main_cli_toolsets_and_startup_warnin
     from gateway.session_authority import initialize_session_authority
     from gateway.session_controls import AuthorityConnection
     from hermes_cli import banner
-    from hermes_cli.tools_config import _get_platform_tools
+    from tools.platform_policy import get_platform_tools
     from tools import browser_use_cli
 
     home = tmp_path / 'home'
@@ -111,7 +111,7 @@ async def test_cli_surface_snapshot_carries_main_cli_toolsets_and_startup_warnin
 
     from hermes_cli.config import load_config
     cli = (await call('session.create', request_id='cli', source='cli', cwd=str(repo)))['info']
-    assert cli['enabled_toolsets'] == sorted(_get_platform_tools(load_config(), 'cli'))
+    assert cli['enabled_toolsets'] == sorted(get_platform_tools(load_config(), 'cli'))
     assert isinstance(cli['tool_availability_warnings'], list)
     assert cli['browser_backend_notice'] == 'browser-harness is missing'
     tui = (await call('session.create', request_id='tui', source='tui', cwd=str(repo)))['info']
