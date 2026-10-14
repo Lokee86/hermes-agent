@@ -9369,6 +9369,23 @@
             "default": null,
             "title": "Source"
           },
+          "latest": {
+            "default": false,
+            "title": "Latest",
+            "type": "boolean"
+          },
+          "cwd": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Cwd"
+          },
           "editor": {
             "anyOf": [
               {

@@ -4759,6 +4759,8 @@ export interface CanonicalResumeParams {
   session_id?: string
   title?: string | null
   source?: string | null
+  latest?: boolean
+  cwd?: string | null
   editor?: Record<string, unknown> | null
   defer_history?: boolean
   omit_messages?: boolean
