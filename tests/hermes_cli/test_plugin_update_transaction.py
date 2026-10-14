@@ -20,7 +20,7 @@ def _commit(repo, message):
 
 
 def _version(repo, version, *, broken=False, minimum="", libraries=("shared-library",)):
-    from hermes_cli.plugins_manifest import SUPPORTED_MANIFEST_VERSION
+    from plugin_runtime.manifest import SUPPORTED_MANIFEST_VERSION
 
     (repo / "plugin.yaml").write_text(
         f"name: transactional\nversion: {version}\nmanifest_version: {SUPPORTED_MANIFEST_VERSION}\n"

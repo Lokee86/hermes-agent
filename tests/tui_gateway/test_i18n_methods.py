@@ -24,8 +24,9 @@ def _call(server, method, params):
 
 def test_languages_and_catalog_serve_pack_layers_per_surface(tmp_path, monkeypatch, clean_layers):
     from tui_gateway import server
-    from hermes_cli.plugins import PluginContext, PluginManager
-    from hermes_cli.plugins_manifest import PluginManifest
+    from plugin_runtime.context import PluginContext
+    from plugin_runtime.manager import PluginManager
+    from plugin_runtime.manifest import PluginManifest
 
     home = tmp_path / "home"
     (home / "locales").mkdir(parents=True)

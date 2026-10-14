@@ -32,10 +32,10 @@ def _make_local_skill(tmp_path: Path, name: str, body: str) -> None:
 
 def _rewrite(event_text: str, tmp_path, monkeypatch, plugin_home):
     """Drive ``_hm_skill_slash_rewrite`` for a Discord event; returns its reply."""
-    from hermes_cli import plugins as plugins_mod
+    from plugin_runtime.lifecycle import reset_plugin_managers_for_tests
 
     monkeypatch.setenv("HERMES_HOME", str(plugin_home))
-    plugins_mod._reset_plugin_managers_for_tests()
+    reset_plugin_managers_for_tests()
     import agent.skill_commands as sc
     try:
         monkeypatch.setattr(sc, "_skill_commands_by_key", {})
@@ -58,7 +58,7 @@ def _rewrite(event_text: str, tmp_path, monkeypatch, plugin_home):
             reply = runner._hm_skill_slash_rewrite(event, source, "qk", event_text[1:].split()[0])
             return reply, event
     finally:
-        plugins_mod._reset_plugin_managers_for_tests()
+        reset_plugin_managers_for_tests()
 
 
 def test_messaging_stacked_skills_never_load_plugin_skill_bodies(tmp_path, monkeypatch):

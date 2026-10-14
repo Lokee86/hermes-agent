@@ -44,11 +44,11 @@ def homes(tmp_path, monkeypatch):
     yield launch, profile
     from agent import outbound_webhooks
     from agent import shell_hooks
-    from hermes_cli.plugins import _reset_plugin_managers_for_tests
+    from plugin_runtime.lifecycle import reset_plugin_managers_for_tests
 
     shell_hooks.reset_for_tests()
     outbound_webhooks.reset_for_tests()
-    _reset_plugin_managers_for_tests()
+    reset_plugin_managers_for_tests()
 
 
 def test_worker_registers_owning_profile_config_hooks(homes, tmp_path, monkeypatch):
