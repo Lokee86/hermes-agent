@@ -201,6 +201,8 @@ export function appEnv(facts: InstallFacts, extra: Record<string, string> = {}):
     ...displayEnv(),
     HERMES_DESKTOP_USER_DATA_DIR: userDataDir(facts),
     HERMES_DESKTOP_SKIP_QUIT_CONFIRM: '1',
+    // Never repoint the user's OS hermes:// handler (HKCU on Windows) at a test checkout.
+    HERMES_DESKTOP_SKIP_PROTOCOL_REGISTRATION: '1',
     HERMES_DESKTOP_CDP_PORT: 'off',
     ...extra
   }
@@ -208,7 +210,11 @@ export function appEnv(facts: InstallFacts, extra: Record<string, string> = {}):
 
 /** A user who configured a custom OpenAI-compatible endpoint (the scripted provider). */
 export function configureProvider(facts: InstallFacts, providerUrl: string): void {
-  fs.writeFileSync(path.join(facts.hermesHome, 'config.yaml'), providerConfigYaml(providerUrl))
+  const config = path.join(facts.hermesHome, 'config.yaml')
+  // Keep the seed's top-level `update:` block (the install's `--set-channel main` record): the
+  // specs publish commits on main, never a release, so the stable default would offer nothing.
+  const update = /^update:\n(?:[ \t].*\n?)*/m.exec(readText(config))?.[0] ?? ''
+  fs.writeFileSync(config, providerConfigYaml(providerUrl, update.endsWith('\n') || !update ? update : `${update}\n`))
   fs.writeFileSync(path.join(facts.hermesHome, '.env'), 'MOCK_API_KEY=update-e2e-key\n')
 }
 
@@ -498,7 +504,8 @@ export function isAlive(pid: number): boolean {
   try {
     process.kill(pid, 0)
 
-    return !/^\S+ \(.*\) Z /.test(readText(`/proc/${pid}/stat`))
+    // Zombie check needs procfs; elsewhere a signalable pid is alive.
+    return !fs.existsSync(`/proc/${pid}/stat`) || !/^\S+ \(.*\) Z /.test(readText(`/proc/${pid}/stat`))
   } catch {
     return false
   }

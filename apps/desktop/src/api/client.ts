@@ -9,7 +9,7 @@ import { map, type MapStore } from 'nanostores'
 
 import type { HermesApiRequest } from '@/global'
 
-import { CANONICAL_GATEWAY_PROTOCOL, CanonicalDesktopProtocol, canonicalProfile, canonicalSessionKey, recordCanonicalOwner } from './canonical-protocol'
+import { CANONICAL_GATEWAY_PROTOCOL, CanonicalDesktopProtocol, canonicalProfile, canonicalSessionKey, recordCanonicalOwner, splitRewindSubmit } from './canonical-protocol'
 
 // Desktop startup fires a burst of read-only data calls (config, profiles,
 // model info/options, cron) the moment the backend passes readiness. On a
@@ -43,16 +43,22 @@ export const GATEWAY_NOT_CONNECTED_MESSAGE = 'Hermes gateway is not connected'
 // the same `onRequest` registry as a request whose `respond` issues the RPC.
 const CANONICAL_PROMPT_EVENTS: Record<string, 'approval' | 'clarify'> = { 'approval.request': 'approval', 'clarify.request': 'clarify' }
 
-const ATTACH_REQUIRED = new Set(['prompt.submit', 'approval.respond', 'clarify.respond', 'session.interrupt', 'prompt.cancel'])
+const ATTACH_REQUIRED = new Set(['prompt.submit', 'approval.respond', 'clarify.respond', 'session.interrupt', 'prompt.cancel', 'session.rewind'])
 // A branch is a CAS mutation on the PARENT: an un-attached parent (right-click on a sidebar row
-// that was never opened) has no cached revision, so attach it first to learn one.
-const PARENT_ATTACH_REQUIRED = new Set(['session.branch_stored', 'session.branch_whole'])
+// that was never opened) has no cached revision, so attach it first to learn one. Move to project
+// (`session_key`) is the same CAS mutation on a sidebar row.
+const PARENT_ATTACH_REQUIRED = new Set(['session.branch_stored', 'session.branch_whole', 'session.workspace.move'])
 
 // Canonical-only identity keys. The legacy `hermes serve` contract refuses an unknown key as
 // version skew (4000), so they are stripped on a non-canonical dial. `prompt.submit` keeps its
 // `submission_id` on purpose: the submit path retries identityless on that exact refusal and
-// records the send as legacy-attempted, which a silent strip here would hide.
-const LEGACY_STRIP: Record<string, string[]> = { 'session.create': ['request_id'], 'session.branch_stored': ['request_id'] }
+// records the send as legacy-attempted, which a silent strip here would hide. A message-level
+// `session.branch` keeps its legacy `count` prefix; only the canonical row boundary is dropped.
+const LEGACY_STRIP: Record<string, string[]> = {
+  'session.create': ['request_id'],
+  'session.branch_stored': ['request_id'],
+  'session.branch': ['through_message_id']
+}
 
 function legacyParams(method: string, params: Record<string, unknown>): Record<string, unknown> {
   const strip = LEGACY_STRIP[method]
@@ -83,6 +89,8 @@ export class HermesGateway extends JsonRpcGatewayClient {
   private readonly displayProfiles = new Map<string, string>()
   private readonly eventRoutes = new WeakMap<GatewayEvent, string>()
   private readonly reconciledEpochs = new Set<string>()
+  // Frames of an ambiguous (session, epoch) parked until its owner probes settle.
+  private readonly parkedFrames = new Map<string, Array<() => void>>()
   private connectionGeneration = 0
 
   override onRequest(handler: ServerRequestHandler): () => void {
@@ -138,7 +146,14 @@ export class HermesGateway extends JsonRpcGatewayClient {
         void this.request(`${kind}.respond`, { session_id: sid, profile, request_id: id, ...answer })
           .catch(() => this.recoverCanonicalPrompt(id, sid, profile, generation))
       },
-      fail: () => { settled = true }
+      // A card this window declined (a stopped session) is not delivered: the next authoritative
+      // snapshot that still lists the prompt shows it again. Only answered prompts stay deduplicated.
+      fail: () => {
+        if (settled) { return }
+        settled = true
+
+        if (generation === this.connectionGeneration) { this.deliveredPrompts.delete(id) }
+      }
     }
 
     recordCanonicalOwner(request, this.displayProfiles.get(canonicalSessionKey(sid, profile)) ?? profile)
@@ -164,28 +179,53 @@ export class HermesGateway extends JsonRpcGatewayClient {
     this.deliveredPrompts.clear()
     this.sessionProfiles.clear()
     this.profileAliases.clear()
-    this.replayProfiles.clear()
+    this.retainReplayOwners()
     this.displayProfiles.clear()
     this.reconciledEpochs.clear()
+    this.parkedFrames.clear()
     this.attached.clear()
     super.close()
   }
 
+  // An epoch's owner qualifies the shared client's retained replay cursor, not this socket's
+  // attachments: it lives exactly as long as that cursor, so a redial replays to the same owner.
+  private retainReplayOwners(): void {
+    const cursors = this.getSeqWatermarks()
+
+    for (const [epoch, owner] of this.replayProfiles) {
+      if (!(owner.sessionId in cursors)) { this.replayProfiles.delete(epoch) }
+    }
+  }
+
   override on<K extends GatewayEventName>(type: K, handler: (event: GatewayEvent<K>) => void): () => void {
-    return super.on<K>(type, event => {
-      // Named listeners run before wildcard listeners in the shared client.
-      // Normalize before either kind sees the prompt, including replay delivery.
-      if (this.canonical && !this.normalizeCanonicalEvent(event)) { return }
-      handler(event)
-    })
+    // Named listeners run before wildcard listeners in the shared client.
+    // Normalize before either kind sees the prompt, including replay delivery.
+    return super.on<K>(type, event => this.deliverNormalized(event, handler as (event: GatewayEvent) => void))
   }
 
   override onAny(handler: (event: GatewayEvent) => void): () => void {
-    return super.onAny(event => {
-      if (this.canonical && !this.normalizeCanonicalEvent(event)) { return }
-      handler(event)
-    })
+    return super.onAny(event => this.deliverNormalized(event, handler))
   }
+
+  private deliverNormalized(event: GatewayEvent, handler: (event: GatewayEvent) => void): void {
+    const key = JSON.stringify([event.session_id, event.replay_epoch])
+    // While an owner probe for this (session, epoch) runs, its frames wait and deliver in order.
+    const parked = this.canonical && event.session_id ? this.parkedFrames.get(key) : undefined
+
+    const deliver = () => {
+      if (!this.canonical || this.normalizeCanonicalEvent(event)) { handler(event) }
+    }
+
+    if (parked) {
+      parked.push(deliver)
+    } else if (!this.canonical || this.normalizeCanonicalEvent(event)) {
+      handler(event)
+    } else {
+      // The owner probe this frame just started may establish its route; it is the first frame parked.
+      this.parkedFrames.get(key)?.push(deliver)
+    }
+  }
+
 
   private rememberSessionProfile(sessionId: string, profile: unknown): void {
     const profiles = this.sessionProfiles.get(sessionId) ?? new Set<string>()
@@ -252,12 +292,28 @@ export class HermesGateway extends JsonRpcGatewayClient {
 
     if (this.reconciledEpochs.has(key)) { return }
     this.reconciledEpochs.add(key)
+    this.parkedFrames.set(key, [])
+    const generation = this.connectionGeneration
 
     // A new/unknown replay epoch cannot choose between equal stored IDs. One
     // authoritative snapshot per known owner recovers cards and establishes routes.
-    for (const profile of this.sessionProfiles.get(sessionId) ?? []) {
-      void this.request('session.resume', { session_id: sessionId, profile }).catch(() => undefined)
-    }
+    const probes = [...this.sessionProfiles.get(sessionId) ?? []].map(profile =>
+      this.request('session.resume', { session_id: sessionId, profile }))
+
+    void Promise.allSettled(probes).then(results => {
+      if (generation !== this.connectionGeneration) { return }
+      const parked = this.parkedFrames.get(key) ?? []
+      this.parkedFrames.delete(key)
+
+      // No owner answered: a later frame probes again instead of being dropped until reconnect.
+      if (!results.some(result => result.status === 'fulfilled')) {
+        this.reconciledEpochs.delete(key)
+
+        return
+      }
+
+      for (const deliver of parked) { deliver() }
+    })
   }
 
   override async connect(wsUrl: string): Promise<void> {
@@ -267,9 +323,10 @@ export class HermesGateway extends JsonRpcGatewayClient {
     this.deliveredPrompts.clear()
     this.sessionProfiles.clear()
     this.profileAliases.clear()
-    this.replayProfiles.clear()
+    this.retainReplayOwners()
     this.displayProfiles.clear()
     this.reconciledEpochs.clear()
+    this.parkedFrames.clear()
 
     return super.connect(wsUrl)
   }
@@ -319,6 +376,14 @@ export class HermesGateway extends JsonRpcGatewayClient {
     if (!this.canonical) { return super.request<T>(method, legacyParams(method, params), timeoutMs, signal) }
     const generation = this.connectionGeneration
     const deadline = Date.now() + (timeoutMs ?? DEFAULT_GATEWAY_REQUEST_TIMEOUT_MS)
+    // A truncating submit (edit / regenerate / restore) is the owner's rewind, then the submit.
+    const rewind = method === 'prompt.submit' ? splitRewindSubmit(params) : null
+
+    if (rewind) {
+      if (rewind.rewind) { await this.request('session.rewind', rewind.rewind, remainingRequestBudget(deadline, signal), signal) }
+
+      return this.request<T>('prompt.submit', rewind.submit, remainingRequestBudget(deadline, signal), signal)
+    }
 
     // A question's owner is immutable even when a second profile attaches an
     // equal stored session ID while the first card remains open.
@@ -388,7 +453,7 @@ export class HermesGateway extends JsonRpcGatewayClient {
       await resume(sid)
     }
 
-    const parent = PARENT_ATTACH_REQUIRED.has(method) ? params.parent_session_id ?? params.session_id : null
+    const parent = PARENT_ATTACH_REQUIRED.has(method) ? params.parent_session_id ?? params.session_id ?? params.session_key : null
 
     if (typeof parent === 'string' && parent && !this.attached.has(canonicalSessionKey(parent, params.profile))) {
       await resume(parent)
