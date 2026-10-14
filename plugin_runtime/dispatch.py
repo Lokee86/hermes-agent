@@ -105,7 +105,7 @@ VALID_HOOKS: set[str] = {
     # pre_gateway_dispatch: once per incoming MessageEvent, after the internal-event guard, BEFORE
     # auth/pairing and dispatch. Kwargs: event, gateway, session_store. Return {"action": "skip",
     # "reason"} -> drop; {"action": "rewrite", "text"} -> replace event.text; "allow"/None -> normal.
-    "pre_gateway_dispatch",
+    "pre_gateway_dispatch", "post_gateway_admission",
     # agent_loop_stopped: an agent turn was interrupted mid-run (/stop, or the running-agent
     # fast-path of /new; see gateway/run.py::_interrupt_and_clear_session). Kwargs: session_key,
     # platform, reason, invalidation_reason. Return values are ignored.
@@ -115,6 +115,9 @@ VALID_HOOKS: set[str] = {
     # surface: "cli"|"gateway"|"smart"; post_approval_response adds choice ("once"|"session"|
     # "always"|"deny"|"timeout"|"smart_approve"|"smart_deny") and decided_by.
     "pre_approval_request", "post_approval_response",
+    # Human-block observers fire around sudo/clarify/approval waits. Payloads are request metadata only;
+    # resolved adds outcome. Return values are ignored.
+    "on_human_input_request", "on_human_input_resolved",
     # on_room_member_activity: a hosted Group Chat member's live runtime events (tool.started/completed,
     # request.opened, message.delta, reasoning.delta, turn.error, ...) stamped with room_id, thread_id,
     # member_id, turn_id, task_id, execution_generation. Observer, queued per consumer off the token
@@ -183,6 +186,7 @@ _HOOK_TIMEOUT_BOUNDED_HOOKS: set[str] = {
     "post_tool_call", "transform_terminal_output", "transform_tool_result", "transform_llm_output",
     "pre_llm_call", "post_llm_call", "pre_api_request", "post_api_request", "api_request_error",
     "pre_auxiliary_call", "post_auxiliary_call", "pre_verify", "on_session_start", "on_session_end",
+    "post_gateway_admission",
 }
 
 # Policy hooks: timeout / still-running must fail closed (block the tool).

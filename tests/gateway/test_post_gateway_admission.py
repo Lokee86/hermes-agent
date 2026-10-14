@@ -7,6 +7,8 @@ are registered on the per-home ``PluginManager`` exactly as ``ctx.register_hook`
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
+import asyncio
+
 import pytest
 
 from gateway.config import GatewayConfig, Platform, PlatformConfig
@@ -63,6 +65,29 @@ def _allow_all(monkeypatch):
         monkeypatch.delenv(key, raising=False)
     monkeypatch.setenv("WHATSAPP_ALLOWED_USERS", "*")
 
+
+
+def test_hook_is_registered_and_timeout_bounded():
+    from plugin_runtime.dispatch import VALID_HOOKS, _HOOK_TIMEOUT_BOUNDED_HOOKS
+
+    assert HOOK in VALID_HOOKS
+    assert HOOK in _HOOK_TIMEOUT_BOUNDED_HOOKS
+
+
+@pytest.mark.asyncio
+async def test_slow_consumer_times_out_fail_open(monkeypatch):
+    import plugin_runtime.dispatch as dispatch
+
+    async def slow(**_kwargs):
+        await asyncio.sleep(0.2)
+        return {"action": "handled", "reply": "too late"}
+
+    monkeypatch.setattr(dispatch, "read_hook_callback_timeout_seconds", lambda: 0.01)
+    _register(slow)
+    runner = _runner()
+
+    assert await runner._handle_message(_event()) == "agent-ok"
+    runner._handle_message_with_agent.assert_awaited_once()
 
 @pytest.mark.asyncio
 async def test_handled_consumes_the_turn_and_its_reply_is_delivered():

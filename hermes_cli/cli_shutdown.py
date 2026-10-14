@@ -171,8 +171,8 @@ def _should_emit_cleanup_session_finalize(session_id: str | None) -> bool:
 def _notify_session_finalize(*, session_id: str | None, platform: str = "cli", reason: str = "shutdown") -> list[str]:
     """Fire on_session_finalize; return the plugin messages meant for the user (never raises)."""
     with suppress(Exception):
-        from hermes_cli.lifecycle import finalize_session, session_end_messages
-        return session_end_messages(finalize_session(session_id=session_id, platform=platform, reason=reason))
+        from hermes_cli.lifecycle import finalize_session
+        return finalize_session(session_id=session_id, platform=platform, reason=reason)
     return []
 
 
