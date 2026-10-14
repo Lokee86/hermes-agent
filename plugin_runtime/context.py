@@ -986,6 +986,7 @@ class PluginContext:
             blueprint, "Plugin %s registered automation blueprint: %s", blueprint.key,
         )
 
+    @_serialized_replacement
     def register_skill(
         self, name: str, path: Path, description: str = "",
         frontmatter: Optional[Mapping[str, Any]] = None,

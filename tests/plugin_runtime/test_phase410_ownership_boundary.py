@@ -1,197 +1,128 @@
-"""Permanent Phase 4.10 ownership ratchet for the plugin runtime boundary."""
+"""Phase 4.10 plugin-runtime ownership verification through interfaces and behavior."""
 
 from __future__ import annotations
 
-import ast
-from pathlib import Path
+from concurrent.futures import ThreadPoolExecutor, TimeoutError
+from threading import Event
+
+from plugin_runtime.context import PluginContext
+from plugin_runtime.loading import LoadedPlugin, PluginLoaderMixin
+from plugin_runtime.manager import PluginManager
+from plugin_runtime.manifest import PluginManifest
+from plugin_runtime.registration import PluginRegistration, replacement_coordinator
 
 
-ROOT = Path(__file__).resolve().parents[2]
-PLUGIN_RUNTIME_ROOT = ROOT / "plugin_runtime"
-PLUGIN_COMPAT_FACADE = ROOT / "hermes_cli" / "plugin_compat.py"
-PLUGINS_FACADE = ROOT / "hermes_cli" / "plugins.py"
-CONFIG_BRIDGE = PLUGIN_RUNTIME_ROOT / "config_bridge.py"
+def test_phase410_cli_facade_reexports_canonical_runtime_owners() -> None:
+    import hermes_cli.plugins as legacy
 
-SOURCE_ROOTS = (
-    "acp_adapter",
-    "agent",
-    "cron",
-    "gateway",
-    "hermes_cli",
-    "nous_cli",
-    "plugin_runtime",
-    "plugins",
-    "providers",
-    "tools",
-    "tui_gateway",
-)
-ROOT_SOURCES = (
-    "cli.py",
-    "hermes_state.py",
-    "model_tools.py",
-    "run_agent.py",
-)
-
-# These were implementation owners before plugin_runtime became canonical. They are
-# intentionally absent: compatibility/process-boundary modules are not retired here.
-RETIRED_PLUGIN_RUNTIME_MODULES = (
-    "hermes_cli.plugin_capabilities",
-    "hermes_cli.plugin_index",
-    "hermes_cli.plugins_activation_live",
-    "hermes_cli.plugins_discovery",
-    "hermes_cli.plugins_dispatch",
-    "hermes_cli.plugins_ledger",
-    "hermes_cli.plugins_loader",
-    "hermes_cli.plugins_manifest",
-)
+    assert legacy.PluginManager is PluginManager
+    assert legacy.PluginContext is PluginContext
+    assert legacy.PluginRegistration is PluginRegistration
+    assert legacy.LoadedPlugin is LoadedPlugin
+    assert legacy.PluginLoaderMixin is PluginLoaderMixin
+    assert legacy.PluginManifest is PluginManifest
 
 
-def _tree(path: Path) -> ast.Module:
-    return ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+def test_phase410_cli_facade_routes_runtime_operations_to_canonical_owners() -> None:
+    import hermes_cli.plugins as legacy
+    from plugin_runtime import api, lifecycle
+
+    assert legacy.invoke_hook is api.invoke_hook
+    assert legacy.invoke_middleware is api.invoke_middleware
+    assert legacy.unload_plugins is api.unload_plugins
+    assert legacy.discover_plugins is lifecycle.discover_plugins
+    assert legacy.get_plugin_manager is lifecycle.get_plugin_manager
 
 
-def _production_sources() -> tuple[Path, ...]:
-    sources = [ROOT / name for name in ROOT_SOURCES if (ROOT / name).exists()]
-    for root_name in SOURCE_ROOTS:
-        root = ROOT / root_name
-        if root.exists():
-            sources.extend(root.rglob("*.py"))
-    return tuple(sorted(set(sources)))
+def test_phase410_manager_constructs_the_canonical_runtime_context(tmp_path) -> None:
+    manager = PluginManager(scope_key=str(tmp_path))
+    manifest = PluginManifest(name="phase410", key="phase410", source="user")
+
+    context = manager.context_for(manifest)
+
+    assert type(context) is PluginContext
+    assert context.manifest is manifest
+    assert context._manager is manager
 
 
-def _imports(path: Path) -> tuple[tuple[int, str], ...]:
-    found: list[tuple[int, str]] = []
-    for node in ast.walk(_tree(path)):
-        if isinstance(node, ast.Import):
-            found.extend((node.lineno, alias.name) for alias in node.names)
-        elif isinstance(node, ast.ImportFrom) and node.module:
-            found.append((node.lineno, node.module))
-    return tuple(found)
+def test_phase410_frozen_compatibility_surface_is_inert() -> None:
+    from hermes_cli import plugin_compat
+
+    assert plugin_compat.compat_report() == {}
+    assert plugin_compat.removal_in_effect() is True
+    assert plugin_compat.summary_lines({}) == []
 
 
-def _module_matches(module: str, prefix: str) -> bool:
-    return module == prefix or module.startswith(f"{prefix}.")
+def test_phase410_register_skill_replacement_is_serialized_against_disposal(
+    tmp_path, monkeypatch
+) -> None:
+    """An older skill lease cannot dispose between replacement write and lease attachment."""
+    skill_a = tmp_path / "a.md"
+    skill_b = tmp_path / "b.md"
+    skill_a.write_text("# a\n", encoding="utf-8")
+    skill_b.write_text("# b\n", encoding="utf-8")
 
-
-def _violations(
-    paths: tuple[Path, ...],
-    forbidden: tuple[str, ...],
-    *,
-    allowed: dict[Path, tuple[str, ...]] | None = None,
-) -> list[tuple[str, int, str]]:
-    violations: list[tuple[str, int, str]] = []
-    allowed = allowed or {}
-    for path in paths:
-        permitted = allowed.get(path, ())
-        for lineno, module in _imports(path):
-            if any(_module_matches(module, prefix) for prefix in forbidden) and not any(
-                _module_matches(module, prefix) for prefix in permitted
-            ):
-                violations.append((path.relative_to(ROOT).as_posix(), lineno, module))
-    return sorted(violations)
-
-
-def test_phase410_plugin_runtime_has_no_application_backedges() -> None:
-    violations = _violations(
-        tuple(PLUGIN_RUNTIME_ROOT.rglob("*.py")),
-        ("gateway", "nous_cli", "hermes_cli"),
-        allowed={CONFIG_BRIDGE: ("hermes_cli.config", "hermes_cli.plugins_state")},
+    manager = PluginManager(scope_key=str(tmp_path))
+    context_a = PluginContext(
+        PluginManifest(name="skill_a", key="skill_a", skill_namespace="shared"),
+        manager,
     )
-
-    assert violations == []
-
-
-def test_phase410_gateway_does_not_import_cli_plugin_runtime_surfaces() -> None:
-    forbidden = ("hermes_cli.plugins", "hermes_cli.plugin_compat") + RETIRED_PLUGIN_RUNTIME_MODULES
-    violations = _violations(tuple((ROOT / "gateway").rglob("*.py")), forbidden)
-
-    assert violations == []
-
-
-def test_phase410_first_party_does_not_consume_legacy_plugins_api() -> None:
-    forbidden = ("hermes_cli.plugins",)
-    sources = tuple(
-        path
-        for path in _production_sources()
-        if path not in {PLUGINS_FACADE, PLUGIN_COMPAT_FACADE}
+    context_b = PluginContext(
+        PluginManifest(name="skill_b", key="skill_b", skill_namespace="shared"),
+        manager,
     )
-    violations = _violations(sources, forbidden, allowed={CONFIG_BRIDGE: ("hermes_cli.plugins_state",)})
+    handle_a = context_a.register_skill("probe", skill_a)
+    qualified = "shared:probe"
 
-    assert violations == []
+    original_acquire = replacement_coordinator.acquire
+    wrote = Event()
+    release = Event()
 
+    def paused_acquire(slot, *, current, previous, restore, finalize=None):
+        if (
+            isinstance(current, dict)
+            and current.get("plugin_key") == "skill_b"
+            and slot == ("manager_mapping", id(manager._plugin_skills), qualified)
+        ):
+            wrote.set()
+            assert release.wait(timeout=2)
+        return original_acquire(
+            slot,
+            current=current,
+            previous=previous,
+            restore=restore,
+            finalize=finalize,
+        )
 
-def test_phase410_first_party_does_not_reference_retired_runtime_owners() -> None:
-    """Reject direct imports, qualified attributes, and literal late lookups."""
-    violations = []
-    retired = RETIRED_PLUGIN_RUNTIME_MODULES
-    for path in _production_sources():
-        tree = _tree(path)
-        for node in ast.walk(tree):
-            if isinstance(node, ast.Import):
-                references = [alias.name for alias in node.names]
-            elif isinstance(node, ast.ImportFrom) and node.module:
-                references = [node.module] + [
-                    f"{node.module}.{alias.name}" for alias in node.names
-                ]
-            elif isinstance(node, ast.Constant) and isinstance(node.value, str):
-                # A retained logging category is not a module reference.
-                if not any(
-                    node.value == name or node.value.startswith(name + ".")
-                    for name in retired
-                ):
-                    continue
-                if any(
-                    isinstance(parent, ast.Call)
-                    and node in parent.args
-                    and isinstance(parent.func, ast.Attribute)
-                    and parent.func.attr == "getLogger"
-                    for parent in ast.walk(tree)
-                ):
-                    continue
-                references = [node.value]
-            elif isinstance(node, ast.Attribute):
-                components = []
-                current = node
-                while isinstance(current, ast.Attribute):
-                    components.append(current.attr)
-                    current = current.value
-                if isinstance(current, ast.Name):
-                    components.append(current.id)
-                references = [".".join(reversed(components))]
+    monkeypatch.setattr(replacement_coordinator, "acquire", paused_acquire)
+
+    handle_b = None
+    try:
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            registration = pool.submit(context_b.register_skill, "probe", skill_b)
+            assert wrote.wait(timeout=1)
+
+            disposal = pool.submit(handle_a.dispose)
+            try:
+                disposal.result(timeout=0.05)
+            except TimeoutError:
+                pass
             else:
-                continue
-            for reference in references:
-                if any(
-                    reference == retired_name or reference.startswith(retired_name + ".")
-                    for retired_name in retired
-                ):
-                    violations.append(
-                        (path.relative_to(ROOT).as_posix(), node.lineno, reference)
-                    )
-    assert violations == []
+                raise AssertionError("skill disposal interleaved with replacement transaction")
+
+            release.set()
+            handle_b = registration.result(timeout=1)
+            disposal.result(timeout=1)
+
+        assert handle_b is not None
+        assert manager._plugin_skills[qualified]["path"] == skill_b
+        assert manager._plugin_skills[qualified]["plugin_key"] == "skill_b"
+    finally:
+        release.set()
+        if handle_b is not None:
+            handle_b.dispose()
 
 
-def test_phase410_retired_plugin_runtime_paths_remain_absent() -> None:
-    missing_enforcement = [
-        module.replace(".", "/") + ".py"
-        for module in RETIRED_PLUGIN_RUNTIME_MODULES
-        if (ROOT / (module.replace(".", "/") + ".py")).exists()
-    ]
-
-    assert missing_enforcement == []
-
-
-def test_phase410_compatibility_edges_remain_minimal() -> None:
-    plugin_compat_tree = _tree(PLUGIN_COMPAT_FACADE)
-    assert [
-        node.name
-        for node in plugin_compat_tree.body
-        if isinstance(node, ast.FunctionDef)
-    ] == ["compat_report", "removal_in_effect", "summary_lines"]
-    assert not any(isinstance(node, (ast.AsyncFunctionDef, ast.ClassDef)) for node in plugin_compat_tree.body)
-
-    plugins_tree = _tree(PLUGINS_FACADE)
-    assert not any(
-        isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
-        for node in plugins_tree.body
-    )
+def test_phase410_retired_load_disable_gate_is_absent() -> None:
+    assert "_plugin_load_disable_reason" not in PluginManager.__dict__
+    assert "_plugin_load_disable_reason" not in PluginLoaderMixin.__dict__

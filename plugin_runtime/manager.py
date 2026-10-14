@@ -132,11 +132,6 @@ class PluginManager(PluginLoaderMixin, PluginDispatchMixin, PluginOwnershipMixin
         """Construct the runtime-owned plugin context requested by plugin loading."""
         return PluginContext(manifest, self)
 
-    @staticmethod
-    def _plugin_load_disable_reason(manifest: PluginManifest) -> Optional[str]:
-        """No scheduled pre-decomposition import-path gate remains after 2026-09-14."""
-        return None
-
     def on_plugin_loaded(self, callback: Callable[[list[dict[str, Any]]], Any]) -> Callable[[], None]:
         """Subscribe to discovery sweeps that load plugins this process did not already have."""
         if not callable(callback):
