@@ -1,217 +1,82 @@
-"""Browser cleanup fallback contracts, retained after retiring the npx warmer."""
-
+"""Browser teardown delegates to the retained runtime owner and kills owned trees."""
+import json
 import os
-import signal
 import subprocess
+import sys
 import time
-from unittest.mock import MagicMock, patch
+from types import SimpleNamespace
 
+import psutil
 import pytest
 
-from tools.browser_tool_lifecycle import _kill_process_tree, _legacy_kill_process_tree
+from tools.browser_tool_lifecycle import _kill_process_tree
 
 
-@pytest.fixture
-def fake_process_table(monkeypatch):
-    """psutil for a MagicMock proc: the shared-group branch snapshots
-    psutil.Process(proc.pid).children() and SIGKILLs each one. Against the real
-    table, pid=999 is whatever the machine runs there, and when that is an
-    ancestor of the test worker the test SIGKILLs its own interpreter (seen as
-    a CRASHED file on macOS runners, whose PIDs are allocated system-wide)."""
-    import psutil
+def test_browser_cleanup_uses_canonical_popen_owner(monkeypatch):
+    from runtime import processes
 
-    child = MagicMock()
-    queried = []
+    seen = []
+    proc = SimpleNamespace(pid=123)
+    monkeypatch.setattr(processes, "kill_popen_process_tree", seen.append)
+    _kill_process_tree(proc)
+    assert seen == [proc]
 
-    def process(pid):
-        queried.append(pid)
-        return MagicMock(children=MagicMock(return_value=[child]))
 
-    monkeypatch.setattr(psutil, "Process", process)
-    return queried, child
+def _running(pid):
+    try:
+        return psutil.Process(pid).status() not in (psutil.STATUS_ZOMBIE, psutil.STATUS_DEAD)
+    except psutil.NoSuchProcess:
+        return False
+
+
+def _exercise_owned_tree(tmp_path, *, own_group):
+    receipt = tmp_path / "grandchild.json"
+    script = tmp_path / "disposable browser.py"
+    script.write_text(
+        "import json, subprocess, sys, time\n"
+        "from pathlib import Path\n"
+        "p = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(60)'])\n"
+        "target = Path(sys.argv[1]); temp = target.with_suffix('.tmp')\n"
+        "temp.write_text(json.dumps({'pid': p.pid})); temp.replace(target)\n"
+        "time.sleep(60)\n", encoding="utf-8")
+    proc = subprocess.Popen(
+        [sys.executable, str(script), str(receipt)], start_new_session=own_group,
+        stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    grandchild = None
+    try:
+        deadline = time.monotonic() + 10
+        while not receipt.exists() and time.monotonic() < deadline:
+            time.sleep(.03)
+        assert receipt.exists(), "child did not publish its owned descendant"
+        grandchild = psutil.Process(json.loads(receipt.read_text())["pid"])
+        if os.name != "nt":
+            assert os.getpgid(proc.pid) == (proc.pid if own_group else os.getpgid(0))
+        _kill_process_tree(proc)
+        proc.wait(timeout=10)
+        deadline = time.monotonic() + 10
+        while _running(grandchild.pid) and time.monotonic() < deadline:
+            time.sleep(.03)
+        assert not _running(grandchild.pid), "owned descendant survived browser teardown"
+        assert psutil.Process(os.getpid()).is_running()
+    finally:
+        if grandchild is not None and grandchild.is_running():
+            try:
+                grandchild.kill()
+            except psutil.NoSuchProcess:
+                pass
+        if proc.poll() is None:
+            proc.kill()
+        proc.wait(timeout=10)
 
 
 @pytest.mark.platforms("posix")
-def test_posix_kills_process_group_term_then_kill(monkeypatch):
-    proc = MagicMock(pid=999)
-    monkeypatch.setattr(os, "getpgid", lambda pid: 999)
-    calls = []
-    monkeypatch.setattr(os, "killpg", lambda pgid, sig: calls.append((pgid, sig)))
-    _legacy_kill_process_tree(proc)
-    assert calls == [(999, signal.SIGTERM), (999, signal.SIGKILL)]
-
-
-@pytest.mark.platforms("posix")
-def test_posix_missing_process_returns_silently(monkeypatch, fake_process_table):
-    def missing(pid):
-        raise ProcessLookupError()
-
-    monkeypatch.setattr(os, "getpgid", missing)
-    _legacy_kill_process_tree(MagicMock(pid=999))
-    assert fake_process_table[0] == [999]
-
-
-@pytest.mark.platforms("posix")
-@pytest.mark.parametrize("kill_error", [None, OSError("already reaped")])
-def test_missing_killpg_falls_back_to_proc_kill(monkeypatch, kill_error):
-    proc = MagicMock(pid=999)
-    proc.kill.side_effect = kill_error
-    monkeypatch.delattr(os, "killpg", raising=False)
-    _legacy_kill_process_tree(proc)
-    proc.kill.assert_called_once()
-
-
-@pytest.mark.platforms("posix")
-def test_permission_denied_does_not_attempt_sigkill(monkeypatch):
-    monkeypatch.setattr(os, "getpgid", lambda pid: 999)
-    calls = []
-
-    def denied(pgid, sig):
-        calls.append((pgid, sig))
-        raise PermissionError()
-
-    monkeypatch.setattr(os, "killpg", denied)
-    _legacy_kill_process_tree(MagicMock(pid=999))
-    assert calls == [(999, signal.SIGTERM)]
+@pytest.mark.live_system_guard_bypass
+@pytest.mark.parametrize("own_group", [False, True])
+def test_posix_browser_tree_kill_spares_callers_group(tmp_path, own_group):
+    _exercise_owned_tree(tmp_path, own_group=own_group)
 
 
 @pytest.mark.platforms("windows")
-@pytest.mark.parametrize("error", [None, OSError("taskkill missing")])
-def test_windows_taskkill_targets_tree_and_is_best_effort(error):
-    with patch("subprocess.run", side_effect=error) as run:
-        _legacy_kill_process_tree(MagicMock(pid=4321))
-    assert run.call_args.args[0] == ["taskkill", "/PID", "4321", "/T", "/F"]
-
-# ---------------------------------------------------------------------------
-# Group-leadership guard (#119149): a child that does not lead its own group
-# shares OURS — killpg would signal the whole Hermes/test-runner tree.
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.platforms("posix")
-def test_posix_shared_group_is_never_killpgd(monkeypatch, fake_process_table):
-    """A child spawned without start_new_session shares OUR process group, so
-    os.getpgid returns the caller's own pgid — killpg would signal the whole
-    Hermes/test-runner tree. Only a group leader may be killpg'd; the direct
-    child still gets proc.kill()."""
-    proc = MagicMock()
-    proc.pid = 999
-    monkeypatch.setattr(os, "getpgid", lambda pid: 555)  # child's group != its pid
-    killpg_calls = []
-    monkeypatch.setattr(os, "killpg", lambda pgid, sig: killpg_calls.append((pgid, sig)))
-
-    _legacy_kill_process_tree(proc)
-
-    assert killpg_calls == []
-    proc.kill.assert_called_once()
-    queried, descendant = fake_process_table
-    assert queried == [999]
-    descendant.kill.assert_called_once()
-
-
-@pytest.mark.platforms("posix")
-def test_real_shared_group_child_does_not_signal_us(monkeypatch):
-    """End-to-end through _kill_process_tree with the deadline helper forced
-    to fail: a real child in our own process group must be proc.kill()ed
-    without any killpg — if the group signal fired, this test process would
-    be dead before the assertion."""
-    from tools.browser_tool_lifecycle import _kill_process_tree
-
-    proc = subprocess.Popen(
-        ["sleep", "60"],
-        stdin=subprocess.DEVNULL,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-    )
-    try:
-        assert os.getpgid(proc.pid) == os.getpgid(0)  # shared group precondition
-        monkeypatch.setattr(
-            "agent.deadline.kill_process_tree",
-            lambda *a, **k: (_ for _ in ()).throw(RuntimeError("deadline unavailable")),
-        )
-        _kill_process_tree(proc)
-        proc.wait(timeout=5)
-        assert proc.returncode is not None
-    finally:
-        if proc.poll() is None:
-            proc.kill()
-
-
-@pytest.mark.platforms("posix")
-@pytest.mark.live_system_guard_bypass  # the grandchild reparents to init once the
-# parent dies; signalling a reparented descendant is exactly the contract under
-# test, and the guard's subtree walk races with the reparenting (blocked kills
-# surfaced as a 1-2% CI flake: psutil's os.kill routes through the guard after
-# the parent kill has landed).
-def test_real_shared_group_child_descendants_are_killed(tmp_path):
-    """A shared-group child's descendants can hold the capture pipe's write
-    end open past proc.kill() (the #68915 communicate() hang), so the
-    non-leader path must kill them individually. The grandchild is in OUR
-    process group: if the implementation regressed to killpg this test
-    process would die before the assertion."""
-    pid_file = tmp_path / "grandchild.pid"
-    proc = subprocess.Popen(
-        ["sh", "-c", f"sleep 60 & echo $! > {pid_file}; wait"],
-        stdin=subprocess.DEVNULL,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-    )
-    gcpid = None
-    try:
-        deadline = time.monotonic() + 5
-        while time.monotonic() < deadline:
-            text = pid_file.read_text().strip() if pid_file.exists() else ""
-            if text:
-                gcpid = int(text)
-                break
-            time.sleep(0.05)
-        assert gcpid is not None, "grandchild never wrote its pid file"
-        assert os.getpgid(proc.pid) == os.getpgid(0)  # shared group precondition
-
-        _legacy_kill_process_tree(proc)
-        proc.wait(timeout=5)
-
-        deadline = time.monotonic() + 5
-        while time.monotonic() < deadline:
-            try:
-                os.kill(gcpid, 0)
-            except ProcessLookupError:
-                break
-            time.sleep(0.05)
-        else:
-            pytest.fail(f"grandchild pid {gcpid} survived the non-leader tree kill")
-    finally:
-        if proc.poll() is None:
-            proc.kill()
-        if gcpid is not None:
-            try:
-                os.kill(gcpid, signal.SIGKILL)
-            except OSError:
-                pass
-
-
-@pytest.mark.platforms("posix")
-def test_real_group_leader_child_is_tree_killed(monkeypatch):
-    """Control: a child leading its own group (process_group=0) still gets the
-    group signal through the same fallback path."""
-    from tools.browser_tool_lifecycle import _kill_process_tree
-
-    proc = subprocess.Popen(
-        ["sleep", "60"],
-        stdin=subprocess.DEVNULL,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-        process_group=0,
-    )
-    try:
-        assert os.getpgid(proc.pid) == proc.pid  # leader precondition
-        monkeypatch.setattr(
-            "agent.deadline.kill_process_tree",
-            lambda *a, **k: (_ for _ in ()).throw(RuntimeError("deadline unavailable")),
-        )
-        _kill_process_tree(proc)
-        proc.wait(timeout=5)
-        assert proc.returncode is not None
-    finally:
-        if proc.poll() is None:
-            proc.kill()
+@pytest.mark.live_system_guard_bypass
+def test_windows_browser_cleanup_kills_owned_descendants(tmp_path):
+    _exercise_owned_tree(tmp_path, own_group=False)

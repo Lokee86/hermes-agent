@@ -1,10 +1,12 @@
 """Tests for shared process-containment primitives."""
 
+import pytest
+
 from runtime import processes
 
 
+@pytest.mark.platforms("posix")
 def test_attach_self_is_noop_off_windows(monkeypatch):
-    monkeypatch.setattr(processes, "_IS_WINDOWS", False)
     monkeypatch.setattr(processes, "_JOB_HANDLE", None)
     assert processes.attach_self_to_kill_on_close_job() is False
 

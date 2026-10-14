@@ -21,7 +21,7 @@ def _run(tmp_path: Path, body: str) -> dict:
         from pathlib import Path
         sys.path.insert(0, sys.argv[1])
         from hermes_cli import update_receipt as receipts
-        from hermes_cli.process_identity import _process_create_time
+        from runtime.process_identity import _process_create_time
     """) + textwrap.dedent(body), encoding="utf-8")
     env = {key: value for key, value in os.environ.items()
            if not key.startswith(("HERMES_", "PYTEST_"))}

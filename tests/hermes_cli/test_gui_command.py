@@ -1402,7 +1402,7 @@ def test_gui_password_store_bridge_is_linux_only(tmp_path, monkeypatch):
 
 @pytest.mark.platforms("windows")
 def test_gui_win32_launches_detached_and_returns(tmp_path, monkeypatch):
-    import hermes_cli._subprocess_compat as _subproc_compat
+    import runtime.subprocess_compat as _subproc_compat
 
     root = _make_desktop_tree(tmp_path)
     monkeypatch.setattr(cli_main, "PROJECT_ROOT", root)
@@ -1435,7 +1435,7 @@ def test_gui_win32_launches_detached_and_returns(tmp_path, monkeypatch):
 
 @pytest.mark.platforms("windows")
 def test_gui_win32_detach_falls_back_without_breakaway(tmp_path, monkeypatch):
-    import hermes_cli._subprocess_compat as _subproc_compat
+    import runtime.subprocess_compat as _subproc_compat
 
     root = _make_desktop_tree(tmp_path)
     monkeypatch.setattr(cli_main, "PROJECT_ROOT", root)

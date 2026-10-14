@@ -25,7 +25,7 @@ sys.path.insert(0, sys.argv[1])
 if sys.argv[2] == 'runtime':
     from runtime.process_identity import pid_exists_stdlib
 else:
-    from hermes_cli._subprocess_compat import pid_exists_stdlib
+    from runtime.process_identity import pid_exists_stdlib
 
 assert pid_exists_stdlib(os.getpid())
 assert 'utils' not in sys.modules, 'bare process liveness eagerly loaded application dependencies'

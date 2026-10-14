@@ -82,7 +82,7 @@ def test_live_running_record_is_not_reclaimed(tmp_path, monkeypatch):
     own_id = update_receipt._current.get().data["update_id"]
     for path in (tmp_path / "logs/update_receipts").glob("*.json"):
         data = json.loads(path.read_text())
-        from hermes_cli.process_identity import _process_create_time
+        from runtime.process_identity import _process_create_time
 
         parent_time = _process_create_time(os.getppid())
         data.update(pid=os.getppid(), writer_pid=os.getppid(),

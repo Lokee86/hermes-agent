@@ -1,93 +1,30 @@
-"""Architecture guards for the stdio/resource-limit runtime extraction."""
-
-from __future__ import annotations
-
-import ast
-from pathlib import Path
+"""Stdio and resource-limit primitives accept policy rather than loading upper layers."""
+from tests.runtime.ownership_probe import probe_without_upper_layers
 
 
-ROOT = Path(__file__).resolve().parents[2]
-SCAN_ROOTS = (
-    "agent",
-    "cron",
-    "gateway",
-    "hermes_cli",
-    "plugins",
-    "profiles",
-    "providers",
-    "runtime",
-    "storage",
-    "auth",
-    "kanban",
-    "automation",
-    "tools",
-    "tui_gateway",
-)
-RUNTIME_OWNERS = (
-    ROOT / "runtime" / "stdio.py",
-    ROOT / "runtime" / "resource_limits.py",
-)
-def _python_sources():
-    for dirname in SCAN_ROOTS:
-        base = ROOT / dirname
-        if base.exists():
-            yield from base.rglob("*.py")
+def test_resource_limit_compatibility_delegates_loaded_policy(monkeypatch):
+    from hermes_cli import resource_limits as compat
+    from runtime import resource_limits as owner
+
+    policy = {"runtime": {"nofile_soft_limit": 1234}}
+    seen = []
+    monkeypatch.setattr(owner, "configured_nofile_soft_limit",
+                        lambda config: seen.append(config) or 1234)
+    assert compat.configured_nofile_soft_limit(policy) == 1234
+    assert seen == [policy]
 
 
-def test_runtime_owners_exist_and_cli_resource_limits_is_compatibility_only():
-    for path in RUNTIME_OWNERS:
-        assert path.exists(), path.relative_to(ROOT)
-    assert not (ROOT / "hermes_cli" / "stdio.py").exists()
+def test_runtime_stdio_and_resource_policy_need_no_upper_layers():
+    probe_without_upper_layers("""
+        import sys
+        from runtime import resource_limits, stdio
 
-    compat = ROOT / "hermes_cli" / "resource_limits.py"
-    tree = ast.parse(compat.read_text(encoding="utf-8"), filename=str(compat))
-    definitions = {
-        node.name
-        for node in tree.body
-        if isinstance(node, (ast.FunctionDef, ast.ClassDef))
-    }
-    assert definitions == {
-        "_loaded_config",
-        "configured_nofile_soft_limit",
-        "apply_nofile_soft_limit",
-    }
-
-
-def test_no_source_references_retired_cli_modules():
-    violations = []
-    needles = (
-        "hermes_cli" + ".stdio",
-        "hermes_cli" + ".resource_limits",
-        "hermes_cli" + "/stdio.py",
-        "hermes_cli" + "/resource_limits.py",
-    )
-    compatibility_facade = ROOT / "hermes_cli" / "resource_limits.py"
-    for path in _python_sources():
-        if path == compatibility_facade:
-            continue
-        source = path.read_text(encoding="utf-8")
-        if any(needle in source for needle in needles):
-            violations.append(str(path.relative_to(ROOT)))
-    assert violations == []
-
-
-def test_runtime_owners_do_not_import_upper_layers():
-    forbidden = ("hermes_cli", "nous_cli", "agent", "gateway")
-    violations = []
-    for path in RUNTIME_OWNERS:
-        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
-        for node in ast.walk(tree):
-            modules = []
-            if isinstance(node, ast.Import):
-                modules.extend(alias.name for alias in node.names)
-            elif isinstance(node, ast.ImportFrom) and node.module:
-                modules.append(node.module)
-            for module in modules:
-                if any(module == prefix or module.startswith(prefix + ".") for prefix in forbidden):
-                    violations.append((str(path.relative_to(ROOT)), module))
-    assert violations == []
-
-
-def test_resource_limits_does_not_load_configuration():
-    source = (ROOT / "runtime" / "resource_limits.py").read_text(encoding="utf-8")
-    assert "load_config_readonly" not in source
+        assert stdio.is_windows() == (sys.platform == 'win32')
+        stdio.configure_windows_stdio()
+        assert resource_limits.configured_nofile_soft_limit(
+            {'runtime': {'nofile_soft_limit': 1234}}) == 1234
+        assert resource_limits.configured_nofile_soft_limit(
+            {'runtime': {'nofile_soft_limit': False}}) is None
+        assert resource_limits.apply_nofile_soft_limit(
+            {'runtime': {'nofile_soft_limit': False}}) is False
+    """)

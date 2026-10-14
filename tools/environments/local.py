@@ -871,7 +871,7 @@ def _leader_is_ours(pgid, expected_start) -> bool:
         return False
     if expected_start is None:
         return True
-    from gateway.status import get_process_start_time, start_time_fingerprints_match
+    from runtime.process_identity import get_process_start_time, start_time_fingerprints_match
     try:
         current = get_process_start_time(pgid)
     except Exception:  # noqa: BLE001 — the guard must never break signalling

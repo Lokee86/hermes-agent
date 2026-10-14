@@ -39,7 +39,7 @@ def _leader_start_time(pid: int) -> Optional[int]:
     """Start-time fingerprint of the pgroup leader (PGID == leader PID on setsid spawn);
     ``None`` only when the reading is genuinely unavailable (already-reaped PID, no
     /proc AND no psutil) — the psutil fallback covers macOS/Windows."""
-    from gateway.status import get_process_start_time
+    from runtime.process_identity import get_process_start_time
     try:
         return get_process_start_time(pid)
     except Exception:
@@ -281,7 +281,7 @@ def _signal_mcp_process(pid: int, sig: int, server_name: str, pgid: Optional[int
         current = _leader_start_time(pid)
         if current is not None:
             try:
-                from gateway.status import start_time_fingerprints_match
+                from runtime.process_identity import start_time_fingerprints_match
                 if not start_time_fingerprints_match(expected_start, current):
                     logger.debug(
                         "Skip signalling MCP pid %d (%s): start-time mismatch — PID was recycled; "

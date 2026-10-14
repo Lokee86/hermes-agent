@@ -141,6 +141,7 @@ def test_owner_exit_kills_router_tree_not_external(tmp_path, stop_mode, nested):
                 launcher.wait(timeout=10)
 
 
+@pytest.mark.platforms("posix")
 def test_spawn_contained_process_preserves_caller_kwargs_off_windows(monkeypatch):
     """Non-Windows spawning is a transparent Popen pass-through."""
     from runtime import processes
@@ -152,7 +153,6 @@ def test_spawn_contained_process_preserves_caller_kwargs_off_windows(monkeypatch
         captured["kwargs"] = kwargs
         return SimpleNamespace()
 
-    monkeypatch.setattr(processes, "sys", SimpleNamespace(platform="linux"))
     monkeypatch.setattr(processes.subprocess, "Popen", fake_popen)
     kwargs = {
         "env": {"TOKEN": "keep", "PATH": "/bin"},
@@ -170,6 +170,7 @@ def test_spawn_contained_process_preserves_caller_kwargs_off_windows(monkeypatch
     assert captured == {"cmd": ["git", "status"], "kwargs": kwargs}
 
 
+@pytest.mark.platforms("windows")
 def test_windows_spawn_ors_creationflags_and_assigns_before_resume(monkeypatch):
     """Caller flags survive, and a Windows child is resumed only after job assignment."""
     from runtime import processes
@@ -202,7 +203,6 @@ def test_windows_spawn_ors_creationflags_and_assigns_before_resume(monkeypatch):
         return FakeProc()
 
     fake_psutil = SimpleNamespace(Process=FakePsProcess)
-    monkeypatch.setattr(processes, "sys", SimpleNamespace(platform="win32"))
     monkeypatch.setattr(processes, "_WindowsJob", FakeJob)
     monkeypatch.setattr(processes.subprocess, "Popen", fake_popen)
     monkeypatch.setitem(sys.modules, "psutil", fake_psutil)

@@ -26,7 +26,7 @@ it) and is still written unchanged. It cannot be the host record: it has no lock
 single-writer semantics, no removal on exit, and no place to publish a protocol version or
 an authentication handle. The record here is authoritative for "who owns this host role"; the
 ledger remains authoritative for "what is running". Both are written. New host records pair the
-ledger's live-PID proof with ``gateway.status``'s canonical process-start fingerprint; legacy
+ledger's live-PID proof with ``runtime.process_identity``'s canonical process-start fingerprint; legacy
 records without that fingerprint keep the old ``(pid, create_time)`` proof.
 """
 
@@ -248,7 +248,7 @@ def _record_incarnation_matches(record: HostRecord) -> Optional[bool]:
     alive = _pid_incarnation_matches(record.pid, None)
     if alive is not True:
         return alive
-    from gateway.status import get_process_start_time, start_time_fingerprints_match
+    from runtime.process_identity import get_process_start_time, start_time_fingerprints_match
 
     current = get_process_start_time(record.pid)
     return None if current is None else start_time_fingerprints_match(record.start_time, current)

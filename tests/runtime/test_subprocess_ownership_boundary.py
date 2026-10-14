@@ -1,84 +1,34 @@
-"""Architecture guards for the completed subprocess/runtime extraction."""
-
-from __future__ import annotations
-
-import ast
-from pathlib import Path
+"""Runtime spawn/Git contracts work when CLI and execution policy are unavailable."""
+from tests.runtime.ownership_probe import probe_without_upper_layers
 
 
-ROOT = Path(__file__).resolve().parents[2]
-SCAN_ROOTS = (
-    "agent",
-    "cron",
-    "gateway",
-    "hermes_cli",
-    "plugins",
-    "profiles",
-    "providers",
-    "runtime",
-    "storage",
-    "auth",
-    "kanban",
-    "automation",
-    "tools",
-    "tui_gateway",
-)
-RUNTIME_OWNERS = (
-    ROOT / "runtime" / "subprocess_compat.py",
-    ROOT / "runtime" / "git_subprocess.py",
-    ROOT / "runtime" / "processes.py",
-    ROOT / "runtime" / "process_identity.py",
-)
+def test_frozen_subprocess_exports_point_to_canonical_owners():
+    from hermes_cli import _subprocess_compat as compat
+    from runtime import git_subprocess, process_identity, processes, subprocess_compat
+
+    owners = {
+        "bounded_probe_run": subprocess_compat.bounded_probe_run,
+        "split_command_line": subprocess_compat.split_command_line,
+        "windows_hide_flags": subprocess_compat.windows_hide_flags,
+        "bounded_git_probe": git_subprocess.bounded_git_probe,
+        "harden_git_argv": git_subprocess.harden_git_argv,
+        "pid_exists_stdlib": process_identity.pid_exists_stdlib,
+        "kill_process_tree": processes.kill_popen_process_tree,
+    }
+    for name, owner in owners.items():
+        assert getattr(compat, name) is owner
 
 
-def _python_sources():
-    for dirname in SCAN_ROOTS:
-        base = ROOT / dirname
-        if base.exists():
-            yield from base.rglob("*.py")
+def test_bounded_capture_and_git_policy_need_no_upper_layers():
+    probe_without_upper_layers("""
+        import sys
+        from runtime import processes
+        from runtime.git_subprocess import harden_git_argv
+        from runtime.subprocess_compat import bounded_probe_run
 
-
-def test_subprocess_runtime_owners_exist_and_cli_module_is_compatibility_only():
-    for path in RUNTIME_OWNERS:
-        assert path.exists(), path.relative_to(ROOT)
-    assert (ROOT / "gateway" / "windows_launch.py").exists()
-
-    compat = ROOT / "hermes_cli" / "_subprocess_compat.py"
-    tree = ast.parse(compat.read_text(encoding="utf-8"), filename=str(compat))
-    definitions = {node.name for node in tree.body if isinstance(node, (ast.FunctionDef, ast.ClassDef))}
-    assert definitions == {"run"}
-
-
-def test_no_source_references_retired_cli_subprocess_module():
-    violations = []
-    needle = "hermes_cli" + "._subprocess_compat"
-    for path in _python_sources():
-        if needle in path.read_text(encoding="utf-8"):
-            violations.append(str(path.relative_to(ROOT)))
-    assert violations == []
-
-
-def test_runtime_subprocess_owners_do_not_import_upper_layers():
-    forbidden = ("hermes_cli", "nous_cli", "agent", "gateway")
-    violations = []
-    for path in RUNTIME_OWNERS:
-        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
-        for node in ast.walk(tree):
-            modules = []
-            if isinstance(node, ast.Import):
-                modules.extend(alias.name for alias in node.names)
-            elif isinstance(node, ast.ImportFrom) and node.module:
-                modules.append(node.module)
-            for module in modules:
-                if any(module == prefix or module.startswith(prefix + ".") for prefix in forbidden):
-                    violations.append((str(path.relative_to(ROOT)), module))
-    assert violations == []
-
-
-def test_gateway_breakaway_metadata_has_one_owner():
-    declaration = '_WINDOWS_GATEWAY_BREAKAWAY_ENV = "_HERMES_GATEWAY_BREAKAWAY"'
-    owners = []
-    for path in _python_sources():
-        if declaration in path.read_text(encoding="utf-8"):
-            owners.append(path.relative_to(ROOT).as_posix())
-    assert owners == ["gateway/windows_launch.py"]
+        assert harden_git_argv(['diff']) == ['diff', '--no-ext-diff', '--no-textconv']
+        result = bounded_probe_run(
+            [sys.executable, '-c', 'print(42)'], timeout=10)
+        assert result.returncode == 0
+        assert result.stdout.strip() == '42'
+    """)

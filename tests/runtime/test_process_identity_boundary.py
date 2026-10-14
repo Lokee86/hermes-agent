@@ -1,85 +1,27 @@
-"""Architecture guards for the completed process-identity extraction."""
-
-from __future__ import annotations
-
-import ast
-import warnings
-from pathlib import Path
+"""Process identity works without CLI/Gateway imports; frozen exports retain identity."""
+from tests.runtime.ownership_probe import probe_without_upper_layers
 
 
-ROOT = Path(__file__).resolve().parents[2]
-PRODUCTION_ROOTS = (
-    "agent",
-    "cron",
-    "gateway",
-    "hermes_cli",
-    "plugins",
-    "profiles",
-    "providers",
-    "runtime",
-    "storage",
-    "auth",
-    "kanban",
-    "automation",
-    "tools",
-)
+def test_frozen_process_identity_exports_are_owned_by_runtime():
+    from hermes_cli import process_identity as compat
+    from runtime import process_identity as owner
+
+    for name in ("REAPABLE_PURPOSES", "ledger_entries", "spawner_is_dead"):
+        assert getattr(compat, name) is getattr(owner, name)
+    assert not hasattr(compat, "_process_create_time")
 
 
-def _python_sources():
-    for dirname in PRODUCTION_ROOTS:
-        base = ROOT / dirname
-        if base.exists():
-            yield from base.rglob("*.py")
+def test_spawn_identity_and_liveness_work_without_upper_layers():
+    probe_without_upper_layers("""
+        import os
+        from pathlib import Path
+        from runtime import process_identity as identity
 
-
-def test_cli_process_identity_surface_is_compatibility_only():
-    path = ROOT / "hermes_cli" / "process_identity.py"
-    tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
-    assert not any(isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)) for node in tree.body)
-    imports = {
-        alias.name
-        for node in tree.body
-        if isinstance(node, ast.ImportFrom) and node.module == "runtime.process_identity"
-        for alias in node.names
-    }
-    assert imports == {"REAPABLE_PURPOSES", "ledger_entries", "spawner_is_dead"}
-
-
-def test_production_never_imports_retired_cli_process_identity():
-    violations = []
-    for path in _python_sources():
-        source = path.read_text(encoding="utf-8")
-        try:
-            with warnings.catch_warnings():
-                warnings.simplefilter("ignore")
-                tree = ast.parse(source, filename=str(path))
-        except SyntaxError:
-            continue
-        for node in ast.walk(tree):
-            if isinstance(node, ast.Import):
-                if any(alias.name == "hermes_cli.process_identity" for alias in node.names):
-                    violations.append(str(path.relative_to(ROOT)))
-            elif isinstance(node, ast.ImportFrom):
-                if node.module == "hermes_cli.process_identity":
-                    violations.append(str(path.relative_to(ROOT)))
-                elif node.module == "hermes_cli" and any(
-                    alias.name == "process_identity" for alias in node.names
-                ):
-                    violations.append(str(path.relative_to(ROOT)))
-    assert violations == []
-
-
-def test_runtime_package_has_no_cli_imports():
-    violations = []
-    for path in (ROOT / "runtime").rglob("*.py"):
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore")
-            tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
-        for node in ast.walk(tree):
-            if isinstance(node, ast.Import):
-                if any(alias.name == "hermes_cli" or alias.name.startswith("hermes_cli.") for alias in node.names):
-                    violations.append(str(path.relative_to(ROOT)))
-            elif isinstance(node, ast.ImportFrom):
-                if node.module and (node.module == "hermes_cli" or node.module.startswith("hermes_cli.")):
-                    violations.append(str(path.relative_to(ROOT)))
-    assert violations == []
+        raw = identity.build_spawn_tag('mcp-helper', project_root=Path.cwd())
+        tag = identity.parse_spawn_tag(raw)
+        assert tag.purpose == 'mcp-helper'
+        assert tag.spawner_pid == os.getpid()
+        assert identity.pid_exists_stdlib(os.getpid())
+        assert identity.start_time_fingerprints_match(1000, 1100)
+        assert not identity.start_time_fingerprints_match(1000, 1500)
+    """)

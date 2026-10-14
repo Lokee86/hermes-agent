@@ -59,3 +59,31 @@ def test_hermes_model_offers_reasoning_whenever_a_pick_is_saved(tmp_path, monkey
         monkeypatch.setitem(main._PROVIDER_MODEL_FLOWS, slug, flow)
         main.select_provider_and_model()
         assert prompted == expected
+
+
+
+def test_successful_model_pick_saves_reasoning_and_finishes_cleanup(tmp_path, monkeypatch):
+    import hermes_cli.main as main
+    from hermes_cli import main_provider_setup
+    from hermes_cli.auth import _save_model_choice
+    from hermes_cli.config import load_config, save_config
+
+    monkeypatch.setenv("HERMES_HOME", str(tmp_path))
+    save_config({**load_config(), "model": {"default": "before", "provider": "openrouter"}})
+    monkeypatch.setattr(main, "_pick_provider", lambda *args: "nous")
+    cleaned = []
+    monkeypatch.setattr(main, "_clear_stale_openai_base_url", lambda: cleaned.append(True))
+    monkeypatch.setattr(main_provider_setup, "_main_model_reasoning_efforts",
+                        lambda model, provider: ["low", "high"])
+    monkeypatch.setattr(main_provider_setup, "_prompt_reasoning_effort_selection",
+                        lambda efforts, **kwargs: "high")
+
+    def pick(config, model, args):
+        _save_model_choice("chosen")
+        save_config({**load_config(), "model": {"default": "chosen", "provider": "nous"}})
+
+    monkeypatch.setitem(main._PROVIDER_MODEL_FLOWS, "nous", pick)
+    main.select_provider_and_model()
+    assert load_config()["model"]["default"] == "chosen"
+    assert _current_reasoning_effort(load_config()) == "high"
+    assert cleaned == [True]
