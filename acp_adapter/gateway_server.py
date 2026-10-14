@@ -359,7 +359,9 @@ class GatewayACPAgent(acp.Agent):
         if kind == "tool.start":
             # A tool closes the preceding assistant-text segment. Completion text
             # must only be compared with the segment after this tool.
-            self._streamed.pop(aid, None)
+            prefix = self._streamed.pop(aid, "")
+            if prefix:
+                self._delivered[aid] = prefix
             from acp_adapter.tools import build_tool_start, coerce_tool_args
             args = coerce_tool_args(payload.get("args"))
             self._tool_args[(sid, payload["tool_call_id"])] = (tool_name, args)
@@ -379,7 +381,7 @@ class GatewayACPAgent(acp.Agent):
         if kind == 'message.interim':
             text = payload.get('text') or ''
             if text and not payload.get('already_streamed'):
-                self._delivered.setdefault(aid, set()).add(text)
+                self._delivered[aid] = text
                 if self._conn:
                     await self._conn.session_update(session_id=self._editor_id(sid),
                         update=acp.update_agent_message_text(text))
@@ -387,8 +389,6 @@ class GatewayACPAgent(acp.Agent):
         if kind == "message.delta":
             text = payload.get("text") or ""
             self._streamed[aid] = self._streamed.get(aid, "") + text
-            if text:
-                self._delivered.setdefault(aid, set()).add(self._streamed[aid])
             if text and self._conn:
                 await self._conn.session_update(session_id=self._editor_id(sid), update=acp.update_agent_message_text(text))
         elif kind == "message.complete":
@@ -399,13 +399,14 @@ class GatewayACPAgent(acp.Agent):
             if payload.get("outcome") == "cancelled" and isinstance(text, str) and text.startswith(INTERRUPT_WAITING_FOR_MODEL_PREFIX):
                 text = ""
             prefix = self._streamed.pop(aid, "")
-            seen = self._delivered.pop(aid, set())
+            last_delivered = self._delivered.pop(aid, None)
             if not isinstance(text, str):
                 text = ''
-            remainder = '' if (payload.get('response_reused') and text in seen) else (
+            # Only the latest closed/interim segment can be reused as the final.
+            # Keeping every cumulative prefix costs quadratic space in stream length.
+            already_delivered = text == last_delivered and (payload.get('response_reused') or not prefix)
+            remainder = '' if already_delivered else (
                 text[len(prefix):] if text.startswith(prefix) else text)
-            if text in seen and not prefix:
-                remainder = ''
             if remainder and self._conn:
                 await self._conn.session_update(session_id=self._editor_id(sid), update=acp.update_agent_message_text(remainder))
             async with self._changed:

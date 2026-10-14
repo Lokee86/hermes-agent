@@ -88,6 +88,10 @@ async def wait_for_result(agent, session_id, admission_id):
     async with agent._changed:
         await agent._changed.wait_for(lambda: admission_id in agent._terminals or agent._failure is not None
             or any(p.get("status") == "unknown" for p in agent._snapshots.get(session_id, {}).get("pending", [])))
+        # A committed result for this admission is authoritative even if a
+        # different turn becomes unknown or the transport closes in the same wakeup.
+        if admission_id in agent._terminals:
+            return agent._terminals.pop(admission_id)
         if agent._failure:
             raise agent._failure
         unknown = next((p for p in agent._snapshots.get(session_id, {}).get("pending", [])
@@ -97,11 +101,11 @@ async def wait_for_result(agent, session_id, admission_id):
         return agent._terminals.pop(admission_id)
 
 
-def finish_prompt(agent, session_id, terminal):
-    agent._inputs.pop(session_id, None)
+def finish_prompt(agent, session_id, admission_id, terminal):
     outcome = terminal.get("outcome")
     if outcome == "unknown":
-        raise GatewayClientError("unknown_execution")
+        raise GatewayClientError(agent._unknown_recovery(session_id, admission_id))
+    agent._inputs.pop(session_id, None)
     if outcome == "failed":
         raise GatewayClientError("admitted_turn_failed")
     return PromptResponse(stop_reason="cancelled" if outcome in {"cancelled", "interrupted"} else "end_turn")
@@ -137,7 +141,7 @@ async def prompt(agent, prompt, session_id, **kwargs):
             raise GatewayClientError(agent._unknown_recovery(session_id, admission_id))
         else:
             terminal = await wait_for_result(agent, session_id, admission_id)
-        return finish_prompt(agent, session_id, terminal)
+        return finish_prompt(agent, session_id, admission_id, terminal)
     finally:
         if agent._admissions.get(session_id) == admission_id:
             agent._admissions.pop(session_id, None)

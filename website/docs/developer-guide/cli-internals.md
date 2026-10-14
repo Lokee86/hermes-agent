@@ -214,3 +214,9 @@ submitting again. Replacement text is refused until the outstanding attempt
 is resolved. Registered slash aliases use the canonical command resolver;
 unknown slash text and paths remain prompts. Guarded model changes use ACP
 permission cards owned by acp_adapter.gateway_model_confirmation.
+
+ACP prompt waiters consume their own committed terminal result before inspecting
+unrelated unknown admissions. Unknown outcomes retain their input identity and
+name the exact admission to discard. Streaming projection retains only the
+current text segment and the latest closed/interim segment, releasing both on
+completion; deduplication state grows linearly with output, not with every prefix.
