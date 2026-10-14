@@ -22,28 +22,50 @@ export interface PreparedSubmission {
 // separate store and read on every journal access, so a reload (fresh module memory) still honors
 // it; module memory only covers a tombstone write that itself failed. A tombstone hides only the
 // entry carrying that exact id, never a newer send that reused the journal key.
-const SPENT_KEY = 'hermes.desktop.preparedSubmissions.spent.v1'
+// One localStorage key per tombstone: every window of the origin shares this storage with
+// last-writer-wins per KEY, so a single blob let one window's read-modify-write drop the tombstone
+// another window had just written for a different entry (and a reload then re-adopted that
+// admitted input). Each retirement now writes only the record it owns.
+const SPENT_PREFIX = 'hermes.desktop.preparedSubmissions.spent.v2:'
+// The pre-v2 single blob: still honored, drained entry by entry as each tombstone clears.
+const LEGACY_SPENT_KEY = 'hermes.desktop.preparedSubmissions.spent.v1'
 const retired = new Map<string, string>()
 
-function readSpent(): Record<string, string> {
-  const raw = window.localStorage.getItem(SPENT_KEY)
+function readLegacySpent(): Record<string, string> {
+  const raw = window.localStorage.getItem(LEGACY_SPENT_KEY)
   const parsed: unknown = raw ? JSON.parse(raw) : {}
 
-  return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
-    ? { ...(parsed as Record<string, string>), ...Object.fromEntries(retired) }
-    : Object.fromEntries(retired)
+  return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed as Record<string, string> : {}
+}
+
+function readSpent(): Record<string, string> {
+  const spent = readLegacySpent()
+
+  for (let index = 0; index < window.localStorage.length; index += 1) {
+    const key = window.localStorage.key(index)
+    const id = key?.startsWith(SPENT_PREFIX) ? window.localStorage.getItem(key) : null
+
+    if (key && id) { spent[key.slice(SPENT_PREFIX.length)] = id }
+  }
+
+  return { ...spent, ...Object.fromEntries(retired) }
 }
 
 function writeSpent(key: string, id: string | undefined): void {
-  const raw = window.localStorage.getItem(SPENT_KEY)
-  const spent: Record<string, string> = raw ? JSON.parse(raw) : {}
+  if (id !== undefined) {
+    window.localStorage.setItem(SPENT_PREFIX + key, id)
 
-  if (id === undefined && !(key in spent)) { return }
+    return
+  }
 
-  if (id === undefined) { delete spent[key] } else { spent[key] = id }
+  window.localStorage.removeItem(SPENT_PREFIX + key)
+  const legacy = readLegacySpent()
 
-  if (Object.keys(spent).length) { window.localStorage.setItem(SPENT_KEY, JSON.stringify(spent)) }
-  else { window.localStorage.removeItem(SPENT_KEY) }
+  if (!(key in legacy)) { return }
+  delete legacy[key]
+
+  if (Object.keys(legacy).length) { window.localStorage.setItem(LEGACY_SPENT_KEY, JSON.stringify(legacy)) }
+  else { window.localStorage.removeItem(LEGACY_SPENT_KEY) }
 }
 
 // A journal, not an automatic outbox. Only an explicit retry may reuse an
@@ -118,13 +140,13 @@ export async function listPreparedImageDrafts(target: string, scopeKey: string) 
   return Object.entries(await readJournal()).flatMap(([key, entry]) => {
     const [scope, session, text, , displayKind, fromQueue, submissionId] = JSON.parse(key)
 
-    // Restoring an ordinary draft must recreate its exact retry key. Queue and
-    // slash submissions own their recovery. Historical slash keys intentionally
-    // omit submissionId, so the retained invocation must also be excluded.
-    return scope === scopeKey && session === target && !displayKind && !fromQueue && !submissionId &&
-      !String(text).trimStart().startsWith('/') &&
+    // An ordinary draft restores with its own identity, so sending it again is the
+    // explicit retry of that entry. Queue and slash submissions own their recovery
+    // (historical slash keys omit submissionId; the retained invocation is excluded).
+    return scope === scopeKey && session === target && !displayKind && !fromQueue &&
+      (!submissionId || submissionId === entry.id) && !String(text).trimStart().startsWith('/') &&
       !entry.legacyAttempted && entry.attachments.some(attachment => attachment.kind === 'image')
-      ? [{ key, text: String(text), attachments: entry.attachments }]
+      ? [{ key, id: entry.id, text: String(text), attachments: entry.attachments }]
       : []
   })
 }
@@ -166,14 +188,28 @@ function holdPreparedSubmission(key: string): Promise<boolean> {
   })
 }
 
-const intentVariant = (intent: string, key: string) => key === intent || key.startsWith(`${intent.slice(0, -1)},`)
+const sameDestination = (intent: string, key: string) => {
+  const [scope, session] = JSON.parse(intent)
+  const [savedScope, savedSession] = JSON.parse(key)
 
-/** The retained entry an explicit retry of `intent` may reuse: this window's own, or one a
- *  closed window left. A live other window's uncertain send is never adopted. */
-export async function adoptPreparedSubmission(intent: string): Promise<{ key: string; entry: PreparedSubmission } | undefined> {
+  return scope === savedScope && session === savedSession
+}
+
+/** The retained entry an explicit retry may reuse: the one carrying exactly `submissionId` on the
+ *  same destination (scope + session) as `intent`, held by this window or left by a closed one.
+ *  Equal text never selects an entry: a new message is a new intent even when it repeats an
+ *  uncertain one, and a live other window's uncertain send is never adopted. */
+export async function adoptPreparedSubmission(
+  intent: string,
+  submissionId: string
+): Promise<{ key: string; entry: PreparedSubmission } | undefined> {
   const journal = await readJournal()
 
-  for (const key of Object.keys(journal).filter(key => intentVariant(intent, key)).sort()) {
+  const keys = Object.keys(journal)
+    .filter(key => journal[key].id === submissionId && sameDestination(intent, key))
+    .sort()
+
+  for (const key of keys) {
     if (await holdPreparedSubmission(key)) { return { key, entry: journal[key] } }
   }
 

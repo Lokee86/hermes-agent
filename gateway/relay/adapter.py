@@ -27,6 +27,7 @@ from gateway.platforms.event import ProcessingOutcome
 from agent.i18n import t
 from gateway.relay.adapter_discord_interaction import RelayDiscordInteractionMixin
 from gateway.relay.descriptor import CapabilityDescriptor
+from hermes_state_runtime import RuntimeStoreError
 from gateway.relay.egress import (
     EGRESS_DECLINE_CODE,
     decline_error,
@@ -35,8 +36,12 @@ from gateway.relay.egress import (
 )
 from gateway.relay.media import RelayMediaClient
 from gateway.relay.transport import RelayTransport
+from datetime import UTC
 
 logger = logging.getLogger(__name__)
+# Native admission refusals a redelivery cannot change (sender, route or payload).
+_PERMANENT_REFUSALS = frozenset({'permission_denied', 'invalid_params', 'admission_conflict',
+                                 'profile_mismatch', 'not_found'})
 
 # The drain-path going-idle ACK budget must stay strictly under the runner's
 # default adapter disconnect timeout (5s) or cancellation fires before
@@ -175,7 +180,7 @@ class RelayAdapter(RelayDiscordInteractionMixin, BasePlatformAdapter):
         self._revocation_monitor: Optional[asyncio.Task[None]] = None
         # Lazily built client for the connector's /relay/media routes; None when
         # dial URL or creds are absent (media lanes degrade to text fallbacks).
-        self._media_client: Optional["RelayMediaClient"] = None
+        self._media_client: Optional[RelayMediaClient] = None
         # prompt_id -> pending-prompt state for the interactive `prompt` op; the
         # user's pick comes back as a prompt_response naming this id and resolves the
         # waiting primitive like native button callbacks. Expire lazily (_pop_prompt).
@@ -189,7 +194,7 @@ class RelayAdapter(RelayDiscordInteractionMixin, BasePlatformAdapter):
         self._prompt_owner_nonce: str = secrets.token_hex(3)
         # Prompt ids this process already resolved, newest last (repeat answers are
         # consumed silently instead of treated as stale).
-        self._resolved_prompts: "OrderedDict[str, float]" = OrderedDict()
+        self._resolved_prompts: OrderedDict[str, float] = OrderedDict()
 
     # ── capability surface (from descriptor) ─────────────────────────────
     @property
@@ -662,7 +667,7 @@ class RelayAdapter(RelayDiscordInteractionMixin, BasePlatformAdapter):
 
     async def _card_frame(
         self, chat_id: str, op: str, reply_to: Optional[str], metadata: dict[str, Any], **fields: Any
-    ) -> Union[SendResult, dict[str, Any]]:
+    ) -> SendResult | dict[str, Any]:
         """Emit one task-card op: the connector result dict, or a failed SendResult
         when the lane is unavailable / the transport raised.
 
@@ -895,10 +900,20 @@ class RelayAdapter(RelayDiscordInteractionMixin, BasePlatformAdapter):
             from gateway.platforms.webhook_ingress import admit_producer
             # The connector does not transmit a provider timestamp. Local arrival
             # time must not change the fingerprint of a retried provider identity.
-            event.timestamp = datetime.fromtimestamp(0, timezone.utc)
+            event.timestamp = datetime.fromtimestamp(0, UTC)
             # Wait only for the SQLite receipt, never inference or outbound ACKs
-            # (those need this same WS reader). Exceptions deliberately suppress ACK.
-            if await admit_producer(self, event) is None and getattr(event, '_consumer_reply', None):
+            # (those need this same WS reader). A permanent refusal returns, so the
+            # transport ACKs it (a replay would be refused again: main's runner dropped
+            # it too); any other failure withholds the ACK so the connector redelivers.
+            try:
+                receipt = await admit_producer(self, event)
+            except RuntimeStoreError as exc:
+                if exc.reason not in _PERMANENT_REFUSALS:
+                    raise
+                logger.warning("relay inbound refused (%s) for %s chat=%s; acknowledged, not replayed",
+                               exc.reason, event.source.platform.value, event.source.chat_id)
+                return
+            if receipt is None and getattr(event, '_consumer_reply', None):
                 # A post_gateway_admission plugin consumed it (never committed); its reply is
                 # sent off this reader, like an executed admission's.
                 from gateway.session_ingress import deliver_response
@@ -1174,7 +1189,7 @@ class RelayAdapter(RelayDiscordInteractionMixin, BasePlatformAdapter):
                 await asyncio.wait_for(
                     self._revocation_monitor, timeout=_RELAY_REVOCATION_MONITOR_TEARDOWN_TIMEOUT_S
                 )
-            except (asyncio.TimeoutError, asyncio.CancelledError, Exception):
+            except (TimeoutError, asyncio.CancelledError, Exception):
                 pass
             self._revocation_monitor = None
         if self._transport is not None:
@@ -1420,7 +1435,7 @@ class RelayAdapter(RelayDiscordInteractionMixin, BasePlatformAdapter):
             self._auto_thread_waiters[key] = waiter
         try:
             await asyncio.wait_for(waiter.wait(), timeout)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             return None
         finally:
             # Only the waiter we installed, and only if no later call replaced it; a

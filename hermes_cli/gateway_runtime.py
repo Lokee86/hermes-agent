@@ -44,7 +44,8 @@ class GatewayDiscovery:
     endpoint: GatewayEndpoint | None = None
     reason_code: str | None = None
     # Human-readable cause behind a bounded ``reason_code`` when the owner published one (the
-    # multiplexer's park reason); never raw peer data.
+    # multiplexer's park reason), or the redacted output tail of a start this call made that died
+    # (``runtime_exited``); never raw peer data.
     detail: str | None = None
 
 
@@ -67,7 +68,10 @@ def _endpoint(payload: dict, home: Path, control_home: Path | None = None) -> Ga
         return GatewayDiscovery("inaccessible", reason_code="profile_mismatch")
     state = payload.get("state")
     if state in {"starting", "draining", "conflict"}:
-        return GatewayDiscovery(state)
+        # An auto-started gateway ending through its idle exit names that, so its clients wait
+        # for it to go and start a fresh one instead of reporting a refusal.
+        idle = state == "draining" and payload.get("drain_reason") == "idle_exit"
+        return GatewayDiscovery(state, reason_code="idle_exit" if idle else None)
     if state != "ready":
         return GatewayDiscovery("inaccessible", reason_code="invalid_runtime_state")
     capabilities = payload.get("capabilities")
@@ -170,7 +174,12 @@ def discover_gateway_endpoint(profile_home: str | Path, *, timeout: float = 2.0)
         served = _served_by_multiplexer(home, timeout=timeout)
         if served is not None:
             return served
-        return GatewayDiscovery(missing_owner_state(home))
+        state = missing_owner_state(home)
+        if state == "inaccessible" and os.name != "nt":
+            from gateway.runtime_ownership import unreadable_lock_recovery
+            if detail := unreadable_lock_recovery(home / "gateway.lock"):
+                return GatewayDiscovery(state, reason_code="foreign_stale_lock", detail=detail)
+        return GatewayDiscovery(state)
     except TimeoutError:
         return GatewayDiscovery("inaccessible", reason_code="control_timeout")
     except DiscoveryError as exc:
@@ -212,11 +221,45 @@ def _update_fenced(homes) -> bool:
     return False
 
 
-def ensure_gateway_runtime(profile_home: str | Path, *, timeout: float = DEFAULT_ENSURE_TIMEOUT) -> GatewayDiscovery:
-    """Ensure once, never install/replace; pending remains pending at deadline.
+_REPLACE_FAILED_DETAIL = "an older Hermes gateway still owns this profile after a stop; run: hermes gateway stop"
+# ``draining`` reasons after which the owner is going away by itself: its own idle exit, or the
+# older-Hermes owner this call just stopped. Ensure waits it out and starts the current owner.
+_RETIRING = frozenset({"idle_exit", "replaced"})
+
+
+def _observe_replacing_stale(home: Path, deadline: float, replaced: set[Path]) -> GatewayDiscovery:
+    """Discovery, except that a gateway an older Hermes left on this home is stopped once (like
+    ``hermes gateway stop``) and reported as retiring; a refusal keeps ``incompatible`` + its remedy."""
+    from hermes_cli.gateway_runtime_service import remaining
+    observed = discover_gateway_endpoint(home, timeout=remaining(deadline))
+    if observed.state != "incompatible" or observed.reason_code != "runtime_protocol":
+        return observed
+    if home in replaced:
+        return GatewayDiscovery("incompatible", reason_code="runtime_protocol", detail=_REPLACE_FAILED_DETAIL)
+    from hermes_cli import gateway_runtime_replace as replace
+    replaced.add(home)
+    refusal = replace.replace_incompatible_owner(home, deadline=deadline)
+    if refusal is not None:
+        return GatewayDiscovery("incompatible", reason_code="runtime_protocol",
+                                detail=replace.REFUSAL_DETAIL.get(refusal, _REPLACE_FAILED_DETAIL))
+    return GatewayDiscovery("draining", reason_code="replaced")
+
+
+def ensure_gateway_runtime(profile_home: str | Path, *, timeout: float = DEFAULT_ENSURE_TIMEOUT,
+                           idle_exit: bool = False) -> GatewayDiscovery:
+    """Ensure once; pending remains pending at deadline.
+
+    Never installs anything. The one owner it replaces is a gateway an older Hermes left running on
+    this install's own home (``incompatible``/``runtime_protocol``, the upgrade case): it is stopped
+    the way ``hermes gateway stop`` stops it, once, and the current one started like any absent
+    owner. Another install's or a newer Hermes's gateway stays refused, with the reason in ``detail``
+    (``hermes_cli.gateway_runtime_replace``).
 
     A successful service command or Popen is not session readiness. After an
     owner/start request is observed this invocation never launches another.
+    ``idle_exit``: an unmanaged daemon this call starts ends itself once idle (client entrypoints:
+    chat, TUI, cron/kanban/ACP clients). A gateway that is ending that way reports ``draining``
+    (``idle_exit``); this call waits for it to go and starts the replacement transparently.
     """
     import time
     from hermes_cli.gateway_runtime_service import (
@@ -231,6 +274,12 @@ def ensure_gateway_runtime(profile_home: str | Path, *, timeout: float = DEFAULT
     home = Path(_canonical_home(profile_home))
     requested = False
     child = None
+    child_home, child_offset = home, 0
+    # A gateway ending through its own idle exit is not a refusal: wait for it to go (its lock is
+    # still held for a moment after its control socket closes, which reads as "starting"), then
+    # start the replacement this call owes the client.
+    retiring = False
+    replaced: set[Path] = set()
     delay = 0.025
     try:
         while True:
@@ -240,18 +289,26 @@ def ensure_gateway_runtime(profile_home: str | Path, *, timeout: float = DEFAULT
             # Poll BEFORE discovering: an exit observed first, then "absent", cannot be a child that
             # published its owner a moment later. A winning racer shows up as starting/ready instead.
             status = child.poll() if child is not None else None
-            observed = discover_gateway_endpoint(home, timeout=remaining(deadline))
+            observed = _observe_replacing_stale(home, deadline, replaced)
             if observed.reason_code == "control_timeout":
                 return GatewayDiscovery("starting", reason_code="deadline")
+            if observed.state == "draining" and observed.reason_code in _RETIRING:
+                retiring, requested, child = True, False, None
+                time.sleep(min(0.1, remaining(deadline)))
+                continue
             if observed.state not in {"absent", "starting"}:
                 return observed
             if status is not None and observed.state == "absent":
                 # The one start this invocation requested died without leaving an owner: waiting
                 # out the deadline cannot change that, and this call never launches a second one.
-                return GatewayDiscovery("inaccessible", reason_code="runtime_exited", detail=(
-                    f"gateway exited with status {status}; see logs/gateway-stdio.log of the started profile"))
-            if observed.state == "starting":
+                # Its own (redacted) output is the answer the user needs, not a pointer to a file.
+                from hermes_cli.gateway_runtime_start import startup_failure_report
+                return GatewayDiscovery("inaccessible", reason_code="runtime_exited",
+                                        detail=startup_failure_report(child_home, child_offset, status, child.pid))
+            if observed.state == "starting" and not retiring:
                 requested = True
+            if observed.state == "absent":
+                retiring = False
             # A default multiplexer that is still starting will serve this named profile; never
             # spawn a competing per-profile daemon while its reservation is pending.
             if observed.state == "absent" and not requested and _multiplexer_starting(home):
@@ -275,11 +332,14 @@ def ensure_gateway_runtime(profile_home: str | Path, *, timeout: float = DEFAULT
                 if service is not None:
                     start_existing_gateway_service(service, deadline=deadline)
                 else:
-                    from hermes_cli.gateway_runtime_start import spawn_unmanaged_gateway
-                    child = spawn_unmanaged_gateway(target, deadline=deadline)
+                    from hermes_cli.gateway_runtime_start import spawn_unmanaged_gateway, stdio_log_size
+                    child_home, child_offset = target, stdio_log_size(target)
+                    child = spawn_unmanaged_gateway(target, deadline=deadline, idle_exit=idle_exit)
                 requested = True
             time.sleep(min(delay, remaining(deadline)))
-            delay = min(delay * 1.5, 0.25)
+            # Capped low: each probe is a lock-file read or one local identify, and READY is noticed
+            # within ~50 ms instead of up to 250 ms later on every cold start.
+            delay = min(delay * 1.5, 0.05)
     except TimeoutError:
         return GatewayDiscovery("starting", reason_code="deadline")
     except RuntimeStartError as exc:

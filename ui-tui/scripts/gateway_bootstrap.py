@@ -1,9 +1,10 @@
 """Ink's private pipe bootstrap; the child is a client, never an agent owner.
 
 ``--start`` ensures the owner (first launch). A reconnect discovers only, except ``--recover``
-re-ensures an owner that CRASHED: discovery finds none while its retained runtime record still
-claims it live and the operator recorded no stop intent. An explicitly stopped gateway (its
-record says ``stopped``) is never resurrected by a reconnect.
+(a bounded slot, ``gatewayClient.ts`` ``OWNER_RECOVERY_LIMIT`` per window) re-ensures whenever the
+owner is not ready: it crashed, ended by its idle exit, was stopped with ``hermes gateway stop``
+while this TUI was open, or an older Hermes's gateway answers (ensure replaces that one). Main's TUI
+ran its own sidecar and never depended on an external daemon, so an open TUI comes back on its own.
 """
 import contextlib
 import json
@@ -13,19 +14,19 @@ import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-# ``gateway_state`` values only a live owner publishes; ``hermes gateway stop`` and planned stops
-# persist ``stopped``, so a dead process still claiming one of these did not stop cleanly.
-_LIVE_CLAIMS = frozenset({"running", "starting", "draining", "degraded"})
 
 
-def owner_crashed(home: Path) -> bool:
-    """After discovery answered ``absent``: did the owner serving *home* die without a clean stop?"""
-    from gateway.status import read_runtime_status
-    from hermes_cli.gateway_runtime_multiplex import implied_host_root, multiplexer_serves_home
-    owner = multiplexer_serves_home(home) or implied_host_root(home) or home
-    record = read_runtime_status(owner / "gateway_state.json")
-    return (isinstance(record, dict) and record.get("desired_state") != "stopped"
-            and record.get("gateway_state") in _LIVE_CLAIMS)
+def failure_message(receipt) -> str:
+    """What the TUI shows when there is no owner to attach: the bounded verdict, then its detail
+    (a refusal's remedy, or a start that died's own redacted output), each line still a verdict."""
+    head = f"gateway {receipt.state}: {receipt.reason_code or 'not ready'}"
+    detail = getattr(receipt, "detail", None)
+    if not detail:
+        return head
+    if receipt.reason_code == "runtime_exited":
+        return f"{head}\n{detail}"
+    lines = [line.strip() for line in str(detail).splitlines() if line.strip()]
+    return "\n".join([head, *(f"gateway {receipt.state}: {line}" for line in lines)])
 
 
 def bootstrap(start: bool, recover: bool = False) -> dict:
@@ -34,18 +35,21 @@ def bootstrap(start: bool, recover: bool = False) -> dict:
     from hermes_cli.gateway_runtime_discovery import connect_private
 
     home = get_hermes_home().resolve()
-    # Launch policy travels in session.create, not into daemon-wide defaults.
+    # Launch policy travels in session.create, not into daemon-wide defaults. That includes the
+    # Kanban board `hermes --tui` pins at launch (_pin_kanban_board_env): a daemon started from
+    # here would otherwise resolve every later chat's, Desktop window's and cron job's board to
+    # this terminal's launch-time board instead of the profile's `kanban/current`.
     for key in ("HERMES_MODEL", "HERMES_INFERENCE_MODEL", "HERMES_TUI_PROVIDER",
                 "HERMES_INFERENCE_PROVIDER", "HERMES_TUI_TOOLSETS", "HERMES_TUI_SKILLS",
                 "HERMES_CWD", "TERMINAL_CWD", "HERMES_YOLO", "HERMES_ACCEPT_HOOKS",
-                "HERMES_TUI_CHECKPOINTS", "HERMES_TUI_PASS_SESSION_ID"):
+                "HERMES_TUI_CHECKPOINTS", "HERMES_TUI_PASS_SESSION_ID", "HERMES_KANBAN_BOARD"):
         os.environ.pop(key, None)
-    receipt = (ensure_gateway_runtime(home, timeout=30) if start
+    receipt = (ensure_gateway_runtime(home, timeout=30, idle_exit=True) if start
                else discover_gateway_endpoint(home, timeout=5))
-    if not start and recover and receipt.state == "absent" and owner_crashed(home):
-        receipt = ensure_gateway_runtime(home, timeout=30)
+    if not start and recover and receipt.state != "ready":
+        receipt = ensure_gateway_runtime(home, timeout=30, idle_exit=True)
     if receipt.state != "ready" or receipt.endpoint is None:
-        raise RuntimeError(f"gateway {receipt.state}: {receipt.reason_code or 'not ready'}")
+        raise RuntimeError(failure_message(receipt))
     endpoint = receipt.endpoint
     # A profile served by the default multiplexer has no socket of its own; the host mints its ticket.
     control = control_home_for(home, endpoint)

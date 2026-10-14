@@ -1,8 +1,9 @@
 """Admission-owned production exec; observers never own the worker lifetime."""
 import asyncio
-from contextlib import contextmanager
+from contextlib import contextmanager, suppress
 from collections import deque
 from dataclasses import asdict, replace
+from functools import partial
 import json
 import os
 import queue
@@ -23,6 +24,9 @@ HELLO_SECONDS = 60
 # After Stop the child interrupts its agent and emits its result; the owner terminates a
 # child that has not acknowledged within this window instead of waiting on the pipe forever.
 STOP_ACK_SECONDS = 30
+# Own session (POSIX): a worker whose owner died kills its whole group (managed_worker
+# _die_with_owner); on Windows it exits itself.
+WORKER_POPEN = {'start_new_session': True, 'close_fds': True}
 
 
 class ManagedExecutionUnknown(RuntimeError):
@@ -65,7 +69,8 @@ def _bootstrap(authority, ref, row, policy, scope):
     request = dict(json.loads(policy.request_json), turn_v1={
         'finite': row['payload'].get('finite', False), 'unattended': row['payload'].get('unattended') is True,
         'yolo': _session_yolo(authority, live.route, policy),
-        **({'surface_v1': row['payload']['surface_v1']} if row['payload'].get('surface_v1') else {})})
+        **({'surface_v1': row['payload']['surface_v1']} if row['payload'].get('surface_v1') else {}),
+        **({'display_v1': row['payload']['display_v1']} if row['payload'].get('display_v1') else {})})
     from gateway.session_worker_construct import construct_inputs
     request['construct_v1'] = construct_inputs(authority, policy, live.source.chat_id)
     hydrated = replace(policy, config_json=json.dumps(_worker_config(authority, policy)), request_json=json.dumps(request),
@@ -115,23 +120,26 @@ def worker_turn_scope(frame):
     never park a prompt, the session's current YOLO governs this child and a HUD / live-voice /
     voice turn reaches the model as it does in process. Frames without it bind nothing."""
     from gateway.session_finite import finite_turn_scope
+    from gateway.session_display import display_turn_scope, restore_display
     from gateway.session_surface import restore_surface, surface_turn_scope
     turn = json.loads(frame['policy'].get('request_json') or '{}').get('turn_v1')
     if turn is None:
         yield
         return
-    flags = {k: v for k, v in turn.items() if k != 'surface_v1'} if isinstance(turn, dict) else None
+    flags = {k: v for k, v in turn.items() if k not in ('surface_v1', 'display_v1')} if isinstance(turn, dict) else None
     if (flags is None or set(flags) != {'finite', 'unattended', 'yolo'}
             or any(type(v) is not bool for v in flags.values()) or (turn['unattended'] and not turn['finite'])):
         raise ValueError('invalid_managed_worker_bootstrap')
     try:
         surface = restore_surface(turn['surface_v1']) if 'surface_v1' in turn else None
+        display = restore_display(turn['display_v1']) if 'display_v1' in turn else None
     except RuntimeStoreError as exc:
         raise ValueError('invalid_managed_worker_bootstrap') from exc
     if turn['yolo']:
         from tools.approval import enable_session_yolo
         enable_session_yolo(frame['route'])
-    with finite_turn_scope(turn['finite'], turn['unattended']), surface_turn_scope(surface):
+    with finite_turn_scope(turn['finite'], turn['unattended']), surface_turn_scope(surface), \
+            display_turn_scope(frame['scope']['execution_id'], display):
         yield
 
 
@@ -226,10 +234,9 @@ class ManagedWorker:
             raise RuntimeStoreError('worker_control_backpressure') from exc
 
     def _stop_budget(self, ack):
-        """Seconds left of the ``ack`` window that opened at the first Stop (zero before the
-        child can receive controls)."""
-        if self.stopped_at is None:
-            self.stopped_at = time.monotonic()
+        """Seconds left of the ``ack`` window that opened at the first Stop. Pure: only
+        ``control`` stamps ``stopped_at``, so a read before any Stop (the hello) never starts
+        the window a later Stop must receive in full."""
         return self.stopped_at + ack - time.monotonic()
 
     async def next_frame(self, timeout, ack):
@@ -252,9 +259,11 @@ class ManagedWorker:
                 await asyncio.wait({arrived, stopper}, timeout=timeout, return_when=asyncio.FIRST_COMPLETED)
                 if not self._frames and not self.stop.is_set():
                     raise RuntimeStoreError('managed_worker_hello_timeout')
-            remaining = self._stop_budget(ack)
-            if not self._frames and remaining > 0:
-                await asyncio.wait({arrived}, timeout=remaining)
+            if not self._frames:
+                # Only a latched Stop gets here; its window runs from the first Stop.
+                remaining = self._stop_budget(ack)
+                if remaining > 0:
+                    await asyncio.wait({arrived}, timeout=remaining)
             if not self._frames:
                 raise RuntimeStoreError('managed_worker_stopped')
             return self._take()
@@ -286,18 +295,34 @@ class ManagedWorker:
         except psutil.Error:
             pass
 
+    def _signal_group(self, kill):
+        """POSIX: signal the worker's whole process group (it leads one, WORKER_POPEN), so the tool
+        children a killed worker never reaps with _die_with_owner go too. Only while the leader is
+        unreaped and still leads its group; otherwise (Windows, gone) the handle alone."""
+        if os.name != 'nt' and self.process.poll() is None:
+            import signal
+            try:
+                if os.getpgid(self.process.pid) == self.process.pid:
+                    os.killpg(self.process.pid, signal.SIGKILL if kill else signal.SIGTERM)  # windows-footgun: ok — POSIX only
+                    return
+            except (ProcessLookupError, PermissionError):
+                pass
+        (self.process.kill if kill else self.process.terminate)()
+
     def close(self):
         self.closed.set()
         self._demand.release()  # a reader parked between frames exits; one mid-read ends at EOF
         if self.process.poll() is None:
             self._signal_worker(kill=False)
-            self.process.terminate()
+            self._signal_group(kill=False)
         try:
             self.process.wait(timeout=5)
         except subprocess.TimeoutExpired:
             self._signal_worker(kill=True)
-            self.process.kill()
-            self.process.wait(timeout=5)
+            self._signal_group(kill=True)
+            # Still unreaped after SIGKILL (a launcher's handle): the teardown below must still run.
+            with suppress(subprocess.TimeoutExpired):
+                self.process.wait(timeout=5)
         else:
             self._signal_worker(kill=True)
         if self.writer.ident is not None:
@@ -434,7 +459,7 @@ async def execute_managed(authority, ref, row, policy):
         log_path = worker_log_path(authority.profile_id)
         process = await acquire_process(subprocess.Popen, [sys.executable, '-m', 'agent.managed_worker'],
             cwd=cwd, stdin=subprocess.PIPE, env=env, stdout=subprocess.PIPE,
-            stderr=subprocess.DEVNULL if log_path is None else subprocess.PIPE, close_fds=True)
+            stderr=subprocess.DEVNULL if log_path is None else subprocess.PIPE, **WORKER_POPEN)
     except asyncio.CancelledError:
         # acquire_process owns late-child cleanup; no bootstrap or reservation was sent.
         return _interrupted_before_bootstrap(authority, row)
@@ -457,8 +482,10 @@ async def execute_managed(authority, ref, row, policy):
         if worker.stop.is_set():
             # Stopped before the child could receive controls: hello raced the latch; never bootstrap.
             raise RuntimeStoreError('managed_worker_stopped')
-        scope = reserve_admission_worker(authority, admission_id=row['admission_id'],
-                    process=process, principal_id=row['principal_id'], hello=hello)
+        # psutil + BEGIN IMMEDIATE: off-loop and retirement-tracked, like admission and claim.
+        from gateway.session_runtime_workers import tracked_write
+        scope = await tracked_write(authority, partial(reserve_admission_worker, authority,
+                    admission_id=row['admission_id'], process=process, principal_id=row['principal_id'], hello=hello))
         worker.worker = (scope['pid'], scope['birth'])
         # The child reads nothing else until the exact reservation has committed.
         frame = await asyncio.to_thread(_bootstrap, authority, ref, row, policy, scope)
@@ -467,7 +494,9 @@ async def execute_managed(authority, ref, row, policy):
         worker.writer.start()
         while True:
             frame = await worker.next_frame(None, ack=STOP_ACK_SECONDS)
-            authority.check_approval_generation(ref.session_id, row['generation'])
+            # The claim's execution stamp, not a ledger read per frame (publish_execution fences the same way).
+            if authority.executing.get(ref.session_id) != row['generation']:
+                raise RuntimeStoreError('stale_generation')
             with authority.sessions[ref.session_id].event_stream.lock:
                 if _prompt_frame(authority, ref, row, worker, frame):
                     continue
@@ -490,11 +519,11 @@ async def execute_managed(authority, ref, row, policy):
                 await asyncio.to_thread(worker.send, {'type': 'finish'})
                 continue
             if frame == {'type': 'finished'} and accepted is not None:
-                code = await asyncio.to_thread(process.wait, 10)
-                if code != 0:
-                    raise RuntimeStoreError('managed_worker_lost')
+                # 'finished' follows the worker's durable execution.finish: the turn is complete.
+                # A slow or non-zero interpreter exit after it is close()'s cleanup, not a loss.
+                with suppress(subprocess.TimeoutExpired):
+                    await asyncio.to_thread(process.wait, 10)
                 # Like in-process execution, settlement belongs to the drain's stream lock.
-                # The worker must acknowledge its durable finish before that boundary.
                 authority.pending_results[row['admission_id']] = {'result': accepted, 'usage': usage}
                 return accepted['final_response']
             raise RuntimeStoreError('invalid_worker_frame')
@@ -510,13 +539,15 @@ async def execute_managed(authority, ref, row, policy):
                 return _interrupted_before_bootstrap(authority, row)
             raise
         from gateway.session_worker_reservation import lose_admission_worker
-        lose_admission_worker(authority, row, scope)
+        from gateway.session_runtime_workers import tracked_write
+        await tracked_write(authority, partial(lose_admission_worker, authority, row, scope))
         live = authority.sessions[ref.session_id]
         with live.event_stream.lock:
             live.controls.snapshot(ref.session_id, None)
             authority._publish_pending(ref)
             live.event_stream.publish(ref.session_id, {'text': 'Worker execution is unknown.',
-                'content': 'Worker execution is unknown.', 'admission_id': row['admission_id'], 'outcome': 'unknown'})
+                'content': 'Worker execution is unknown.', 'admission_id': row['admission_id'], 'outcome': 'unknown',
+                'status': 'error'})  # the message.complete TurnStatus: never painted as a normal finish
         waiter = authority.waiters.pop(row['admission_id'], None)
         if waiter is not None and not waiter.done():
             waiter.set_result('Worker execution is unknown.')

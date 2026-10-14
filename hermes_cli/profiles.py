@@ -19,6 +19,7 @@ from typing import Dict, List, Optional, Tuple
 from agent.file_safety import HOME_CREDENTIAL_DIRS
 from hermes_cli.archive_safe import archive_root_dirs, make_targz, normalize_archive_parts, safe_extract_targz
 from hermes_cli.home_data_layout import PM_RUNTIME_ROOT_DIRS
+from hermes_cli.profiles_remove import _rmtree_make_writable, _rmtree_with_retry, wait_profile_unowned
 from hermes_constants import (
     LOCAL_RUNTIME_ROOT_DIRS, PROFILE_ID_RE, clear_named_profile_deleted, mark_named_profile_deleted,
     named_profile_has_identity, named_profile_is_deleted, named_profile_is_live,
@@ -371,10 +372,17 @@ def _wrapper_path(alias: str) -> Path:
     return _get_wrapper_dir() / (f"{alias}.bat" if sys.platform == "win32" else alias)
 
 
+def _find_our_wrapper(alias: str) -> Optional[Path]:
+    """The Hermes wrapper for *alias*: :func:`_wrapper_path`, else a pre-``.bat`` bare Windows one."""
+    candidates = [_wrapper_path(alias), _get_wrapper_dir() / alias] if sys.platform == "win32" else [_wrapper_path(alias)]
+    return next((p for p in candidates if _is_our_wrapper(p)), None)
+
+
 def _is_our_wrapper(path: Path) -> bool:
-    """True when *path* reads as a Hermes-generated wrapper (contains ``hermes -p``)."""
+    """True when *path* reads as a Hermes-generated wrapper (``hermes -p`` in its head)."""
     try:
-        return "hermes -p" in path.read_text(encoding="utf-8-sig")
+        with open(path, encoding="utf-8-sig") as f:
+            return "hermes -p" in f.read(_WRAPPER_READ_LIMIT)
     except Exception:
         return False
 
@@ -435,6 +443,7 @@ def check_alias_collision(name: str) -> Optional[str]:
         result = subprocess.run(
             ["where" if sys.platform == "win32" else "which", canon],
             capture_output=True, text=True, encoding='utf-8', errors='replace', timeout=5,
+            check=False,
         )
         if result.returncode == 0:
             existing_path = result.stdout.strip().splitlines()[0]
@@ -486,15 +495,12 @@ def remove_wrapper_script(name: str) -> bool:
     except ValueError:
         return False
 
-    # Both the extensionless path (POSIX) and .bat (Windows)
-    candidates = [_get_wrapper_dir() / canon]
-    if sys.platform == "win32":
-        candidates.insert(0, _get_wrapper_dir() / f"{canon}.bat")
-    for wrapper_path in candidates:
-        if wrapper_path.exists() and _is_our_wrapper(wrapper_path):
-            with contextlib.suppress(Exception):
-                wrapper_path.unlink()
-                return True
+    wrapper_path = _find_our_wrapper(canon)
+    if wrapper_path is None:
+        return False
+    with contextlib.suppress(Exception):
+        wrapper_path.unlink()
+        return True
     return False
 
 
@@ -546,10 +552,8 @@ def build_alias_map() -> dict[str, str]:
     for entry in sorted(wrapper_dir.iterdir()):
         if not entry.is_file():
             continue
-        # Our wrappers are named after the alias and (on Windows only) carry .bat.
-        if is_windows and entry.suffix != ".bat":
-            continue
-        if not is_windows and entry.suffix:
+        # Our wrappers are named after the alias; Windows ones carry .bat (none before #34796).
+        if entry.suffix and not (is_windows and entry.suffix == ".bat"):
             continue
         try:
             with open(entry, "r", encoding="utf-8-sig", errors="strict") as f:
@@ -836,7 +840,7 @@ def _junction_target(path: str) -> Optional[str]:
     # readlink hands back the substitute name; CreateJunction rejects the ``\\?\`` spelling.
     if target.startswith("\\\\?\\UNC\\"):
         return "\\" + target[7:]
-    return target[4:] if target.startswith("\\\\?\\") else target
+    return target.removeprefix("\\\\?\\")
 
 
 def _copytree_keep_junctions(src: Path, dst: Path, ignore, dirs_exist_ok: bool = False) -> None:
@@ -986,7 +990,7 @@ def _bootstrap_profile_dir(profile_dir: Path, source_dir: Optional[Path],
 def create_profile(
     name: str, clone_from: Optional[str] = None, clone_all: bool = False, clone_config: bool = False,
     no_alias: bool = False, no_skills: bool = False, description: Optional[str] = None,
-    clone_channels: bool = False, sync_imports: bool = False,
+    clone_channels: bool = False, sync_imports: bool = False, soul: Optional[str] = None,
 ) -> Path:
     """Create a new profile directory and return its path.
 
@@ -1017,7 +1021,10 @@ def create_profile(
     profile_dir = _profile_get_dir(canon)
     if profile_dir.exists() and not named_profile_has_identity(profile_dir):
         if named_profile_is_deleted(profile_dir):
-            # Empty shell left by a post-delete mkdir: invisible to ``profile list``, safe to replace.
+            # Empty shell left by a post-delete mkdir: invisible to ``profile list``, safe to replace
+            # unless a gateway still tearing the deleted profile down holds its gateway.lock in it.
+            if not wait_profile_unowned(profile_dir, timeout=0):
+                raise FileExistsError(f"Cannot create profile '{canon}': a running gateway still owns {profile_dir}")
             shutil.rmtree(profile_dir)
         else:
             # A live marker-less dir is invisible to ``profile list`` but may still hold user
@@ -1053,7 +1060,8 @@ def create_profile(
             stripped = strip_channel_settings(staging, include_state=clone_all, source_dir=source_dir)
             if stripped:
                 logger.info("profile %s: cloned without messaging channels %s", canon, stripped)
-        _finish_profile_layout(staging, no_skills=no_skills, clone_all=clone_all, description=description)
+        from hermes_cli.profiles_initialization import finish_profile_layout
+        finish_profile_layout(staging, no_skills=no_skills, clone_all=clone_all, description=description, soul=soul)
         os.rename(staging, profile_dir)
     except BaseException:
         shutil.rmtree(staging, ignore_errors=True)
@@ -1153,6 +1161,7 @@ def seed_profile_skills(profile_dir: Path, quiet: bool = False) -> Optional[dict
             env={**os.environ, "HERMES_HOME": str(profile_dir)},
             cwd=str(project_root),
             capture_output=True, text=True, encoding='utf-8', errors='replace', timeout=60,
+            check=False,
         )
         if result.returncode == 0 and result.stdout.strip():
             return json.loads(result.stdout.strip())
@@ -1350,44 +1359,6 @@ def _stop_bot_desktop(profile_dir: Path) -> None:
         reset_hermes_home_override(token)
 
 
-def _rmtree_make_writable(func, path, exc):
-    """onexc/onerror handler: add +w on PermissionError so rmtree can proceed. Covers NixOS-
-    style read-only copies where the path itself (0444) or its parent (0555) isn't writable."""
-    # onexc(func, path, exc_instance) on 3.12+; onerror(func, path, exc_info_tuple) on 3.11.
-    if isinstance(exc, tuple):
-        exc = exc[1]
-    if not isinstance(exc, PermissionError):
-        raise
-    for target in (path, os.path.dirname(path)):  # parent needed for unlink/rmdir
-        if target:
-            with contextlib.suppress(OSError):
-                os.chmod(target, os.stat(target).st_mode | stat.S_IWUSR)
-    func(path)
-
-
-def _rmtree_with_retry(profile_dir: Path, onexc_handler) -> None:
-    """``shutil.rmtree`` with a short retry loop: a just-terminated process can leave in-flight
-    writes (SQLite -wal/-shm checkpoints, sandbox temp files) landing after rmtree walked
-    past a directory — ENOTEMPTY on POSIX, transient PermissionError on Windows."""
-    attempts = 3
-    last_exc: OSError | None = None
-    for attempt in range(attempts):
-        try:
-            try:
-                shutil.rmtree(profile_dir, onexc=onexc_handler)
-            except TypeError:  # ``onexc`` is 3.12+; 3.11 has ``onerror``
-                shutil.rmtree(profile_dir, onerror=onexc_handler)
-            return
-        except OSError as e:
-            last_exc = e
-            if not profile_dir.exists():
-                return
-            if attempt < attempts - 1:
-                time.sleep(0.3 * (attempt + 1))
-    if last_exc is not None:
-        raise last_exc
-
-
 def _print_delete_summary(canon: str, profile_dir: Path, gw_running: bool, wrapper_path: Optional[Path]) -> None:
     """Show what ``delete_profile`` is about to remove."""
     model, provider = read_config_model(profile_dir)
@@ -1438,9 +1409,8 @@ def delete_profile(name: str, yes: bool = False) -> Path:
         raise ValueError("Cannot delete the default profile (~/.hermes).\nTo remove everything, use: hermes uninstall")
     canon, profile_dir = _profile_existing_dir(canon)
     gw_running = _check_gateway_running(profile_dir)
-    wrapper_path = _get_wrapper_dir() / canon
-    has_wrapper = wrapper_path.exists()
-    _print_delete_summary(canon, profile_dir, gw_running, wrapper_path if has_wrapper else None)
+    wrapper_path = _find_our_wrapper(canon)
+    _print_delete_summary(canon, profile_dir, gw_running, wrapper_path)
     if not yes:
         print()
         try:
@@ -1505,12 +1475,16 @@ def delete_profile(name: str, yes: bool = False) -> Path:
             print(f"✓ Released {_released_logs} profile log handler(s) held by this process")
 
     # 3. Remove wrapper script
-    if has_wrapper and remove_wrapper_script(canon):
+    if wrapper_path and remove_wrapper_script(canon):
         print(f"✓ Removed {wrapper_path}")
 
     # 4. Remove profile directory
     remove_error: Exception | None = None
     try:
+        # A multiplexer still tearing the profile down holds its gateway.lock: never remove a home
+        # a live runtime owns (its writers would recreate the tree under the tombstone).
+        if not wait_profile_unowned(profile_dir):
+            raise RuntimeError("a running gateway still owns this profile; retry the delete once it settles")
         _rmtree_with_retry(profile_dir, _rmtree_make_writable)
         print(f"✓ Removed {profile_dir}")
     except Exception as e:
@@ -1991,6 +1965,8 @@ def rename_profile(old_name: str, new_name: str) -> Path:
     # 2. Rename directory. If the move fails (cross-device EXDEV, permissions, a racing writer),
     # undo the unroute so the profile is never stranded tombstoned-but-present.
     try:
+        if live_mux and not wait_profile_unowned(old_dir):  # same owner wait as delete_profile
+            raise RuntimeError("a running gateway still owns this profile; retry the rename once it settles")
         old_dir.rename(new_dir)
     except Exception:
         if live_mux:

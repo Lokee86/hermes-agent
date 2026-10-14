@@ -93,10 +93,17 @@ def _group(authority, actor, home, method, params):
             service = None
 
     execution_methods = {'groups.send', 'groups.stop', 'groups.retry', 'groups.discard', 'groups.approve'}
+    admit = None
     if getattr(authority, 'hosted_room_service', None) is not None and 'room_id' in params:
         if room_authorizer is None:
             raise RuntimeStoreError('permission_denied')
-        room_authorizer(actor.subject, params['room_id'], create=method == 'groups.create')
+        if method == 'groups.create':
+            # Claim ownership inside the room insert's transaction: a create rejected by
+            # validation or storage must not leave an owner-only reservation behind.
+            def admit(conn):
+                room_authorizer(actor.subject, params['room_id'], create=True, conn=conn)
+        else:
+            room_authorizer(actor.subject, params['room_id'])
     if method in {'groups.attachment.upload', 'groups.attachment.download'}:
         if service is None:
             raise RuntimeStoreError('runtime_coordination_required')
@@ -119,26 +126,42 @@ def _group(authority, actor, home, method, params):
 
     def listing():
         limit, offset = params.get('limit', rooms.MAX_ROOM_LIST_LIMIT), params.get('offset', 0)
-        result = rooms.list_rooms(db_path, **params)
-        next_offset = offset + limit if len(result) == limit else None
-        if getattr(authority, 'hosted_room_service', None) is not None:
-            visible = []
-            for room in result:
-                if room_authorizer is None:
-                    raise RuntimeStoreError('permission_denied')
-                try:
-                    room_authorizer(actor.subject, room['room_id'])
-                except RuntimeStoreError as exc:
-                    if exc.reason != 'permission_denied':
-                        raise
-                else:
-                    visible.append(room)
-            result = visible
-        return {'rooms': result, 'next_offset': next_offset}
+        if getattr(authority, 'hosted_room_service', None) is None:
+            result = rooms.list_rooms(db_path, **params)
+            return {'rooms': result, 'next_offset': offset + limit if len(result) == limit else None}
+        authorize = room_authorizer
+        if authorize is None:
+            raise RuntimeStoreError('permission_denied')
+
+        def visible(room):
+            try:
+                authorize(actor.subject, room['room_id'])
+            except RuntimeStoreError as exc:
+                if exc.reason != 'permission_denied':
+                    raise
+                return False
+            return True
+        # Page the actor-visible collection, not the room table: scan the underlying cursor until
+        # the page holds ``limit`` visible rooms, and continue at the next VISIBLE room (or None),
+        # so a page is never short or empty while visible rooms remain after it. ``offset`` is
+        # that underlying continuation cursor, as returned in ``next_offset``.
+        found, cursor, next_offset = [], offset, None
+        while next_offset is None:
+            batch = rooms.list_rooms(db_path, **{**params, 'offset': cursor})
+            for room in batch:
+                if visible(room):
+                    if len(found) == limit:
+                        next_offset = cursor
+                        break
+                    found.append(room)
+                cursor += 1
+            if len(batch) < limit:
+                break
+        return {'rooms': found, 'next_offset': next_offset}
 
     def create():
         if service is not None:
-            return {'room': service.create_room(**params)}
+            return {'room': service.create_room(**params, admit=admit)}
         from gateway.hosted_room_discussion import validate_roster
         from gateway.session_authorities import served_profile_name
         name = served_profile_name(home)
@@ -150,7 +173,8 @@ def _group(authority, actor, home, method, params):
                        'target': dict(m.target or {}),
                        **({'display_name': m.display_name} if m.display_name else {})} for m in members]
         return {'room': rooms.create_room(db_path, room_id=params.get('room_id'),
-                name=params.get('name'), members=normalized, authority_gateway_id=gateway_id)}
+                name=params.get('name'), members=normalized, authority_gateway_id=gateway_id,
+                admit=admit)}
 
     def disband():
         from gateway.hosted_room_driver import list_tasks

@@ -1,6 +1,9 @@
 """Nonblocking, all-or-nothing reservations of canonical profile homes.
 
-Lock inodes are never removed: unlinking a locked inode creates a second owner.
+A held lock inode is never removed: unlinking it creates a second owner. The one exception is a
+stale inode this user cannot write (left by a gateway that ran as root, #42685) that a flock through
+a read-only descriptor proves unheld; it is replaced once, and every winner checks that the path
+still names the inode it locked.
 """
 from __future__ import annotations
 
@@ -41,6 +44,99 @@ def tighten_lock_mode(fd: int) -> None:
         os.fchmod(fd, 0o600)  # windows-footgun: ok — POSIX branch
 
 
+_LOCK_FLAGS = os.O_RDWR | os.O_CREAT | getattr(os, 'O_NOFOLLOW', 0)
+
+
+def _open_checked(path: Path, flags: int) -> int:
+    fd = os.open(path, flags, 0o600)
+    try:
+        tighten_lock_mode(fd)
+    except BaseException:
+        os.close(fd)
+        raise
+    return fd
+
+
+def _unlink_stale_lock(path: Path) -> bool:
+    """Unlink a ``gateway.lock`` this user cannot write (another uid's) once a flock taken through a
+    read-only descriptor proves it unheld. Symlinks, hardlinks, non-regular files, a home whose
+    ``gateway.pid`` names a live process and anything not provably unheld are left in place (False).
+    An inode this user cannot even open is refused with the recovery command: an unheld snapshot
+    (``/proc/locks``) does not stop a holder locking it between the read and the unlink."""
+    from gateway.status import _live_pid_from_record, _read_pid_record
+    if os.name == 'nt':
+        return False  # a sharing violation is a live holder there
+    info = os.lstat(path)
+    if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
+        return False
+    if _live_pid_from_record(_read_pid_record(path.with_name('gateway.pid'))) is not None:
+        return False
+    try:
+        probe = os.open(path, os.O_RDONLY | getattr(os, 'O_NOFOLLOW', 0) | os.O_NONBLOCK)
+    except PermissionError:
+        raise PermissionError(foreign_lock_recovery(path)) from None
+    import fcntl
+    try:
+        if not _same_inode(os.fstat(probe), info):
+            return False
+        try:
+            fcntl.flock(probe, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError:
+            return False
+        # Unlinked while still locked: a late locker of the old inode never shares our lock.
+        return _unlink_if_same(path, info)
+    finally:
+        os.close(probe)
+
+
+def foreign_lock_recovery(path: Path) -> str:
+    return (f'foreign_stale_lock: {path} is not readable by this user (left by a gateway run as root?) '
+            f'and cannot be proven unheld. If `sudo lsof {path}` lists no process, run `sudo rm {path}`.')
+
+
+def unreadable_lock_recovery(path: Path) -> str | None:
+    """The recovery a client prints for a ``gateway.lock`` it cannot even open read-only."""
+    try:
+        os.close(os.open(path, os.O_RDONLY | getattr(os, 'O_NOFOLLOW', 0) | os.O_NONBLOCK))
+    except PermissionError:
+        return foreign_lock_recovery(path)
+    except OSError:
+        pass
+    return None
+
+
+def _unlink_if_same(path: Path, info) -> bool:
+    if not _same_inode(os.lstat(path), info):
+        return False
+    os.unlink(path)
+    return True
+
+
+def _same_inode(left, right) -> bool:
+    return (left.st_dev, left.st_ino) == (right.st_dev, right.st_ino)
+
+
+def _open_lock(path: Path) -> int:
+    """Descriptor for *path*, replacing a provably stale inode this user cannot use once."""
+    try:
+        return _open_checked(path, _LOCK_FLAGS)
+    except PermissionError:
+        if not _unlink_stale_lock(path):
+            raise
+    # A racer may create the fresh inode first; both then contend for its flock as usual.
+    return _open_checked(path, _LOCK_FLAGS)
+
+
+def _still_names(path: Path, fd: int) -> bool:
+    """True when *path* is still the inode *fd* locked (a stale-lock replacement unlinks it)."""
+    if os.name == 'nt':
+        return True
+    try:
+        return _same_inode(os.lstat(path), os.fstat(fd))
+    except FileNotFoundError:
+        return False
+
+
 class ProfileOwnership:
     def __init__(self):
         self._handles: dict[Path, object] = {}
@@ -62,12 +158,10 @@ class ProfileOwnership:
                         continue
                     home.mkdir(mode=0o700, parents=True, exist_ok=True)
                     path = home / 'gateway.lock'
-                    flags = os.O_RDWR | os.O_CREAT | getattr(os, 'O_NOFOLLOW', 0)
-                    fd = os.open(path, flags, 0o600)
-                    handle = os.fdopen(fd, 'r+', encoding='utf-8')
+                    fd = _open_lock(path)
+                    handle = os.fdopen(fd, 'r+', encoding='utf-8')  # windows-footgun: ok — write-only
                     try:
-                        tighten_lock_mode(handle.fileno())
-                        if not _try_acquire_file_lock(handle):
+                        if not _try_acquire_file_lock(handle) or not _still_names(path, handle.fileno()):
                             raise OwnershipConflict(f'Gateway runtime already owns profile {home}')
                         record = {**_build_pid_record(), 'hermes_home': str(home)}
                         handle.seek(0)

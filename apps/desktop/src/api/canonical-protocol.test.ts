@@ -85,15 +85,17 @@ test('metadata writes retain the original CAS revision and request identity unti
   expect(protocol.prepare('session.archive', { session_id: 's', archived: true })).toMatchObject({ expected_revision: 8, operation: 'archive', payload: { archived: true } })
 })
 
-test('canonical create retries retain identity and reject unsupported explicit intent', () => {
+test('canonical create retries retain identity', () => {
   const protocol = new CanonicalDesktopProtocol()
   const params = { source: 'desktop', profile: 'default', cols: 96, fast: false, cwd: '/tmp' }
   const first = protocol.prepare('session.create', params)
   expect(first).toMatchObject({ source: 'gui', cwd: '/tmp', request_id: expect.any(String) })
   expect(protocol.prepare('session.create', { ...params })).toEqual(first)
   expect(first).not.toHaveProperty('profile')
-  expect(() => protocol.prepare('session.create', { ...params, fast: true })).toThrow('fast')
-  expect(() => protocol.prepare('session.create', { ...params, provider: 'custom' })).toThrow('provider')
+  expect(protocol.prepare('session.create', { ...params, fast: true })).toMatchObject({ service_tier: 'priority' })
+  const manual = protocol.prepare('session.create', { ...params, model: 'gpt-5', provider: 'custom' })
+  expect(manual).toMatchObject({ model: 'gpt-5', provider: 'custom' })
+  expect(protocol.prepare('session.create', { ...params, model: 'gpt-5', provider: 'custom' })).toEqual(manual)
   protocol.result('session.create', first, { session_id: 'canonical', stored_session_id: 'canonical' })
   expect(protocol.prepare('session.create', params).request_id).not.toBe(first.request_id)
 })
@@ -225,4 +227,17 @@ test('the composer model picker travels as the canonical model mutation, not an 
   // Other preferences, and model flags the mutation has no field for, keep their own route.
   expect(protocol.wire('config.set', protocol.prepare('config.set', { session_id: 's', key: 'busy', value: 'queue' }))).toBe('config.set')
   expect(protocol.wire('config.set', protocol.prepare('config.set', { session_id: 's', key: 'model', value: 'gpt-5 --global' }))).toBe('config.set')
+})
+
+test('a message-level branch carries its durable boundary row; a whole-chat branch copies everything', () => {
+  const protocol = new CanonicalDesktopProtocol()
+  protocol.result('session.resume', { session_id: 's' }, { session_id: 's', revision: 3, execution_generation: 1 })
+  const selected = protocol.prepare('session.branch', { session_id: 's', idempotency_key: 'k', count: 2, through_message_id: 41 })
+  expect(protocol.wire('session.branch', selected)).toBe('session.mutate')
+  expect(selected).toMatchObject({ operation: 'branch', payload: { through_message_id: 41 } })
+  // A lost-response retry presents the identical mutation (the boundary is part of its identity).
+  expect(protocol.prepare('session.branch', { session_id: 's', idempotency_key: 'k', count: 2, through_message_id: 41 })).toEqual(selected)
+  // A selected message with no durable row yet must never fall back to a whole-history copy.
+  expect(() => protocol.prepare('session.branch', { session_id: 's', count: 2 })).toThrow(/not saved yet/)
+  expect(protocol.prepare('session.branch', { session_id: 's' })).toMatchObject({ payload: {} })
 })
