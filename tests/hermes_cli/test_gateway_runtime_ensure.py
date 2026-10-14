@@ -5,6 +5,7 @@ import os
 from pathlib import Path
 import subprocess
 import sys
+import threading
 import time
 
 import pytest
@@ -45,9 +46,10 @@ def test_ensure_waits_for_real_control_owner_without_claiming_pending_is_ready(t
         payload = {"runtime_protocol": 1, "state": "starting", "instance_id": "peer",
                    "served_profiles": [{"profile_id": str(home), "home": str(home)}]}
         stalled = False
+        unstall = threading.Event()  # set at teardown so the stalled handler thread exits
         def identify():
             if stalled:
-                time.sleep(4)  # longer than the caller's deadline: a stalled owner is 'starting', never ready
+                unstall.wait(30)  # outlives the caller's deadline: a stalled owner is 'starting', never ready
             return payload
         server = GatewayControlServer(home, verb_handlers={"identify": identify})
         assert await server.start()
@@ -67,6 +69,7 @@ def test_ensure_waits_for_real_control_owner_without_claiming_pending_is_ready(t
             assert result.state == "starting" and result.reason_code == "deadline"
             assert not (home / "logs").exists()
         finally:
+            unstall.set()
             await server.stop()
     asyncio.run(probe())
 
@@ -144,17 +147,17 @@ def test_public_ensure_json_deadline_and_invalid_invocation(tmp_path):
         encoding="utf-8")
     env = {**os.environ, "HERMES_HOME": str(home)}
     result = subprocess.run([sys.executable, "-m", "hermes_cli.main", "gateway", "ensure", "--json"],
-                            env=env, stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=15)
+                            env=env, stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=15, check=False)
     assert result.returncode == 6, result.stderr
     value = json.loads(result.stdout)
     assert value["state"] == "draining" and value["reason_code"] == "update_paused"
     assert "private-token" not in result.stdout
     result = subprocess.run([sys.executable, "-m", "hermes_cli.main", "gateway", "ensure", "--json", "--timeout", "nan"],
-                            env=env, stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=15)
+                            env=env, stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=15, check=False)
     assert result.returncode == 2
     assert json.loads(result.stdout)["reason_code"] == "invalid_invocation"
     result = subprocess.run([sys.executable, "-m", "hermes_cli.main", "gateway", "ensure", "--json", "--unknown", "private-value"],
-                            env=env, stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=15)
+                            env=env, stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=15, check=False)
     assert result.returncode == 2
     assert json.loads(result.stdout)["reason_code"] == "invalid_invocation"
     assert "private-value" not in result.stdout
@@ -199,6 +202,7 @@ def test_unmanaged_child_uses_explicit_home_and_survives_launcher_exit(tmp_path,
         f"home=Path({str(home)!r})\n"
         "real=start.subprocess.Popen\n"
         "def boundary(argv, **kw):\n"
+        " if 'hermes_cli.main' not in argv: return real(argv, **kw)  # e.g. git from the env builder\n"
         " assert argv[-3:] == ['gateway','run','--quiet']\n"
         " assert '--replace' not in argv and '--force' not in argv\n"
         " assert kw['env']['HERMES_HOME'] == str(home)\n"
@@ -209,7 +213,7 @@ def test_unmanaged_child_uses_explicit_home_and_survives_launcher_exit(tmp_path,
         "print(child.pid, flush=True)\n", encoding="utf-8")
     env = {**os.environ, "PYTHONPATH": str(Path.cwd()), "HERMES_HOME": str(tmp_path / "wrong")}
     result = subprocess.run([sys.executable, str(launcher)], env=env, stdin=subprocess.DEVNULL,
-                            capture_output=True, text=True, timeout=10)
+                            capture_output=True, text=True, timeout=10, check=False)
     try:
         assert result.returncode == 0, result.stderr
         deadline = time.monotonic() + 5
@@ -435,16 +439,22 @@ def test_reserved_root_never_suppresses_a_standalone_profile_start(tmp_path, mon
 
 @pytest.mark.platforms("linux", "macos")
 def test_dead_unmanaged_start_is_a_prompt_terminal_verdict(tmp_path, monkeypatch):
-    """The one start this call requested exited without leaving an owner: report it, never
-    `starting` until the deadline, and never launch a second daemon."""
+    """The one start this call requested exited without leaving an owner: report it with the
+    redacted tail of that launch's own output (never an earlier run's), never `starting` until the
+    deadline, and never launch a second daemon."""
     from hermes_cli import gateway_runtime as runtime, gateway_runtime_service as service, gateway_runtime_start as start
 
     home = tmp_path / "profile"
-    home.mkdir(mode=0o700)
+    (home / "logs").mkdir(parents=True, mode=0o700)
+    (home / "logs" / "gateway-stdio.log").write_text("OLD_RUN_TRACEBACK\n", encoding="utf-8")
+    secret = "sk-proj-" + "A1b2C3d4E5f6G7h8I9j0K1l2M3n4"
     children = []
 
     def dead_start(target, **kwargs):
-        children.append(subprocess.Popen([sys.executable, "-c", "raise SystemExit(3)"]))
+        log = (target / "logs" / "gateway-stdio.log").open("ab")
+        code = ("import sys; print('Traceback (most recent call last):'); "
+                f"print('RuntimeError: boot failed with key {secret}'); sys.exit(3)")
+        children.append(subprocess.Popen([sys.executable, "-c", code], stdout=log, stderr=log))
         return children[-1]
     monkeypatch.setattr(service, "discover_existing_gateway_service", lambda *a, **k: None)
     monkeypatch.setattr(start, "spawn_unmanaged_gateway", dead_start)
@@ -453,3 +463,6 @@ def test_dead_unmanaged_start_is_a_prompt_terminal_verdict(tmp_path, monkeypatch
     assert time.monotonic() - before < 10
     assert (result.state, result.reason_code) == ("inaccessible", "runtime_exited")
     assert "status 3" in result.detail and len(children) == 1
+    assert "RuntimeError: boot failed with key" in result.detail, result.detail
+    assert secret not in result.detail and "OLD_RUN_TRACEBACK" not in result.detail
+    assert "gateway-stdio.log" in result.detail

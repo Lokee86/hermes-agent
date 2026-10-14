@@ -404,6 +404,7 @@ def _run_git(
             # console-less desktop/gateway backend; suppress the per-call
             # conhost flash on Windows (no-op on POSIX).
             creationflags=windows_hide_flags(),
+            check=False,
         )
         ok = result.returncode == 0
         stdout = os.fsdecode(result.stdout) if "-z" in args else result.stdout.strip()
@@ -553,6 +554,7 @@ def _init_store(store: Path, working_dir: str) -> Optional[str]:
             env=init_env, timeout=_GIT_TIMEOUT,
             stdin=subprocess.DEVNULL,
             creationflags=windows_hide_flags(),
+            check=False,
         )
         if result.returncode != 0:
             return f"Shadow store init failed: {result.stderr.strip()}"

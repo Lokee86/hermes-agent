@@ -23,6 +23,9 @@ import threading
 logger = logging.getLogger(__name__)
 
 MAX_FRAME = 4 * 1024 * 1024
+# Toolsets a managed worker turn never offers (subtracted last, so the tool_search bridge and a
+# restored tools[] pin drop them too): delegate_task's child has no owner registration here.
+WORKER_DISABLED_TOOLSETS = ('delegation',)
 BOOTSTRAP_FIELDS = {'version', 'home', 'scope', 'policy', 'api_key', 'text', 'route', 'user_id', 'chat_id',
                     'turn_author', 'safe_mode', 'ignore_user_config'}
 # The bounded run_conversation fields a turn receipt keeps (outcome, exit reason, tokens, cost,
@@ -130,6 +133,22 @@ class WorkerChannel:
 
 
 _INTERRUPTED = object()
+# The owner's control pipe closing under a live worker means the owner died (a closing owner
+# signals the worker itself). The agent is interrupted at once; cooperative tools get this long.
+ORPHAN_GRACE_SECONDS = 10
+
+
+def _die_with_owner():
+    """Then end this worker and, on POSIX, every descendant still in its process group: the owner
+    spawns it as a group leader (``start_new_session``). Tools that open their own session (the
+    terminal tool, background processes meant to outlive the turn) are not in it. Never a group
+    this process does not lead."""
+    def kill():
+        if os.name != 'nt' and os.getpgrp() == os.getpid():
+            import signal
+            os.killpg(os.getpid(), signal.SIGKILL)  # windows-footgun: ok — POSIX only
+        os._exit(1)
+    threading.Timer(ORPHAN_GRACE_SECONDS, kill).start()
 
 
 class WorkerControls:
@@ -146,7 +165,8 @@ class WorkerControls:
     def stop(self):
         self.stopped.set()
         if self.agent is not None:
-            self.agent.interrupt()
+            from agent.interrupt_compat import request_hard_interrupt
+            request_hard_interrupt(self.agent)  # parity with the canonical Stop (SessionAuthority.interrupt)
         with self.lock:
             for state in self.clarifications.values():
                 state['answer'] = _INTERRUPTED
@@ -177,9 +197,11 @@ class WorkerControls:
                         if state is not None:
                             state['answer'] = frame['value']
                             state['event'].set()
-        except (EOFError, OSError, ValueError):
+        except (EOFError, OSError, ValueError) as exc:
             self.stop()
             self.finish.set()
+            if not isinstance(exc, ValueError):
+                _die_with_owner()
 
     def approval(self, data):
         from tools.approval import ack_gateway_approval
@@ -190,7 +212,11 @@ class WorkerControls:
     def clarify(self, questions):
         """clarify_tool's batch contract: ``callback(questions) -> {answers, outcome, notice?}``.
         One owner prompt per question, stopping at the first that is interrupted or unanswered;
-        an empty answer is a skip (``None``), as on the other surfaces."""
+        an empty answer is a skip (``None``), as on the other surfaces. A finite turn (``chat -q`` /
+        ``-z``, bound by worker_turn_scope) answers headless at once: its viewer cannot answer."""
+        from gateway.session_finite import finite_clarify_reply, finite_turn_required
+        if finite_turn_required() is True:
+            return finite_clarify_reply()
         answers = {}
         reply = {'answers': answers, 'outcome': 'submitted'}
         for entry in questions:
@@ -206,6 +232,8 @@ class WorkerControls:
 
     def _ask(self, question, choices, multi_select):
         import uuid
+        from tools.clarify_gateway import get_clarify_timeout
+        timeout = get_clarify_timeout()  # the frozen worker config; <= 0 is unlimited, as on every surface
         prompt_id = uuid.uuid4().hex
         state = {'event': threading.Event(), 'answer': None}
         with self.lock:
@@ -215,7 +243,7 @@ class WorkerControls:
         try:
             self.channel.send('clarify', prompt_id=prompt_id, question=question,
                               choices=list(choices or []), multi_select=bool(multi_select))
-            state['event'].wait(3600)
+            state['event'].wait(timeout if timeout > 0 else None)
             return state['answer']
         finally:
             with self.lock:
@@ -286,7 +314,7 @@ def execute(frame, channel):
     adopted = rpc('worker.adopt', **{k: v for k, v in scope.items() if k != 'epoch'})
     if adopted['owner_epoch'] != scope['epoch']:
         raise RuntimeError('stale_epoch')
-    store = RuntimeSessionStore(rpc, scope, outbox_dir(frame['home'], scope['execution_id']))
+    store = RuntimeSessionStore(rpc, scope, outbox_dir(frame['home'], scope['execution_id']), adopted)
     from gateway.session_kanban import bind_worker_context
     bind_worker_context(frame)
     # Background processes a previous admission of this session started outlive that worker
@@ -303,7 +331,7 @@ def execute(frame, channel):
     from tools.approval_context import set_current_session_key
     set_current_session_key(frame['route'])
     os.environ['HERMES_GATEWAY_SESSION'] = '1'
-    from gateway.session_worker_construct import construct_kwargs
+    from gateway.session_worker_construct import checkpoint_agent_kwargs, construct_kwargs, routing_agent_kwargs
     construct = {'ephemeral_system_prompt': policy.skills_prompt, **construct_kwargs(frame)}
     controls = WorkerControls(channel, frame['route'])
     register_gateway_notify(frame['route'], controls.approval)
@@ -313,6 +341,9 @@ def execute(frame, channel):
             agent = _construct_agent(frame, AIAgent, model=policy.model, provider=policy.provider, base_url=policy.base_url,
                 api_key=frame['api_key'], session_db=store, session_id=scope['session_id'],
                 enabled_toolsets=list(policy.toolsets), max_iterations=policy.max_turns,
+                # A delegated child needs its own owner-registered execution, which this single-turn
+                # worker cannot reserve; never offer a tool whose only outcome here is a refusal.
+                disabled_toolsets=list(WORKER_DISABLED_TOOLSETS),
                 reasoning_config=policy.reasoning_config,
                 # ``tool`` / ``oneshot`` are storage labels for a CLI-surface agent (session_policy.SURFACES).
                 platform=policy.platform if policy.source in ('tool', 'oneshot') else policy.source,
@@ -320,7 +351,8 @@ def execute(frame, channel):
                 skip_context_files=policy.ignore_rules, load_soul_identity=not policy.ignore_rules,
                 skip_memory=policy.ignore_rules, skip_background_review=True, quiet_mode=True,
                 pass_session_id=policy.pass_session_id,
-                checkpoints_enabled=policy.checkpoints_enabled, **construct,
+                **checkpoint_agent_kwargs(policy.config()), **construct,
+                **routing_agent_kwargs(policy.config(), policy.model, policy.provider, policy.base_url),
                 stream_delta_callback=lambda text: channel.send('delta', text=text) if text else None,
                 clarify_callback=controls.clarify,
                 tool_start_callback=lambda call_id, name, args: channel.send('tool.start', **tool_frame(call_id, name, args)),
@@ -328,7 +360,8 @@ def execute(frame, channel):
                                                                                          **tool_frame(call_id, name, args, result)))
             controls.agent = agent
             if controls.stopped.is_set():
-                agent.interrupt()
+                from agent.interrupt_compat import request_hard_interrupt
+                request_hard_interrupt(agent)
             channel.send('ready', pid=os.getpid())
             history = store.get_messages_as_conversation(scope['session_id'])
             from gateway.session_kanban import run_worker_turns
