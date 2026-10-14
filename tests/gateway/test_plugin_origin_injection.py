@@ -17,7 +17,9 @@ from gateway.config import GatewayConfig, Platform, PlatformConfig
 from gateway.platforms.base import BasePlatformAdapter, MessageEvent, MessageType, SendResult
 from gateway.profile_routing import parse_profile_routes
 from gateway.run import GatewayRunner
-from hermes_cli.plugins import PluginContext, PluginManager, PluginManifest
+from plugin_runtime.context import PluginContext
+from plugin_runtime.manager import PluginManager
+from plugin_runtime.manifest import PluginManifest
 
 PLUGIN = "desk"
 
@@ -134,7 +136,7 @@ async def test_origin_creates_session_in_own_profile_and_replies_to_origin(gatew
     runner, alpha, beta = gateway.runner, gateway.adapters["alpha"], gateway.adapters["beta"]
     ctx_alpha, mgr_alpha = _context(gateway.homes["alpha"])
     ctx_beta, mgr_beta = _context(gateway.homes["beta"])
-    with patch("hermes_cli.plugins._known_plugin_managers", return_value=[mgr_alpha, mgr_beta]):
+    with patch("plugin_runtime.lifecycle._known_plugin_managers", return_value=[mgr_alpha, mgr_beta]):
         await _publish(runner)
         assert ctx_alpha.inject_message("Kick off the review", origin=_origin("100")) is True
         await _settle(runner, alpha)
@@ -176,7 +178,7 @@ async def test_origin_cannot_reach_another_profile(gateway):
     through a chat the gateway routes to ``beta``. Refusal is synchronous and nothing is created."""
     runner, alpha = gateway.runner, gateway.adapters["alpha"]
     ctx_alpha, mgr_alpha = _context(gateway.homes["alpha"])
-    with patch("hermes_cli.plugins._known_plugin_managers", return_value=[mgr_alpha]):
+    with patch("plugin_runtime.lifecycle._known_plugin_managers", return_value=[mgr_alpha]):
         await _publish(runner)
         assert ctx_alpha.inject_message("x", origin=_origin("100", profile="beta")) is False
         assert ctx_alpha.inject_message("x", origin=_origin("999")) is False  # routed to beta
@@ -192,7 +194,7 @@ async def test_origin_without_connected_adapter_returns_false(gateway):
     runner = gateway.runner
     ctx_alpha, mgr_alpha = _context(gateway.homes["alpha"])
     runner._profile_adapters["alpha"] = {}  # alpha's bot is down; never borrow default's
-    with patch("hermes_cli.plugins._known_plugin_managers", return_value=[mgr_alpha]):
+    with patch("plugin_runtime.lifecycle._known_plugin_managers", return_value=[mgr_alpha]):
         await _publish(runner)
         assert ctx_alpha.inject_message("x", origin=_origin("100")) is False
         assert ctx_alpha.inject_message("x", origin={**_origin("100"), "platform": "discord"}) is False
