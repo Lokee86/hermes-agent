@@ -256,7 +256,7 @@ def register(ctx):
         check_fn=check_requirements,
     )
     # Feature-detect: older cores reject unknown register_platform kwargs.
-    from gateway.platform_registry import PlatformEntry
+    from plugin_runtime.platform_registry import PlatformEntry
     known = {f.name for f in dataclasses.fields(PlatformEntry)}
     for key, value in (
         ("trusted_inbound", True),
