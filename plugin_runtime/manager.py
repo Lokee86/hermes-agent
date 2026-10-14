@@ -42,10 +42,17 @@ from utils import env_var_enabled
 logger = logging.getLogger("hermes_cli.plugins")
 
 
+class _RemovalPolicyUnavailable:
+    reason = "catalog removal policy unavailable; refusing third-party plugin load"
+
+
 def _installed_plugin_removal(name: str, plugin_dir: Any):
-    """Call the host-owned catalog recall policy when that host is available."""
+    """Call the host-owned catalog recall policy; missing policy fails closed."""
     callback = get_plugin_host_callback("installed_plugin_removal")
-    return callback(name, plugin_dir) if callback is not None else None
+    if callback is None:
+        logger.error("Plugin catalog removal policy is unavailable while gating %s", name)
+        return _RemovalPolicyUnavailable()
+    return callback(name, plugin_dir)
 
 
 class PluginManager(PluginLoaderMixin, PluginDispatchMixin, PluginOwnershipMixin):

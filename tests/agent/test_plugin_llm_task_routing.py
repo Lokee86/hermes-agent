@@ -87,7 +87,7 @@ def _set_registry(monkeypatch, entries: list[dict[str, Any]]) -> None:
 
 def _set_builtins(monkeypatch, keys: list[str]) -> None:
     monkeypatch.setattr(
-        "hermes_cli.main_provider_setup._AUX_TASKS", [(k, k.title(), "") for k in keys]
+        "agent.auxiliary_tasks.BUILTIN_AUX_TASKS", tuple((k, k.title(), "") for k in keys)
     )
 
 

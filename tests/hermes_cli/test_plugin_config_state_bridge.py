@@ -107,8 +107,8 @@ def test_runtime_config_bridge_preserves_plugin_runtime_gates(
 
     assert config_bridge.read_plugin_mcp_allowlist("fixture-plugin") == ["alpha", "7"]
     assert config_bridge.read_plugin_mcp_allowlist("missing") == []
-    assert config_bridge.plugin_gateway_injection_allowed("fixture-plugin") is True
-    assert config_bridge.plugin_gateway_injection_allowed("missing") is False
+    assert config_bridge.plugin_gateway_injection_allowed("fixture-plugin", isolated_home) is True
+    assert config_bridge.plugin_gateway_injection_allowed("missing", isolated_home) is False
 
 
 def test_runtime_config_bridge_can_pin_reads_to_manager_home(tmp_path: Path) -> None:

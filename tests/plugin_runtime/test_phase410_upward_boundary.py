@@ -41,16 +41,23 @@ def test_plugin_context_uses_host_bindings_for_host_owned_facades(monkeypatch) -
 
     actions = object()
     callbacks = {
-        "platform_actions_factory": lambda plugin_id: (actions, plugin_id),
-        "builtin_auxiliary_task_keys": lambda: {"builtin"},
+        "platform_actions_factory": lambda plugin_id, home: (actions, plugin_id, home),
     }
     monkeypatch.setattr(context_module, "get_plugin_host_callback", callbacks.get)
     manager = PluginManager(scope_key="/tmp/phase410")
     context = PluginContext(PluginManifest(name="fixture", key="fixture"), manager)
 
-    assert context.platform_actions == (actions, "fixture")
+    assert context.platform_actions == (actions, "fixture", manager.home_path)
     context.register_approval_transport("custom", lambda request: request)
     assert manager._approval_transports["custom"].plugin_id == "fixture"
+
+
+def test_manager_catalog_policy_fails_closed_when_host_policy_is_missing(monkeypatch) -> None:
+    import plugin_runtime.manager as manager_module
+
+    monkeypatch.setattr(manager_module, "get_plugin_host_callback", lambda _name: None)
+    verdict = manager_module._installed_plugin_removal("fixture", "/tmp/fixture")
+    assert "policy unavailable" in verdict.reason
 
 
 def test_manager_catalog_policy_is_late_bound(monkeypatch) -> None:

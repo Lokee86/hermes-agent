@@ -142,13 +142,15 @@ def read_plugin_mcp_allowlist(plugin_id: str) -> list[str]:
         return []
 
 
-def plugin_gateway_injection_allowed(plugin_id: str) -> bool:
-    """Return whether a plugin may inject gateway/TUI session messages; failures deny."""
+def plugin_gateway_injection_allowed(plugin_id: str, home: Path) -> bool:
+    """Return whether a plugin may inject messages from its manager-owned profile; failures deny."""
     try:
         from hermes_cli.config import load_config_readonly
         from hermes_cli.plugins_state import _plugin_settings_entry
+        from plugin_runtime.scope import plugin_home_scope
 
-        entry = _plugin_settings_entry(load_config_readonly() or {}, plugin_id) or {}
+        with plugin_home_scope(home):
+            entry = _plugin_settings_entry(load_config_readonly() or {}, plugin_id) or {}
         return entry.get("allow_gateway_injection") is True
     except Exception:
         return False

@@ -68,9 +68,9 @@ def plugin_catalog_names() -> frozenset[str]:
 
 @functools.cache
 def aux_task_names() -> frozenset[str]:
-    from hermes_cli.main_provider_setup import _AUX_TASKS
+    from agent.auxiliary_tasks import builtin_auxiliary_task_keys
 
-    return frozenset(key for key, _name, _desc in _AUX_TASKS)
+    return builtin_auxiliary_task_keys()
 
 
 @functools.cache

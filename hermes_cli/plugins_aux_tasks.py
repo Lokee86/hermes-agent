@@ -23,8 +23,8 @@ def build_auxiliary_task_entry(
     if not all(c.isalnum() or c == "_" for c in key):
         raise ValueError(f"Plugin '{me}' auxiliary task key {key!r} "
                          f"must contain only alphanumeric characters and underscores")
-    from hermes_cli.main_provider_setup import _AUX_TASKS as _BUILTIN_AUX_TASKS
-    builtin_aux_keys = {k for k, _name, _desc in _BUILTIN_AUX_TASKS}
+    from agent.auxiliary_tasks import builtin_auxiliary_task_keys
+    builtin_aux_keys = set(builtin_auxiliary_task_keys())
     if key in builtin_aux_keys:
         raise ValueError(f"Plugin '{me}' cannot register auxiliary task {key!r} — that key is reserved "
                          f"for a built-in task. Pick a plugin-namespaced key (e.g. '{me}_{key}').")

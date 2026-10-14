@@ -197,9 +197,9 @@ def _resolve_task_ownership(plugin_id: str) -> tuple[frozenset, frozenset]:
     except Exception:  # pragma: no cover — registry unavailable
         pass
     try:
-        from hermes_cli.main_provider_setup import _AUX_TASKS
-        builtin = {k for k, _name, _desc in _AUX_TASKS}
-    except Exception:  # pragma: no cover — main import failure
+        from agent.auxiliary_tasks import builtin_auxiliary_task_keys
+        builtin = set(builtin_auxiliary_task_keys())
+    except Exception:  # pragma: no cover — task registry unavailable
         pass
     return frozenset(owned), frozenset(builtin)
 
