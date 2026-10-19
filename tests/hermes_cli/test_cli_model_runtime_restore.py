@@ -5,13 +5,13 @@ from hermes_cli.cli_model_switch_mixin import CLIModelSwitchMixin
 
 class _Agent:
     def __init__(self) -> None:
-        self._pre_agent_primary = {"model": "configured-primary"}
-        self.seen_supersede = None
+        self.model = "one-turn-model"
+        self.provider = "openai"
+        self.calls = []
 
-    def switch_model(self, *, supersede_pre_agent_primary=True, **_kwargs) -> None:
-        self.seen_supersede = supersede_pre_agent_primary
-        if supersede_pre_agent_primary:
-            self._pre_agent_primary = None
+    def switch_model(self, *, once=False, restore=False, **_kwargs) -> bool:
+        self.calls.append((once, restore))
+        return True
 
 
 
@@ -41,19 +41,12 @@ def test_successful_model_switch_only_cancels_intent_for_explicit_choice(monkeyp
         assert agent.model == "chosen-model"
         assert agent._pre_agent_primary is (intent if internal else None)
 
-def test_one_turn_runtime_restore_preserves_pending_startup_primary_intent() -> None:
+def test_one_turn_runtime_restore_uses_gateway_nonpersistent_restore() -> None:
+    """The classic CLI now uses GatewayAgent; internal restore must not commit a model switch."""
     cli = CLIModelSwitchMixin()
     agent = _Agent()
     cli.agent = agent
-
-    intent = agent._pre_agent_primary
     cli._restore_model_runtime_snapshot(
-        {
-            "agent_primary_runtime": None,
-            "model": "temporary-fallback",
-            "provider": "openai",
-        }
+        {"agent_primary_runtime": None, "model": "previous-model", "provider": "openai"}
     )
-
-    assert agent.seen_supersede is False
-    assert agent._pre_agent_primary is intent
+    assert agent.calls == [(True, True)]
