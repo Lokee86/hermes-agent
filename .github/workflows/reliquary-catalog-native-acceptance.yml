@@ -42,6 +42,13 @@ jobs:
         with:
           toolchain: python
           extras: '[]'
+          test-environment: ${{ matrix.target == 'linux-amd64' && 'true' || 'false' }}
+      - name: Check catalog install and update transactions
+        if: matrix.target == 'linux-amd64'
+        shell: bash
+        run: |
+          bash scripts/run_tests.sh tests/hermes_cli/test_plugins_cmd_catalog.py tests/hermes_cli/test_plugin_native_assets.py \
+            -k 'native_host_publishes or catalog_native_asset_selection' -q -j 2
       - name: Install and run the published host
         shell: bash
         env:
