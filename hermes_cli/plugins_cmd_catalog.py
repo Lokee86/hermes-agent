@@ -333,7 +333,7 @@ def install_catalog_entry(entry: PluginCatalogEntry, *, force: bool, ref: Option
         reviewed_pin=entry.sha, python_deps=python_deps, assume_deps_consent=assume_deps_consent,
         allow_removed=allow_removed, before_swap=before_swap, app_title=entry.title or None,
         catalog={"name": entry.name, "repo": entry.repo, "tier": entry.tier, "pin": entry.sha},
-        inspected_sha=inspected_sha)
+        native_assets=entry.native_assets, inspected_sha=inspected_sha)
     return target, manifest, installed_name
 
 
@@ -435,7 +435,9 @@ def _stash_local_files(target: Path, rels: list[str], stash: Path) -> None:
             shutil.copy2(src, dst)
 
 
-def _carry_user_files(old: Path, new: Path, local: Optional[list[str]]) -> list[str]:
+def _carry_user_files(
+    old: Path, new: Path, local: Optional[list[str]], *, managed_paths: frozenset[str] = frozenset(),
+) -> list[str]:
     """Carry user-owned files into a staged replacement without reviving old plugin code.
 
     For a git checkout, *local* is the ``??``/``!!`` set and may contain a directory entry
@@ -491,6 +493,8 @@ def _carry_user_files(old: Path, new: Path, local: Optional[list[str]]) -> list[
                 continue
             src = here / name
             rel = src.relative_to(old)
+            if rel.as_posix() in managed_paths:
+                continue
             if local is None:
                 # A no-git subdir install cannot distinguish removed upstream code from user files.
                 # Never resurrect known executable/control surfaces.
@@ -677,6 +681,11 @@ def repin_catalog_plugin(
             f"{str(sidecar.get('sha') or '')[:8] or 'its installed version'}; the update is available after "
             f"you update Hermes (`{recommended_update_command()}`).", failure_class="incompatible")
 
+    if entry.native_assets is not None:
+        _refuse_unsupported_catalog_platform(entry)
+    from hermes_cli.plugin_native_assets import managed_native_paths
+
+    managed_paths = managed_native_paths(entry.native_assets, _install_record(target))
     local, modified = _local_changes(target)
     old_sha8 = str(sidecar.get("sha") or "old")[:8]
     installed_surface = plugin_surface(_read_manifest(target), target)
@@ -705,7 +714,7 @@ def repin_catalog_plugin(
         target,
         catalog_entry=entry,
         interactive=interactive,
-        carry_user_files=lambda staged: _carry_user_files(target, staged, local),
+        carry_user_files=lambda staged: _carry_user_files(target, staged, local, managed_paths=managed_paths),
     )
     matches = []
     for installed_name, row in _read_install_metadata().items():
