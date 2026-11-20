@@ -1,0 +1,56 @@
+name: Reliquary catalog native acceptance
+
+on:
+  push:
+    branches: [proof/catalog-native-assets]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  install:
+    name: Install (${{ matrix.target }})
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: linux-amd64
+            runner: ubuntu-22.04
+          - target: linux-arm64
+            runner: ubuntu-22.04-arm
+          - target: macos-amd64
+            runner: macos-15-intel
+          - target: macos-arm64
+            runner: macos-15
+            surface: --desktop
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          fetch-depth: 0
+          filter: blob:none
+          persist-credentials: false
+      - name: Resolve the Hermes release baseline
+        shell: bash
+        run: |
+          git fetch --no-tags https://github.com/NousResearch/hermes-agent.git refs/tags/v0.23.0:refs/tags/v0.23.0
+          test "$(git rev-parse 'v0.23.0^{}')" = 2bd378ed1b8d6bf2192cb26e0a55ff3091e6bd19
+      - name: Prepare Hermes from this checkout
+        uses: ./.github/actions/setup-pm
+        with:
+          toolchain: python
+          extras: '[]'
+      - name: Install and run the published host
+        shell: bash
+        env:
+          GIT_TERMINAL_PROMPT: "0"
+          _TARGET: ${{ matrix.target }}
+          _SURFACE: ${{ matrix.surface }}
+        run: |
+          set -euo pipefail
+          args=()
+          if [ -n "$_SURFACE" ]; then args+=("$_SURFACE"); fi
+          "$HERMES_PYTHON" -m scripts.ci.reliquary_catalog_native_smoke \
+            plugin-catalog/reliquary.yaml "$_TARGET" "${args[@]}"
