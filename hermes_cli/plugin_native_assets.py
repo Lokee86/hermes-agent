@@ -21,6 +21,13 @@ _TARGETS = {
     "macos-amd64": (".zip", "min_macos"),
     "macos-arm64": (".zip", "min_macos"),
 }
+# Magic/word-size/endian prefix, then CPU field offset and little-endian value.
+_EXECUTABLE_HEADERS = {
+    "linux-amd64": (b"\x7fELF\x02\x01", 18, b"\x3e\x00"),
+    "linux-arm64": (b"\x7fELF\x02\x01", 18, b"\xb7\x00"),
+    "macos-amd64": (b"\xcf\xfa\xed\xfe", 4, b"\x07\x00\x00\x01"),
+    "macos-arm64": (b"\xcf\xfa\xed\xfe", 4, b"\x0c\x00\x00\x01"),
+}
 _OS_NAMES = {"darwin": "macos", "linux": "linux"}
 _RELEASE_HOSTS = frozenset({"github.com", "release-assets.githubusercontent.com", "objects.githubusercontent.com"})
 _MAX_ASSET_BYTES = 64 * 1024 * 1024
@@ -189,13 +196,18 @@ def _open_tar_member(archive: tarfile.TarFile, member: str):
     return archive.extractfile(entry)
 
 
-def extract_native_executable(archive_path: Path, member: str, destination: Path) -> None:
-    """Copy one regular member out of a verified archive."""
+def extract_native_executable(archive_path: Path, member: str, destination: Path, *, target: str) -> None:
+    """Copy the regular executable for the declared target out of a verified archive."""
     is_zip = archive_path.suffix == ".zip"
     opener, get_member = (zipfile.ZipFile, _open_zip_member) if is_zip else (tarfile.open, _open_tar_member)
+    magic, offset, machine = _EXECUTABLE_HEADERS[target]
     try:
         with opener(archive_path, "r" if is_zip else "r:gz") as archive, get_member(archive, member) as source:
+            header = source.read(20)
+            if not header.startswith(magic) or header[offset:offset + len(machine)] != machine:
+                raise ValueError(f"Native archive member {member} does not match {target}")
             with destination.open("xb") as output:
+                output.write(header)
                 shutil.copyfileobj(source, output)
         destination.chmod(0o755)
     except (OSError, tarfile.TarError, zipfile.BadZipFile, EOFError, RuntimeError) as exc:
@@ -237,7 +249,7 @@ def stage_catalog_native_asset(catalog: dict | None, assets: NativeAssets | None
         with tempfile.TemporaryDirectory(prefix="native-asset-", dir=staged.parent) as scratch:
             archive = Path(scratch) / asset.filename
             download_native_archive(catalog["repo"], assets.tag, asset, archive)
-            extract_native_executable(archive, assets.member, destination)
+            extract_native_executable(archive, assets.member, destination, target=key)
     except (OSError, RuntimeError, ValueError) as exc:
         raise PluginOperationError(str(exc)) from exc
     catalog["native_asset"] = {"target": key, "sha256": asset.sha256, "path": assets.destination}

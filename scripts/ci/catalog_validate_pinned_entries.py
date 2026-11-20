@@ -257,7 +257,7 @@ def _check_native_assets(declaration: str, clone_dir: str, repo: str, sha: str) 
             try:
                 contract["download_native_archive"](repo, assets.tag, asset, archive)
                 _verify_native_provenance(archive, owner_repo, sha, approval)
-                contract["extract_native_executable"](archive, assets.member, Path(staging) / target)
+                contract["extract_native_executable"](archive, assets.member, Path(staging) / target, target=target)
             except (OSError, ValueError) as exc:
                 reason = " ".join(str(exc).splitlines())
                 raise EntryRejected(f"native_assets {target}: {reason}") from exc
