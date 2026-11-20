@@ -540,13 +540,10 @@ def _install_plugin_core(
                 "sha": installed_revision,
                 "pin": reviewed_pin if at_reviewed_pin else "",
             }
-            if reviewed_assets is not None:
-                from hermes_cli.plugin_native_assets import stage_catalog_native_asset
-
-                receipt = stage_catalog_native_asset(catalog["repo"], reviewed_assets, tmp_target)
-                if receipt is not None:
-                    record["catalog"]["native_asset"] = receipt
+            from hermes_cli.plugin_native_assets import stage_catalog_native_asset
             from hermes_cli.plugins_cmd_catalog import write_catalog_sidecar_record
+
+            stage_catalog_native_asset(record["catalog"], reviewed_assets, tmp_target)
             write_catalog_sidecar_record(tmp_target, catalog, installed_revision)
         if allow_removed:
             record["allow_removed"] = True
