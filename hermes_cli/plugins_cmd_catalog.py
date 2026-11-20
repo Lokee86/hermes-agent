@@ -435,6 +435,15 @@ def _stash_local_files(target: Path, rels: list[str], stash: Path) -> None:
             shutil.copy2(src, dst)
 
 
+def _keep_user_file(rel: Path, keep: set[Path] | None, managed_paths: frozenset[str]) -> bool:
+    if _skip_preserve(rel.name) or rel.as_posix() in managed_paths:
+        return False
+    if keep is None:
+        # A no-git tree has no record of removed upstream code.
+        return not _revision_owned_without_git(rel)
+    return not keep.isdisjoint((rel, *rel.parents))
+
+
 def _carry_user_files(
     old: Path, new: Path, local: Optional[list[str]], *, managed_paths: frozenset[str] = frozenset(),
 ) -> list[str]:
@@ -453,14 +462,14 @@ def _carry_user_files(
     from hermes_cli.plugins_cmd import PluginOperationError
     from hermes_cli.plugins_install_scan import EXCLUDED_DIRS
 
-    keep = {Path(rel) for rel in local or ()}
+    keep = {Path(rel) for rel in local} if local is not None else None
     linked: list[str] = []
     carried: list[str] = []
 
     def _user_link(rel: Path) -> None:
         # Git-owned user state that is a symlink is refused, never followed: a link injected after the
         # installer's scan could point outside the plugin root past the guard (which skips links).
-        if local is not None and not keep.isdisjoint((rel, *rel.parents)):
+        if keep is not None and not keep.isdisjoint((rel, *rel.parents)):
             linked.append(rel.as_posix())
 
     def _walk_error(exc: OSError) -> None:
@@ -488,19 +497,9 @@ def _carry_user_files(
             walk.append(name)
         dirnames[:] = walk
         for name in filenames:
-            # Skipped directories are pruned above, so only the file name itself needs checking.
-            if _skip_preserve(name):
-                continue
             src = here / name
             rel = src.relative_to(old)
-            if rel.as_posix() in managed_paths:
-                continue
-            if local is None:
-                # A no-git subdir install cannot distinguish removed upstream code from user files.
-                # Never resurrect known executable/control surfaces.
-                if _revision_owned_without_git(rel):
-                    continue
-            elif keep.isdisjoint((rel, *rel.parents)):
+            if not _keep_user_file(rel, keep, managed_paths):
                 continue
             try:
                 src_mode = src.lstat().st_mode

@@ -149,8 +149,6 @@ def update_plugin(
             if catalog_entry:
                 git_url, subdir = pc._resolve_git_url(source)
                 revision = pc._clone_plugin_repo(staged, git_url, catalog_entry.sha)
-                if catalog_entry.native_assets is not None and revision != catalog_entry.sha:
-                    raise pc.PluginOperationError("Native release assets require the exact reviewed source commit.")
                 staged = pc._resolve_subdir_within(staged, subdir) if subdir else staged
                 output = f"Updated to catalog pin {revision}"
                 catalog_record = {
@@ -201,12 +199,10 @@ def update_plugin(
             pc._check_manifest_version(manifest, installed_name)
             pc._scan_merged_tree(staged, source, merged, force=force, scan_decision_cb=scan_decision_cb,
                                  reviewed_pin=catalog_entry is not None)
-            if catalog_entry is not None and catalog_entry.native_assets is not None:
-                from hermes_cli.plugin_native_assets import stage_catalog_native_asset
+            from hermes_cli.plugin_native_assets import stage_catalog_native_asset
 
-                receipt = stage_catalog_native_asset(catalog_entry.repo, catalog_entry.native_assets, staged)
-                if receipt is not None:
-                    catalog_record["native_asset"] = receipt
+            native_assets = catalog_entry.native_assets if catalog_entry is not None else None
+            stage_catalog_native_asset(record.get("catalog"), native_assets, staged)
             pc._copy_example_files(staged, pc._console())
             _refresh_declared_dependencies(target, staged, manifest, interactive=interactive)
             if tree_digest(target) != before:

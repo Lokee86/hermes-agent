@@ -211,15 +211,15 @@ def managed_native_paths(assets: NativeAssets | None, record: dict | None) -> fr
     return frozenset(path for path in (old_path, current_path) if _relative_path(path))
 
 
-def stage_catalog_native_asset(
-    repo: str, assets: NativeAssets | None, staged: Path,
-) -> dict[str, str] | None:
-    """Provision the reviewed native executable before the staged tree is published."""
-    if assets is None:
-        return None
+def stage_catalog_native_asset(catalog: dict | None, assets: NativeAssets | None, staged: Path) -> None:
+    """Provision the reviewed executable and record its origin before publication."""
+    if assets is None or catalog is None:
+        return
     from hermes_cli.plugins_cmd import PluginOperationError
     from hermes_platform.host import facts
 
+    if catalog["pin"] != catalog["sha"]:
+        raise PluginOperationError("Native release assets require the exact reviewed source commit.")
     os_family = facts.os_family()
     version = facts.glibc_version() if os_family == "linux" else facts.macos_version()
     try:
@@ -227,7 +227,7 @@ def stage_catalog_native_asset(
     except ValueError as exc:
         raise PluginOperationError(str(exc), failure_class="incompatible") from exc
     if selection is None:
-        return None
+        return
     key, asset = selection
     destination = staged.resolve() / assets.destination
     try:
@@ -236,8 +236,8 @@ def stage_catalog_native_asset(
         destination.parent.mkdir(parents=True, exist_ok=True)
         with tempfile.TemporaryDirectory(prefix="native-asset-", dir=staged.parent) as scratch:
             archive = Path(scratch) / asset.filename
-            download_native_archive(repo, assets.tag, asset, archive)
+            download_native_archive(catalog["repo"], assets.tag, asset, archive)
             extract_native_executable(archive, assets.member, destination)
     except (OSError, RuntimeError, ValueError) as exc:
         raise PluginOperationError(str(exc)) from exc
-    return {"target": key, "sha256": asset.sha256, "path": assets.destination}
+    catalog["native_asset"] = {"target": key, "sha256": asset.sha256, "path": assets.destination}
