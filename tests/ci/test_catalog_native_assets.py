@@ -83,8 +83,11 @@ def test_native_provenance_requires_reviewed_source_or_exact_repack(
         if expected != signer:
             return CompletedProcess(argv, 1, b"")
         if signer == PRODUCER:
+            assert "--signer-repo" not in argv
             assert argv[argv.index("--signer-digest") + 1] == PRODUCER
             assert argv[argv.index("--signer-workflow") + 1] == f"{REPO}/{WORKFLOW}"
+        else:
+            assert argv[argv.index("--signer-repo") + 1] == REPO
         return CompletedProcess(argv, 0, f"{invocation}\n".encode())
 
     contract = runpy.run_path(str(gate._NATIVE_ASSETS_MODULE))

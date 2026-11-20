@@ -203,8 +203,7 @@ def _verify_native_provenance(
     verify = [
         "gh", "attestation", "verify", str(archive), "--repo", owner_repo,
         "--source-digest", producer["sha"] if producer else pin,
-        "--signer-repo", owner_repo, "--deny-self-hosted-runners",
-        "--predicate-type", _PROVENANCE,
+        "--deny-self-hosted-runners", "--predicate-type", _PROVENANCE,
     ]
     if producer:
         # An entry can only use a repack authorized for these exact bytes by
@@ -216,6 +215,8 @@ def _verify_native_provenance(
             "--format", "json", "--jq",
             ".[].verificationResult.statement.predicate.runDetails.metadata.invocationId",
         ])
+    else:
+        verify.extend(["--signer-repo", owner_repo])
     verified = _run(verify, timeout=_ATTEST_SECONDS, stdout=subprocess.PIPE)
     if verified.returncode != 0 or (
         producer and producer["invocation"] not in _substituted(verified.stdout).splitlines()
