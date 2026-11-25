@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from contextlib import nullcontext
 import json
 import logging
 from pathlib import Path
@@ -94,10 +95,9 @@ def record_rewind(conn, session_id, before):
 def emit_transcript_removal(db):
     """Best-effort post-commit wake-up. The receipt stream is the replay authority."""
     try:
+        from agent.runtime_scope import bind_profile_scope
         from hermes_cli.lifecycle import invoke_hook
-        from hermes_constants import (
-            get_hermes_home, profile_name_for_home, reset_hermes_home_override, set_hermes_home_override,
-        )
+        from hermes_constants import get_hermes_home, profile_name_for_home
 
         path = Path(db.db_path).resolve()
         home = path.parent
@@ -105,11 +105,8 @@ def emit_transcript_removal(db):
         # Detached copies must not wake observers for a differently named store.
         if profile is None or path.name != "state.db":
             return
-        token = set_hermes_home_override(str(home)) if home != get_hermes_home().resolve() else None
-        try:
+        binding = bind_profile_scope(home, hydrate_secrets=False) if home != get_hermes_home().resolve() else nullcontext()
+        with binding:
             invoke_hook("on_transcript_removal", profile=profile, hermes_home=str(home))
-        finally:
-            if token is not None:
-                reset_hermes_home_override(token)
     except Exception:
         logger.warning("on_transcript_removal dispatch failed", exc_info=True)

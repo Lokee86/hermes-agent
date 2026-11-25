@@ -1862,38 +1862,6 @@ class SessionMessagesMixin(SessionDetachedResultsMixin, SessionTodoResultMixin, 
             raise ValueError("preserve_compaction_handoff requires an active composite carrier")
         return handoff if preserve_compaction_handoff else None
 
-    def rewind_to_message(self, session_id: str, target_message_id: int, *, preserve_compaction_handoff: bool = False,
-                          expected_active_ids: Optional[list[int]] = None,
-                          expected_target_content: Any = None) -> dict[str, Any]:
-        """Soft-delete (``active=0``) every message with id >= *target_message_id*, target included (the caller
-        pre-fills it as the next prompt). Returns ``{"rewound_count", "target_message", "new_head_id"}``, plus
-        ``replacement_message_id`` with ``preserve_compaction_handoff`` (archives a composite summary carrier,
-        inserts its hidden handoff scaffold as the new head). ``ValueError``: target missing or not ``user``.
-        ``expected_active_ids`` / ``expected_target_content`` pin the active set and canonical live payload
-        in-txn before any mutation (presentation-only metadata changes don't invalidate a rewind). A live turn
-        lease refuses; expired/dead holders are reclaimed. ``rewind_count`` always increments."""
-        from hermes_state_mutation_transcript import rewind_in_transaction
-        def _do(conn):
-            target_row, ids, head_id, replacement_id = rewind_in_transaction(
-                self, conn, session_id, target_message_id,
-                preserve_compaction_handoff=preserve_compaction_handoff,
-                expected_active_ids=expected_active_ids, expected_target_content=expected_target_content)
-            # The scaffold insert stamped a ``message_uid``; read it back in the same txn so the
-            # caller can address the new head by its durable identity.
-            replacement_uid = replacement_id and conn.execute(
-                "SELECT message_uid FROM messages WHERE id = ?", (replacement_id,)).fetchone()[0]
-            return target_row, ids, head_id, replacement_id, replacement_uid
-        target_row, rewound, new_head_id, replacement_message_id, replacement_message_uid = self._execute_write(_do)
-        if rewound:
-            from hermes_state_removals import emit_transcript_removal
-            emit_transcript_removal(self)
-        # Decode for the prompt-buffer prefill without a second fallible DB operation.
-        target_row["content"] = self._decode_content(target_row.get("content"))
-        return {"rewound_count": len(rewound), "target_message": target_row, "new_head_id": new_head_id,
-                **({"replacement_message_id": replacement_message_id,
-                    "replacement_message_uid": replacement_message_uid}
-                   if preserve_compaction_handoff else {})}
-
     def message_count(self, session_id: str | None = None) -> int:
         """Count messages, optionally for a specific session."""
         sql = "SELECT COUNT(*) FROM messages" + (" WHERE session_id = ?" if session_id else "")
