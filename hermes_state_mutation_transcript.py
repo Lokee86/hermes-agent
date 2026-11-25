@@ -1,10 +1,11 @@
 """Transaction-scoped rewind shared by storage and canonical mutations."""
-from hermes_state_messages import _ACTIVE_IDS_SQL, _SET_COUNTERS_SQL, _placeholders
+from hermes_state_messages import _ACTIVE_IDS_SQL, _SET_COUNTERS_SQL
+from hermes_state_removals import record_rewind, rewind_receipt_rows
 
 
 def rewind_in_transaction(self, conn, session_id, target_message_id, *,
                           preserve_compaction_handoff=False, expected_active_ids=None,
-                          expected_target_content=None):
+                          expected_target_content=None, record_removal=True):
     self._check_transcript_write_guards(
         conn, session_id, None, reject_active_turn_lease=True, reject_active_compression_lock=True)
     if expected_active_ids is not None:
@@ -22,10 +23,12 @@ def rewind_in_transaction(self, conn, session_id, target_message_id, *,
     replacement_message_id = replacement = None
     if preserve_compaction_handoff or expected_target_content is not None:
         replacement = self._split_rewind_target(target_row, expected_target_content, preserve_compaction_handoff)
-    ids = [r[0] for r in conn.execute("SELECT id FROM messages WHERE session_id = ? AND id >= ? AND active = 1",
+    before = rewind_receipt_rows(conn, session_id) if record_removal else []
+    ids = [r[0] for r in conn.execute("SELECT id FROM messages WHERE session_id = ? AND id >= ? AND active = 1 ORDER BY id",
                                      (session_id, target_message_id)).fetchall()]
     if ids:
-        conn.execute(f"UPDATE messages SET active = 0 WHERE id IN ({_placeholders(ids)})", ids)
+        conn.execute("UPDATE messages SET active = 0 WHERE session_id = ? AND id >= ? AND active = 1",
+                     (session_id, target_message_id))
     if replacement is not None:
         self._insert_message_rows(conn, session_id, [replacement])
         replacement_message_id = int(conn.execute("SELECT last_insert_rowid()").fetchone()[0])
@@ -35,4 +38,6 @@ def rewind_in_transaction(self, conn, session_id, target_message_id, *,
     conn.execute(f"{_SET_COUNTERS_SQL} WHERE id = ?", (message_count, tool_call_count, session_id))
     head_id = conn.execute(
         "SELECT MAX(id) FROM messages WHERE session_id = ? AND active = 1", (session_id,)).fetchone()[0]
+    if before and ids:
+        record_rewind(conn, session_id, before)
     return target_row, ids, head_id, replacement_message_id

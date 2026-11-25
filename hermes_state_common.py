@@ -428,6 +428,9 @@ def emit_session_deleted(db, deleted_ids, *, reason, primary=None, sessions_dir=
     ids = sorted({sid for sid in (deleted_ids or ()) if isinstance(sid, str) and sid})
     if not ids:
         return
+    if reason == "delete":
+        from hermes_state_removals import emit_transcript_removal
+        emit_transcript_removal(db)
     try:
         from hermes_cli.lifecycle import invoke_hook
         from hermes_constants import (
@@ -647,6 +650,16 @@ CREATE TABLE IF NOT EXISTS worker_receipts (
 CREATE TABLE IF NOT EXISTS state_meta (
     key TEXT PRIMARY KEY,
     value TEXT
+);
+
+CREATE TABLE IF NOT EXISTS transcript_removals (
+    sequence INTEGER PRIMARY KEY AUTOINCREMENT,
+    event_id TEXT NOT NULL UNIQUE,
+    kind TEXT NOT NULL CHECK (kind IN ('delete', 'rewind')),
+    session_id TEXT NOT NULL,
+    previous_head_message_uid TEXT,
+    last_surviving_message_uid TEXT,
+    removed_message_uids TEXT
 );
 
 CREATE TABLE IF NOT EXISTS gateway_routing (

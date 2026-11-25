@@ -82,10 +82,17 @@ def test_every_surface_persists_the_same_active_set(db, n, rich):
     for surface in SURFACES:
         sid = f"rewind-{surface}-{n}-{rich}"
         _seed(db, sid, rich=rich)
+        logical_ids = [row["message_uid"] for row in db.get_messages(sid)]
         assert _rewind_via(surface, db, sid, n)
         rows = [(role, content, active) for _id, role, content, active in _active_rows(db, sid)]
         expected = expected or rows
         assert rows == expected, surface
+        surviving = len([row for row in rows if row[2]])
+        event = db.committed_transcript_removals()[-1]
+        assert event["kind"] == "rewind" and event["session_id"] == sid
+        assert event["previous_head_message_uid"] == logical_ids[-1]
+        assert event["last_surviving_message_uid"] == logical_ids[surviving - 1]
+        assert event["removed_message_uids"] == logical_ids[surviving:]
     active = [(r, c) for r, c, a in expected if a]
     if not rich:
         assert [c for _r, c in active] == [f"q{i}" if k == 0 else f"a{i}" for i in range(1, 4 - n) for k in (0, 1)]

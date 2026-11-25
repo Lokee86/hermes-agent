@@ -19,6 +19,7 @@ def test_rewind_has_existing_semantics_with_atomic_retry(tmp_path):
         assert db.get_session('s')['runtime_generation'] == 1
         assert rt.mutate_runtime_session(db, **args) == receipt
         assert db.get_session('s')['rewind_count'] == 1
+        assert len(db.committed_transcript_removals()) == 1
 
 
 def test_rewind_refuses_queued_work(tmp_path):
@@ -32,6 +33,7 @@ def test_rewind_refuses_queued_work(tmp_path):
             rt.mutate_runtime_session(db, epoch=epoch, principal_id='human', session_id='s', request_id='rewind',
                 expected_revision=0, expected_generation=0, operation='rewind', payload={'target_message_id': target})
         assert db.get_messages('s')[0]['content'] == 'keep'
+        assert db.committed_transcript_removals() == []
 
 
 def _compacted_session(db):

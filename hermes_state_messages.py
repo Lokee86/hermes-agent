@@ -719,7 +719,8 @@ class SessionMessagesMixin(SessionDetachedResultsMixin, SessionTodoResultMixin, 
         return rewritten
 
     def replace_messages(self, session_id: str, messages: list[dict[str, Any]], active_only: bool = False,
-        archive_dropped: bool = False, reject_active_turn_lease: bool = False) -> None:
+        archive_dropped: bool = False, reject_active_turn_lease: bool = False,
+        record_removal: bool = False) -> None:
         """Atomically replace a session's messages (/retry, /undo, /compress). DESTRUCTIVE by default (rows
         DELETEd, leave FTS). ``active_only`` spares soft-archived rows (needed with in-place compaction).
         ``archive_dropped`` SOFT-archives live rows rewind-style: what rewind/edit/regenerate must use, since
@@ -741,17 +742,23 @@ class SessionMessagesMixin(SessionDetachedResultsMixin, SessionTodoResultMixin, 
         def _do(conn):
             self.replace_messages_in_transaction(
                 conn, session_id, messages, active_only=active_only, archive_dropped=archive_dropped,
-                reject_active_turn_lease=reject_active_turn_lease)
+                reject_active_turn_lease=reject_active_turn_lease, record_removal=record_removal)
         self._execute_transcript_write(_do, messages)
+        if record_removal:
+            from hermes_state_removals import emit_transcript_removal
+            emit_transcript_removal(self)
 
     def replace_messages_in_transaction(self, conn, session_id: str, messages: list[dict[str, Any]], *,
                                         active_only: bool = False, archive_dropped: bool = False,
                                         reject_active_turn_lease: bool = False,
-                                        expected_active_ids: Optional[list[int]] = None) -> None:
+                                        expected_active_ids: Optional[list[int]] = None,
+                                        record_removal: bool = False) -> None:
         """:meth:`replace_messages` inside the caller's write transaction (the gateway ``/retry``
         rewrite commits in its re-send's own admission). ``expected_active_ids`` pins the active set
-        the replacement was computed from: a row committed since refuses (``RuntimeError``)."""
+        the replacement was computed from: a row committed since refuses (``RuntimeError``).
+        ``record_removal`` opts a user-requested rewind into the durable receipt stream."""
         from hermes_state_errors import CompressionSessionClosedError
+        from hermes_state_removals import record_rewind, rewind_receipt_rows
         if reject_active_turn_lease:
             self._check_transcript_write_guards(
                 conn, session_id, None, reject_active_turn_lease=True, reject_active_compression_lock=True)
@@ -760,6 +767,7 @@ class SessionMessagesMixin(SessionDetachedResultsMixin, SessionTodoResultMixin, 
         if expected_active_ids is not None and [
                 int(row[0]) for row in conn.execute(_ACTIVE_IDS_SQL, (session_id,))] != expected_active_ids:
             raise RuntimeError("active transcript changed before the rewrite could be persisted")
+        before = rewind_receipt_rows(conn, session_id) if record_removal else []
         kept = kept_tool_calls = 0
         if archive_dropped:
             # Only the first len(messages)+1 live rows matter: the prefix to match plus the row whose
@@ -776,6 +784,8 @@ class SessionMessagesMixin(SessionDetachedResultsMixin, SessionTodoResultMixin, 
         inserted, inserted_tool_calls = self._insert_message_rows(conn, session_id, messages[kept:])
         conn.execute(f"{_SET_COUNTERS_SQL} WHERE id = ?",
                      (kept + inserted, kept_tool_calls + inserted_tool_calls, session_id))
+        if before:
+            record_rewind(conn, session_id, before)
 
     @classmethod
     def _row_identity(cls, role: str, content: Any, tool_call_id: Any, tool_calls: Any) -> tuple:
@@ -1874,6 +1884,9 @@ class SessionMessagesMixin(SessionDetachedResultsMixin, SessionTodoResultMixin, 
                 "SELECT message_uid FROM messages WHERE id = ?", (replacement_id,)).fetchone()[0]
             return target_row, ids, head_id, replacement_id, replacement_uid
         target_row, rewound, new_head_id, replacement_message_id, replacement_message_uid = self._execute_write(_do)
+        if rewound:
+            from hermes_state_removals import emit_transcript_removal
+            emit_transcript_removal(self)
         # Decode for the prompt-buffer prefill without a second fallible DB operation.
         target_row["content"] = self._decode_content(target_row.get("content"))
         return {"rewound_count": len(rewound), "target_message": target_row, "new_head_id": new_head_id,

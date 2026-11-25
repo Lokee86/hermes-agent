@@ -14,8 +14,8 @@ from agent.message_metadata import (
 from hermes_state_keys import admission_fingerprint
 
 
-class SessionGoneEvent(NamedTuple):
-    """The ``on_session_delete`` event a committed runtime mutation owes its plugins."""
+class CommittedSessionEvent(NamedTuple):
+    """A lifecycle notification owed after a runtime mutation commits."""
     session_ids: tuple
     reason: str
 
@@ -511,8 +511,8 @@ def mutate_runtime_session(db, *, epoch: int, principal_id: str, session_id: str
     key, digest = mutation_receipt_key(principal_id, session_id, request_id, operation=operation, payload=payload,
                                        expected_revision=expected_revision, expected_generation=expected_generation)
 
-    def write(conn) -> tuple[dict, Optional[SessionGoneEvent]]:
-        """The receipt result plus the on_session_delete event this commit owes (None on replay)."""
+    def write(conn) -> tuple[dict, Optional[CommittedSessionEvent]]:
+        """The receipt result plus the lifecycle event this commit owes (None on replay)."""
         _epoch(conn, epoch)
         replay = replay_mutation_receipt(conn, key, digest)
         if replay is not None:
@@ -542,9 +542,11 @@ def mutate_runtime_session(db, *, epoch: int, principal_id: str, session_id: str
         affected, projection = apply_action(db, conn, session_id, operation, payload, prepared=_prepared)
         event = None
         if operation == 'delete':
-            event = SessionGoneEvent(tuple(projection.get('deleted_ids') or (session_id,)), 'delete')
+            event = CommittedSessionEvent(tuple(projection.get('deleted_ids') or (session_id,)), 'delete')
+        elif operation == 'rewind' and projection.get('rewound_count'):
+            event = CommittedSessionEvent((session_id,), 'rewind')
         elif payload.get('archived') is True and session is not None and not session['archived']:
-            event = SessionGoneEvent(tuple(affected) or (session_id,), 'archive')
+            event = CommittedSessionEvent(tuple(affected) or (session_id,), 'archive')
         conn.executemany('UPDATE sessions SET runtime_revision=runtime_revision+1 WHERE id=?',
                          [(target,) for target in affected])
         updated = conn.execute('SELECT * FROM sessions WHERE id=?', (session_id,)).fetchone()
@@ -555,7 +557,10 @@ def mutate_runtime_session(db, *, epoch: int, principal_id: str, session_id: str
                      (key, _json({'digest': digest, 'result': result})))
         return result, event
     result, event = db._execute_write(write)
-    if event is not None:
+    if event is not None and event.reason == 'rewind':
+        from hermes_state_removals import emit_transcript_removal
+        emit_transcript_removal(db)
+    elif event is not None:
         from hermes_state_common import emit_session_deleted
         emit_session_deleted(db, event.session_ids, reason=event.reason, primary=session_id)
     return result

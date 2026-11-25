@@ -508,7 +508,8 @@ class GatewaySessionCommandsMixin:
             last_user_msg = rewind_result["target_text"]
         # active_only preserves the active=0/compacted=1 archive left by in-place compaction.
         elif not await self.async_session_store.rewrite_transcript(
-            session_entry.session_id, truncated, active_only=True, reject_active_turn_lease=True):
+            session_entry.session_id, truncated, active_only=True, reject_active_turn_lease=True,
+            record_removal=True):
             return t("gateway.retry.failed_unchanged")
         session_entry.last_prompt_tokens = 0  # transcript was truncated
         self._record_model_friction("retry", source, session_entry.session_id)
@@ -566,12 +567,16 @@ class GatewaySessionCommandsMixin:
         else:
             def write(conn):
                 db.replace_messages_in_transaction(conn, session_id, [dict(m) for m in truncated], active_only=True,
-                                                   reject_active_turn_lease=True, expected_active_ids=pinned)
+                                                   reject_active_turn_lease=True, expected_active_ids=pinned,
+                                                   record_removal=True)
 
         def committed():
+            from hermes_state_removals import emit_transcript_removal
+
             self.session_store._clear_dirty_transcript(session_id)
             session_entry.last_prompt_tokens = 0  # transcript was truncated
             self._record_model_friction("retry", event.source, session_id)
+            asyncio.get_running_loop().run_in_executor(None, emit_transcript_removal, db)
         rewrite = retry_admission.RetryRewrite(db=db, session_id=session_id, source=event.source,
                                                write=write, on_commit=committed)
         turn = MessageEvent(

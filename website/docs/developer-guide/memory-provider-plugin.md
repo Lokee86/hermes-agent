@@ -354,6 +354,25 @@ accumulating duplicate archives.
 
 Contract tests: `tests/agent/test_pre_compress_checkpoint_contract.py`.
 
+## Synchronize transcript removals
+
+If your provider copies Hermes transcripts, check `SessionDB.TRANSCRIPT_REMOVALS_VERSION == 1`.
+Open the owning profile's `state.db` with `SessionDB(path, read_only=True)` and call
+`db.committed_transcript_removals(after_sequence=last_sequence, limit=128)`. Hermes writes these
+receipts in the transaction that changes the transcript. Replay them at startup, and register
+[`on_transcript_removal`](../user-guide/features/hooks.md#on_transcript_removal) to wake your consumer
+immediately in the process committing the change. The hook can be missed. Store your cursor for
+each profile database alongside your own durable delivery work.
+
+Each receipt contains an increasing `sequence`, a stable `event_id`, a `kind` (`delete` or
+`rewind`), and the affected `session_id` in that database. A bulk delete or a cascade produces a
+receipt for each deleted session. A rewind also carries `previous_head_message_uid`,
+`last_surviving_message_uid` (null for an empty stable prefix), and the ordered `removed_message_uids`.
+These are durable logical message IDs. Match them against the IDs your provider accepted for
+the affected source. A retained compaction copy of a message still carries the same identity.
+Archive and restore leave the copy available, and provider views such as a rewind flag or a
+truncated model history never enter the receipt stream.
+
 ## Setup UX — what a standalone provider keeps
 
 Every setup surface Hermes gives a bundled provider is driven by files in the provider's

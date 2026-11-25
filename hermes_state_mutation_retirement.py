@@ -260,9 +260,11 @@ def retire_prunable(conn, session_ids):
 
 def delete_in_transaction(db, conn, session_id, payload):
     from hermes_state_mutation_guards import require_idle, delete_targets
+    from hermes_state_removals import record_session_deletions
     targets = delete_targets(conn, session_id)
     require_idle(db, conn, targets)
     retire_sessions(conn, targets)
+    record_session_deletions(conn, targets)
     for sid in targets:
         db._bump_conversation_generation(conn, sid, 'session_reset')
         conn.execute('UPDATE sessions SET parent_session_id=NULL, runtime_revision=runtime_revision+1 WHERE parent_session_id=?', (sid,))

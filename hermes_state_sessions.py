@@ -225,7 +225,9 @@ def _collect_delegate_child_ids(conn, parent_ids: list[str]) -> list[str]:
 def _delete_delegate_children(conn, parent_ids: list[str]) -> list[str]:
     ids = _collect_delegate_child_ids(conn, parent_ids)
     from hermes_state_mutation_retirement import retire_sessions
+    from hermes_state_removals import record_session_deletions
     retire_sessions(conn, ids)
+    record_session_deletions(conn, ids)
     for chunk in _id_chunks(ids):
         ph = _session_ids_placeholders(chunk)
         conn.execute(f"DELETE FROM messages WHERE session_id IN ({ph})", chunk)
@@ -1763,7 +1765,9 @@ class SessionSessionsMixin:
             ):
                 return False
             from hermes_state_mutation_retirement import retire_sessions
+            from hermes_state_removals import record_session_deletions
             retire_sessions(conn, scope)
+            record_session_deletions(conn, scope)
             removed_ids.extend(_delete_delegate_children(conn, scope))
             for sid in scope:  # orphan remaining children (branches) so FK is satisfied
                 conn.execute("UPDATE sessions SET parent_session_id = NULL WHERE parent_session_id = ?", (sid,))
@@ -1908,7 +1912,9 @@ class SessionSessionsMixin:
                     return 0
                 expanded = expand(existing)
             from hermes_state_mutation_retirement import retire_sessions
+            from hermes_state_removals import record_session_deletions
             retire_sessions(conn, expanded)
+            record_session_deletions(conn, expanded)
             removed_ids.extend(_delete_delegate_children(conn, expanded))
             for chunk in _id_chunks(expanded):
                 ph = _session_ids_placeholders(chunk)

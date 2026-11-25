@@ -539,7 +539,7 @@ class SessionTranscriptMixin:
 
     def rewrite_transcript(
         self, session_id: str, messages: list[dict[str, Any]], active_only: bool = False,
-        reject_active_turn_lease: bool = False) -> bool:
+        reject_active_turn_lease: bool = False, record_removal: bool = False) -> bool:
         """Replace a session's transcript (/retry, /compress). DESTRUCTIVE by default:
         ``active_only=False`` DELETEs every row incl. soft-archived compaction history (pass
         ``active_only=True`` for sessions that may carry archived rows). True when the write lands
@@ -564,7 +564,7 @@ class SessionTranscriptMixin:
                 # avoids.
                 db.replace_messages(
                     session_id, messages, active_only=active_only,
-                    reject_active_turn_lease=reject_active_turn_lease)
+                    reject_active_turn_lease=reject_active_turn_lease, record_removal=record_removal)
             except Exception as e:
                 logger.debug("Failed to rewrite transcript in DB: %s", e)
                 return False

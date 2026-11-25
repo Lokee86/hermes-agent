@@ -132,7 +132,7 @@ class SessionRewindMixin:
             rewind_in_transaction(
                 self, conn, session_id, target_row_id,
                 preserve_compaction_handoff=preserve_handoff,
-                expected_active_ids=expected_active_ids)
+                expected_active_ids=expected_active_ids, record_removal=False)
             row = conn.execute(
                 "SELECT display_metadata FROM messages WHERE id = ? AND session_id = ?",
                 (target_row_id, session_id)).fetchone()

@@ -129,6 +129,7 @@ _DEFAULT_PAYLOADS = {
     "on_session_finalize": {"session_id": "test-session"},
     "on_session_reset": {"session_id": "test-session"},
     "on_session_delete": {"session_id": "test-session", "reason": "delete", "profile": "default"},
+    "on_transcript_removal": {"profile": "default", "hermes_home": "/test/hermes-home"},
     "pre_api_request": {
         "session_id": "test-session", "task_id": "test-task", "platform": "cli",
         "model": "claude-sonnet-4-6", "provider": "anthropic",

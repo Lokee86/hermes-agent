@@ -27,6 +27,7 @@ def test_delete_refuses_outstanding_descendant_obligations(tmp_path, obligation)
             rt.mutate_runtime_session(db, **args)
         assert db.get_session('child') == before
         assert db.get_session('s') is not None
+        assert db.committed_transcript_removals() == []
 
 
 def test_delete_receipt_survives_removal_and_fences_generation(tmp_path):
@@ -44,6 +45,8 @@ def test_delete_receipt_survives_removal_and_fences_generation(tmp_path):
         assert db.get_session('s') is None
         assert db.get_session('branch')['parent_session_id'] is None
         assert rt.mutate_runtime_session(db, **args) == receipt
+        removal, = db.committed_transcript_removals()
+        assert (removal['kind'], removal['session_id']) == ('delete', 's')
         with pytest.raises(rt.RuntimeStoreError, match='admission_conflict'):
             rt.mutate_runtime_session(db, **(args | {'expected_generation': 1}))
 
@@ -65,6 +68,7 @@ def test_delete_of_compressed_logical_root_retires_every_physical_continuation(t
         receipt = rt.mutate_runtime_session(db, epoch=epoch, principal_id='human', session_id='root', request_id='delete',
                                             expected_revision=0, expected_generation=0, operation='delete', payload={})
         assert set(receipt['deleted_ids']) == {'root', 'child'}
+        assert {e['session_id'] for e in db.committed_transcript_removals()} == {'root', 'child'}
         assert db.get_session('child') is None
         assert db.get_messages_as_conversation('child') == []
         assert db.load_gateway_routing_entries() == {}
