@@ -1,16 +1,16 @@
 name: reliquary
 title: Reliquary
 repo: https://github.com/Lokee86/reliquary-hermes
-sha: de15584353143363291a7fddf82f61f7702e2467
+sha: 19dfb276fcd636290190fb84a83b30c4d636a2f4
 version: "0.3.5"
-description: "Local, inspectable long-term memory with source provenance, General and project RELs, a read-only PHY identity layer, and a relationship graph. Disclosure — on Linux and macOS this package ships four CI-built native hosts. Reliquary launches the matching executable and removes the other three from its installed plugin directory after authenticated startup. The local Rust process binds authenticated loopback HTTP and can keep running after a session for recovery. It reads and writes the selected REL files, reads the selected PHY, and stores copied sources and recovery data under the active profile. Setup provisions a profile-scoped token through Hermes. Processing and recall use the active Hermes profile for general and structured completions. The Rust host sends bounded queries and text for indexing to the embedding provider configured in Reliquary Switchboard for that profile. Opt-in Perception decisions may call a separately configured endpoint. Provider calls can incur charges. Conversation capture, project routing and Desktop features depend on the Hermes host. No telemetry."
+description: "Local, inspectable long-term memory with source provenance, General and project RELs, active PHY recall, opt-in Ego context, and a relationship graph. Disclosure — on Linux and macOS this package ships four CI-built native hosts. Reliquary launches the matching executable and removes the other three from its installed plugin directory after authenticated startup. The local Rust process binds authenticated loopback HTTP and can keep running after a session for recovery. It reads and writes the selected REL files and stores copied sources and recovery data under the active profile. Opt-in Ego and private PHY Perception can write to the active PHY. Trusted chat capture can also write personal Memories on compatible Hermes builds. Setup provisions a profile-scoped token through Hermes. Processing and recall use the active Hermes profile for general and structured completions. The Rust host sends bounded queries and text for indexing to the embedding provider configured in Reliquary Switchboard for that profile. Opt-in Perception decisions may call a separately configured endpoint. Provider calls can incur charges. Conversation capture, project routing and Desktop features depend on the Hermes host. No telemetry."
 maintainer: Lokee86
 tier: community
 category: memory
 requires_hermes: ">=0.23.4"
-docs_url: https://github.com/Lokee86/reliquary-hermes/tree/de15584353143363291a7fddf82f61f7702e2467
+docs_url: https://github.com/Lokee86/reliquary-hermes/tree/19dfb276fcd636290190fb84a83b30c4d636a2f4
 screenshots:
-  - https://raw.githubusercontent.com/Lokee86/reliquary-hermes/de15584353143363291a7fddf82f61f7702e2467/assets/graph-overview.png
+  - https://raw.githubusercontent.com/Lokee86/reliquary-hermes/19dfb276fcd636290190fb84a83b30c4d636a2f4/assets/graph-overview.png
 readme: true
 platforms:
   - windows
@@ -27,7 +27,7 @@ known_issues:
   - On Windows, build the host with scripts/build-native.ps1 before running Hermes memory setup.
   - Semantic processing and recall require a protected Switchboard configuration selected for the profile. Restart the native host after changing the embedding route or credentials.
   - Stock Desktop supports browsing. Graph bytes, setup, and writes depend on the Desktop SDK and native admission. The web dashboard supports setup and writes.
-  - Conversation capture and project routing use trusted Hermes history and project capabilities when available.
+  - Automatic chat capture requires trusted history and completed-turn attribution. Capture stays on hold on stock Hermes v0.23.4 and v0.23.5. Project routing requires trusted project attribution.
   - Imported Memories without accepted source provenance may appear in the dashboard while production recall refuses them.
 capabilities:
   provides_tools: []
